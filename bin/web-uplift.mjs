@@ -10,6 +10,7 @@
  *   audit  [...]    Passthrough to the headless batch runner (runner/run-batch.mjs).
  *   fix    [...]    Passthrough to the model-driven hill-climb (fixer/fix.mjs).
  *   aggregate [...] Passthrough to the cross-site aggregator (aggregate/aggregate.mjs).
+ *   compare <host> [runA] [runB]  Diff two retained runs (aggregate/compare.mjs).
  *   evidence <primitive> <url> [...]  Passthrough to the evidence primitives.
  *
  * The PRIMARY, subscription-friendly path is to `install` the skill and then run
@@ -52,6 +53,9 @@ switch (command) {
     break;
   case 'aggregate':
     passthrough(join(PKG_ROOT, 'aggregate', 'aggregate.mjs'), rest);
+    break;
+  case 'compare':
+    passthrough(join(PKG_ROOT, 'aggregate', 'compare.mjs'), rest);
     break;
   case 'evidence':
     passthrough(join(PKG_ROOT, 'evidence', 'cli.mjs'), rest);
@@ -288,6 +292,7 @@ HEADLESS / CI path (uses API tokens):
   web-uplift audit [urls...] [--agent <name>] [--dry-run]   Batch fan-out audit.
   web-uplift fix --target <dir> --audit-url <url> [...]      Model-driven hill-climb.
   web-uplift aggregate [--reports <dir>]                     Cross-site summary.
+  web-uplift compare <host|url> [runA] [runB]                Diff two retained runs (before/after).
   web-uplift evidence <primitive> <url> [options]            Raw-CDP evidence primitives.
 
   web-uplift --help | --version
