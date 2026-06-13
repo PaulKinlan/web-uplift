@@ -12,8 +12,26 @@ Audit `$ARGUMENTS`: a URL, plus optional flags:
   authored HTML/CSS/JS, not just the rendered output.
 - `--fix` - after auditing, apply fixes to local source and re-audit (requires
   `--source`). Without `--fix`, this is report mode (critique only).
+- `--findings <path>` - a pre-aggregated `report.json` to start fix mode from,
+  so you can skip the baseline audit and go straight to the hill-climb.
+- `--max-iterations <n>` - cap on fix-mode passes (default ~4); stop earlier if
+  no outstanding `issues` remain.
 - `--expected <file>` - a ground-truth file to self-score against (used for the
   playground eval).
+
+## The two ways to run this (the DEFAULT is your own session)
+
+1. **In your own agent session (DEFAULT, uses your subscription).** You are
+   already a capable model in a session (Claude Code, Codex, Gemini, Antigravity,
+   Copilot, opencode). Just follow this file: run `/web-audit <url>` for an audit,
+   or `/web-audit <url> --source <dir> --fix` for the hill-climb, doing the
+   reasoning yourself and calling `node evidence/cli.mjs ...` for evidence. No
+   headless runner, no `claude -p`, no extra API billing. This is the path an
+   individual should use.
+2. **Headless / CI / batch (uses API tokens).** `npm run audit`/`npm run fix`
+   (or `web-uplift audit`/`web-uplift fix`) spawn an agent CLI in `-p`/`exec`
+   mode to drive this same skill unattended. That bills API tokens, so it is for
+   automation, not the default for a person. Same methodology either way.
 
 ## The contract: you are the auditor, not a runner
 
@@ -217,24 +235,45 @@ Write two files in `reports/<host>/` (or `--out`):
   artifact paths), findings grouped by principle, the prioritised task list, and
   anything skipped or low-confidence.
 
-### 7. Fix mode (`--fix --source <dir>`, the hill-climb)
+### 7. Fix mode (`--fix --source <dir>`, the model-driven hill-climb)
 
-Only with local source. For each task, highest leverage first:
+Only with local source. This is a MODEL-DRIVEN hill-climb: YOU write every edit
+based on Modern Web Guidance. There are no canned transforms anywhere. You can
+run this loop entirely INSIDE your own session (the default, subscription path)
+- you do not need the headless runner; you ARE the model.
+
+Inputs: the findings + `taskList` you just produced (step 5), or a pre-aggregated
+report passed with `--findings <path>` (in which case you may skip the baseline
+audit and go straight to the climb).
+
+The loop, highest-leverage task first:
 
 1. `retrieve` the task's guidance guide and read its technique + browser-support
    notes (assume Baseline Widely available is safe; follow the guide's fallback
-   advice otherwise).
-2. Write the fix into the local source under `<dir>`. You are the coding agent;
-   there are no canned transforms.
-3. Re-gather the relevant evidence (the same primitive/condition you used to
-   find it) and confirm the issue is gone. If a fix introduces a new issue, log
-   it and continue.
-4. Repeat passes until no findings above your chosen severity remain or a pass
-   makes no further progress. Record `budget.auditPasses`. Optionally open a PR
-   (branch, commit only the source changes, `gh pr create`).
+   advice otherwise, unless `web-uplift.json` states a custom policy).
+2. Write the fix into the local source under `<dir>`. You are the coding agent.
+   Honour `web-uplift.json`: never "fix" a principle reported `opted-out` or
+   `not-applicable` - those are out of scope, not issues.
+3. Re-gather the relevant evidence (the SAME primitive and emulated condition you
+   used to find it) and confirm the issue is gone. Compare against a known-good
+   reference where one exists (e.g. a `?mode=fixed` variant). If a fix introduces
+   a new issue, log it and continue.
+4. After a pass, recount the OUTSTANDING issue-findings: findings whose
+   `principleId` is NOT one you reported `not-applicable`/`opted-out`. This is the
+   number that must climb DOWN; print it so the descent is visible (e.g.
+   `9 -> 5 -> 0`).
+5. Repeat passes until there are zero outstanding `issues` (a clean audit may
+   still carry `not-applicable`/`opted-out` principles - that is a pass), or a
+   pass makes no further progress, or `--max-iterations` is hit. Record
+   `budget.auditPasses`. Optionally open a PR (branch, commit only the source
+   changes, `gh pr create`).
 
 Never edit source outside `<dir>`. Never run fix mode against a site whose
 source you do not have locally.
+
+The headless `web-uplift fix` / `npm run fix` command drives exactly this loop
+unattended via an agent CLI (API tokens); the in-session path above is the same
+methodology with no extra billing.
 
 ## Why fully agentic (and why no fast path)
 

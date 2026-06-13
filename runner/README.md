@@ -1,5 +1,12 @@
 # Running audits
 
+> **Which path?** For an INDIVIDUAL, the default is to run the skill INSIDE your
+> own agent session (`/web-audit <url>`), which uses your **subscription** - see
+> "Run it in your agent" in the [top-level README](../README.md). The batch
+> runner and `web-uplift fix` documented here are the **HEADLESS / CI / batch**
+> path: they spawn an agent CLI in `-p`/`exec` mode, which **bills API tokens**.
+> Same methodology either way; only the billing and ergonomics differ.
+
 ## Cross-agent support matrix
 
 `web-uplift` is **not Claude-only**. One canonical methodology
@@ -40,11 +47,18 @@ Adding a new agent is deliberately a one-file-plus-one-map-entry job:
    a Gemini `.toml`, an Antigravity `.md`, a Copilot prompt file, an opencode
    command file, a Codex symlink. Never copy the methodology - point at it.
 2. **Headless entry** - add one entry to the `AGENTS` map in
-   [run-batch.mjs](run-batch.mjs): `{ bin, prompt, args }`, where `prompt` is
+   [agents.mjs](agents.mjs): `{ bin, prompt, args }`, where `prompt` is
    `slashPrompt` (if the agent has the slash command) or `skillPrompt` (the raw
-   prompt), and `args` returns the agent's headless CLI flags. That single entry
-   is the entire batch integration.
-3. **Verify** with `node runner/run-batch.mjs <url> --agent <new> --dry-run`.
+   prompt), and `args` returns the agent's headless CLI flags. That single map
+   is shared by BOTH the audit runner ([run-batch.mjs](run-batch.mjs)) and the
+   fix hill-climb ([../fixer/fix.mjs](../fixer/fix.mjs)), so one entry wires the
+   agent into both.
+3. **Install entry (optional)** - to make `web-uplift install --agent <new>`
+   place the skill for the agent, add one entry to `agentTargets()` in
+   [../bin/web-uplift.mjs](../bin/web-uplift.mjs) describing where the agent
+   reads its project command/skill file.
+4. **Verify** with `node runner/run-batch.mjs <url> --agent <new> --dry-run`
+   and `node fixer/fix.mjs --target . --audit-url <url> --agent <new> --dry-run`.
 
 No MCP server, no browser automation, no per-principle wiring is needed: the
 agent only has to run shell (`node evidence/cli.mjs ...`) and read the skill.
@@ -92,9 +106,35 @@ ends up with none. `--verbose` echoes each spawned command and streams agent
 stdout/stderr with a `[site-slug]` prefix per line (`[slug!]` for stderr);
 `run.json` is written either way.
 
-The batch runner runs **report mode** only. Fix mode (`--fix --source <dir>`)
-is agentic and source-bound, best driven interactively per site; it is
-intentionally not a fan-out flag.
+The batch runner runs **report mode** only. Fix mode is the separate
+**model-driven hill-climb** below; it is source-bound and per-site, so it is not
+a fan-out flag.
+
+# Fix runner (the model-driven hill-climb)
+
+```sh
+npm run fix -- --target ./src --audit-url http://localhost:8080            # claude default
+npm run fix -- --target ./src --audit-url http://localhost:8080 --agent codex
+npm run fix -- --target ./src --audit-url http://localhost:8080 --max-iterations 6
+npm run fix -- --target ./src --audit-url http://localhost:8080 --findings reports/site/report.json
+npm run fix -- --target ./src --audit-url http://localhost:8080 --dry-run  # print per-agent commands
+```
+
+(`npm run fix` is `node fixer/fix.mjs`.) It ORCHESTRATES; it contains **no
+transforms**. Each iteration drives the model (via the shared
+[agents.mjs](agents.mjs) map) to follow
+[SKILL.md](../.claude/skills/web-audit/SKILL.md) section 7 in FIX mode: read the
+aggregated findings, retrieve Modern Web Guidance, write the edits into
+`--target` itself, then re-audit. The runner reads `report.json` after each pass
+and loops until there are zero outstanding `issues`
+(`not-applicable`/`opted-out` principles are fine) or `--max-iterations` is hit,
+printing the outstanding count per iteration so the descent is visible. It
+honours `web-uplift.json` opt-outs (an opted-out / n-a principle is never an
+outstanding issue, so it is never "fixed").
+
+Like the batch runner this is the **headless / CI** path (API tokens). The
+default for an individual is to run the same loop in-session:
+`/web-audit <url> --source <dir> --fix`.
 
 Reports land in `reports/<agent>/<site>/`, so running the same URL list
 through several agents gives a side-by-side comparison  - 

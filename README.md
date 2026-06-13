@@ -175,36 +175,102 @@ reports/                    Ad-hoc audit output, one directory per site (gitigno
 .github/workflows/          CI: smoke-tests the evidence primitives against the playground on push
 ```
 
-## Quickstart
+## Run it in your agent (uses your subscription) - the DEFAULT path
+
+web-uplift is a **skill** (methodology) plus a few plain-Node evidence CLIs.
+There is nothing to host. The intended way to use it as an individual is to
+**install the skill into your project and run it inside your own running agent
+session** (Claude Code, Codex, Gemini CLI, Antigravity, GitHub Copilot,
+opencode). The in-session agent does the reasoning on YOUR plan and just shells
+out to `node evidence/cli.mjs ...` for evidence, so it uses your **subscription**,
+not metered API tokens.
 
 ```sh
-# 1. The Modern Web Guidance feed is fetched on demand via npx; no install
-#    needed. Verify it works:
-npx -y modern-web-guidance@latest list | head
+# 0. Install web-uplift's skill + evidence CLIs into your project, for your agent
+#    (one-command in Claude Code via the plugin; see "Install" below). Or via npx:
+npx web-uplift install --agent claude        # or codex|gemini|antigravity|copilot|opencode|all
+npx web-uplift install --dry-run --agent all # show exactly what gets placed where
 
-# 2. Run the playground (serves playground/ on http://localhost:8080)
-npm run playground
-
-# 3. Gather evidence directly (the building blocks the model uses)
-npm run evidence -- dom        "http://localhost:8080/#no-dark-mode" --selector ".ndm-card" --emulate-media prefers-color-scheme=dark
-npm run evidence -- screenshot "http://localhost:8080/#no-dark-mode" --emulate-media prefers-color-scheme=dark --out shot.png
-npm run evidence -- layout     "http://localhost:8080/#fixed-layout" --viewport 360x800
-npm run evidence -- video      "http://localhost:8080/#motion" --out motion.mp4 --duration 2500
-npm run evidence -- heap       "http://localhost:8080/#motion" --out heap.json
-npm run evidence -- evaluate   "http://localhost:8080/#motion" --emulate-media prefers-reduced-motion=reduce --expr "document.querySelector('.mv-card').getAnimations().length"
-
-# 4. Run the agentic audit (the model follows SKILL.md). Inside Claude Code,
-#    Codex, Gemini CLI, Antigravity, GitHub Copilot, or opencode:
+# 1. Then, INSIDE your agent session, audit a URL (you are the auditor):
 /web-audit http://localhost:8080
 
-# 5. Batch: fan out one agentic audit per URL (defaults to Claude; also
-#    --agent codex|gemini|antigravity|copilot|opencode). Orchestrates; no checks.
-npm run batch -- https://example.com
-npm run batch -- --urls urls/sample.txt --concurrency 2 --agent claude
+# 2. ...and hill-climb fixes against local source, in the SAME session:
+/web-audit http://localhost:8080 --source ./src --fix
+```
 
-# 6. Aggregate findings across reports
+Everything below the audit is just the building blocks the in-session model
+calls; you rarely run them by hand:
+
+```sh
+# Verify the Modern Web Guidance feed (fetched on demand via npx; no install):
+npx -y modern-web-guidance@latest list | head
+
+# Serve the demo playground on http://localhost:8080:
+npm run playground
+
+# The evidence primitives the model uses (raw CDP):
+npm run evidence -- dom        "http://localhost:8080/#no-dark-mode" --selector ".ndm-card" --emulate-media prefers-color-scheme=dark
+npm run evidence -- layout     "http://localhost:8080/#fixed-layout" --viewport 360x800
+npm run evidence -- video      "http://localhost:8080/#motion" --out motion.mp4 --duration 2500
+npm run evidence -- evaluate   "http://localhost:8080/#motion" --emulate-media prefers-reduced-motion=reduce --expr "document.querySelector('.mv-card').getAnimations().length"
+```
+
+## Headless runner (CI / batch) - uses API tokens, NOT the default
+
+For unattended CI or surveying many sites, `npm run audit`/`npm run fix` (or
+`web-uplift audit`/`web-uplift fix`) spawn an agent CLI in `-p`/`exec` mode to
+drive the **same** skill. That **bills API tokens**, so it is the automation
+path, not what an individual should reach for first.
+
+```sh
+# Batch audit: one agentic audit per URL (claude default; also
+# --agent codex|gemini|antigravity|copilot|opencode). Orchestrates; no checks.
+npm run audit -- https://example.com
+npm run audit -- --urls urls/sample.txt --concurrency 2 --agent claude
+
+# Model-driven fix hill-climb against local source (NOT canned transforms):
+npm run fix -- --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4
+npm run fix -- --target ./src --audit-url http://localhost:8080 --dry-run   # print per-agent commands
+
+# Aggregate findings across reports:
 npm run aggregate
 ```
+
+## Install
+
+web-uplift ships as an npm package. `web-uplift install` copies the canonical
+skill plus the evidence CLIs into your project at the right location for each
+agent (thin wrappers that only POINT at the one SKILL.md, so the method can't
+drift), and `--dry-run` prints the placement plan first.
+
+| Agent | `--agent` | What `install` places | Run it |
+|---|---|---|---|
+| Claude Code | `claude` | `.claude/skills/web-audit/SKILL.md` (+ install the plugin for one-command) | `/web-audit <url>` |
+| Codex | `codex` | `.codex/skills/web-audit/SKILL.md` + `AGENTS.md` snippet | `/web-audit <url>` |
+| Gemini CLI | `gemini` | `.gemini/commands/web-audit.toml` | `/web-audit <url>` |
+| Antigravity | `antigravity` | `.agents/skills/web-audit.md` | `/web-audit <url>` |
+| GitHub Copilot | `copilot` | `.github/prompts/web-audit.prompt.md` + instructions snippet | `/web-audit <url>` |
+| opencode | `opencode` | `.opencode/command/web-audit.md` + `AGENTS.md` snippet | `/web-audit <url>` |
+| all | `all` | everything above | per agent |
+
+Every agent also gets the evidence CLIs + skill + principles + schema vendored
+under `.web-uplift/` so the in-session model can call them directly.
+
+**Claude Code plugin (one command):** this repo carries a Claude plugin manifest
+at [.claude-plugin/plugin.json](.claude-plugin/plugin.json) and a marketplace
+entry at [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json), so
+in Claude Code you can add the marketplace and `/plugin install web-uplift` to
+get the `/web-audit` skill in one step (no manual file copying). The other
+agents use `web-uplift install --agent <name>` above.
+
+**Adding an agent** is one entry in the headless map
+([runner/agents.mjs](runner/agents.mjs)) plus one entry in the install map
+(`agentTargets()` in [bin/web-uplift.mjs](bin/web-uplift.mjs)); see "How to add
+an agent" in [runner/README.md](runner/README.md).
+
+**Publishing (for the maintainer):** the package name `web-uplift` is free on
+npm. To publish: `npm pack --dry-run` to review the file set, then
+`npm publish --access public`. (Not run here.)
 
 ## Cross-agent (not Claude-only)
 

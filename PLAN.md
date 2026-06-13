@@ -78,10 +78,14 @@ Why, explicitly:
 
 - The deterministic CDP check runner (`auditor/audit.mjs`, `checks.mjs`,
   `score.mjs`, `report.mjs`, `guidance.mjs`).
-- The deterministic fixer and per-issue transforms (`fixer/fix.mjs`,
-  `transforms.mjs`).
-- The `npm run audit`/`npm run fix` deterministic scripts and the docs/CI that
-  presented a deterministic "fast path."
+- The deterministic fixer and per-issue transforms (the old `fixer/fix.mjs` +
+  `transforms.mjs`). The CURRENT `fixer/fix.mjs` is the opposite: a thin
+  ORCHESTRATOR that drives the model through SKILL.md's fix loop. It contains no
+  transforms; the model writes every edit.
+- The deterministic-fast-path framing of `npm run audit`/`npm run fix`. Those
+  scripts now exist again, but as the HEADLESS / CI path that drives the agentic
+  skill (API tokens); the default for an individual is to run the skill in their
+  own session (subscription).
 - The chrome-devtools browser-automation MCP server (a parallel browser path);
   the model uses the evidence primitives instead.
 
@@ -112,9 +116,14 @@ fallback.
 - **Phase 4 - cross-site study.** Aggregate into principle / guidance-category
   frequency, severity distributions, per-framework and per-agent breakdowns. A
   "State of modern web" summary.
-- **Phase 5 - fix mode (the hill-climb).** With local source, the model writes
-  guidance-backed fixes, re-gathers evidence to verify, and opens a PR. Loop
-  until no findings above a chosen severity remain.
+- **Phase 5 - fix mode (the hill-climb).** Done (model-driven). With local
+  source, the model writes guidance-backed fixes, re-gathers evidence to verify,
+  and loops until no outstanding findings remain (`not-applicable`/`opted-out`
+  are fine). Driven in-session via `/web-audit <url> --source <dir> --fix`
+  (subscription) or headlessly via `npm run fix` / `web-uplift fix` (API
+  tokens); both follow SKILL.md section 7. Demonstrated on a copy of the
+  seeded-issues fixture: outstanding findings climbed 9 -> 5 -> 0 across two
+  passes, each fix verified with the same evidence primitive that surfaced it.
 
 ## Resolved
 

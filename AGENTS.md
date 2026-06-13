@@ -1,4 +1,4 @@
-# AGENTS.md — web-uplift
+# AGENTS.md - web-uplift
 
 Guidance for any coding agent that reads `AGENTS.md` (Codex, opencode, and
 others). This repo is a fully agentic modern-web quality auditor: the model
@@ -19,10 +19,20 @@ prompt in any agent:
 > Read the file .claude/skills/web-audit/SKILL.md and follow its instructions
 > exactly, with these arguments: <url>
 
+**Two ways to run, default first.** The DEFAULT for an individual is to run the
+skill INSIDE this session (it uses your subscription): `/web-audit <url>` to
+audit, `/web-audit <url> --source <dir> --fix` for the model-driven fix
+hill-climb. The HEADLESS / CI path (`npm run audit`, `npm run fix`,
+`web-uplift audit|fix`) spawns an agent CLI in `-p`/`exec` mode and bills API
+tokens; it is for automation, not the individual default. Both follow this same
+SKILL.md. Fix mode is a MODEL-DRIVEN hill-climb: you write every guidance-backed
+edit and re-audit until no outstanding `issues` remain (there are no canned
+transforms).
+
 ## How you see the page (no MCP required)
 
 Evidence is gathered with a plain Node CLI over raw Chrome DevTools Protocol
-(chrome-remote-interface) — no browser-automation MCP server, no Playwright, no
+(chrome-remote-interface), no browser-automation MCP server, no Playwright, no
 Puppeteer:
 
 ```sh
