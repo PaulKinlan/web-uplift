@@ -19,6 +19,7 @@ on:
       - 'eval/**'
       - 'principles/**'
       - 'schema/**'
+      - 'tests/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/audit-playground.yml'
@@ -52,6 +53,9 @@ jobs:
             echo "CHROME_BIN=$(command -v google-chrome-stable || command -v chromium-browser)" >> "$GITHUB_ENV"
           fi
           "$CHROME_BIN" --version || true
+
+      - name: Regression tests
+        run: npm test
 
       - name: Serve the live playground and the eval fixture
         run: |
