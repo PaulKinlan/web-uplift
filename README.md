@@ -64,21 +64,77 @@ decides them): `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion
 ## The two knowledge layers
 
 1. **Principles** - [principles/principles.json](principles/principles.json):
-   the spec of what good looks like, as OUTCOMES. Nine principles: Una Kravets'
-   five modern-UX principles from her Google I/O 2026 talk *What's new in Web UI*
-   (https://www.youtube.com/watch?v=uT7MVcCQ4rw) plus four Lighthouse-dimension
-   principles (`be-fast-and-stable`, `be-accessible`, `follow-best-practices`,
-   `be-discoverable`). Each check is phrased as an outcome and carries a
-   `detectableVia` HINT that may *mention* candidate evidence or tools without
-   mandating any. Nothing here is wired to a code path.
+   the spec of what good looks like, as OUTCOMES. **Fifteen principles**: Una
+   Kravets' five modern-UX principles from her Google I/O 2026 talk *What's new
+   in Web UI* (https://www.youtube.com/watch?v=uT7MVcCQ4rw); the four
+   Lighthouse-dimension principles, with `be-accessible` widened to
+   `be-inclusive` and `follow-best-practices` narrowed so it is no longer the
+   catch-all for security and forms (`be-fast-and-stable`, `be-discoverable`
+   unchanged); and **six framework-derived principles** that close the gaps the
+   original nine left open: `be-private-and-secure`, `be-resilient`,
+   `be-internationalised`, `be-trustworthy`, `be-sustainable`, and
+   `be-agent-ready` (emerging/forward-looking). Each check is phrased as an
+   outcome and carries a `detectableVia` HINT (may *mention* candidate
+   evidence/tools, mandates none) plus a `guides` LIST of Modern Web Guidance
+   ids and/or query strings. Each principle declares an `applicability` block
+   (see "Guard criteria" below). Nothing here is wired to a code path. The full
+   coverage map (all 137 mwg guides -> principles, none orphaned) and the
+   rationale for the expansion is in
+   [docs/principles-analysis.md](docs/principles-analysis.md) (adopted
+   2026-06-13).
+
+   | # | Principle | Origin | Change |
+   |---|---|---|---|
+   | 1 | `respect-user-preferences` | una-kravets | unchanged |
+   | 2 | `implement-natural-interactions` | una-kravets | unchanged |
+   | 3 | `provide-guided-navigation` | una-kravets | unchanged |
+   | 4 | `maximize-content-reduce-noise` | una-kravets | unchanged |
+   | 5 | `adapt-to-the-form-factor` | una-kravets | unchanged |
+   | 6 | `be-fast-and-stable` | lighthouse | unchanged |
+   | 7 | `be-inclusive` | lighthouse (a11y) | renamed + widened from `be-accessible` |
+   | 8 | `follow-best-practices` | lighthouse | narrowed (no longer catch-all) |
+   | 9 | `be-discoverable` | lighthouse (SEO) | unchanged |
+   | 10 | `be-private-and-secure` | framework-derived | **net-new** |
+   | 11 | `be-resilient` | framework-derived | **net-new** (contextual) |
+   | 12 | `be-internationalised` | framework-derived | **net-new** (contextual) |
+   | 13 | `be-trustworthy` | framework-derived | **net-new** |
+   | 14 | `be-sustainable` | framework-derived | **net-new** (contextual weight bar) |
+   | 15 | `be-agent-ready` | framework-derived | **net-new** (contextual, emerging) |
 2. **Modern Web Guidance** - the `modern-web-guidance` npm feed
    (https://developer.chrome.com/docs/modern-web-guidance/): use-case-based best
-   practices, the *how*. The model `search`es it while auditing (to confirm the
-   recommended modern approach and cite a guidance id) and `retrieve`s it while
-   fixing. See [guidance/README.md](guidance/README.md).
+   practices, the *how*. Each principle check carries a `guides` LIST (mwg ids
+   and/or query strings); the model consults the mapped guides UP FRONT to set
+   the bar, `search`es ad hoc while auditing, and `retrieve`s while fixing,
+   pinned to `modern-web-guidance@0.0.172`. See
+   [guidance/README.md](guidance/README.md).
 
 The principles set the goal; the guidance provides the concrete, citable
 techniques to get there.
+
+## Guard criteria and the `web-uplift.json` config (quality without shaming)
+
+Not every principle applies to every site, and the audit must not shame a site
+for legitimately not needing one. Two mechanisms make this honest:
+
+- **Per-principle `applicability`.** Each principle in `principles.json`
+  declares `expectation: "default" | "contextual"`. `default` principles are
+  expected of essentially every site (absence is a finding). `contextual`
+  principles (`be-resilient`'s offline/installable aspect, `be-internationalised`,
+  `be-sustainable`'s absolute weight bar, `be-agent-ready`, and public
+  discoverability for a gated site) legitimately may not apply; each records
+  `optOutWhy` explaining when a developer might reasonably skip it.
+- **`web-uplift.json` project config** ([schema/config.schema.json](schema/config.schema.json),
+  documented example [web-uplift.example.json](web-uplift.example.json)). A
+  developer drops this at the site root to declare `siteType`, `scope`,
+  per-principle `optOut` (with a reason), and `intent`. The audit honours it: a
+  declared opt-out is reported as **`opted-out`** (with the reason), never as an
+  issue; `intent` sets context the model judges against.
+
+The audit then reports each principle's outcome as one of `pass`, `issues`,
+**`not-applicable`** (the model judged a contextual principle out of scope, with
+a rationale) or **`opted-out`** (the developer declared it) - the last two kept
+distinct from a real issue. See `principleOutcomes` in
+[schema/findings.schema.json](schema/findings.schema.json).
 
 ## The audit (model-driven)
 
@@ -105,7 +161,7 @@ In outline, the model:
 ```
 evidence/                   Generic, judgement-free CDP evidence primitives (the model's senses)
 .claude/skills/web-audit/   The audit METHODOLOGY a model follows (the heart of the system)
-principles/                 The declarative spec: Una's five + the four Lighthouse-dimension principles
+principles/                 The declarative spec: Una's five + Lighthouse dimensions + six framework-derived principles (15 total), each with guard criteria
 guidance/                   Modern Web Guidance feed integration (the how)
 schema/                     Findings + report JSON schema
 playground/                 The genuinely-correct demo site (modern-UX techniques applied by default)

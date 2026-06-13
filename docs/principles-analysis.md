@@ -1,8 +1,16 @@
 # Proposal: an expanded principle set for web-uplift
 
-Status: PROPOSAL for sign-off. This document does NOT change
-`principles/principles.json`. It is the evidence and reasoning behind a
-recommended expansion, so Paul can decide what (if anything) to encode.
+Status: ADOPTED 2026-06-13. Paul approved the full expansion - all net-new
+principles including the optional `be-agent-ready`, the `be-accessible` ->
+`be-inclusive` rename, the narrowing of `follow-best-practices`, and the
+guard-criteria design. `principles/principles.json` now reflects this document:
+15 principles, each check carries a `guides` list of Modern Web Guidance
+pointers, and every one of the 137 guides in the coverage map below is mapped
+(verified none orphaned). Each principle also carries an `applicability` block
+(`expectation: default | contextual`), backed by the `web-uplift.json` project
+config ([schema/config.schema.json](../schema/config.schema.json)) for declared
+opt-outs/intent. This document remains the rationale and the canonical coverage
+map; the sections below are preserved as written for that record.
 
 Author: Paul Kinlan. Analysis assembled by Claude.
 

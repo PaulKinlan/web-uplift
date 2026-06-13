@@ -40,10 +40,16 @@ Why, explicitly:
   probe in the page). Each accepts emulated conditions (media features,
   viewport) the model chooses. They return data/artifacts and make no decisions.
 - **Principles** ([principles/principles.json](principles/principles.json)) -
-  Una Kravets' five modern-UX principles plus four Lighthouse-dimension
-  principles (`be-fast-and-stable`, `be-accessible`, `follow-best-practices`,
-  `be-discoverable`). Each check is an outcome with a `detectableVia` HINT that
-  may mention candidate evidence/tools without mandating them.
+  fifteen principles: Una Kravets' five modern-UX principles; the Lighthouse
+  dimensions with `be-accessible` widened to `be-inclusive` and
+  `follow-best-practices` narrowed (`be-fast-and-stable`, `be-discoverable`
+  unchanged); and six framework-derived principles (`be-private-and-secure`,
+  `be-resilient`, `be-internationalised`, `be-trustworthy`, `be-sustainable`,
+  `be-agent-ready`). Each check is an outcome with a `detectableVia` HINT and a
+  `guides` list of mwg pointers; each principle has an `applicability` block
+  (default vs contextual). Expansion adopted 2026-06-13 per
+  [docs/principles-analysis.md](docs/principles-analysis.md); all 137 mwg guides
+  are mapped (none orphaned).
 - **The methodology** ([.claude/skills/web-audit/SKILL.md](.claude/skills/web-audit/SKILL.md))
   - how a model recons, plans the evidence per principle, gathers it, reasons,
   judges every principle, reports against the schema, and (with `--source`)
@@ -110,11 +116,26 @@ fallback.
   guidance-backed fixes, re-gathers evidence to verify, and opens a PR. Loop
   until no findings above a chosen severity remain.
 
+## Resolved
+
+- **Expanded principle set + guard criteria (2026-06-13).** Adopted the
+  proposal in [docs/principles-analysis.md](docs/principles-analysis.md): grew
+  the set from 9 to 15 (rename `be-accessible` -> `be-inclusive`, narrow
+  `follow-best-practices`, add `be-private-and-secure`, `be-resilient`,
+  `be-internationalised`, `be-trustworthy`, `be-sustainable`, `be-agent-ready`),
+  mapped all 137 mwg guides to per-check `guides` lists (none orphaned, pinned to
+  `modern-web-guidance@0.0.172`), added per-principle `applicability` guard
+  criteria, a `web-uplift.json` project config + JSON schema for declared
+  scope/opt-outs/intent, and the `not-applicable` / `opted-out` outcome
+  reporting ("quality without shaming"). The eval ground truth was re-baselined
+  against the wider principles.
+
 ## Open questions
 
-1. **Guidance feed caching / version pinning.** The feed is queried live. Pin a
-   `--skill-version`, decide bump cadence, cache `list`/`retrieve` for offline
-   batch runs.
+1. **Guidance feed caching / version pinning.** Version is now pinned to
+   `modern-web-guidance@0.0.172` in `principles.json` (`guidanceCatalogVersion`,
+   overridable via `web-uplift.json`). Still open: bump cadence and caching
+   `list`/`retrieve` for offline batch runs.
 2. **Eval design for an agentic audit.** Scoring the seeded scenarios joins on
    scenario id and checks principle alignment. Still open: how to score
    subjective/aesthetic findings, and whether a "should NOT flag" list guards
