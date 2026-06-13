@@ -1,34 +1,61 @@
 # Running audits
 
-## Interactive (inside each CLI)
+## Cross-agent support matrix
 
-From this repo's root, `/web-audit <url>` works in every CLI - each one
-discovers it through its own project-config mechanism, all pointing at the
-single canonical [SKILL.md](../.claude/skills/web-audit/SKILL.md):
+`web-uplift` is **not Claude-only**. One canonical methodology
+([SKILL.md](../.claude/skills/web-audit/SKILL.md)) plus one declarative spec
+([principles.json](../principles/principles.json)) plus one generic evidence CLI
+([evidence/cli.mjs](../evidence/cli.mjs), plain `node` shell commands over raw
+CDP) are all agent-agnostic. Each agent gets only a **thin wrapper** that points
+at the same canonical skill, so the methodology cannot drift.
 
-| CLI | Type it as | Wired up via |
-|---|---|---|
-| Claude Code | `/web-audit http://localhost:8080` | `.claude/skills/web-audit/` (native) |
-| Codex | `/web-audit http://localhost:8080` | `.codex/skills/web-audit` - a symlink to the Claude skill (Codex uses the same SKILL.md format) |
-| Gemini CLI | `/web-audit http://localhost:8080` | `.gemini/commands/web-audit.toml` (two-line wrapper, `{{args}}`) |
-| Antigravity | `/web-audit http://localhost:8080` | `.agents/skills/web-audit.md` (two-line wrapper) |
+| Agent | Interactive entry point | Headless `--agent` | Status |
+|---|---|---|---|
+| Claude Code | `.claude/skills/web-audit/` (native skill) | `claude` | wired + real run verified |
+| Codex | `.codex/skills/web-audit` -> symlink to the Claude skill; `AGENTS.md` | `codex` | wired (dry-run verified) |
+| Gemini CLI | `.gemini/commands/web-audit.toml` (`{{args}}` wrapper) | `gemini` | wired (dry-run verified) |
+| Antigravity | `.agents/skills/web-audit.md` (wrapper) | `agy` | wired (dry-run verified) |
+| GitHub Copilot | `.github/copilot-instructions.md` + `.github/prompts/web-audit.prompt.md` | `copilot` | wired (dry-run verified) |
+| opencode | `.opencode/command/web-audit.md` + `AGENTS.md` + `opencode.json` | `opencode` | wired (dry-run verified) |
+| anything else | raw prompt (below) | add one map entry | n/a |
 
-If you'd rather not use the command, the raw prompt that works in *any*
-agent run from the repo root is:
+From the repo root, `/web-audit <url>` works in every CLI that surfaces commands
+(each discovers it through its own project-config mechanism). The raw prompt that
+works in **any** agent, command support or not, is:
 
 > Read the file .claude/skills/web-audit/SKILL.md and follow its
 > instructions exactly, with these arguments: http://localhost:8080
 
-Only the Claude copy is real; the rest are pointers, so the methodology can't
-drift between agents. (Windows checkouts may need the Codex symlink replaced
-with a copy.)
+Only the Claude copy of the skill is real; the rest are pointers, so the
+methodology can't drift between agents. (Windows checkouts may need the Codex
+symlink replaced with a copy.)
 
-## Skills over MCP
+## How to add an agent (one thin wrapper)
 
-[mcp/skills-server.mjs](../mcp/skills-server.mjs) additionally distributes
-the skill through MCP itself (registered in `.mcp.json`,
-`.gemini/settings.json`, `.codex/config.toml` as `web-uplift`), exposing it
-two ways:
+Adding a new agent is deliberately a one-file-plus-one-map-entry job:
+
+1. **Interactive wrapper** - add the file the agent reads for project commands,
+   and have it say nothing more than "read `.claude/skills/web-audit/SKILL.md`
+   and follow it with these arguments: <args>". Examples already in the repo:
+   a Gemini `.toml`, an Antigravity `.md`, a Copilot prompt file, an opencode
+   command file, a Codex symlink. Never copy the methodology - point at it.
+2. **Headless entry** - add one entry to the `AGENTS` map in
+   [run-batch.mjs](run-batch.mjs): `{ bin, prompt, args }`, where `prompt` is
+   `slashPrompt` (if the agent has the slash command) or `skillPrompt` (the raw
+   prompt), and `args` returns the agent's headless CLI flags. That single entry
+   is the entire batch integration.
+3. **Verify** with `node runner/run-batch.mjs <url> --agent <new> --dry-run`.
+
+No MCP server, no browser automation, no per-principle wiring is needed: the
+agent only has to run shell (`node evidence/cli.mjs ...`) and read the skill.
+
+## Skills over MCP (optional)
+
+This layer is **optional** - it adds nothing the file wrappers and the evidence
+CLI don't already provide; it just distributes the skill to MCP-aware hosts.
+[mcp/skills-server.mjs](../mcp/skills-server.mjs) distributes the skill through
+MCP itself (registered in `.mcp.json`, `.gemini/settings.json`,
+`.codex/config.toml`, `opencode.json` as `web-uplift`), exposing it two ways:
 
 - **An MCP prompt** - in hosts with prompt discovery this surfaces as a slash
   command with no wrapper file at all: Claude Code shows it as
@@ -52,7 +79,7 @@ at the server and it has the workflow).
 ```sh
 npm run batch -- https://example.com                       # URLs as arguments
 npm run batch -- --urls urls/sample.txt                    # …or from a file (the default file)
-npm run batch -- https://example.com --agent gemini        # claude | gemini | antigravity | codex
+npm run batch -- https://example.com --agent gemini        # claude | codex | gemini | antigravity | copilot | opencode
 npm run batch -- --urls urls/top-1k.txt --concurrency 4
 npm run batch -- https://example.com --agent codex --dry-run   # print commands only
 npm run batch -- https://example.com --verbose                 # stream agent output live
@@ -78,23 +105,27 @@ directly (it's plain markdown instructions any agent can follow).
 
 ## Per-agent setup
 
-There is no browser-automation MCP server to register. The agent drives a real
-headless Chrome through this repo's own **evidence primitives**
-([evidence/cli.mjs](../evidence/cli.mjs), raw CDP via chrome-remote-interface),
-which it runs as `node evidence/cli.mjs <primitive> <url> ...`. So each agent
-only needs permission to run Node and `npx` (for the Modern Web Guidance feed
-and, if it chooses, Lighthouse), and read/write access to the repo.
+**No MCP server is required, and there is no browser-automation MCP anywhere.**
+The agent drives a real headless Chrome through this repo's own **evidence
+primitives** ([evidence/cli.mjs](../evidence/cli.mjs), raw CDP via
+chrome-remote-interface), which it runs as `node evidence/cli.mjs <primitive>
+<url> ...`. So each agent only needs permission to run Node and `npx` (for the
+Modern Web Guidance feed and, if it chooses, Lighthouse), and read/write access
+to the repo.
 
 | Agent | Binary | Headless invocation | Tooling it needs |
 |---|---|---|---|
 | Claude Code | `claude` | `-p --output-format json --allowedTools …` | `Bash(node:*)`, `Bash(npx:*)`, `Bash(ffmpeg:*)`, file tools (set by the runner) |
+| Codex CLI | `codex` | `exec --json --sandbox workspace-write` | node + npx + ffmpeg on PATH |
 | Gemini CLI | `gemini` | `-p --yolo --output-format json` | node + npx + ffmpeg on PATH |
 | Antigravity CLI | `agy` | `-p --dangerously-skip-permissions` | node + npx + ffmpeg on PATH |
-| Codex CLI | `codex` | `exec --json --sandbox workspace-write` | node + npx + ffmpeg on PATH |
+| GitHub Copilot | `copilot` | `-p --allow-all-tools` | node + npx + ffmpeg on PATH |
+| opencode | `opencode` | `run <prompt>` | node + npx + ffmpeg on PATH |
 
-The only MCP server still registered (in `.mcp.json`, `.gemini/settings.json`,
-`.codex/config.toml`) is `web-uplift` (the skills server), which distributes the
-SKILL.md methodology itself; it is not a browser. The host machine needs
+The `web-uplift` MCP server (registered in `.mcp.json`, `.gemini/settings.json`,
+`.codex/config.toml`, `opencode.json`) is **optional**: it only distributes the
+SKILL.md methodology to MCP-aware hosts as a convenience, it is not a browser,
+and the audit works fine with it disabled. The host machine needs
 `google-chrome-stable` (override with `CHROME_BIN`) and `ffmpeg` for the video
 primitive.
 
@@ -105,19 +136,20 @@ for this.
 
 ## Caveats
 
-- **Permissions:** `--yolo` (Gemini) and `--dangerously-skip-permissions`
-  (Antigravity) auto-approve *every* tool call. Fine against the playground;
-  for batch runs over arbitrary third-party sites, run inside a container or
-  VM. Claude's invocation uses a scoped `--allowedTools` list instead. Codex
-  uses the `workspace-write` sandbox - if Chrome can't reach the network from
-  it, fall back to `--dangerously-bypass-approvals-and-sandbox` inside a
-  container.
+- **Permissions:** `--yolo` (Gemini), `--dangerously-skip-permissions`
+  (Antigravity), and `--allow-all-tools` (Copilot) auto-approve *every* tool
+  call. Fine against the playground; for batch runs over arbitrary third-party
+  sites, run inside a container or VM. Claude's invocation uses a scoped
+  `--allowedTools` list instead. Codex uses the `workspace-write` sandbox - if
+  Chrome can't reach the network from it, fall back to
+  `--dangerously-bypass-approvals-and-sandbox` inside a container. opencode's
+  `run` follows its own configured permissions.
 - **Output:** `run.json` stores raw agent stdout (JSON for claude/gemini,
-  JSONL for codex, plain text for antigravity). The contract that matters is
-  the same for all agents: `report.json` in the site directory, validating
-  against `schema/findings.schema.json`.
+  JSONL for codex, plain text for antigravity/copilot/opencode). The contract
+  that matters is the same for all agents: `report.json` in the site directory,
+  validating against `schema/findings.schema.json`.
 - **Gemini CLI sunset:** for individual Pro/Ultra accounts Gemini CLI is
   scheduled to sunset on 2026-06-18 in favour of Antigravity CLI - keep both
   adapters until the dust settles.
-- Flags drift fast in all four CLIs; if an invocation fails, `--dry-run`
+- Flags drift fast across all six CLIs; if an invocation fails, `--dry-run`
   shows the exact command to debug.

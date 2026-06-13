@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md", ".claude/skills/web-audit/SKILL.md"],
+  "mcp": {
+    "web-uplift": {
+      "type": "local",
+      "command": ["node", "mcp/skills-server.mjs"],
+      "enabled": true
+    }
+  }
+}

@@ -52,12 +52,21 @@ Why, explicitly:
   (`search`/`retrieve`/`list`), queried live for the recommended approach and the
   fix detail.
 - **Runner** ([runner/](runner/)) - a generic fan-out that invokes the model
-  per URL (claude/codex/gemini/antigravity). It orchestrates; it has no checks.
-- **Playground + eval** ([playground/](playground/)) - seeded modern-UX issues,
-  an issue vs `?mode=fixed` toggle, and `expected-findings.json` as ground
-  truth. The eval runs the agentic audit against the playground and compares the
-  model's findings to expected (precision/recall). The eval may score; the audit
-  itself is model-driven.
+  per URL through a single `{agent: headless-command}` map
+  (claude/codex/gemini/antigravity/copilot/opencode; adding an agent is one map
+  entry). It orchestrates; it has no checks. No agent needs a browser-automation
+  MCP server: the audit shells out to `node evidence/cli.mjs ...`, so any agent
+  that can run shell + read the skill works.
+- **Eval fixture** ([eval/](eval/)) - the seeded modern-UX issues are frozen as
+  a dedicated ground-truth fixture (`eval/fixtures/seeded-issues/site` +
+  `expected-findings.json`, nine findings F-001..F-009). The eval runs the
+  agentic audit against the fixture and compares the model's findings to
+  expected (precision/recall). The eval may score; the audit itself is
+  model-driven.
+- **Playground** ([playground/](playground/)) - the genuinely-correct demo site.
+  Each scenario ships its Modern Web Guidance technique by default, so an audit
+  finds zero seeded issues; it is the precision / regression guard. The fixture
+  proves recall, the live playground proves precision.
 
 ## What was removed (and stays removed)
 
@@ -77,11 +86,17 @@ fallback.
 
 - **Phase 0 - skeleton.** Done: repo layout, schema, principles, guidance
   integration, playground + ground truth, the SKILL.md methodology.
-- **Phase 1 - single-URL agentic report, validated against ground truth.** The
-  model audits the playground using the evidence primitives, judges the
-  principles, and self-scores precision/recall vs `expected-findings.json`; the
-  `?mode=fixed` run is the false-positive guard. See
-  [examples/playground-report.md](examples/playground-report.md).
+- **Phase 1 - single-URL agentic report, validated against ground truth.** Done.
+  The model audits the frozen seeded-issues fixture
+  ([eval/](eval/)) using the evidence primitives, judges the principles, and
+  self-scores precision/recall vs `expected-findings.json` (nine findings, 100%
+  recall); auditing the genuinely-fixed live playground is the false-positive
+  guard (zero findings). See [examples/playground-report.md](examples/playground-report.md)
+  and [eval/README.md](eval/README.md).
+- **Cross-agent portability.** Done. One canonical skill + spec + evidence CLI;
+  thin per-agent wrappers for Claude Code, Codex, Gemini CLI, Antigravity,
+  GitHub Copilot, and opencode; the runner fans out via a single agent map; no
+  MCP server is required. Adding an agent is one map entry plus one wrapper file.
 - **Phase 2 - explore + plan quality.** Recon (classify SPA/MPA, framework, auth
   wall, cookie banner; enumerate routes/forms/overlays/flows) and a reviewable
   per-site plan of what to exercise under which conditions.

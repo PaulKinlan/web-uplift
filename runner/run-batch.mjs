@@ -18,9 +18,15 @@
  * site slug (output is still captured to run.json either way), and echoes
  * the exact command being spawned.
  *
- * Agents: claude (default) | gemini | antigravity | codex
- * See runner/README.md for per-agent MCP setup (each CLI needs the
- * chrome-devtools MCP server configured in its own config file).
+ * Agents: claude (default) | codex | gemini | antigravity | copilot | opencode.
+ * Every agent is ONE entry in the AGENTS map below: {bin, prompt, args}. All of
+ * them invoke the SAME canonical skill (.claude/skills/web-audit/SKILL.md)
+ * against the URL. Adding an agent = adding one entry to that map (see
+ * runner/README.md, "How to add an agent"). No agent needs a browser-automation
+ * MCP server: the audit shells out to `node evidence/cli.mjs ...` (raw CDP), so
+ * any agent that can run shell commands and read the skill works. --dry-run
+ * prints the exact command per agent so the wiring can be validated even when a
+ * given CLI is not installed.
  *
  * Reports land in <out>/<agent>/<site-slug>/ so the same URL list can be run
  * through several agents and compared. Resumable: a URL is skipped if its
@@ -33,9 +39,12 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 
-// Claude invokes the project skill directly; the other CLIs don't read
-// .claude/skills, so they're pointed at the SKILL.md file, which is plain
-// markdown instructions any agent can follow.
+// The one canonical methodology is .claude/skills/web-audit/SKILL.md. Agents
+// that surface it as a slash command invoke /web-audit; the rest are pointed at
+// the SKILL.md file directly, which is plain markdown any agent can follow. The
+// audit needs NO browser-automation MCP server: it shells out to
+// `node evidence/cli.mjs ...` (raw CDP). So every agent below only needs to run
+// shell + read the repo.
 //
 // The runner ORCHESTRATES; it contains no checks. It fans out one fully-agentic
 // audit per URL. The agent (the model) follows SKILL.md: it gathers evidence
@@ -45,10 +54,16 @@ const skillPrompt = (url, siteDir) =>
   `Read the file .claude/skills/web-audit/SKILL.md and follow its ` +
   `instructions exactly, with these arguments: ${url} --out ${siteDir}`;
 
+const slashPrompt = (url, siteDir) => `/web-audit ${url} --out ${siteDir}`;
+
+// SINGLE source of truth for headless invocation per agent. Each entry is a
+// thin wrapper: {bin, prompt, args} all pointing at the same skill against a
+// URL. ADDING AN AGENT = ADDING ONE ENTRY HERE (and a thin per-agent command
+// file so the slash command works interactively; see runner/README.md).
 const AGENTS = {
   claude: {
     bin: 'claude',
-    prompt: (url, siteDir) => `/web-audit ${url} --out ${siteDir}`,
+    prompt: slashPrompt,
     args: (prompt, { maxTurns }) => [
       '-p', prompt,
       '--output-format', 'json',
@@ -59,6 +74,14 @@ const AGENTS = {
       '--allowedTools',
       'Read,Write,Edit,Glob,Grep,Bash(node:*),Bash(npx:*),Bash(mkdir:*),Bash(ffmpeg:*)',
     ],
+  },
+  codex: {
+    bin: 'codex',
+    prompt: skillPrompt,
+    // workspace-write keeps file edits sandboxed to the repo. If Chrome can't
+    // reach the network from the sandbox, run inside a container with
+    // --dangerously-bypass-approvals-and-sandbox instead.
+    args: (prompt) => ['exec', '--json', '--sandbox', 'workspace-write', prompt],
   },
   gemini: {
     bin: 'gemini',
@@ -72,13 +95,20 @@ const AGENTS = {
     // No reliable JSON output mode yet; we keep raw stdout in run.json.
     args: (prompt) => ['-p', prompt, '--dangerously-skip-permissions'],
   },
-  codex: {
-    bin: 'codex',
+  copilot: {
+    bin: 'copilot',
     prompt: skillPrompt,
-    // workspace-write keeps file edits sandboxed to the repo. If Chrome can't
-    // reach the network from the sandbox, run inside a container with
-    // --dangerously-bypass-approvals-and-sandbox instead.
-    args: (prompt) => ['exec', '--json', '--sandbox', 'workspace-write', prompt],
+    // GitHub Copilot CLI: headless prompt with auto tool approval. The repo's
+    // .github/copilot-instructions.md + prompts/web-audit.prompt.md point it at
+    // the same skill. Run untrusted sites in a container.
+    args: (prompt) => ['-p', prompt, '--allow-all-tools'],
+  },
+  opencode: {
+    bin: 'opencode',
+    prompt: skillPrompt,
+    // opencode headless run. It reads AGENTS.md and .opencode/command/web-audit
+    // from the repo; here we pass the skill prompt directly for batch use.
+    args: (prompt) => ['run', prompt],
   },
 };
 

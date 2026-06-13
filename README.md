@@ -138,17 +138,44 @@ npm run evidence -- heap       "http://localhost:8080/#motion" --out heap.json
 npm run evidence -- evaluate   "http://localhost:8080/#motion" --emulate-media prefers-reduced-motion=reduce --expr "document.querySelector('.mv-card').getAnimations().length"
 
 # 4. Run the agentic audit (the model follows SKILL.md). Inside Claude Code,
-#    Codex, Gemini CLI, or Antigravity:
+#    Codex, Gemini CLI, Antigravity, GitHub Copilot, or opencode:
 /web-audit http://localhost:8080
 
 # 5. Batch: fan out one agentic audit per URL (defaults to Claude; also
-#    --agent codex|gemini|antigravity). The runner orchestrates; it has no checks.
+#    --agent codex|gemini|antigravity|copilot|opencode). Orchestrates; no checks.
 npm run batch -- https://example.com
 npm run batch -- --urls urls/sample.txt --concurrency 2 --agent claude
 
 # 6. Aggregate findings across reports
 npm run aggregate
 ```
+
+## Cross-agent (not Claude-only)
+
+The methodology is one canonical file
+([SKILL.md](.claude/skills/web-audit/SKILL.md)), the spec is one file
+([principles.json](principles/principles.json)), and the way the model sees a
+page is one plain Node CLI ([evidence/cli.mjs](evidence/cli.mjs), raw CDP shell
+commands). All three are agent-agnostic. Each agent gets only a thin wrapper
+pointing at the same skill, so nothing can drift, and **no MCP server is
+required** (the `web-uplift` skills server is an optional convenience, and there
+is no browser-automation MCP anywhere).
+
+| Agent | Entry point | `--agent` | Status |
+|---|---|---|---|
+| Claude Code | `.claude/skills/web-audit/` (native skill) | `claude` | real run verified |
+| Codex | `.codex/skills/web-audit` (symlink to the skill) + `AGENTS.md` | `codex` | dry-run verified |
+| Gemini CLI | `.gemini/commands/web-audit.toml` | `gemini` | dry-run verified |
+| Antigravity | `.agents/skills/web-audit.md` | `agy` | dry-run verified |
+| GitHub Copilot | `.github/copilot-instructions.md` + `.github/prompts/web-audit.prompt.md` | `copilot` | dry-run verified |
+| opencode | `.opencode/command/web-audit.md` + `AGENTS.md` + `opencode.json` | `opencode` | dry-run verified |
+
+**How to add an agent (one thin wrapper):** add the agent's command/instructions
+file saying only "read `.claude/skills/web-audit/SKILL.md` and follow it with
+these arguments", then add one `{ bin, prompt, args }` entry to the `AGENTS` map
+in [runner/run-batch.mjs](runner/run-batch.mjs), and verify with
+`node runner/run-batch.mjs <url> --agent <new> --dry-run`. Full detail in
+[runner/README.md](runner/README.md).
 
 ## Example report and the eval
 

@@ -183,13 +183,26 @@ the method stays current (you query the live guidance feed), it generalises
 an inspection-time decision, not a runtime constant. The principles say what
 good is; you work out how to see it.
 
-## Cross-agent note
+## Cross-agent note (this is NOT Claude-only)
 
 This skill is plain markdown methodology any agent can follow. It runs as
-`/web-audit <url>` in Claude Code, Codex, Gemini CLI, and Antigravity from this
-repo (each CLI is wired to this one canonical SKILL.md; see
-[runner/README.md](../../../runner/README.md)). The evidence primitives are a
-plain Node CLI any agent can shell out to.
+`/web-audit <url>` in Claude Code, Codex, Gemini CLI, Antigravity, GitHub
+Copilot, and opencode from this repo, and as a raw prompt in anything else
+("Read the file .claude/skills/web-audit/SKILL.md and follow its instructions
+exactly, with these arguments: <url>"). Each CLI is wired to this one canonical
+SKILL.md via a thin per-agent entry point; see the support matrix and the
+"How to add an agent" section in [README.md](../../../README.md) and
+[runner/README.md](../../../runner/README.md).
+
+**No MCP server is required.** The evidence primitives are a plain Node CLI
+(`node evidence/cli.mjs <primitive> <url> ...`, raw CDP via
+chrome-remote-interface) that any agent able to run shell commands and read this
+file can use directly. The repo's `web-uplift` MCP server only *distributes*
+this SKILL.md to MCP-aware hosts as a convenience; it is optional and there is no
+browser-automation MCP server anywhere in this project. The only hard
+requirements on the host are: Node, a `google-chrome-stable` (override with
+`CHROME_BIN`), `ffmpeg` (for the video primitive), and network access for the
+Modern Web Guidance feed and optional Lighthouse (`npx`).
 
 Finish your reply with a one-paragraph TLDR: finding count by severity, which
 evidence modalities and tools you actually used, the single highest-leverage
