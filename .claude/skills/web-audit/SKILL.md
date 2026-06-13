@@ -86,7 +86,7 @@ Primitives, all content- and tool-agnostic:
 | `dom` | DOM, computed styles for `--selector` list, page HTML/CSS, and (`--source <dir>`) the local source files | DOM/CSS/Runtime |
 | `evaluate` | runs your own `--expr "<js>"` in the page: ad-hoc probes and static tests you write on the spot | Runtime.evaluate |
 | `trace` | a DevTools performance trace over the load (+ `--interact`): a devtools-loadable `trace.json` AND a compact `*-summary.json` (FCP/LCP, long tasks, total blocking time). Read the summary, never the raw trace | Tracing.start/end |
-| `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` to include response bodies) AND a compact `*-summary.json` of network SIGNALS: totals + by-resource-type, first/third-party origins by bytes, render-blocking candidates (heuristic), weight offenders (largest/slowest), and hygiene (uncompressed text, missing cache headers, redirects, HTTP errors). Read the HAR summary, never the raw HAR. Feeds be-fast-and-stable (request weight, render-blocking), be-sustainable (bytes over the wire), and be-private-and-secure (third parties) | Network domain |
+| `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` to include response bodies) AND a compact `*-summary.json` of network SIGNALS: totals + by-resource-type, first/third-party origins by bytes, render-blocking candidates (grounded in the CDP initiator + priority + renderBlockingStatus when exposed, each with a stated `basis`; confirm against the DOM), weight offenders (largest/slowest), and hygiene (uncompressed text, missing cache headers, redirects, HTTP errors). Read the HAR summary, never the raw HAR. Feeds be-fast-and-stable (request weight, render-blocking), be-sustainable (bytes over the wire), and be-private-and-secure (third parties) | Network domain |
 
 Common options the harness simply applies (you choose them, it does not):
 `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
@@ -167,8 +167,18 @@ the actual page):
   over the wire) -> a `har` capture; read its `*-summary.json` (totals,
   by-resource-type, first/third-party origins, render-blocking candidates, weight
   offenders, hygiene signals), NEVER the raw multi-MB HAR, and record the `.har`
-  artifact path in the finding. Note render-blocking candidates are a HAR-derived
-  heuristic (load order + initiator + type); corroborate against the page/trace.
+  artifact path in the finding. renderBlockingCandidates are GROUNDED in the real
+  CDP signals the har capture records per request - the rich `_initiator`
+  (parser|script|preload, with the inserting document url/line or the script call
+  frame), the `_priority` (initial + final), and `_renderBlockingStatus` when the
+  Chrome build exposes it - and each candidate carries an explicit `basis`. The
+  HAR alone is partial (it does not by itself show `<head>` placement or
+  async/defer/type=module), so treat the list as the STARTING signal and CONFIRM
+  it against the live DOM: use `dom`/`evaluate` to read the real element's
+  placement and its `async` / `defer` / `type=module` attributes before asserting
+  a resource is render-blocking (e.g. a parser-inserted module script is deferred
+  by spec and is not render-blocking). The harness as a whole CAN determine this;
+  combine the HAR initiator/priority with the DOM.
 - be-inclusive -> axe via `evaluate`, and/or Lighthouse a11y, and/or your own
   contrast/label probes; plus a screenshot to judge legibility/alignment.
 - follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for

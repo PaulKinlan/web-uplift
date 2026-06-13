@@ -648,13 +648,35 @@ async function har(client, url, opts, log) {
     rec.startTs = rec.startTs ?? p.timestamp;
     rec.initiator = p.initiator;
     rec.type = p.type;
+    // Priority: capture the INITIAL priority off the request now; a later
+    // Network.resourceChangedPriority may upgrade/downgrade it (final wins).
+    rec.initialPriority = rec.initialPriority ?? p.request?.initialPriority;
+    rec.finalPriority = rec.finalPriority ?? p.request?.initialPriority;
+    // renderBlockingStatus: Chrome exposes this on request.renderBlockingStatus
+    // (blocking | non_blocking | in_body_parser_blocking | dynamically_inserted_*)
+    // in some builds. Capture it only when present; never fabricate it.
+    if (p.request?.renderBlockingStatus != null) {
+      rec.renderBlockingStatus = p.request.renderBlockingStatus;
+    }
     if (p.redirectResponse) rec.redirectResponse = p.redirectResponse;
+  });
+  // Network.resourceChangedPriority fires when the loader re-prioritises a
+  // request after it was sent; the last value is the priority Chrome actually
+  // scheduled with, so it overrides the initial priority for _priority.final.
+  client.Network.resourceChangedPriority?.((p) => {
+    const rec = requests.get(p.requestId);
+    if (rec && p.newPriority) rec.finalPriority = p.newPriority;
   });
   client.Network.responseReceived((p) => {
     const rec = requests.get(p.requestId);
     if (rec) {
       rec.response = p.response;
       rec.type = p.type || rec.type;
+      // Some builds also surface renderBlockingStatus on the response; prefer
+      // the request-side value but fall back to the response-side one.
+      if (rec.renderBlockingStatus == null && p.response?.renderBlockingStatus != null) {
+        rec.renderBlockingStatus = p.response.renderBlockingStatus;
+      }
     }
   });
   client.Network.loadingFinished((p) => {
@@ -776,10 +798,6 @@ function summariseHar(har, mainUrl) {
   const redirects = [];
   const httpErrors = [];
 
-  // First-paint heuristic: the earliest startedDateTime among entries gives us a
-  // load-order baseline; head scripts/styles requested before the first non-doc
-  // paint-ish resource are render-blocking candidates. With only a HAR we cannot
-  // observe the actual paint, so we approximate by load order + initiator.
   const sorted = [...entries].sort(
     (a, b) => startedMs(a) - startedMs(b),
   );
@@ -864,29 +882,69 @@ function summariseHar(har, mainUrl) {
     }
   }
 
-  // Render-blocking candidates (HEURISTIC): scripts/stylesheets in the document
-  // <head> load window, before the first image/media paint, classic (non-async,
-  // non-module) by initiator where derivable. We cannot see <head> placement or
-  // async/defer from the HAR alone, so this is a load-order + initiator + type
-  // approximation, not a definitive list. Field naming is honest about that.
-  const firstPaintishMs = (() => {
-    const paintish = sorted.find(
-      (e) => typeOf(e) === 'image' || typeOf(e) === 'media',
-    );
-    return paintish ? startedMs(paintish) : Infinity;
-  })();
+  // Render-blocking candidates, GROUNDED in the real CDP signals we now capture
+  // (initiator + priority + renderBlockingStatus where the build exposes it),
+  // not in load order. A request is a strong candidate when:
+  //   - CDP says so outright: _renderBlockingStatus === 'blocking', OR
+  //   - it is a parser-inserted stylesheet (classic <link rel=stylesheet>), OR
+  //   - it is a parser-inserted script (classic <script src> in the markup),
+  // and we raise confidence when the request also carries a high/blocking
+  // priority. Each candidate states its basis. This is the STARTING signal: the
+  // model confirms/refines it against the live DOM (async/defer/type=module and
+  // <head> placement are read with the dom/evaluate primitives).
+  const HIGH_PRIORITY = new Set(['VeryHigh', 'High']);
+  const ranked = [];
   for (const e of sorted) {
     const type = typeOf(e);
     if (type !== 'script' && type !== 'stylesheet') continue;
-    const startedAt = startedMs(e);
-    if (startedAt >= firstPaintishMs) continue;
-    const initiator = e._initiator || 'other';
-    renderBlockingCandidates.push({
+    const init = e._initiator || {};
+    const initType = String(init.type || 'other');
+    const priority = e._priority?.final || e._priority?.initial || null;
+    const rbStatus = e._renderBlockingStatus || null; // present only if CDP gave it
+    const highPriority = priority ? HIGH_PRIORITY.has(priority) : false;
+
+    const cdpBlocking = rbStatus === 'blocking';
+    const parserStylesheet = type === 'stylesheet' && initType === 'parser';
+    const parserScript = type === 'script' && initType === 'parser';
+    const isCandidate = cdpBlocking || parserStylesheet || parserScript;
+    if (!isCandidate) continue;
+
+    // Build a human-readable basis and a numeric score for ranking.
+    const reasons = [];
+    let score = 0;
+    if (cdpBlocking) {
+      reasons.push('CDP renderBlockingStatus=blocking');
+      score += 100;
+    }
+    if (parserStylesheet) {
+      reasons.push('parser-inserted stylesheet');
+      score += 40;
+    }
+    if (parserScript) {
+      // A parser-inserted module script is deferred by spec; the DOM confirms
+      // async/defer/type=module, so we flag it but rank it below classic scripts.
+      reasons.push('parser-inserted script (confirm async/defer/type=module via DOM)');
+      score += 25;
+    }
+    if (priority) {
+      reasons.push(`${priority} priority`);
+      if (highPriority) score += 15;
+    }
+    ranked.push({
       url: e.request.url,
       type: bucketFor(type),
-      initiator,
+      initiator: init,
+      priority,
+      ...(rbStatus ? { renderBlockingStatus: rbStatus } : {}),
+      basis: reasons.join(', '),
       startedDateTime: e.startedDateTime,
+      _score: score,
     });
+  }
+  ranked.sort((a, b) => b._score - a._score);
+  for (const c of ranked) {
+    delete c._score;
+    renderBlockingCandidates.push(c);
   }
 
   const topBySize = bySize
@@ -938,7 +996,7 @@ function summariseHar(har, mainUrl) {
       httpErrors: httpErrors.slice(0, 10),
     },
     note:
-      'Compact, model-readable summary of network SIGNALS distilled from a HAR 1.2 log (the network analogue of the trace/heap summaries; the in-repo, lightweight memlab analogue). These are DESCRIPTIVE signals, not pass/fail verdicts: the model judges them against the principles (be-fast-and-stable, be-sustainable, be-private-and-secure). renderBlockingCandidates is a HEURISTIC derived from HAR load order + initiator + resource type (a HAR cannot show <head> placement or async/defer), so treat it as candidates, not a definitive render-blocking list. Read this summary, never the raw .har; the raw .har is retained for the report, cross-run compare, and DevTools/HAR viewers.',
+      'Compact, model-readable summary of network SIGNALS distilled from a HAR 1.2 log (the network analogue of the trace/heap summaries; the in-repo, lightweight memlab analogue). These are DESCRIPTIVE signals, not pass/fail verdicts: the model judges them against the principles (be-fast-and-stable, be-sustainable, be-private-and-secure). renderBlockingCandidates is GROUNDED in the real CDP signals we capture per request: the rich initiator (_initiator.type parser|script|preload + the inserting document url/line, or the script call frame), the request _priority (initial + final, after Network.resourceChangedPriority), and _renderBlockingStatus WHEN this Chrome build exposes it (omitted when not). Each candidate states its basis. This is the STARTING signal, not the final word: the HAR alone is partial, so CONFIRM and refine each candidate against the live DOM - use the dom and evaluate primitives to read the actual <head> placement and the async / defer / type=module attributes on the real elements (e.g. a parser-inserted module script is deferred by spec and is NOT render-blocking). Read this summary, never the raw .har; the raw .har is retained for the report, cross-run compare, and DevTools/HAR viewers.',
   };
 }
 
@@ -970,6 +1028,30 @@ function startedMs(entry) {
 
 function num(x) {
   return typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : 0;
+}
+
+// Normalise a CDP Network.Initiator into the compact, render-blocking-relevant
+// shape we keep on the HAR entry. We keep the type (parser | script | preload |
+// SignedExchange | preflight | other), plus the request's provenance: for
+// parser-inserted requests, the document url + line that wrote the tag; for
+// script-initiated requests, the top call frame (url + functionName). This is
+// the real CDP signal render-blocking judgement is built on.
+function harInitiator(init) {
+  if (!init) return { type: 'other' };
+  const out = { type: init.type || 'other' };
+  // Parser-inserted (and preload): the inserting document and source position.
+  if (init.url) out.url = init.url;
+  if (typeof init.lineNumber === 'number') out.lineNumber = init.lineNumber;
+  // Script-initiated: surface the top call frame of the JS stack, if present.
+  const top = init.stack?.callFrames?.[0];
+  if (top) {
+    out.callFrame = {
+      url: top.url || '',
+      functionName: top.functionName || '',
+      ...(typeof top.lineNumber === 'number' ? { lineNumber: top.lineNumber } : {}),
+    };
+  }
+  return out;
 }
 
 // Assemble HAR 1.2 from the aggregated CDP network records. Timestamps from CDP
@@ -1042,7 +1124,22 @@ function buildHar(requests, order, log) {
       cache: {},
       timings,
       _resourceType: rec.type || 'other',
-      _initiator: rec.initiator?.type || 'other',
+      // Rich initiator (not just the bare type) so render-blocking can be judged
+      // from the real CDP signal: parser-inserted requests carry the inserting
+      // document url + line; script-initiated requests carry the top call frame.
+      _initiator: harInitiator(rec.initiator),
+      // Priority: initial (from request.initialPriority) and final (after any
+      // Network.resourceChangedPriority). VeryLow|Low|Medium|High|VeryHigh.
+      _priority: {
+        initial: rec.initialPriority || null,
+        final: rec.finalPriority || rec.initialPriority || null,
+      },
+      // renderBlockingStatus from CDP, ONLY when the build exposes it. If the
+      // field is absent here, this Chrome did not report it (do not infer it);
+      // render-blocking is then judged from initiator + priority + the DOM.
+      ...(rec.renderBlockingStatus != null
+        ? { _renderBlockingStatus: rec.renderBlockingStatus }
+        : {}),
     });
   }
   log(`[evidence] HAR assembled: ${entries.length} entries`);
