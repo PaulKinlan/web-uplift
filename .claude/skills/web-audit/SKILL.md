@@ -132,14 +132,42 @@ Before anything else:
    are declarative pointers (mwg ids and/or query strings), not tests; you still
    decide what evidence proves the outcome. Cache `list`/`retrieve` for the run.
 
-### 1. Recon
+### 1. Recon and coverage (decide which pages to audit)
 
 Use `dom` (with `--source` if you have it) and a `screenshot` to understand the
-page: SPA or MPA, framework, the meaningful surfaces (routes, forms, overlays,
-key flows). For a hash-routed SPA each route is reached as `<url>#<route>` and a
-real reload is needed to re-run per-route styles; the primitives navigate via
-about:blank already, so just pass the route URL. Note an auth wall or bot block
-and stop with `status: blocked` if you cannot proceed.
+entry page: SPA or MPA, framework, the meaningful surfaces (routes, forms,
+overlays, key flows). For a hash-routed SPA each route is reached as
+`<url>#<route>` and a real reload is needed to re-run per-route styles; the
+primitives navigate via about:blank already, so just pass the route URL. Note an
+auth wall or bot block and stop with `status: blocked` if you cannot proceed.
+
+Then decide COVERAGE, do not just audit the homepage. A site is its templates,
+and most quality problems hide on the pages people actually use (articles,
+product or detail pages, listings, forms, checkout, search, account). Work out
+whether to navigate and where:
+
+- Discover candidate routes: read the nav/menu and prominent internal links from
+  the DOM; fetch `/sitemap.xml` and `/robots.txt` (an `evaluate` `fetch(...)`, or
+  point a primitive at those URLs); check the web app manifest (the
+  `<link rel="manifest">` target) for `start_url` and `shortcuts`; for an SPA,
+  enumerate routes from the router or the visible links.
+- Select a REPRESENTATIVE set, not every URL: the homepage PLUS one example of
+  each distinct page archetype/template the site has, e.g. a content/article or
+  detail page, a section or listing/index page, a primary form or interactive
+  flow, search results, and any surface a specific principle targets. Aim for a
+  handful (roughly 4 to 8) covering the distinct templates and the
+  highest-traffic or highest-risk journeys. De-duplicate pages that share a
+  template (audit one, note it represents the rest).
+- Justify it: in the plan and in the report's `paths`, list each page you will
+  audit and WHY (which archetype or journey it represents), and state explicitly
+  what you are NOT covering and why. No silent homepage-only. If the site
+  genuinely is a single page, say so as an explicit judgement, do not assume it.
+
+Principles are then judged across this set: some are global (security headers,
+manifest, transport) and judged once; many are per-page (layout, color-scheme,
+headings, content, forms) and must be checked on the representative pages, not
+only the entry URL. Aggregate findings across pages and record which page each
+came from.
 
 ### 2. Plan the evidence you need, per principle
 
