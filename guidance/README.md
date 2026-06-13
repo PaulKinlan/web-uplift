@@ -51,10 +51,13 @@ and browser-support / fallback notes).
 ## How the skill queries it
 
 See [lookup.md](lookup.md) for the step-by-step query protocol the
-`web-audit` skill follows (search to find candidate guides while auditing,
-retrieve to get the fix detail in fix mode). The principles layer
-(`principles/principles.json`) seeds the search: each principle check carries
-a `guidanceQuery` string used as the `search` argument.
+`web-audit` skill follows (consult the mapped guides up front to set the bar,
+retrieve the fix detail in fix mode). The principles layer
+(`principles/principles.json`) seeds this: each principle check carries a
+`guides` LIST of Modern Web Guidance ids and/or free-text query strings used as
+`retrieve`/`search` arguments. All 137 catalog guides are mapped across the
+checks (see `docs/principles-analysis.md` and `principles/principles.json`'s
+`guidanceCatalogVersion`).
 
 ## Open questions
 
@@ -65,6 +68,8 @@ a `guidanceQuery` string used as the `search` argument.
 - **Offline / batch caching.** Large batch runs shouldn't hit the network 137
   times. Cache `list` output (and frequently-used `retrieve` payloads) locally
   for the run; `npx --offline` is the fallback. Not yet implemented.
-- **Mapping fidelity.** A principle check maps to a guidance query, not a
-  fixed id, so the feed can evolve. We may later pin the top guidance ids per
-  check once they stabilise, to make evals deterministic.
+- **Mapping fidelity.** Each principle check now maps to a `guides` list of mwg
+  ids (and/or query strings), pinned to `modern-web-guidance@0.0.172`. The ids
+  make the mapping concrete and the eval more stable; the query strings keep it
+  open to feed evolution. Bump the pin deliberately and re-verify the coverage
+  map (none of the 137 guides orphaned).

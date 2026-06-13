@@ -23,16 +23,29 @@ by gathering evidence and reasoning over it. The repo gives you two declarative
 inputs and one generic capability:
 
 1. **Principles** - [principles/principles.json](../../../principles/principles.json):
-   the spec of what good looks like, as OUTCOMES. Nine principles: Una Kravets'
-   five modern-UX principles (respect-user-preferences,
+   the spec of what good looks like, as OUTCOMES. Fifteen principles: Una
+   Kravets' five modern-UX principles (respect-user-preferences,
    implement-natural-interactions, provide-guided-navigation,
-   maximize-content-reduce-noise, adapt-to-the-form-factor) plus four
-   Lighthouse-dimension principles (be-fast-and-stable, be-accessible,
-   follow-best-practices, be-discoverable). Each check has a `detectableVia`
-   HINT. The hint may MENTION candidate evidence or tools; it MANDATES nothing.
+   maximize-content-reduce-noise, adapt-to-the-form-factor); two
+   widened/narrowed Lighthouse-dimension principles (be-inclusive - the former
+   be-accessible, widened beyond WCAG conformance; follow-best-practices -
+   narrowed so it is no longer the catch-all for security and forms); two
+   unchanged Lighthouse-dimension principles (be-fast-and-stable,
+   be-discoverable); and six framework-derived principles
+   (be-private-and-secure, be-resilient, be-internationalised, be-trustworthy,
+   be-sustainable, be-agent-ready). Each check has a `detectableVia` HINT (may
+   MENTION candidate evidence/tools, MANDATES nothing) and a `guides` list of
+   Modern Web Guidance ids and/or query strings - declarative pointers you
+   consult to set the bar, not hard-coded tests. Each principle also has an
+   `applicability` block (`expectation: default | contextual`); see step 0 and
+   step 4. The full coverage map (all 137 mwg guides -> principles) and the
+   rationale for the set is in
+   [docs/principles-analysis.md](../../../docs/principles-analysis.md).
 2. **Guidance** - Modern Web Guidance via the `modern-web-guidance` npm feed
    (the *how*). See [guidance/lookup.md](../../../guidance/lookup.md): `search`
-   to find the recommended approach, `retrieve` to get the fix detail.
+   to find the recommended approach, `retrieve` to get the fix detail. Pin the
+   catalog version in `principles.json` (`guidanceCatalogVersion`, currently
+   `modern-web-guidance@0.0.172`) unless `web-uplift.json` overrides it.
 3. **Evidence primitives** - [evidence/cli.mjs](../../../evidence/cli.mjs): a
    generic, judgement-free CLI you call to gather evidence. It launches the
    system Chrome and drives it over raw CDP (chrome-remote-interface). It returns
@@ -78,6 +91,27 @@ these is wired into the runtime; you invoke them yourself when they help:
 
 ## Method
 
+### 0. Read the project config (if present) and set the bar
+
+Before anything else:
+
+1. **Read `web-uplift.json`** if one exists (at the site root, the `--source`
+   dir, or passed explicitly). It conforms to
+   [schema/config.schema.json](../../../schema/config.schema.json) and lets the
+   developer declare `siteType`, `scope`, per-principle `optOut` (with a
+   reason), and `intent`. **Honour it.** A declared `optOut` means you report
+   that principle as `opted-out` with the developer's reason and do NOT count it
+   as an issue. `intent` sets context you judge against; it does not silence
+   findings. If no config is present, proceed with judgement (step 4). Record in
+   the report's `config` field whether one was loaded.
+2. **Consult the mapped guidance UP FRONT.** For each principle you will judge,
+   look at its checks' `guides` lists and `search`/`retrieve` the relevant
+   Modern Web Guidance guides from the live feed (at the pinned
+   `guidanceCatalogVersion`) BEFORE you judge, so you set the bar from the
+   current recommended approach rather than from memory. The `guides` entries
+   are declarative pointers (mwg ids and/or query strings), not tests; you still
+   decide what evidence proves the outcome. Cache `list`/`retrieve` for the run.
+
 ### 1. Recon
 
 Use `dom` (with `--source` if you have it) and a `screenshot` to understand the
@@ -89,9 +123,10 @@ and stop with `status: blocked` if you cannot proceed.
 
 ### 2. Plan the evidence you need, per principle
 
-Read every principle check and its `detectableVia` HINT. For each, decide what
-evidence WOULD let you judge it, and under which condition. Examples (not a
-script; you adapt to the actual page):
+Read every principle check, its `detectableVia` HINT, and its `guides` (which
+you already consulted up front in step 0). For each, decide what evidence WOULD
+let you judge it, and under which condition. Examples (not a script; you adapt to
+the actual page):
 
 - respects-color-scheme -> `screenshot`/`dom --selector` under
   `--emulate-media prefers-color-scheme=dark`; does the surface re-tint?
@@ -104,8 +139,8 @@ script; you adapt to the actual page):
 - input-modality-aware (focus) -> an `evaluate` probe that focuses the control
   and reads the computed outline.
 - be-fast-and-stable -> `layout` (CLS + long tasks) and/or Lighthouse.
-- be-accessible -> axe via `evaluate`, and/or Lighthouse a11y, and/or your own
-  contrast/label probes.
+- be-inclusive -> axe via `evaluate`, and/or Lighthouse a11y, and/or your own
+  contrast/label probes; plus a screenshot to judge legibility/alignment.
 - follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for
   doctype, charset, title, meta description, viewport, anchor hrefs; and/or
   Lighthouse.
@@ -119,14 +154,40 @@ Run the primitives and tools you planned. Keep artifacts (screenshots, videos,
 heap summaries, layout JSON, Lighthouse JSON) under the report directory or
 `scratch/` (gitignored). Capture enough that a reader could verify each finding.
 
-### 4. Reason and judge every principle
+### 4. Reason and judge every principle (quality without shaming)
 
-For each principle check, weigh the evidence and decide: pass, issue, or
-not-applicable (e.g. a brand area intentionally always-light). Be honest about
-`confidence` for subjective judgements. For each issue, run the guidance
-`search` (its `guidanceQuery`) to confirm the recommended modern approach and to
-get a `guidanceId` to cite. Search the feed ad hoc for anything you observe that
-no principle names.
+For each principle, first decide **applicability**, then **verdict**, and record
+both in `principleOutcomes`:
+
+- **Opted out.** If `web-uplift.json` declared an `optOut` for this principle
+  (or check), report it as `opted-out` with the developer's reason and move on.
+  Do not raise findings against it.
+- **Applicability by expectation.** Read the principle's
+  `applicability.expectation`:
+  - `default` principles (respect-user-preferences,
+    implement-natural-interactions, provide-guided-navigation,
+    maximize-content-reduce-noise, adapt-to-the-form-factor, be-fast-and-stable,
+    be-inclusive, follow-best-practices, be-discoverable, be-private-and-secure,
+    be-trustworthy) are expected of essentially every site; absence is a
+    finding.
+  - `contextual` principles (be-resilient's offline/installable aspect,
+    be-internationalised, be-sustainable's absolute weight bar, be-agent-ready,
+    and public discoverability for a deliberately gated site) legitimately may
+    not apply. If there is no declared `intent`/`optOut`, **make a judgement
+    call** on applicability from the recon (siteType, surfaces). If you judge it
+    does not apply, mark it `not-applicable` WITH A RATIONALE rather than
+    penalising the site. If you judge it does apply, judge it normally.
+- **Verdict.** For each applicable principle check, weigh the evidence and decide
+  pass or issue. Be honest about `confidence` for subjective judgements.
+
+So the four reported statuses are distinct: `pass`, `issues`, `not-applicable`
+(you judged it does not apply, with a reason), and `opted-out` (the developer
+declared it, with their reason). Never silently drop a `default` principle, and
+never penalise a `contextual` one you reasonably judged out of scope.
+
+For each issue, use the check's `guides` (already consulted in step 0) to cite
+the most relevant Modern Web Guidance `id`; run a fresh `search` if you need to
+refine. Search the feed ad hoc for anything you observe that no principle names.
 
 ### 5. Findings and task list
 
@@ -147,9 +208,11 @@ Write two files in `reports/<host>/` (or `--out`):
 
 - `report.json` - MUST validate against
   [schema/findings.schema.json](../../../schema/findings.schema.json). Set
-  `evidenceUsed` (the modalities and tools you actually ran) so the report is
-  honest about method. If scoring against `--expected`, include your own
-  precision/recall under an `eval` field.
+  `evidenceUsed` (the modalities and tools you actually ran), `config` (whether a
+  `web-uplift.json` was loaded), and `principleOutcomes` (per-principle
+  applicability + status, so `opted-out` and `not-applicable` show distinctly
+  from pass/issue, each with its reason). If scoring against `--expected`,
+  include your own precision/recall under an `eval` field.
 - `report.md` - human-readable: page profile, the evidence you gathered (with
   artifact paths), findings grouped by principle, the prioritised task list, and
   anything skipped or low-confidence.

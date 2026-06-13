@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/PaulKinlan/web-uplift/schema/config.schema.json",
+  "title": "web-uplift project config",
+  "description": "Optional per-project config (web-uplift.json) a developer drops at the root of the site being audited (or passes to the audit). It lets the developer declare scope, opt-outs and intent per principle WITH A REASON, so the audit can honour them and report 'opted-out' / 'not-applicable' distinctly from a real issue. This is the opt-in half of the 'quality without shaming' design: contextual principles (be-resilient/offline, be-internationalised, be-agent-ready, the absolute weight bar of be-sustainable, public discoverability) may legitimately not apply, and a declared opt-out with a reason is respected rather than penalised. The config NEVER suppresses a default-expectation principle silently: a declared opt-out is recorded and shown in the report.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "siteType": {
+      "type": "string",
+      "description": "Free-form hint about what the site is (e.g. 'static brochure site', 'real-time collaborative editor', 'single-locale internal tool'). Helps the model judge contextual principles proportionally.",
+      "examples": ["static brochure site", "online-only SaaS app", "media-heavy product"]
+    },
+    "scope": {
+      "type": "object",
+      "description": "Optional declaration of what to audit.",
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "type": "array",
+          "description": "Specific routes/paths the developer wants audited (otherwise the model recons and chooses).",
+          "items": { "type": "string" }
+        },
+        "sourceDir": {
+          "type": "string",
+          "description": "Path to the local source, equivalent to --source."
+        }
+      }
+    },
+    "optOut": {
+      "type": "object",
+      "description": "Map of principleId (or principleId/checkId) -> reason string. A declared opt-out is reported as 'opted-out' (with the reason) and NOT counted as an issue. Use only for principles whose applicability is 'contextual', or for a check that genuinely does not apply to this site; opting out of a 'default' principle is recorded and surfaced so it cannot hide a real gap.",
+      "additionalProperties": {
+        "type": "string",
+        "description": "Why this principle/check does not apply to this site."
+      },
+      "examples": [
+        {
+          "be-resilient": "static brochure site, offline not needed",
+          "be-agent-ready": "no agent-facing surface; not exposing WebMCP yet",
+          "be-internationalised": "single-locale internal tool, one language only"
+        }
+      ]
+    },
+    "intent": {
+      "type": "object",
+      "description": "Map of principleId -> a statement of the developer's intent for that principle, so the model judges against what the team is actually trying to do rather than a generic bar. Does not suppress findings; it sets context.",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "examples": [
+        {
+          "be-sustainable": "media product; large hero video is intentional but everything else should be lean",
+          "maximize-content-reduce-noise": "the cookie banner is legally required in our jurisdiction"
+        }
+      ]
+    },
+    "guidanceCatalogVersion": {
+      "type": "string",
+      "description": "Override the Modern Web Guidance catalog version to consult (defaults to the version pinned in principles/principles.json).",
+      "examples": ["modern-web-guidance@0.0.172"]
+    }
+  }
+}

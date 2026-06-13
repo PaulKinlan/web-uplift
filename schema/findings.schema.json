@@ -32,6 +32,46 @@
       "description": "The evidence modalities and tools the model actually ran for this audit (e.g. 'screenshot', 'layout-metrics', 'transition-video', 'heap-summary', 'dom+source', 'evaluate-probe', 'lighthouse', 'axe-core'). Makes the audit honest about its method, since method selection is the model's at inspection time, not pre-baked.",
       "items": { "type": "string" }
     },
+    "config": {
+      "type": "object",
+      "description": "The web-uplift.json project config the audit honoured, if present (see schema/config.schema.json). Records declared scope/opt-outs/intent so the report is honest about what the developer asked for.",
+      "properties": {
+        "loaded": { "type": "boolean", "description": "Whether a web-uplift.json was found and applied." },
+        "path": { "type": "string" }
+      }
+    },
+    "principleOutcomes": {
+      "type": "array",
+      "description": "Per-principle applicability + verdict, so the audit reports 'opted-out' and 'n/a (judged)' DISTINCTLY from pass/issue. This is the 'quality without shaming' record: a contextual principle that legitimately does not apply is not penalised, but the rationale is captured.",
+      "items": {
+        "type": "object",
+        "required": ["principleId", "status"],
+        "properties": {
+          "principleId": { "type": "string" },
+          "expectation": {
+            "type": "string",
+            "enum": ["default", "contextual"],
+            "description": "From principles.json applicability.expectation."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "issues", "not-applicable", "opted-out"],
+            "description": "pass = met; issues = one or more findings; not-applicable = the model judged the principle does not apply (contextual, no declared intent); opted-out = the developer declared an opt-out in web-uplift.json."
+          },
+          "reason": {
+            "type": "string",
+            "description": "REQUIRED when status is not-applicable (the model's judgement-call rationale) or opted-out (the developer's declared reason, echoed from web-uplift.json)."
+          },
+          "findingIds": { "type": "array", "items": { "type": "string" } }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "enum": ["not-applicable", "opted-out"] } } },
+            "then": { "required": ["reason"] }
+          }
+        ]
+      }
+    },
     "paths": {
       "type": "array",
       "description": "The user paths / test cases exercised (mirrors the test plan).",

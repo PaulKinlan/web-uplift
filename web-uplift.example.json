@@ -1,0 +1,17 @@
+{
+  "$schema": "./schema/config.schema.json",
+  "siteType": "static brochure site",
+  "scope": {
+    "sourceDir": "./src"
+  },
+  "optOut": {
+    "be-resilient": "static brochure site, offline not needed; core content is plain HTML so progressive enhancement already holds",
+    "be-agent-ready": "no agent-facing surface yet; not exposing WebMCP tools",
+    "be-internationalised": "single-locale site, English only, no locale-sensitive data"
+  },
+  "intent": {
+    "be-sustainable": "image-led marketing site; hero imagery is intentionally rich but must stay optimised and lazy-loaded",
+    "maximize-content-reduce-noise": "the consent banner is legally required in our jurisdiction and must remain until dismissed"
+  },
+  "guidanceCatalogVersion": "modern-web-guidance@0.0.172"
+}

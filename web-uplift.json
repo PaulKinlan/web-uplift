@@ -1,0 +1,16 @@
+{
+  "$schema": "./schema/config.schema.json",
+  "siteType": "demo / reference site (the playground) plus tooling repo",
+  "scope": {
+    "routes": ["http://localhost:8080"],
+    "sourceDir": "./playground"
+  },
+  "intent": {
+    "be-sustainable": "the playground is a tiny hand-authored demo; weight is already minimal, judge proportionally",
+    "be-discoverable": "the playground is a localhost demo, not a public page; SEO is illustrative only"
+  },
+  "optOut": {
+    "be-agent-ready": "the playground is a static demo of UX techniques with no agent-facing surface; not exposing WebMCP tools here",
+    "be-resilient": "the playground demonstrates client-rendered modern-UX scenarios; offline/installable is out of scope for this demo (progressive enhancement of core content still expected)"
+  }
+}
