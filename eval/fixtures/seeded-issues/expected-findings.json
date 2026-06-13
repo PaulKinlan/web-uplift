@@ -1,0 +1,110 @@
+{
+  "description": "Ground truth for the web-uplift agentic-audit eval. This fixture is a FROZEN copy of the seeded-issue playground: its issues must not be fixed, because they are the eval's ground truth. A correct audit of site/ (served as-is, default 'issue' mode) must surface all nine findings below with the right principle and a sensible Modern Web Guidance id. The live playground/ in the repo is the genuinely-fixed product and must report ZERO of these (see eval/README.md). The first six are the seeded CSS scenarios (one per scenario route); the last three are page-level Lighthouse-dimension findings the agentic audit surfaces by choosing to run Lighthouse + axe. Principle ids use the current principles/principles.json ids. See PLAN.md open question #2 on scoring an agentic eval.",
+  "fixture": "eval/fixtures/seeded-issues/site",
+  "expectedFindingCount": 9,
+  "scenarios": [
+    {
+      "id": "no-dark-mode",
+      "findingId": "F-001",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-color-scheme",
+      "expectedGuidanceId": "dark-mode",
+      "expectedGuidanceQuery": "dark mode prefers-color-scheme light-dark",
+      "severity": "high",
+      "detectableVia": "Emulate prefers-color-scheme: dark; the .ndm-card background stays rgb(255,255,255) with no light-dark() declared.",
+      "fix": "Declare color-scheme: light dark and use light-dark() for surface and text colors so the card follows the user preference. Guidance id: dark-mode."
+    },
+    {
+      "id": "motion",
+      "findingId": "F-002",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-reduced-motion",
+      "expectedGuidanceId": "accessibility",
+      "expectedGuidanceQuery": "respect reduced motion preference accessible animation",
+      "severity": "high",
+      "detectableVia": "Emulate prefers-reduced-motion: reduce; getAnimations() on .mv-card returns 1 running animation (mv-slide).",
+      "fix": "Gate the animation behind @media (prefers-reduced-motion: no-preference) so it only runs when the user has not requested reduced motion."
+    },
+    {
+      "id": "fixed-layout",
+      "findingId": "F-003",
+      "principleId": "adapt-to-the-form-factor",
+      "principleCheckId": "responsive-no-horizontal-scroll",
+      "expectedGuidanceId": "css",
+      "expectedGuidanceQuery": "responsive layout adapt to viewport mobile",
+      "severity": "high",
+      "detectableVia": "Resize to viewport 360x800; issue mode produces ~1158px of horizontal overflow and clips .fl-hero (width: 1200px).",
+      "fix": "Replace fixed width with width: 100%; max-width: 1200px and box-sizing: border-box so the layout adapts to narrow viewports."
+    },
+    {
+      "id": "poor-focus",
+      "findingId": "F-004",
+      "principleId": "adapt-to-the-form-factor",
+      "principleCheckId": "input-modality-aware",
+      "expectedGuidanceId": "accessibility",
+      "expectedGuidanceQuery": "visible focus indicator focus-visible keyboard accessibility",
+      "severity": "high",
+      "detectableVia": "Focus a .pf-btn control; issue mode sets outline: none with no :focus-visible replacement, so the computed outline-style is none.",
+      "fix": "Remove the blanket outline: none and add a :focus-visible outline so keyboard focus is clearly indicated without affecting pointer clicks."
+    },
+    {
+      "id": "layout-shift",
+      "findingId": "F-005",
+      "principleId": "be-fast-and-stable",
+      "principleCheckId": "visual-stability",
+      "expectedGuidanceId": "css",
+      "expectedGuidanceQuery": "prevent layout shift reserve space CLS aspect-ratio",
+      "severity": "medium",
+      "detectableVia": "The layout-shift observer records CLS as the paragraph below .ls-slot shifts down ~600ms after load when the banner injects; issue mode reserves no space.",
+      "fix": "Reserve the banner's space up front with min-height (or aspect-ratio) on the slot so the late content does not shift surrounding layout."
+    },
+    {
+      "id": "no-container-queries",
+      "findingId": "F-006",
+      "principleId": "adapt-to-the-form-factor",
+      "principleCheckId": "component-level-responsiveness",
+      "expectedGuidanceId": "size-aware-styling",
+      "expectedGuidanceQuery": "container queries component responsive",
+      "severity": "medium",
+      "detectableVia": "The same .cq-card stays flex-direction: row inside the 240px .cq-narrow container; the component does not respond to its container width (no container-type / @container).",
+      "fix": "Add container-type: inline-size to the wrapper and a @container (max-width: 320px) rule that stacks the card, so the component adapts to its container rather than the viewport."
+    },
+    {
+      "id": "site-wide-contrast",
+      "findingId": "F-007",
+      "principleId": "be-accessible",
+      "principleCheckId": "sufficient-contrast",
+      "expectedGuidanceId": "accessibility",
+      "expectedGuidanceQuery": "color contrast WCAG text legibility",
+      "severity": "high",
+      "pageLevel": true,
+      "detectableVia": "Lighthouse accessibility flags color-contrast; axe-core (injected via the evaluate primitive) reports a serious color-contrast violation on the three .pf-btn buttons (grey #f2f2f2 background, low-contrast label).",
+      "fix": "Raise button text/background contrast to at least 4.5:1; re-verify with axe / Lighthouse."
+    },
+    {
+      "id": "site-wide-meta-description",
+      "findingId": "F-008",
+      "principleId": "be-discoverable",
+      "principleCheckId": "title-and-description",
+      "expectedGuidanceId": "accessibility",
+      "expectedGuidanceQuery": "page title meta description seo",
+      "severity": "low",
+      "pageLevel": true,
+      "detectableVia": "Lighthouse SEO reports meta-description missing; a DOM probe confirms a <title> but no <meta name=\"description\">.",
+      "fix": "Add a concise <meta name=\"description\"> to the head."
+    },
+    {
+      "id": "site-wide-console-404",
+      "findingId": "F-009",
+      "principleId": "follow-best-practices",
+      "principleCheckId": "no-console-errors",
+      "expectedGuidanceId": "security",
+      "expectedGuidanceQuery": "avoid console errors uncaught exceptions",
+      "severity": "low",
+      "pageLevel": true,
+      "detectableVia": "Lighthouse best-practices reports errors-in-console with one 404 (a missing resource, e.g. the favicon, under the bare static server).",
+      "fix": "Add the missing resource (e.g. a favicon) or remove the reference so the page loads without console errors."
+    }
+  ],
+  "falsePositiveCheck": "The site/ fixture also ships ?mode=fixed (the corrected stylesheets). An audit of ?mode=fixed must report zero of the six CSS scenarios. The page-level findings F-007..F-009 are document-level and are corrected in the genuinely-fixed live playground/, not toggled here."
+}

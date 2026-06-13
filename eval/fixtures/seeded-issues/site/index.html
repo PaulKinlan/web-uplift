@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Modern Web UX Playground</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; }
+    header {
+      display: flex; align-items: baseline; justify-content: space-between;
+      padding: 0.75rem 1.25rem; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    }
+    header h1 { font-size: 1.1rem; margin: 0; }
+    #mode-toggle { font-size: 0.85rem; text-decoration: none; padding: 0.3rem 0.6rem; border-radius: 0.4rem; }
+    body[data-mode="issue"] #mode-toggle { background: #c62828; color: white; }
+    body[data-mode="fixed"] #mode-toggle { background: #2e7d32; color: white; }
+    .layout { display: grid; grid-template-columns: 230px 1fr; min-height: calc(100vh - 3.5rem); }
+    nav { border-right: 1px solid color-mix(in srgb, currentColor 20%, transparent); padding: 0.75rem 0; }
+    nav a { display: block; padding: 0.5rem 1.25rem; text-decoration: none; color: inherit; font-size: 0.9rem; }
+    nav a.active { font-weight: 700; border-left: 3px solid currentColor; padding-left: calc(1.25rem - 3px); }
+    main { padding: 1.25rem 1.5rem; max-width: 52rem; }
+    main h2 { margin-top: 0; }
+    .description { opacity: 0.8; }
+    .guidance { font-size: 0.85rem; padding: 0.6rem 0.8rem; border-radius: 0.4rem;
+      background: color-mix(in srgb, currentColor 8%, transparent); }
+    button { font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Modern Web UX Playground</h1>
+    <a id="mode-toggle" href="?mode=fixed"></a>
+  </header>
+  <div class="layout">
+    <nav id="nav"></nav>
+    <main id="view"></main>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
