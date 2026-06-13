@@ -21,3 +21,6 @@ npm-debug.log*
 # OS noise
 .DS_Store
 Thumbs.db
+
+# npm pack output
+*.tgz
