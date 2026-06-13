@@ -20,10 +20,13 @@ import { z } from 'zod';
 
 const SKILL_PATH = new URL('../.claude/skills/web-audit/SKILL.md', import.meta.url);
 const DESCRIPTION =
-  'Audit a URL for modern web UX quality: explore the site, write a per-site ' +
-  'test plan, evaluate against modern-UX principles and Modern Web Guidance, ' +
-  'and emit structured findings plus a prioritised task list. --fix applies ' +
-  'guidance-backed fixes to local source and re-audits.';
+  'Audit a URL for modern web quality, fully agentically: the model gathers ' +
+  'multi-modal evidence via generic raw-CDP primitives, chooses its own tools ' +
+  '(Lighthouse, axe, ad-hoc probes), reasons over it, and judges every ' +
+  'principle (Una Kravets five + the Lighthouse dimensions) against Modern Web ' +
+  'Guidance, emitting structured findings plus a prioritised task list. --fix ' +
+  'writes guidance-backed fixes to local source and re-audits. No hard-coded ' +
+  'checks, no fast path.';
 
 const skillText = () => readFile(SKILL_PATH, 'utf8');
 

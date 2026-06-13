@@ -1,15 +1,18 @@
-name: audit-playground
+name: evidence-smoke
 
-# Runs the CDP auditor against the bundled playground on every push to master,
-# then commits the refreshed example report so each run is logged in the repo.
-# Skips the commit when nothing changed.
+# The audit is fully agentic: the MODEL gathers evidence and judges the
+# principles (see .claude/skills/web-audit/SKILL.md). There is no deterministic
+# check runner to exercise in CI. What CI CAN verify without a model in the loop
+# is that the generic evidence primitives still launch Chrome over raw CDP and
+# return data/artifacts against the bundled playground. That is the smoke test
+# below. The real agentic report lives in examples/playground-report.md, refreshed
+# by running the agent (a person or a scheduled agent run), not by CI.
 
 on:
   push:
     branches: [master]
     paths:
-      - 'auditor/**'
-      - 'fixer/**'
+      - 'evidence/**'
       - 'playground/**'
       - 'principles/**'
       - 'schema/**'
@@ -18,11 +21,8 @@ on:
       - '.github/workflows/audit-playground.yml'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  audit:
+  evidence-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
         run: npm ci || npm install
 
       # GitHub-hosted ubuntu runners ship google-chrome-stable. Confirm and
-      # expose its path so the auditor's CDP launcher can find it.
+      # expose its path so the evidence primitives' CDP launcher can find it.
       - name: Locate Chrome
         id: chrome
         run: |
@@ -54,34 +54,36 @@ jobs:
         run: |
           npx -y serve playground -l 8080 &
           echo "SERVE_PID=$!" >> "$GITHUB_ENV"
-          # Wait for the server to answer.
           for i in $(seq 1 30); do
             if curl -fsS -o /dev/null http://localhost:8080/; then break; fi
             sleep 1
           done
           curl -fsS -o /dev/null -w "serve=%{http_code}\n" http://localhost:8080/
 
-      - name: Audit (issues mode)
-        run: node auditor/audit.mjs "http://localhost:8080/" --no-guidance --out examples --name playground-report
-
-      - name: Audit (fixed mode, false-positive check)
-        run: node auditor/audit.mjs "http://localhost:8080/?mode=fixed" --no-guidance --out examples --name playground-report-fixed
+      - name: Evidence primitive smoke tests
+        run: |
+          set -e
+          mkdir -p scratch/ci
+          # DOM + computed styles under emulated dark preference.
+          node evidence/cli.mjs dom "http://localhost:8080/#no-dark-mode" \
+            --selector ".ndm-card" --emulate-media prefers-color-scheme=dark \
+            --out scratch/ci/dom.json --wait 800 --quiet
+          # Layout metrics + overflow at an emulated mobile viewport.
+          node evidence/cli.mjs layout "http://localhost:8080/#fixed-layout" \
+            --viewport 360x800 --out scratch/ci/layout.json --wait 800 --quiet
+          # Screenshot artifact.
+          node evidence/cli.mjs screenshot "http://localhost:8080/#no-dark-mode" \
+            --emulate-media prefers-color-scheme=dark --out scratch/ci/shot.png --wait 800 --quiet
+          # Ad-hoc in-page probe (the model's escape hatch).
+          node evidence/cli.mjs evaluate "http://localhost:8080/#motion" \
+            --emulate-media prefers-reduced-motion=reduce \
+            --expr "document.querySelector('.mv-card').getAnimations().length" --wait 600 --quiet
+          # Assert artifacts exist and have content.
+          test -s scratch/ci/dom.json
+          test -s scratch/ci/layout.json
+          test -s scratch/ci/shot.png
+          echo "evidence primitives OK"
 
       - name: Stop the playground server
         if: always()
         run: kill "$SERVE_PID" 2>/dev/null || true
-
-      - name: Commit refreshed example report (skip if unchanged)
-        run: |
-          git config user.name "Paul Kinlan"
-          git config user.email "paul.kinlan@gmail.com"
-          git add examples/playground-report.md examples/playground-report.json \
-                  examples/playground-report-fixed.md examples/playground-report-fixed.json
-          if git diff --cached --quiet; then
-            echo "No report changes; skipping commit."
-          else
-            git commit -m "ci: refresh playground audit report
-
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-            git push
-          fi

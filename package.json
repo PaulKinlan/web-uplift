@@ -4,16 +4,13 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "description": "Agent-driven modern-web-quality auditing and fixing for websites via the Chrome DevTools Protocol and Modern Web Guidance",
+  "description": "Fully agentic modern-web-quality auditing and fixing for websites: the model gathers multi-modal evidence via raw-CDP primitives and judges declarative principles. No hard-coded checks, no fast path.",
   "scripts": {
     "playground": "npx -y serve playground -l 8080",
-    "audit": "node auditor/audit.mjs",
-    "fix": "node fixer/fix.mjs",
+    "evidence": "node evidence/cli.mjs",
+    "audit": "node runner/run-batch.mjs",
     "batch": "node runner/run-batch.mjs",
     "aggregate": "node aggregate/aggregate.mjs"
-  },
-  "devDependencies": {
-    "chrome-devtools-mcp": "^1.2.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

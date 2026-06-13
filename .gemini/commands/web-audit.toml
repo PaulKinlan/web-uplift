@@ -1,4 +1,4 @@
-description = "Audit a URL for modern web UX quality (explore -> test plan -> principles + Modern Web Guidance -> findings -> task list; --fix to hill-climb)"
+description = "Audit a URL for modern web quality, fully agentically: gather evidence via raw-CDP primitives, choose tools, reason, judge every principle (Una's five + Lighthouse dimensions) against Modern Web Guidance; --fix to hill-climb"
 
 prompt = """
 Read the file .claude/skills/web-audit/SKILL.md and follow its

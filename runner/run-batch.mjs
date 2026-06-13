@@ -24,8 +24,10 @@
  *
  * Reports land in <out>/<agent>/<site-slug>/ so the same URL list can be run
  * through several agents and compared. Resumable: a URL is skipped if its
- * report.json already exists. Each audit uses an isolated browser profile
- * (chrome-devtools-mcp --isolated), so concurrent runs don't share state.
+ * report.json already exists. Each audit drives its own headless Chrome through
+ * the repo's evidence primitives (node evidence/cli.mjs, raw CDP), launched per
+ * run with an ephemeral profile, so concurrent runs don't share state. This
+ * runner ORCHESTRATES the fan-out; it contains no checks.
  */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
@@ -34,6 +36,11 @@ import { join } from 'node:path';
 // Claude invokes the project skill directly; the other CLIs don't read
 // .claude/skills, so they're pointed at the SKILL.md file, which is plain
 // markdown instructions any agent can follow.
+//
+// The runner ORCHESTRATES; it contains no checks. It fans out one fully-agentic
+// audit per URL. The agent (the model) follows SKILL.md: it gathers evidence
+// with evidence/cli.mjs, decides which tools to run, reasons, and judges the
+// principles. Nothing about the audit is deterministic here.
 const skillPrompt = (url, siteDir) =>
   `Read the file .claude/skills/web-audit/SKILL.md and follow its ` +
   `instructions exactly, with these arguments: ${url} --out ${siteDir}`;
@@ -46,10 +53,11 @@ const AGENTS = {
       '-p', prompt,
       '--output-format', 'json',
       '--max-turns', String(maxTurns),
-      // Scoped permissions instead of a blanket bypass. npx lets the agent
-      // query the Modern Web Guidance feed (modern-web-guidance).
+      // Scoped permissions instead of a blanket bypass. Bash(node:*) lets the
+      // agent run the evidence primitives (node evidence/cli.mjs ...); npx lets
+      // it query the Modern Web Guidance feed and run Lighthouse if it chooses.
       '--allowedTools',
-      'mcp__chrome-devtools__*,Read,Write,Edit,Glob,Grep,Bash(npx:*),Bash(node:*),Bash(mkdir:*)',
+      'Read,Write,Edit,Glob,Grep,Bash(node:*),Bash(npx:*),Bash(mkdir:*),Bash(ffmpeg:*)',
     ],
   },
   gemini: {

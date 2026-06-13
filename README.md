@@ -1,185 +1,168 @@
 # web-uplift
 
-Agent-driven, constant web improvement. Point it at any website and it
-hill-climbs the site toward modern web quality: explore, audit against modern
-UX principles and [Modern Web Guidance](https://developer.chrome.com/docs/modern-web-guidance/),
-report a prioritised task list, and (when the source is available) apply fixes
-and re-audit until the principles are satisfied.
+Agent-driven, constant web improvement. Point it at any website and a **model**
+audits it against modern web quality, reports a prioritised task list, and (when
+the source is available) applies fixes and re-audits until the principles are
+satisfied.
 
-There are two complementary front ends:
+web-uplift is **fully agentic**. There is no deterministic check runner and no
+fast path. The model is the auditor: at inspection time it gathers multi-modal
+evidence, decides for itself which tools to use, reasons over what it sees, and
+judges every principle. The repo supplies only declarative inputs and generic
+capabilities; all the intelligence is the model's.
 
-1. **A deterministic, runnable auditor + fixer** (this is what `npm run audit`
-   and `npm run fix` drive). It talks to the system Chrome directly over the
-   **Chrome DevTools Protocol** using the thin `chrome-remote-interface` client
-   (no Playwright, no browser-automation framework). This is the path CI runs
-   and the path the committed example report comes from.
-2. **An agent skill** in the shape of
-   [memory-tracer](https://github.com/PaulKinlan/memory-tracer): a prompt/skill
-   harness over the
-   [Chrome DevTools MCP server](https://github.com/ChromeDevTools/chrome-devtools-mcp)
-   (navigate, click, fill, snapshot, emulate). memory-tracer audits for memory
-   leaks; web-uplift audits for modern UX quality. The skill is for open-ended,
-   LLM-driven exploration; the deterministic auditor is for repeatable,
-   CI-friendly, scored runs.
+## The architecture (and why)
 
-### How the auditor drives the browser (Chrome DevTools Protocol)
+```
+principles  ->  the declarative SPEC of what good looks like (outcomes + hints)
+SKILL.md    ->  the METHODOLOGY a model follows to audit a URL
+evidence/   ->  GENERIC, judgement-free primitives the model calls to see the page
+guidance    ->  the live how-to feed the model cites and fixes from
+model       ->  supplies all the intelligence: method selection, reasoning, judging
+```
 
-`auditor/audit.mjs` launches the system Chrome
-(`/usr/bin/google-chrome-stable`, override with `CHROME_BIN`) headless with
-`--headless=new --remote-debugging-port=0 --no-sandbox --user-data-dir=<temp>`,
-parses the chosen port from Chrome's stderr ("DevTools listening on ws://..."),
-and connects with `chrome-remote-interface`. It uses the CDP domains directly:
+**No hard-coded checks. No per-principle registry. No deterministic transforms.
+No "call Lighthouse" baked into a runner.** Earlier versions had a deterministic
+CDP check-runner and a deterministic fixer; both were deleted. The reason is a
+deliberate architectural decision: web quality is open-ended and the platform
+moves fast, so a fixed check registry rots, misses context, and becomes the
+thing tools quietly fall back to. By leaning on the model the method stays
+current (it queries the live guidance feed), it generalises (it can judge a
+principle it has no canned check for), and **tool and test choice is an
+inspection-time decision, not a runtime constant**. The model may run
+Lighthouse, inject axe, take a screenshot, record a transition video, take a
+heap snapshot, read layout metrics, or write its own ad-hoc static test on the
+spot, whatever the situation calls for.
 
-- **Page / Runtime** - navigate and `evaluate` DOM/CSS state.
-- **DOM / CSS** - inspect author stylesheets and computed styles.
-- **Emulation.setEmulatedMedia** - `prefers-color-scheme: dark`,
-  `prefers-reduced-motion: reduce` (and the same plumbing for
-  `prefers-contrast` / `forced-colors`).
-- **Emulation.setDeviceMetricsOverride** - narrow mobile viewport to surface
-  horizontal overflow.
-- **PerformanceObserver** (installed via `Runtime.evaluate`) - `layout-shift`
-  entries for a real CLS measurement.
+### Evidence primitives (the model's senses)
 
-The playground is a hash-routed SPA whose per-scenario CSS only exists while
-its route is active, so the auditor navigates each scenario route (routing
-through `about:blank` to force a real load), sets the relevant emulated
-condition, lets it settle, and reads the result.
+[evidence/cli.mjs](evidence/cli.mjs) is a small CLI of generic, content-agnostic
+primitives. Each one launches the system Chrome
+(`/usr/bin/google-chrome-stable`, override with `CHROME_BIN`) headless and drives
+it purely over the **Chrome DevTools Protocol** via the thin
+`chrome-remote-interface` client (no Playwright, no Puppeteer). They return data
+and artifacts; they make **no judgements**.
 
-## How it works
+```sh
+node evidence/cli.mjs <primitive> <url> [options]
+```
 
-The DevTools MCP server provides the *engine* (a real browser the agent can
-drive and inspect, including device and preference emulation). web-uplift adds
-the *orchestration* around it, plus two knowledge layers (below):
+| Primitive | Returns | CDP |
+|---|---|---|
+| `screenshot` | a PNG (full or `--selector`-clipped) under any emulated condition | Page.captureScreenshot |
+| `video` | an MP4 of an interaction window (frames assembled with the system `ffmpeg`); `--interact "<js>"` triggers the transition | Page.startScreencast |
+| `heap` | a readable heap-snapshot summary (types/constructors by size); never the raw multi-MB snapshot | HeapProfiler.takeHeapSnapshot |
+| `layout` | layout metrics, a CLS/layout-shift observer, long tasks, overflow at the current viewport | Page.getLayoutMetrics + observers |
+| `dom` | DOM, computed styles for a `--selector` set, page HTML/CSS, and (`--source <dir>`) the local source files | DOM / CSS / Runtime |
+| `evaluate` | the value of a model-supplied `--expr "<js>"` run in the page: ad-hoc probes and static tests the model writes on the spot | Runtime.evaluate |
 
-1. **Explore + plan** - an agent explores the site (navigate, click, fill,
-   snapshot), enumerates the meaningful user paths and test cases (routes,
-   forms, modals, key flows), and persists a reviewable test plan to
-   `testplans/<site>.json`.
-2. **Audit** - run each path and evaluate the site against the two knowledge
-   layers, emitting structured findings
-   (see [schema/findings.schema.json](schema/findings.schema.json)). Each
-   finding is `{id, path/url, principle or guidance violated, severity,
-   evidence, suggestedFix}`.
-3. **Report mode** - emit findings as JSON (validated against
-   `schema/findings.schema.json`) plus a human-readable markdown report and a
-   prioritised task list. Ad-hoc runs land in `reports/<site>/` (gitignored);
-   the playground's latest report is committed to `examples/` so it is visible
-   on GitHub, and CI keeps it fresh on every push to master.
-4. **Fix mode** - if the site's source is available locally, hand the task
-   list to a coding agent that applies fixes following Modern Web Guidance,
-   then re-runs the audit. This is the hill-climb loop: audit, fix, re-audit
-   until the principles are satisfied.
-5. **Batch + aggregate** - a [runner/](runner/) fans out headless audits over
-   a URL list (`--agent claude | codex | gemini | antigravity`,
-   `--concurrency N`), and [aggregate/](aggregate/) merges reports into a
-   cross-site summary of where the web is weakest.
+Common options the model chooses and the harness simply applies (it never
+decides them): `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
+`--viewport 360x800`, `--wait <ms>`, `--selector <css>`, `--interact "<js>"`,
+`--source <dir>`, `--out <path>`.
 
 ## The two knowledge layers
 
-web-uplift judges a site against two complementary layers:
-
-1. **Principles layer** - [principles/principles.json](principles/principles.json):
-   Una Kravets' five core principles for modern UX, from her Google I/O 2026
-   talk *What's new in Web UI*
-   (https://www.youtube.com/watch?v=uT7MVcCQ4rw). These are the *why*: the
-   high-level qualities a modern interface should have. All five are now
-   confirmed from the talk transcript, each with programmatically-detectable
-   checks carrying a `guidanceQuery`; see the file.
-2. **Knowledge layer** - Modern Web Guidance
-   (https://developer.chrome.com/docs/modern-web-guidance/, repo
-   https://github.com/GoogleChrome/modern-web-guidance): use-case-based best
-   practices. These are the *how*: the recommended modern approach for a given
-   task. web-uplift uses them both to **critique** a site (find divergence
-   from the recommended approach) and to **fix** it (the guidance is the
-   how-to). See [guidance/README.md](guidance/README.md) for the integration
-   plan.
+1. **Principles** - [principles/principles.json](principles/principles.json):
+   the spec of what good looks like, as OUTCOMES. Nine principles: Una Kravets'
+   five modern-UX principles from her Google I/O 2026 talk *What's new in Web UI*
+   (https://www.youtube.com/watch?v=uT7MVcCQ4rw) plus four Lighthouse-dimension
+   principles (`be-fast-and-stable`, `be-accessible`, `follow-best-practices`,
+   `be-discoverable`). Each check is phrased as an outcome and carries a
+   `detectableVia` HINT that may *mention* candidate evidence or tools without
+   mandating any. Nothing here is wired to a code path.
+2. **Modern Web Guidance** - the `modern-web-guidance` npm feed
+   (https://developer.chrome.com/docs/modern-web-guidance/): use-case-based best
+   practices, the *how*. The model `search`es it while auditing (to confirm the
+   recommended modern approach and cite a guidance id) and `retrieve`s it while
+   fixing. See [guidance/README.md](guidance/README.md).
 
 The principles set the goal; the guidance provides the concrete, citable
 techniques to get there.
 
+## The audit (model-driven)
+
+The methodology lives in [.claude/skills/web-audit/SKILL.md](.claude/skills/web-audit/SKILL.md).
+In outline, the model:
+
+1. **Recon** - uses `dom` (with `--source` if available) and a `screenshot` to
+   understand the page and its surfaces.
+2. **Plan the evidence** - reads every principle check and decides what evidence
+   would let it judge that check, and under which emulated condition.
+3. **Gather** - runs the primitives and any tools it judges useful (Lighthouse,
+   axe via `evaluate`, its own probes).
+4. **Reason and judge** - weighs the evidence and decides pass / issue /
+   not-applicable for every principle, citing guidance ids.
+5. **Report** - writes findings conforming to
+   [schema/findings.schema.json](schema/findings.schema.json) plus a markdown
+   report, recording the `evidenceUsed` so the method is honest.
+6. **Fix (optional)** - with `--source`, writes guidance-backed fixes, re-gathers
+   the same evidence to verify, and can open a PR. The model is the coding agent;
+   there are no canned transforms.
+
 ## Layout
 
 ```
-auditor/                    CDP auditor: launches Chrome over chrome-remote-interface, runs the checks, scores vs ground truth
-fixer/                      Fix + PR engine: applies guidance-backed fixes, re-audits (hill-climb), opens a PR
-examples/                   Committed example audit report (issues + fixed mode) so runs are visible on GitHub
-.github/workflows/          CI: audit the playground on push to master and commit the refreshed example report
-.claude/skills/web-audit/   The orchestration skill (explore -> plan -> audit -> report -> fix)
-.mcp.json                   chrome-devtools-mcp config (isolated + the interaction/inspection tools)
-principles/                 Una Kravets' modern-UX principles (the "why")
-guidance/                   Modern Web Guidance integration plan (the "how")
+evidence/                   Generic, judgement-free CDP evidence primitives (the model's senses)
+.claude/skills/web-audit/   The audit METHODOLOGY a model follows (the heart of the system)
+principles/                 The declarative spec: Una's five + the four Lighthouse-dimension principles
+guidance/                   Modern Web Guidance feed integration (the how)
 schema/                     Findings + report JSON schema
-playground/                 Seeded modern-UX issues, issue vs fixed mode, ground truth
-runner/                     Batch runner (headless agent run per URL)
+playground/                 Seeded modern-UX issues, issue vs fixed mode, ground truth for the eval
+examples/                   A committed real agentic audit of the playground (report + fixed-mode check)
+runner/                     Batch fan-out: one fully-agentic audit per URL (claude/codex/gemini/antigravity)
 aggregate/                  Merge reports into a cross-site summary
 urls/                       URL lists + notes on sourcing top-site lists
-testplans/                  Generated per-site test plans (committed, reviewable)
+testplans/                  Reviewable per-site plans (when an agent persists one)
 reports/                    Ad-hoc audit output, one directory per site (gitignored)
+.github/workflows/          CI: smoke-tests the evidence primitives against the playground on push
 ```
 
 ## Quickstart
 
 ```sh
-# 1. Get the DevTools MCP server (one of):
-#    a) Claude Code plugin:
-#       /plugin install chrome-devtools-mcp@chrome-devtools-plugins
-#    b) Or rely on this repo's .mcp.json (server only).
-
-# 2. The Modern Web Guidance feed is fetched on demand via npx; no install
-#    needed (see guidance/README.md). Verify it works:
+# 1. The Modern Web Guidance feed is fetched on demand via npx; no install
+#    needed. Verify it works:
 npx -y modern-web-guidance@latest list | head
 
-# 3. Run the playground
-npm run playground          # serves playground/ on http://localhost:8080
+# 2. Run the playground (serves playground/ on http://localhost:8080)
+npm run playground
 
-# 4a. Deterministic CDP auditor (this is what CI runs). Issues mode finds all
-#     six seeded issues; ?mode=fixed must find none. Auto-scores precision/
-#     recall against playground/expected-findings.json and writes a JSON report
-#     (schema/findings.schema.json) plus a markdown report.
-npm run audit -- http://localhost:8080/
-npm run audit -- "http://localhost:8080/?mode=fixed"
-#     Flags: --out <dir> --name <base> --expected <file> --no-guidance --quiet
-#     The committed example output lives in examples/playground-report.md.
+# 3. Gather evidence directly (the building blocks the model uses)
+npm run evidence -- dom        "http://localhost:8080/#no-dark-mode" --selector ".ndm-card" --emulate-media prefers-color-scheme=dark
+npm run evidence -- screenshot "http://localhost:8080/#no-dark-mode" --emulate-media prefers-color-scheme=dark --out shot.png
+npm run evidence -- layout     "http://localhost:8080/#fixed-layout" --viewport 360x800
+npm run evidence -- video      "http://localhost:8080/#motion" --out motion.mp4 --duration 2500
+npm run evidence -- heap       "http://localhost:8080/#motion" --out heap.json
+npm run evidence -- evaluate   "http://localhost:8080/#motion" --emulate-media prefers-reduced-motion=reduce --expr "document.querySelector('.mv-card').getAnimations().length"
 
-# 4b. Or the agent skill (open-ended, LLM-driven) - /web-audit works inside
-#     Claude Code, Codex, Gemini CLI, and Antigravity (see runner/README.md)
+# 4. Run the agentic audit (the model follows SKILL.md). Inside Claude Code,
+#    Codex, Gemini CLI, or Antigravity:
 /web-audit http://localhost:8080
 
-# 5. Fix + PR engine (the hill-climb). Audit the target, apply guidance-backed
-#    fixes to its source, re-audit until clean, optionally open a PR. Serve the
-#    --target dir at --audit-url so the re-audit sees the edits.
-npm run fix -- --target playground --audit-url http://localhost:8080/
-#    Add --pr to branch, commit the fixes, and open a PR via gh.
-#    Add --dry-run to compute fixes without writing.
-
-# 6. Batch mode - URLs as arguments or --urls <file> (defaults to
-#    urls/sample.txt). Runs with Claude Code by default; also supports
-#    --agent gemini | antigravity | codex. Reports land in
-#    reports/<agent>/<site>/ for cross-agent comparison.
+# 5. Batch: fan out one agentic audit per URL (defaults to Claude; also
+#    --agent codex|gemini|antigravity). The runner orchestrates; it has no checks.
 npm run batch -- https://example.com
-npm run batch -- --urls urls/sample.txt --concurrency 2
-npm run batch -- --urls urls/sample.txt --agent gemini
+npm run batch -- --urls urls/sample.txt --concurrency 2 --agent claude
 
-# 7. Aggregate findings across reports
+# 6. Aggregate findings across reports
 npm run aggregate
 ```
 
-## Example report and CI
+## Example report
 
-[examples/playground-report.md](examples/playground-report.md) is a real,
-committed run of the CDP auditor against the playground in issues mode
-(precision 100%, recall 100% against the six seeded issues), and
-[examples/playground-report-fixed.md](examples/playground-report-fixed.md) is
-the `?mode=fixed` false-positive check (zero findings). The
-[audit-playground workflow](.github/workflows/audit-playground.yml) re-runs the
-auditor on every push to master, installs/locates Chrome in the runner, and
-commits the refreshed report (skipping the commit when nothing changed), so the
-example always reflects the current code.
+[examples/playground-report.md](examples/playground-report.md) is a real
+agentic audit of the playground: the model launched headless Chrome, gathered
+DOM/computed-styles, screenshots, layout metrics, a heap summary and a
+transition video via the evidence primitives, reasoned over them, and judged the
+nine principles. [examples/playground-report-fixed.md](examples/playground-report-fixed.md)
+is the `?mode=fixed` false-positive check. The
+[evidence-smoke workflow](.github/workflows/audit-playground.yml) smoke-tests the
+primitives on every push (the full audit needs a model in the loop, so it is
+refreshed by running the agent, not by CI).
 
-See [PLAN.md](PLAN.md) for the roadmap and remaining open questions. The five
-Una principles are now all confirmed in `principles/principles.json`; the CDP
-auditor, the fix/PR hill-climb, the committed example report, and CI are all
-shipped.
+See [PLAN.md](PLAN.md) for the roadmap and the rationale for the fully-agentic,
+no-fast-path design.
 
 ## License
 

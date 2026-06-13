@@ -1,140 +1,196 @@
 ---
 name: web-audit
-description: Audit a URL for modern web UX quality and (optionally) fix it. Explores the site, writes a per-site test plan of meaningful user paths, evaluates each against Una Kravets' modern-UX principles and Modern Web Guidance, and writes a structured findings report plus a prioritised task list. In fix mode (local source only) it applies guidance-backed fixes and re-audits in a hill-climb loop. Use when asked to web-audit, UX-audit, uplift, or modernise a site.
+description: Audit a URL for modern web quality and (optionally) fix it. This is a FULLY AGENTIC audit: YOU (the model) gather multi-modal evidence about the page with the generic evidence primitives, decide for yourself which tools to run (Lighthouse, axe, your own ad-hoc static tests), reason over that evidence, and judge every principle, then emit a findings report. There are no hard-coded checks and no fast path: the principles are the spec, this skill is the method, and you supply all the intelligence. Use when asked to web-audit, UX-audit, uplift, modernise, or quality-audit a site.
 ---
 
-# Web audit
+# Web audit (fully agentic)
 
 Audit `$ARGUMENTS`: a URL, plus optional flags:
 
-- `--plan-only` - stop after writing the test plan.
-- `--path <id>` - run a single path from the plan.
-- `--out <dir>` - override the report directory (default `reports/<host>/`).
-- `--replan` - regenerate the test plan even if one exists.
-- `--fix` - fix mode: apply fixes to local source and re-audit (requires
-  `--source <dir>`). Without `--fix`, this is report mode (critique only).
-- `--source <dir>` - path to the site's local source, required for `--fix`.
+- `--out <dir>` - report directory (default `reports/<host>/`).
+- `--source <dir>` - path to the site's local source, so you can read the
+  authored HTML/CSS/JS, not just the rendered output.
+- `--fix` - after auditing, apply fixes to local source and re-audit (requires
+  `--source`). Without `--fix`, this is report mode (critique only).
+- `--expected <file>` - a ground-truth file to self-score against (used for the
+  playground eval).
 
-You need the `chrome-devtools` MCP server (this repo's `.mcp.json` starts it
-with `--isolated`). The two knowledge layers are:
+## The contract: you are the auditor, not a runner
 
-- **Principles** - [principles/principles.json](../../../principles/principles.json):
-  Una Kravets' modern-UX principles (the *why*). NOTE: only two are confirmed
-  (`adapt-to-the-user`, `adapt-to-the-device`); three are TODO placeholders.
-  Audit against the confirmed ones and their checks. Do NOT invent findings
-  for the placeholder principles.
-- **Guidance** - Modern Web Guidance, queried via the `modern-web-guidance`
-  npm feed (the *how*). Follow [guidance/lookup.md](../../../guidance/lookup.md):
-  `search` to find the recommended approach, `retrieve` to get the fix detail.
+There is **no deterministic check runner** and there are **no fast paths** in
+this project. Nothing decides for you whether a principle passes. You decide,
+by gathering evidence and reasoning over it. The repo gives you two declarative
+inputs and one generic capability:
 
-Drive the browser through the chrome-devtools MCP tools (navigate, click,
-fill, hover, take_snapshot, screenshot, resize, and preference/device
-emulation). Do not write your own puppeteer/CDP automation. If you need an
-ad-hoc helper script or screenshot, write it under `scratch/` (gitignored),
-never the repo root; deliverables belong only in the report directory and
-`testplans/`.
+1. **Principles** - [principles/principles.json](../../../principles/principles.json):
+   the spec of what good looks like, as OUTCOMES. Nine principles: Una Kravets'
+   five modern-UX principles (respect-user-preferences,
+   implement-natural-interactions, provide-guided-navigation,
+   maximize-content-reduce-noise, adapt-to-the-form-factor) plus four
+   Lighthouse-dimension principles (be-fast-and-stable, be-accessible,
+   follow-best-practices, be-discoverable). Each check has a `detectableVia`
+   HINT. The hint may MENTION candidate evidence or tools; it MANDATES nothing.
+2. **Guidance** - Modern Web Guidance via the `modern-web-guidance` npm feed
+   (the *how*). See [guidance/lookup.md](../../../guidance/lookup.md): `search`
+   to find the recommended approach, `retrieve` to get the fix detail.
+3. **Evidence primitives** - [evidence/cli.mjs](../../../evidence/cli.mjs): a
+   generic, judgement-free CLI you call to gather evidence. It launches the
+   system Chrome and drives it over raw CDP (chrome-remote-interface). It returns
+   data and artifacts; it never decides anything.
 
-## Phase 1 - Explore and test plan
+## The evidence primitives (your senses)
 
-Reuse `testplans/<host>.json` if it exists (regenerate only on `--replan`).
-Otherwise:
+```sh
+node evidence/cli.mjs <primitive> <url> [options]
+```
 
-1. `new_page` -> navigate to the URL. Dismiss cookie/consent banners if
-   present. If the page is blocked (bot wall, login required), record that in
-   the report and stop.
-2. Take a snapshot + screenshot. Classify the app: SPA or MPA, framework if
-   detectable, and the meaningful surfaces: primary nav routes, forms,
-   modals/overlays, and key flows (search, sign-up, checkout, media).
-3. Write `testplans/<host>.json`: an array of paths, each with `id`,
-   `description`, `url` (or how to reach it), `steps` (the interaction to
-   exercise), and `conditions` (which emulated conditions to evaluate it
-   under). Conditions are the heart of the audit, drawn from the principle
-   checks, for example:
-   - `prefers-color-scheme: dark` (adapt-to-the-user / respects-color-scheme)
-   - `prefers-reduced-motion: reduce` (adapt-to-the-user / respects-reduced-motion)
-   - `viewport: 360x800` (adapt-to-the-device / responsive)
-   - `keyboard-only` (focus states and reachability)
-   Always include a `landing` path. Add one path per primary route, per form,
-   and per overlay discovered in recon. Cap at ~6 paths; prefer the
-   highest-traffic flows.
+Primitives, all content- and tool-agnostic:
 
-Stop here if `--plan-only`.
+| Primitive | What it gives you | Key CDP |
+|---|---|---|
+| `screenshot` | a PNG (full or `--selector`-clipped) under any emulated condition | Page.captureScreenshot |
+| `video` | an MP4 of an interaction window, frames assembled with ffmpeg; `--interact "<js>"` triggers the transition/animation | Page.startScreencast |
+| `heap` | a readable heap summary (types/constructors by size); `--interact` to exercise first, for leak hunting | HeapProfiler.takeHeapSnapshot |
+| `layout` | layout metrics, a CLS/layout-shift observer, long tasks, overflow at the current viewport | Page.getLayoutMetrics + observers |
+| `dom` | DOM, computed styles for `--selector` list, page HTML/CSS, and (`--source <dir>`) the local source files | DOM/CSS/Runtime |
+| `evaluate` | runs your own `--expr "<js>"` in the page: ad-hoc probes and static tests you write on the spot | Runtime.evaluate |
 
-## Phase 2 - Audit (per path, per condition)
+Common options the harness simply applies (you choose them, it does not):
+`--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
+`--viewport 360x800`, `--wait <ms>`, `--selector <css>`, `--interact "<js>"`,
+`--out <path>`, `--source <dir>`.
 
-For each path, and for each condition on it:
+You may also run **any other tool you judge useful** at inspection time. None of
+these is wired into the runtime; you invoke them yourself when they help:
 
-1. Fresh navigation to the path's start state. Apply the condition via
-   emulation (resize for viewport; CDP preference overrides for
-   `prefers-color-scheme` / `prefers-reduced-motion` / `prefers-contrast`;
-   keyboard-only = navigate with Tab/Enter only).
-2. Exercise the path's `steps`, taking snapshots/screenshots and reading
-   computed styles where needed.
-3. Evaluate against the confirmed principle checks relevant to the condition.
-   For each check, run the guidance `search` (its `guidanceQuery`) to confirm
-   the recommended modern approach, then compare. See
-   [guidance/lookup.md](../../../guidance/lookup.md).
-4. Also search the guidance feed for anything notable you observe that no
-   principle check names (the feed is broader than the five principles).
+- **Lighthouse**: `npx -y lighthouse <url> --output=json --quiet
+  --chrome-flags="--headless=new --no-sandbox"` for LCP/CLS/TBT and the a11y /
+  best-practices / SEO audits. Use it to corroborate the Lighthouse-dimension
+  principles, or skip it and gather the same signal first-party with `layout`
+  and `evaluate`.
+- **axe-core**: inject it and run it via the `evaluate` primitive, e.g. fetch
+  the script text and `--expr` a call to `axe.run()`, to enumerate accessibility
+  violations. Or write your own contrast/label/role probes with `evaluate`.
+- **Your own static tests**: when no tool fits, write a probe with `evaluate`
+  (e.g. focus an element and read its computed outline; diff two heap summaries;
+  measure the same component in two containers). This is the point of leaning on
+  the model: you can invent the test the situation needs.
 
-## Phase 3 - Findings and task list
+## Method
 
-Classify each divergence into a finding tied to a principle check and/or a
-guidance `id`. Severity:
+### 1. Recon
 
-- `critical` - core content/flow unusable under a common condition (e.g. site
-  unreadable in dark mode, primary nav broken on mobile).
-- `high` - a principle clearly violated on a primary path.
-- `medium` - a meaningful divergence on a secondary path or partial support.
-- `low` - polish, or a missed-opportunity to adopt a modern technique.
+Use `dom` (with `--source` if you have it) and a `screenshot` to understand the
+page: SPA or MPA, framework, the meaningful surfaces (routes, forms, overlays,
+key flows). For a hash-routed SPA each route is reached as `<url>#<route>` and a
+real reload is needed to re-run per-route styles; the primitives navigate via
+about:blank already, so just pass the route URL. Note an auth wall or bot block
+and stop with `status: blocked` if you cannot proceed.
 
-Be honest about `confidence`. Some modern-UX judgements are subjective; mark
-them so rather than asserting a bug. Detached/intentional exceptions exist
-(e.g. a brand area that is intentionally always-light) - note them rather than
-flagging blindly.
+### 2. Plan the evidence you need, per principle
 
-Then derive a prioritised, deduplicated `taskList` (highest leverage first),
-each task referencing its `findingIds` and a `guidanceId`.
+Read every principle check and its `detectableVia` HINT. For each, decide what
+evidence WOULD let you judge it, and under which condition. Examples (not a
+script; you adapt to the actual page):
 
-## Phase 4 - Report
+- respects-color-scheme -> `screenshot`/`dom --selector` under
+  `--emulate-media prefers-color-scheme=dark`; does the surface re-tint?
+- respects-reduced-motion -> `video --interact` or an `evaluate` of
+  `getAnimations()` under `--emulate-media prefers-reduced-motion=reduce`.
+- responsive-no-horizontal-scroll -> `layout --viewport 360x800`; is there
+  horizontal overflow? a `screenshot` shows the clipping.
+- component-level-responsiveness -> `dom --selector` of the same component in a
+  wide vs narrow container, or CSS inspection for `@container`.
+- input-modality-aware (focus) -> an `evaluate` probe that focuses the control
+  and reads the computed outline.
+- be-fast-and-stable -> `layout` (CLS + long tasks) and/or Lighthouse.
+- be-accessible -> axe via `evaluate`, and/or Lighthouse a11y, and/or your own
+  contrast/label probes.
+- follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for
+  doctype, charset, title, meta description, viewport, anchor hrefs; and/or
+  Lighthouse.
+
+You own this mapping. If the HINT names a tool you do not want to use, use a
+different one. If you want evidence the HINT does not mention, gather it.
+
+### 3. Gather the evidence
+
+Run the primitives and tools you planned. Keep artifacts (screenshots, videos,
+heap summaries, layout JSON, Lighthouse JSON) under the report directory or
+`scratch/` (gitignored). Capture enough that a reader could verify each finding.
+
+### 4. Reason and judge every principle
+
+For each principle check, weigh the evidence and decide: pass, issue, or
+not-applicable (e.g. a brand area intentionally always-light). Be honest about
+`confidence` for subjective judgements. For each issue, run the guidance
+`search` (its `guidanceQuery`) to confirm the recommended modern approach and to
+get a `guidanceId` to cite. Search the feed ad hoc for anything you observe that
+no principle names.
+
+### 5. Findings and task list
+
+Classify each divergence into a finding tied to a `principleId` /
+`principleCheckId` and/or a guidance `id`. Severity: `critical` (core
+content/flow unusable under a common condition), `high` (principle clearly
+violated on a primary path), `medium` (meaningful divergence or partial
+support), `low` (polish / missed modern technique). Every finding needs a
+concrete `evidence` string naming the modality you used (e.g. "screenshot under
+prefers-color-scheme: dark shows .ndm-card still #fff" or "layout primitive
+reported CLS 0.18 from a banner injected at ~600ms"). Then derive a prioritised,
+deduplicated `taskList` (highest leverage first), each task citing its
+`findingIds` and a `guidanceId`.
+
+### 6. Report
 
 Write two files in `reports/<host>/` (or `--out`):
 
 - `report.json` - MUST validate against
-  [schema/findings.schema.json](../../../schema/findings.schema.json). Every
-  finding needs: severity, a one-line `summary`, concrete `evidence` (what you
-  observed), the violated `principleId`/`principleCheckId` and/or `guidanceId`,
-  and a concrete `suggestedFix` citing the guidance (the technique to apply,
-  e.g. "Declare color-scheme: light dark and use light-dark() for surfaces;
-  see guidance id dark-mode" - not "support dark mode").
-- `REPORT.md` - human-readable: page profile, paths and conditions run,
-  findings table grouped by principle, the prioritised task list with fix
-  sketches, and anything skipped or low-confidence.
+  [schema/findings.schema.json](../../../schema/findings.schema.json). Set
+  `evidenceUsed` (the modalities and tools you actually ran) so the report is
+  honest about method. If scoring against `--expected`, include your own
+  precision/recall under an `eval` field.
+- `report.md` - human-readable: page profile, the evidence you gathered (with
+  artifact paths), findings grouped by principle, the prioritised task list, and
+  anything skipped or low-confidence.
 
-## Phase 5 - Fix mode (`--fix`, the hill-climb)
+### 7. Fix mode (`--fix --source <dir>`, the hill-climb)
 
-Only with `--fix --source <dir>` (the site's local source). Then, for each
-task in the prioritised list:
+Only with local source. For each task, highest leverage first:
 
-1. `retrieve` the task's guidance guide and read its technique + browser
-   support notes.
-2. Apply the fix to the local source under `<dir>`.
-3. Re-run the relevant path/condition from Phase 2.
-4. Mark the task `applied`, then `verified` if the finding is gone. If a fix
-   introduces a new finding, log it and continue.
+1. `retrieve` the task's guidance guide and read its technique + browser-support
+   notes (assume Baseline Widely available is safe; follow the guide's fallback
+   advice otherwise).
+2. Write the fix into the local source under `<dir>`. You are the coding agent;
+   there are no canned transforms.
+3. Re-gather the relevant evidence (the same primitive/condition you used to
+   find it) and confirm the issue is gone. If a fix introduces a new issue, log
+   it and continue.
+4. Repeat passes until no findings above your chosen severity remain or a pass
+   makes no further progress. Record `budget.auditPasses`. Optionally open a PR
+   (branch, commit only the source changes, `gh pr create`).
 
-Repeat passes until no findings above your chosen severity remain, or a pass
-makes no further progress. Record `budget.auditPasses`. Never edit source
-outside `<dir>`; never run fix mode against a site whose source you do not
-have locally.
+Never edit source outside `<dir>`. Never run fix mode against a site whose
+source you do not have locally.
+
+## Why fully agentic (and why no fast path)
+
+Tooling normally bakes in a check registry and falls back to it. This project
+deliberately does not: web quality is open-ended, the modern platform moves
+fast, and a fixed registry rots and misses context. By leaning on the model,
+the method stays current (you query the live guidance feed), it generalises
+(you can judge a principle you have never seen a check for), and tool choice is
+an inspection-time decision, not a runtime constant. The principles say what
+good is; you work out how to see it.
 
 ## Cross-agent note
 
 This skill is plain markdown methodology any agent can follow. It runs as
-`/web-audit <url>` in Claude Code, Codex, Gemini CLI, and Antigravity from
-this repo (each CLI is wired to this one canonical SKILL.md; see
-[runner/README.md](../../../runner/README.md)).
+`/web-audit <url>` in Claude Code, Codex, Gemini CLI, and Antigravity from this
+repo (each CLI is wired to this one canonical SKILL.md; see
+[runner/README.md](../../../runner/README.md)). The evidence primitives are a
+plain Node CLI any agent can shell out to.
 
-Finish your reply with a one-paragraph TLDR: finding count by severity, the
-single highest-leverage fix, and (in fix mode) how many findings were
-verified-fixed.
+Finish your reply with a one-paragraph TLDR: finding count by severity, which
+evidence modalities and tools you actually used, the single highest-leverage
+fix, and (in fix mode) how many findings you verified fixed.

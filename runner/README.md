@@ -66,8 +66,8 @@ stdout/stderr with a `[site-slug]` prefix per line (`[slug!]` for stderr);
 `run.json` is written either way.
 
 The batch runner runs **report mode** only. Fix mode (`--fix --source <dir>`)
-is source-bound and best driven interactively per site; it is intentionally
-not a fan-out flag.
+is agentic and source-bound, best driven interactively per site; it is
+intentionally not a fan-out flag.
 
 Reports land in `reports/<agent>/<site>/`, so running the same URL list
 through several agents gives a side-by-side comparison  - 
@@ -78,38 +78,30 @@ directly (it's plain markdown instructions any agent can follow).
 
 ## Per-agent setup
 
-Every CLI needs the chrome-devtools MCP server registered in **its own**
-config - the runner doesn't (and mostly can't) inject it.
+There is no browser-automation MCP server to register. The agent drives a real
+headless Chrome through this repo's own **evidence primitives**
+([evidence/cli.mjs](../evidence/cli.mjs), raw CDP via chrome-remote-interface),
+which it runs as `node evidence/cli.mjs <primitive> <url> ...`. So each agent
+only needs permission to run Node and `npx` (for the Modern Web Guidance feed
+and, if it chooses, Lighthouse), and read/write access to the repo.
 
-| Agent | Binary | Headless invocation | MCP config |
+| Agent | Binary | Headless invocation | Tooling it needs |
 |---|---|---|---|
-| Claude Code | `claude` | `-p --output-format json --allowedTools …` | `.mcp.json` (in this repo) |
-| Gemini CLI | `gemini` | `-p --yolo --output-format json` | `.gemini/settings.json` (in this repo) |
-| Antigravity CLI | `agy` | `-p --dangerously-skip-permissions` | `mcp_config.json` (see Antigravity docs for location) |
-| Codex CLI | `codex` | `exec --json --sandbox workspace-write` | `.codex/config.toml` (in this repo; requires trusting the project) |
+| Claude Code | `claude` | `-p --output-format json --allowedTools …` | `Bash(node:*)`, `Bash(npx:*)`, `Bash(ffmpeg:*)`, file tools (set by the runner) |
+| Gemini CLI | `gemini` | `-p --yolo --output-format json` | node + npx + ffmpeg on PATH |
+| Antigravity CLI | `agy` | `-p --dangerously-skip-permissions` | node + npx + ffmpeg on PATH |
+| Codex CLI | `codex` | `exec --json --sandbox workspace-write` | node + npx + ffmpeg on PATH |
 
-Codex loads project-scoped config from [.codex/config.toml](../.codex/config.toml)
-(checked into this repo), but **only after you mark the project as trusted**
-in Codex - untrusted repos' `.codex/` layers are ignored. If you prefer, the
-same `[mcp_servers.chrome-devtools]` table works in the global
-`~/.codex/config.toml`.
-
-Antigravity `mcp_config.json` / any `mcpServers`-style config:
-
-```json
-{
-  "mcpServers": {
-    "chrome-devtools": {
-      "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp", "--isolated"]
-    }
-  }
-}
-```
+The only MCP server still registered (in `.mcp.json`, `.gemini/settings.json`,
+`.codex/config.toml`) is `web-uplift` (the skills server), which distributes the
+SKILL.md methodology itself; it is not a browser. The host machine needs
+`google-chrome-stable` (override with `CHROME_BIN`) and `ffmpeg` for the video
+primitive.
 
 The agent also needs network access to query the Modern Web Guidance feed
-(`npx -y modern-web-guidance@latest …`). Claude's `--allowedTools` list
-includes `Bash(npx:*)` for this.
+(`npx -y modern-web-guidance@latest …`) and, optionally, to run Lighthouse
+(`npx -y lighthouse …`). Claude's `--allowedTools` list includes `Bash(npx:*)`
+for this.
 
 ## Caveats
 

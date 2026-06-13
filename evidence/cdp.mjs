@@ -5,6 +5,11 @@
 // Chrome at /usr/bin/google-chrome-stable, launched headless with an ephemeral
 // debugging port, and parse the chosen port from Chrome's stderr. No Playwright,
 // no Puppeteer.
+//
+// IMPORTANT: this module is a GENERIC harness. It makes no judgements and knows
+// nothing about principles, checks, or what "good" looks like. It only knows how
+// to launch Chrome, open a session, navigate, and run model-supplied code in the
+// page. The intelligence lives in the model (following SKILL.md), not here.
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
@@ -154,3 +159,41 @@ export async function navigate(client, url, { settleMs = 1200, log = () => {} } 
     await new Promise((r) => setTimeout(r, settleMs));
   }
 }
+
+// Run an arbitrary expression in the page and return its value. This is the
+// model's escape hatch: it can pass any probe / ad-hoc static test it writes at
+// inspection time. The harness does not interpret what the expression means.
+export async function evaluate(client, expression, { awaitPromise = true } = {}) {
+  const { result, exceptionDetails } = await client.Runtime.evaluate({
+    expression,
+    returnByValue: true,
+    awaitPromise,
+  });
+  if (exceptionDetails) {
+    throw new Error(
+      `evaluate failed: ${exceptionDetails.text} ${
+        exceptionDetails.exception?.description ?? ''
+      }`,
+    );
+  }
+  return result.value;
+}
+
+// Launch Chrome, open a session, run the body, and always clean up. A thin
+// convenience so each primitive does not repeat the launch/teardown dance.
+export async function withSession(fn, { log = () => {} } = {}) {
+  const chrome = await launchChrome({ log });
+  try {
+    const session = await newSession(chrome.port, { log });
+    try {
+      return await fn(session.client, { chrome, session });
+    } finally {
+      await session.close();
+    }
+  } finally {
+    await chrome.close();
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export { sleep };
