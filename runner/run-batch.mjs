@@ -38,6 +38,7 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { AGENTS } from './agents.mjs';
 
 // The one canonical methodology is .claude/skills/web-audit/SKILL.md. Agents
 // that surface it as a slash command invoke /web-audit; the rest are pointed at
@@ -50,67 +51,11 @@ import { join } from 'node:path';
 // audit per URL. The agent (the model) follows SKILL.md: it gathers evidence
 // with evidence/cli.mjs, decides which tools to run, reasons, and judges the
 // principles. Nothing about the audit is deterministic here.
-const skillPrompt = (url, siteDir) =>
-  `Read the file .claude/skills/web-audit/SKILL.md and follow its ` +
-  `instructions exactly, with these arguments: ${url} --out ${siteDir}`;
-
-const slashPrompt = (url, siteDir) => `/web-audit ${url} --out ${siteDir}`;
-
-// SINGLE source of truth for headless invocation per agent. Each entry is a
-// thin wrapper: {bin, prompt, args} all pointing at the same skill against a
-// URL. ADDING AN AGENT = ADDING ONE ENTRY HERE (and a thin per-agent command
-// file so the slash command works interactively; see runner/README.md).
-const AGENTS = {
-  claude: {
-    bin: 'claude',
-    prompt: slashPrompt,
-    args: (prompt, { maxTurns }) => [
-      '-p', prompt,
-      '--output-format', 'json',
-      '--max-turns', String(maxTurns),
-      // Scoped permissions instead of a blanket bypass. Bash(node:*) lets the
-      // agent run the evidence primitives (node evidence/cli.mjs ...); npx lets
-      // it query the Modern Web Guidance feed and run Lighthouse if it chooses.
-      '--allowedTools',
-      'Read,Write,Edit,Glob,Grep,Bash(node:*),Bash(npx:*),Bash(mkdir:*),Bash(ffmpeg:*)',
-    ],
-  },
-  codex: {
-    bin: 'codex',
-    prompt: skillPrompt,
-    // workspace-write keeps file edits sandboxed to the repo. If Chrome can't
-    // reach the network from the sandbox, run inside a container with
-    // --dangerously-bypass-approvals-and-sandbox instead.
-    args: (prompt) => ['exec', '--json', '--sandbox', 'workspace-write', prompt],
-  },
-  gemini: {
-    bin: 'gemini',
-    prompt: skillPrompt,
-    // --yolo auto-approves every tool call: run untrusted sites in a container.
-    args: (prompt) => ['-p', prompt, '--yolo', '--output-format', 'json'],
-  },
-  antigravity: {
-    bin: 'agy',
-    prompt: skillPrompt,
-    // No reliable JSON output mode yet; we keep raw stdout in run.json.
-    args: (prompt) => ['-p', prompt, '--dangerously-skip-permissions'],
-  },
-  copilot: {
-    bin: 'copilot',
-    prompt: skillPrompt,
-    // GitHub Copilot CLI: headless prompt with auto tool approval. The repo's
-    // .github/copilot-instructions.md + prompts/web-audit.prompt.md point it at
-    // the same skill. Run untrusted sites in a container.
-    args: (prompt) => ['-p', prompt, '--allow-all-tools'],
-  },
-  opencode: {
-    bin: 'opencode',
-    prompt: skillPrompt,
-    // opencode headless run. It reads AGENTS.md and .opencode/command/web-audit
-    // from the repo; here we pass the skill prompt directly for batch use.
-    args: (prompt) => ['run', prompt],
-  },
-};
+//
+// HEADLESS / CI / BATCH PATH (uses API tokens). The per-agent invocation map is
+// the single source of truth in runner/agents.mjs; ADDING AN AGENT = ADDING ONE
+// ENTRY THERE. For an INDIVIDUAL, the default subscription-friendly path is to
+// run /web-audit inside your own agent session instead (see README).
 
 const args = parseArgs(process.argv.slice(2));
 const agentName = args.agent ?? 'claude';
