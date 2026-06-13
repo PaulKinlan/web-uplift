@@ -28,17 +28,17 @@
  * prints the exact command per agent so the wiring can be validated even when a
  * given CLI is not installed.
  *
- * Reports land in <out>/<agent>/<site-slug>/ so the same URL list can be run
- * through several agents and compared. Resumable: a URL is skipped if its
- * report.json already exists. Each audit drives its own headless Chrome through
- * the repo's evidence primitives (node evidence/cli.mjs, raw CDP), launched per
- * run with an ephemeral profile, so concurrent runs don't share state. This
- * runner ORCHESTRATES the fan-out; it contains no checks.
+ * Reports land in retained run directories: <out>/<site-slug>/<runId>/ with a
+ * <out>/<site-slug>/latest pointer. Each audit drives its own headless Chrome
+ * through the repo's evidence primitives (node evidence/cli.mjs, raw CDP),
+ * launched per run with an ephemeral profile, so concurrent runs don't share
+ * state. This runner ORCHESTRATES the fan-out; it contains no checks.
  */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AGENTS } from './agents.mjs';
+import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 
 // The one canonical methodology is .claude/skills/web-audit/SKILL.md. Agents
 // that surface it as a slash command invoke /web-audit; the rest are pointed at
@@ -81,7 +81,7 @@ if (!urls.length) {
   process.exit(1);
 }
 
-console.log(`${urls.length} URLs via ${agentName}, concurrency ${concurrency}, output -> ${outDir}/${agentName}/`);
+console.log(`${urls.length} URLs via ${agentName}, concurrency ${concurrency}, output -> ${outDir}/`);
 
 const queue = [...urls];
 const failures = [];
@@ -96,12 +96,11 @@ if (failures.length) {
 async function worker() {
   while (queue.length) {
     const url = queue.shift();
-    const siteDir = join(outDir, agentName, slugify(url));
+    const planned = args['dry-run']
+      ? dryRunDir(url)
+      : runDir(outDir, url, makeRunId());
+    const siteDir = planned.dir;
 
-    if (await exists(join(siteDir, 'report.json'))) {
-      console.log(`skip (exists)  ${url}`);
-      continue;
-    }
     if (args['dry-run']) {
       const prompt = agent.prompt(url, siteDir);
       console.log(`would run      ${agent.bin} ${agent.args(prompt, { maxTurns }).join(' ')}`);
@@ -114,12 +113,36 @@ async function worker() {
       const result = await runAgent(url, siteDir);
       await writeFile(join(siteDir, 'run.json'), result);
       const ok = await exists(join(siteDir, 'report.json'));
+      if (ok) {
+        await annotateReport(siteDir, { agent: agentName, runId: planned.runId });
+        updateLatest(planned.hostRoot, planned.runId);
+      }
       console.log(`${ok ? 'done' : 'NO REPORT'}     ${url}`);
       if (!ok) failures.push({ url, reason: 'finished without report.json' });
     } catch (err) {
       failures.push({ url, reason: String(err) });
       console.error(`failed         ${url}: ${err}`);
     }
+  }
+}
+
+function dryRunDir(url) {
+  const host = hostSlug(url);
+  const hostRoot = join(outDir, host);
+  const runId = '<timestamp>';
+  return { dir: join(hostRoot, runId), hostRoot, host, runId };
+}
+
+async function annotateReport(siteDir, meta) {
+  const reportPath = join(siteDir, 'report.json');
+  try {
+    const report = JSON.parse(await readFile(reportPath, 'utf8'));
+    report.agent = report.agent ?? meta.agent;
+    report.runId = report.runId ?? meta.runId;
+    await writeFile(reportPath, JSON.stringify(report, null, 2) + '\n');
+  } catch {
+    // If the model wrote an invalid report, keep the original file so the
+    // failure can be inspected instead of hiding it behind runner metadata.
   }
 }
 
@@ -189,7 +212,7 @@ async function collectUrls() {
 }
 
 function slugify(url) {
-  return new URL(url).host.replace(/[^a-z0-9.-]/gi, '_');
+  return hostSlug(url);
 }
 
 async function exists(path) {

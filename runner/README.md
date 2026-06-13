@@ -136,10 +136,11 @@ Like the batch runner this is the **headless / CI** path (API tokens). The
 default for an individual is to run the same loop in-session:
 `/web-audit <url> --source <dir> --fix`.
 
-Reports land in `reports/<agent>/<site>/`, so running the same URL list
-through several agents gives a side-by-side comparison  - 
-`aggregate/aggregate.mjs` adds a per-agent breakdown when it sees more than
-one. Claude invokes the `/web-audit` skill; the other CLIs are pointed at
+Batch audit reports land in retained run directories,
+`reports/<site>/<runId>/`, with a `latest` pointer under each site. The batch
+runner annotates generated reports with the headless agent name, so
+`aggregate/aggregate.mjs` can still add a per-agent breakdown when it sees more
+than one. Claude invokes the `/web-audit` skill; the other CLIs are pointed at
 [.claude/skills/web-audit/SKILL.md](../.claude/skills/web-audit/SKILL.md)
 directly (it's plain markdown instructions any agent can follow).
 

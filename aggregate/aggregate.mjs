@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Merge report.json files (any depth under the reports dir - the batch
- * runner writes reports/<agent>/<site>/report.json) into a cross-site
+ * Merge report.json files (any depth under the reports dir - retained runs use
+ * reports/<site>/<runId>/report.json, and legacy flat batch runs used
+ * reports/<agent>/<site>/report.json) into a cross-site
  * summary: which modern-UX principles are violated most, which Modern Web
  * Guidance categories show up most, severity distribution, and a per-agent
  * breakdown for cross-agent comparison.
@@ -10,6 +11,7 @@
  */
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, sep } from 'node:path';
+import { AGENT_NAMES } from '../runner/agents.mjs';
 
 const reportsDir = argValue('--reports') ?? 'reports';
 const outFile = argValue('--out') ?? join(reportsDir, 'summary.md');
@@ -21,10 +23,12 @@ for (const entry of entries) {
   const path = join(entry.parentPath ?? entry.path, entry.name);
   try {
     const report = JSON.parse(await readFile(path, 'utf8'));
-    // reports/<agent>/<site>/report.json - first path segment under the
-    // reports dir is the agent name (older flat layouts fall back to "claude").
+    // Layouts supported:
+    //   reports/<agent>/<site>/report.json          older flat batch output
+    //   reports/<site>/<runId>/report.json          retained run output
+    // New retained reports are annotated with report.agent by run-batch.
     const rel = path.slice(reportsDir.length + 1).split(sep);
-    report.agent = rel.length > 2 ? rel[0] : 'claude';
+    report.agent = report.agent ?? (AGENT_NAMES.includes(rel[0]) ? rel[0] : 'unknown');
     sites.push(report);
   } catch {
     /* unreadable report - skip */

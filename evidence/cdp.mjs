@@ -144,12 +144,18 @@ export async function newSession(port, { log = () => {} } = {}) {
 // To get a clean, fully-reloaded document for each check (and to re-run the
 // scenario's mount + injected styles from scratch), we always route through
 // about:blank first, forcing a real load of the target URL.
-export async function navigate(client, url, { settleMs = 1200, log = () => {} } = {}) {
+export async function navigate(
+  client,
+  url,
+  { settleMs = 1200, log = () => {}, beforeTargetNavigate = null } = {},
+) {
   const { Page } = client;
 
   const blanked = Page.loadEventFired();
   await Page.navigate({ url: 'about:blank' });
   await blanked;
+
+  if (beforeTargetNavigate) await beforeTargetNavigate();
 
   const loaded = Page.loadEventFired();
   await Page.navigate({ url });

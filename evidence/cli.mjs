@@ -93,8 +93,11 @@ async function applyConditions(client, opts, log) {
 
 // screenshot: Page.captureScreenshot. Optionally clip to a selector's box.
 async function screenshot(client, url, opts, log) {
-  await navigate(client, url, { settleMs: opts.wait, log });
-  await applyConditions(client, opts, log);
+  await navigate(client, url, {
+    settleMs: opts.wait,
+    log,
+    beforeTargetNavigate: () => applyConditions(client, opts, log),
+  });
   await sleep(250);
 
   let clip;
@@ -127,8 +130,11 @@ async function screenshot(client, url, opts, log) {
 // --interact <js> (or --interact-file) is model-supplied code run after capture
 // starts, so the model can trigger the transition/animation it wants to record.
 async function video(client, url, opts, log) {
-  await navigate(client, url, { settleMs: opts.wait, log });
-  await applyConditions(client, opts, log);
+  await navigate(client, url, {
+    settleMs: opts.wait,
+    log,
+    beforeTargetNavigate: () => applyConditions(client, opts, log),
+  });
 
   const frameDir = mkdtempSync(join(tmpdir(), 'web-uplift-frames-'));
   const frames = [];
@@ -213,8 +219,11 @@ async function video(client, url, opts, log) {
 // NOT hand the model the raw multi-MB snapshot; we stream it, parse the node
 // table, and return aggregate counts by constructor/type plus totals.
 async function heap(client, url, opts, log) {
-  await navigate(client, url, { settleMs: opts.wait, log });
-  await applyConditions(client, opts, log);
+  await navigate(client, url, {
+    settleMs: opts.wait,
+    log,
+    beforeTargetNavigate: () => applyConditions(client, opts, log),
+  });
 
   // Optionally let the model exercise the page first (e.g. open/close a dialog
   // N times) so retained growth shows up.
@@ -307,8 +316,11 @@ function summariseHeapSnapshot(raw) {
 async function layout(client, url, opts, log) {
   // Install observers BEFORE navigation completes settling so buffered entries
   // (and late shifts) are captured.
-  await navigate(client, url, { settleMs: 0, log });
-  await applyConditions(client, opts, log);
+  await navigate(client, url, {
+    settleMs: 0,
+    log,
+    beforeTargetNavigate: () => applyConditions(client, opts, log),
+  });
   await client.Runtime.evaluate({
     expression: `
       window.__cls = 0;
@@ -383,8 +395,11 @@ async function layout(client, url, opts, log) {
 // dom: serialise the DOM, computed styles for a set of selectors, the page's
 // outer HTML and collected CSS text, and (with --source) the local source tree.
 async function dom(client, url, opts, log) {
-  await navigate(client, url, { settleMs: opts.wait, log });
-  await applyConditions(client, opts, log);
+  await navigate(client, url, {
+    settleMs: opts.wait,
+    log,
+    beforeTargetNavigate: () => applyConditions(client, opts, log),
+  });
   await sleep(150);
 
   const selectors = opts.selector
@@ -470,8 +485,11 @@ function readSourceTree(dir, base = dir, acc = { files: [] }) {
 // evaluate: run a model-supplied expression in the page. The model's escape
 // hatch for ad-hoc probes and static tests it writes on the spot.
 async function evaluateCmd(client, url, opts, log) {
-  await navigate(client, url, { settleMs: opts.wait, log });
-  await applyConditions(client, opts, log);
+  await navigate(client, url, {
+    settleMs: opts.wait,
+    log,
+    beforeTargetNavigate: () => applyConditions(client, opts, log),
+  });
   await sleep(150);
   if (opts.interact) await evaluate(client, opts.interact);
   const expr = opts.expr;
@@ -632,20 +650,30 @@ function summariseTrace(events) {
 // build entries. Response bodies are fetched as base64 via Network.getResponseBody
 // (CDP returns a string; no Node Buffer involved).
 async function har(client, url, opts, log) {
-  const requests = new Map(); // requestId -> aggregate record
-  const order = [];
+  const active = new Map(); // requestId -> current aggregate record
+  const records = []; // one record per HAR entry; redirects reuse requestId but get their own entry
 
   client.Network.requestWillBeSent((p) => {
-    if (!requests.has(p.requestId)) {
-      order.push(p.requestId);
-      requests.set(p.requestId, {});
+    let rec = active.get(p.requestId);
+    if (rec && p.redirectResponse) {
+      // CDP reuses requestId across a redirect chain. Preserve the completed
+      // redirect response as its own HAR entry before starting the next request.
+      rec.response = p.redirectResponse;
+      rec.endTs = p.timestamp;
+      rec.encodedDataLength = p.redirectResponse.encodedDataLength;
+      rec.redirectedTo = p.request.url;
+      rec = null;
     }
-    const rec = requests.get(p.requestId);
-    // A redirect reuses the requestId; keep the latest request but remember the
-    // first wall-clock start.
+
+    if (!rec) {
+      rec = { requestId: p.requestId };
+      records.push(rec);
+      active.set(p.requestId, rec);
+    }
+
     rec.request = p.request;
-    rec.wallTime = rec.wallTime ?? p.wallTime;
-    rec.startTs = rec.startTs ?? p.timestamp;
+    rec.wallTime = p.wallTime;
+    rec.startTs = p.timestamp;
     rec.initiator = p.initiator;
     rec.type = p.type;
     // Priority: capture the INITIAL priority off the request now; a later
@@ -664,11 +692,11 @@ async function har(client, url, opts, log) {
   // request after it was sent; the last value is the priority Chrome actually
   // scheduled with, so it overrides the initial priority for _priority.final.
   client.Network.resourceChangedPriority?.((p) => {
-    const rec = requests.get(p.requestId);
+    const rec = active.get(p.requestId);
     if (rec && p.newPriority) rec.finalPriority = p.newPriority;
   });
   client.Network.responseReceived((p) => {
-    const rec = requests.get(p.requestId);
+    const rec = active.get(p.requestId);
     if (rec) {
       rec.response = p.response;
       rec.type = p.type || rec.type;
@@ -680,14 +708,14 @@ async function har(client, url, opts, log) {
     }
   });
   client.Network.loadingFinished((p) => {
-    const rec = requests.get(p.requestId);
+    const rec = active.get(p.requestId);
     if (rec) {
       rec.endTs = p.timestamp;
       rec.encodedDataLength = p.encodedDataLength;
     }
   });
   client.Network.loadingFailed((p) => {
-    const rec = requests.get(p.requestId);
+    const rec = active.get(p.requestId);
     if (rec) {
       rec.endTs = p.timestamp;
       rec.failed = p.errorText || 'failed';
@@ -715,11 +743,10 @@ async function har(client, url, opts, log) {
 
   // Optionally fetch response bodies (base64 via the CDP string result).
   if (opts.bodies) {
-    for (const id of order) {
-      const rec = requests.get(id);
-      if (!rec.response || rec.failed) continue;
+    for (const rec of records) {
+      if (!rec.response || rec.failed || rec.redirectedTo) continue;
       try {
-        const body = await client.Network.getResponseBody({ requestId: id });
+        const body = await client.Network.getResponseBody({ requestId: rec.requestId });
         rec.body = body; // { body: string, base64Encoded: bool }
       } catch {
         // Some bodies (e.g. redirects, data: URIs) are not retrievable.
@@ -727,7 +754,7 @@ async function har(client, url, opts, log) {
     }
   }
 
-  const har12 = buildHar(requests, order, log);
+  const har12 = buildHar(records, log);
   const out = opts.out || derivedOut(url, 'network', 'har');
   writeFileSync(out, JSON.stringify(har12, null, 2) + '\n');
 
@@ -1058,10 +1085,9 @@ function harInitiator(init) {
 // are monotonic seconds (Network timestamp); we use wallTime for startedDateTime
 // and the monotonic delta for the entry time. Timing detail comes from
 // response.timing where present.
-function buildHar(requests, order, log) {
+function buildHar(records, log) {
   const entries = [];
-  for (const id of order) {
-    const rec = requests.get(id);
+  for (const rec of records) {
     if (!rec.request) continue;
     const req = rec.request;
     const res = rec.response;

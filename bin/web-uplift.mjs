@@ -169,7 +169,8 @@ Options:
   --target <dir>   Project root to install into (default: cwd).
   --dry-run        Print the placement plan without writing anything.
 
-Copies the canonical skill + evidence CLIs under .web-uplift/ and writes each
+Copies the canonical skill + evidence CLIs under .web-uplift/ with the small
+runtime dependency closure needed by the raw-CDP evidence CLI, then writes each
 agent's thin command wrapper (which only POINTS at the skill). Idempotent: an
 existing instructions snippet is not duplicated. Then run /web-audit <url>
 inside your agent session (uses your subscription).`);
@@ -194,6 +195,7 @@ inside your agent session (uses your subscription).`);
   // without depending on this package's checkout layout.
   const vendorRoot = join(projectRoot, '.web-uplift');
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'evidence'), to: join(vendorRoot, 'evidence'), what: 'evidence primitives (raw-CDP CLI)' });
+  plan.push(...dependencyCopySteps(['chrome-remote-interface'], join(vendorRoot, 'node_modules')));
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, '.claude/skills/web-audit/SKILL.md'), to: join(vendorRoot, 'skill', 'SKILL.md'), what: 'canonical web-audit SKILL.md' });
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'principles/principles.json'), to: join(vendorRoot, 'principles', 'principles.json'), what: 'principles spec' });
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'schema'), to: join(vendorRoot, 'schema'), what: 'findings + config schema' });
@@ -253,6 +255,35 @@ function copyDir(from, to) {
     if (statSync(src).isDirectory()) copyDir(src, dst);
     else copyFileSync(src, dst);
   }
+}
+
+function dependencyCopySteps(rootNames, destNodeModules) {
+  const seen = new Set();
+  const steps = [];
+  const visit = (name) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+
+    const pkgDir = join(PKG_ROOT, 'node_modules', ...name.split('/'));
+    const pkgJsonPath = join(pkgDir, 'package.json');
+    if (!existsSync(pkgJsonPath)) {
+      throw new Error(
+        `Cannot vendor dependency "${name}" because ${pkgJsonPath} does not exist. ` +
+          'Run npm install in the web-uplift package first.',
+      );
+    }
+
+    const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
+    for (const dep of Object.keys(pkg.dependencies ?? {})) visit(dep);
+    steps.push({
+      action: 'copy-dir',
+      from: pkgDir,
+      to: join(destNodeModules, ...name.split('/')),
+      what: `evidence runtime dependency: ${name}`,
+    });
+  };
+  for (const name of rootNames) visit(name);
+  return steps;
 }
 
 // --- passthrough -----------------------------------------------------------

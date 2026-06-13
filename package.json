@@ -45,6 +45,7 @@
     "principles/",
     "schema/",
     "guidance/",
+    "tests/",
     ".claude/skills/web-audit/SKILL.md",
     ".claude-plugin/",
     "AGENTS.md",
@@ -54,6 +55,7 @@
   ],
   "scripts": {
     "playground": "npx -y serve playground -l 8080",
+    "test": "node tests/regression.mjs",
     "evidence": "node evidence/cli.mjs",
     "audit": "node runner/run-batch.mjs",
     "batch": "node runner/run-batch.mjs",
@@ -68,5 +70,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
   }
 }

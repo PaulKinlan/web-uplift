@@ -1,0 +1,127 @@
+#!/usr/bin/env node
+import http from 'node:http';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { gather } from '../evidence/cli.mjs';
+
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
+
+try {
+  testInstalledEvidenceCli();
+  await testPreNavigationEmulation();
+  await testHarRedirects();
+  testBatchDryRunUsesRetainedDirs();
+  console.log('regression tests OK');
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
+}
+
+function run(command, args, opts = {}) {
+  return spawnSync(command, args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    ...opts,
+  });
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function testInstalledEvidenceCli() {
+  const target = join(tmp, 'installed-target');
+  const install = run(process.execPath, [
+    'bin/web-uplift.mjs',
+    'install',
+    '--agent',
+    'codex',
+    '--target',
+    target,
+  ]);
+  assert(install.status === 0, `install failed: ${install.stderr || install.stdout}`);
+
+  const evidenceUsage = run(process.execPath, ['.web-uplift/evidence/cli.mjs'], {
+    cwd: target,
+  });
+  assert(evidenceUsage.status === 1, 'evidence CLI without args should print usage and exit 1');
+  assert(
+    evidenceUsage.stderr.includes('Usage: node evidence/cli.mjs') &&
+      !evidenceUsage.stderr.includes('ERR_MODULE_NOT_FOUND'),
+    `installed evidence CLI did not load cleanly:\n${evidenceUsage.stderr}`,
+  );
+}
+
+async function testPreNavigationEmulation() {
+  const html =
+    '<!doctype html><script>' +
+    "window.initialReduce = matchMedia('(prefers-reduced-motion: reduce)').matches;" +
+    '</script>';
+  const value = await gather(
+    'evaluate',
+    `data:text/html,${encodeURIComponent(html)}`,
+    {
+      quiet: true,
+      wait: 0,
+      emulateMedia: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+      expr:
+        "({ initial: window.initialReduce, current: matchMedia('(prefers-reduced-motion: reduce)').matches })",
+    },
+  );
+  assert(value.initial === true, `emulated media was not visible during load: ${JSON.stringify(value)}`);
+  assert(value.current === true, `emulated media was not visible after load: ${JSON.stringify(value)}`);
+}
+
+async function testHarRedirects() {
+  const server = http.createServer((req, res) => {
+    if (req.url === '/start') {
+      res.writeHead(302, { Location: '/final' });
+      res.end('redirecting');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<!doctype html><title>ok</title><link rel="icon" href="data:,">ok');
+  });
+
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const out = join(tmp, 'network.har');
+    const result = await gather('har', `http://127.0.0.1:${port}/start`, {
+      quiet: true,
+      wait: 250,
+      out,
+    });
+    assert(result.statusBreakdown['302'] === 1, `HAR status breakdown missed redirect: ${JSON.stringify(result.statusBreakdown)}`);
+
+    const summary = JSON.parse(readFileSync(join(tmp, 'network-summary.json'), 'utf8'));
+    assert(
+      summary.hygiene.redirects.some((r) => r.status === 302 && r.location === '/final'),
+      `HAR summary missed redirect hygiene entry: ${JSON.stringify(summary.hygiene.redirects)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+function testBatchDryRunUsesRetainedDirs() {
+  const reports = join(tmp, 'reports');
+  const result = run(process.execPath, [
+    'runner/run-batch.mjs',
+    '--dry-run',
+    '--agent',
+    'codex',
+    '--out',
+    reports,
+    'https://example.com',
+  ]);
+  assert(result.status === 0, `batch dry-run failed: ${result.stderr || result.stdout}`);
+  assert(
+    result.stdout.includes(`${reports}/example_com/<timestamp>`),
+    `batch dry-run did not use retained run dir:\n${result.stdout}`,
+  );
+  assert(!result.stdout.includes(`${reports}/codex/`), `batch dry-run still used old agent prefix:\n${result.stdout}`);
+}
