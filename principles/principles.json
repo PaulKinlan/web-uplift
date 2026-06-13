@@ -1,84 +1,138 @@
 {
-  "note": "Una Kravets' five core principles for modern UX, from her Google I/O 2026 talk 'What's new in Web UI' (https://www.youtube.com/watch?v=uT7MVcCQ4rw). That talk is the SOURCE OF TRUTH for this file. IMPORTANT: only two principles are confirmed here ('adapt-to-the-user' and 'adapt-to-the-device'). The remaining three are TODO placeholders and MUST be filled in from the talk; do NOT invent them. See PLAN.md open question #1.",
+  "note": "Una Kravets' five core principles for modern UX, from her Google I/O 2026 talk 'What's new in Web UI' (https://www.youtube.com/watch?v=uT7MVcCQ4rw). That talk is the SOURCE OF TRUTH. All five are now confirmed from the talk transcript (she states them as a list and recaps them at the end). Checks are derived from the APIs and patterns she demonstrates under each principle.",
   "source": "https://www.youtube.com/watch?v=uT7MVcCQ4rw",
   "talkTitle": "What's new in Web UI (Google I/O 2026)",
   "author": "Una Kravets",
   "principles": [
     {
-      "id": "adapt-to-the-user",
-      "title": "Adapt to the user",
+      "id": "respect-user-preferences",
+      "title": "Respect user preferences",
       "status": "confirmed",
-      "description": "The interface should respect and respond to the user's stated and system-level preferences (theme, motion, contrast, language, reduced data) rather than imposing a single fixed experience. A modern site reads the signals the platform already provides and adjusts.",
+      "description": "The most fundamental principle for web usability: build trust and improve accessibility by adapting to the user's stated and system-level preferences (theme, motion, contrast) rather than imposing one fixed experience. Read the signals the platform already provides and adjust.",
       "checks": [
         {
           "id": "respects-color-scheme",
           "summary": "Honours prefers-color-scheme: a usable dark mode exists and is driven by the user's preference (color-scheme / prefers-color-scheme / light-dark()), not hard-coded light only.",
           "detectableVia": "Emulate prefers-color-scheme: dark and compare rendered colors; check for a color-scheme declaration.",
-          "guidanceQuery": "dark mode prefers-color-scheme"
+          "guidanceQuery": "dark mode prefers-color-scheme light-dark"
         },
         {
           "id": "respects-reduced-motion",
-          "summary": "Honours prefers-reduced-motion: large or essential animations are reduced or removed when the user asks for less motion.",
-          "detectableVia": "Emulate prefers-reduced-motion: reduce and check that non-essential animation/auto-advance stops.",
+          "summary": "Honours prefers-reduced-motion: non-essential animations and auto-advance are reduced or removed when the user asks for less motion.",
+          "detectableVia": "Emulate prefers-reduced-motion: reduce and check that non-essential animation stops.",
           "guidanceQuery": "respect reduced motion preference accessible animation"
         },
         {
           "id": "respects-contrast",
-          "summary": "Honours prefers-contrast / forced-colors: controls and scrollbars remain visible under high-contrast preferences.",
-          "detectableVia": "Emulate prefers-contrast: more / forced-colors and check control visibility.",
-          "guidanceQuery": "high contrast prefers-contrast scrollbar visibility"
+          "summary": "Honours prefers-contrast / forced-colors: controls, text and scrollbars remain visible under high-contrast preferences.",
+          "detectableVia": "Emulate prefers-contrast: more / forced-colors and check control and text visibility.",
+          "guidanceQuery": "high contrast prefers-contrast forced colors"
         }
       ]
     },
     {
-      "id": "adapt-to-the-device",
-      "title": "Adapt to the device",
+      "id": "implement-natural-interactions",
+      "title": "Implement natural interactions",
       "status": "confirmed",
-      "description": "The interface should respond to the device and context it is rendered in (viewport size, input modality, capabilities) using modern responsive techniques, so layout and interaction work from small touch screens to large pointer-driven displays without breaking.",
+      "description": "Make interactions feel intuitive and physical. Use modern declarative motion and transition APIs so movement reflects how things move in the real world, rather than abrupt state swaps or heavy hand-rolled JavaScript.",
+      "checks": [
+        {
+          "id": "view-transitions",
+          "summary": "State and route changes use View Transitions (including same-document and scroll-driven/staggered) rather than instant, jarring swaps.",
+          "detectableVia": "Look for view-transition usage / ::view-transition pseudo-elements; observe transitions on navigation and state change.",
+          "guidanceQuery": "view transitions smooth state route change"
+        },
+        {
+          "id": "scroll-driven-animations",
+          "summary": "Scroll-linked motion uses declarative CSS scroll-driven animations (off main thread) instead of scroll event listeners.",
+          "detectableVia": "Inspect for animation-timeline: scroll()/view(); check for scroll event-listener-driven animation as an anti-pattern.",
+          "guidanceQuery": "scroll-driven animations animation-timeline"
+        },
+        {
+          "id": "physical-gestures",
+          "summary": "Gesture-driven interactions feel native (e.g. declarative overscroll/scroll-snap) rather than fighting the platform with custom pointer handlers.",
+          "detectableVia": "Check for scroll-snap / overscroll-driven gestures vs custom pointermove reimplementations.",
+          "guidanceQuery": "natural gesture interaction scroll snap overscroll"
+        }
+      ]
+    },
+    {
+      "id": "provide-guided-navigation",
+      "title": "Provide guided navigation",
+      "status": "confirmed",
+      "description": "Help users understand where they are and guide their attention through the experience, using state-aware UI and positioning rather than leaving them to orient themselves.",
+      "checks": [
+        {
+          "id": "scroll-state-aware-chrome",
+          "summary": "Sticky/affixed UI reacts to scroll state (e.g. the new scroll-state(scrolled) query) so headers and navigation respond to position instead of static or JS-driven toggling.",
+          "detectableVia": "Inspect for scroll-state container queries / scrolled state; observe header behaviour on scroll.",
+          "guidanceQuery": "scroll-state query scrolled sticky header"
+        },
+        {
+          "id": "anchored-positioning",
+          "summary": "Tooltips, popovers and menus use CSS anchor positioning (with fallback positions) so they stay attached and reposition correctly rather than being manually positioned.",
+          "detectableVia": "Inspect for anchor-name / position-anchor / position-try usage on overlays.",
+          "guidanceQuery": "anchor positioning tooltip popover position-try"
+        },
+        {
+          "id": "directs-attention",
+          "summary": "Navigation and in-page jumps guide attention (e.g. highlight effects, scroll markers/carousel markers) so the user can follow where focus moved.",
+          "detectableVia": "Check for ::highlight / scroll-marker usage and visible focus/landing cues after navigation.",
+          "guidanceQuery": "scroll marker highlight guide attention navigation"
+        }
+      ]
+    },
+    {
+      "id": "maximize-content-reduce-noise",
+      "title": "Maximize content, reduce noise",
+      "status": "confirmed",
+      "description": "Prioritise the user's content by eliminating visual clutter, application borders, and intrusive interruptions. Avoid pop-ups and banners that obscure content; use the right semantic, dismissible primitives instead of heavy custom chrome.",
+      "checks": [
+        {
+          "id": "no-intrusive-interruptions",
+          "summary": "No intrusive pop-ups, interstitials or banners that obscure content on load; overlays are dismissible and content-first.",
+          "detectableVia": "Load the page and detect modal/banner overlays that cover content before interaction.",
+          "guidanceQuery": "avoid intrusive interstitial popup content first"
+        },
+        {
+          "id": "semantic-dismissible-primitives",
+          "summary": "Overlays use the right primitive: popover (with declarative light-dismiss) for transient UI, dialog for modal flows, details for disclosure, rather than ad-hoc divs.",
+          "detectableVia": "Inspect for popover / <dialog> / <details> usage vs custom overlay divs with manual dismiss handling.",
+          "guidanceQuery": "popover dialog light dismiss semantic overlay"
+        },
+        {
+          "id": "reduced-chrome",
+          "summary": "Minimise non-content chrome and borders so the content is the focus, not the application frame.",
+          "detectableVia": "Assess proportion of viewport given to chrome vs content; flag heavy persistent frames.",
+          "guidanceQuery": "reduce visual clutter maximize content"
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-the-form-factor",
+      "title": "Adapt to the form factor",
+      "status": "confirmed",
+      "description": "Account for the form factor users actually access the site from. We design and code on desktop then resize to check small screens, but a modern experience genuinely adapts layout and interaction across viewports and input types using modern responsive techniques.",
       "checks": [
         {
           "id": "responsive-no-horizontal-scroll",
-          "summary": "Layout adapts to narrow viewports with no horizontal overflow, no fixed pixel widths forcing a desktop layout on mobile, and a viewport meta tag present.",
+          "summary": "Layout adapts to narrow viewports with no horizontal overflow and no fixed pixel widths forcing a desktop layout on mobile; viewport meta present.",
           "detectableVia": "Resize to a narrow mobile viewport and check for horizontal scrollbar / clipped content; check meta viewport.",
-          "guidanceQuery": "responsive layout adapt to viewport mobile"
+          "guidanceQuery": "responsive layout adapt viewport mobile"
         },
         {
           "id": "component-level-responsiveness",
-          "summary": "Components adapt to their container (container queries) where a component is reused at different sizes, rather than relying only on global viewport breakpoints.",
-          "detectableVia": "Inspect for @container usage where components are reused at multiple widths; resize containers.",
+          "summary": "Components adapt to their container with container queries (incl. anchored container queries) where reused at different sizes, not only global viewport breakpoints.",
+          "detectableVia": "Inspect for @container usage where components are reused at multiple widths.",
           "guidanceQuery": "container queries component responsive"
         },
         {
           "id": "input-modality-aware",
-          "summary": "Touch targets are adequately sized and hover-only affordances have a non-hover fallback, so the UI works for both touch and pointer.",
-          "detectableVia": "Check tap target sizes at mobile viewport; check that hover-revealed controls are reachable without hover.",
+          "summary": "Touch targets are adequately sized and hover-only affordances have a non-hover fallback, so the UI works for touch and pointer alike.",
+          "detectableVia": "Check tap target sizes at mobile viewport; check hover-revealed controls are reachable without hover.",
           "guidanceQuery": "touch target size hover fallback pointer input"
         }
       ]
-    },
-    {
-      "id": "principle-3-todo",
-      "title": "TODO: confirm from talk",
-      "status": "todo",
-      "comment": "PLACEHOLDER. Do not invent. Fill in from Una Kravets' 'What's new in Web UI' (Google I/O 2026): https://www.youtube.com/watch?v=uT7MVcCQ4rw . Replace id, title, description, and checks with the real third principle once confirmed.",
-      "description": "",
-      "checks": []
-    },
-    {
-      "id": "principle-4-todo",
-      "title": "TODO: confirm from talk",
-      "status": "todo",
-      "comment": "PLACEHOLDER. Do not invent. Fill in from Una Kravets' 'What's new in Web UI' (Google I/O 2026): https://www.youtube.com/watch?v=uT7MVcCQ4rw . Replace id, title, description, and checks with the real fourth principle once confirmed.",
-      "description": "",
-      "checks": []
-    },
-    {
-      "id": "principle-5-todo",
-      "title": "TODO: confirm from talk",
-      "status": "todo",
-      "comment": "PLACEHOLDER. Do not invent. Fill in from Una Kravets' 'What's new in Web UI' (Google I/O 2026): https://www.youtube.com/watch?v=uT7MVcCQ4rw . Replace id, title, description, and checks with the real fifth principle once confirmed.",
-      "description": "",
-      "checks": []
     }
   ]
 }
