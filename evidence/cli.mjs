@@ -28,6 +28,14 @@
 //   evaluate <url>       Runtime.evaluate of a model-supplied expression
 //                        (--expr "<js>" or --expr-file <path>); the model's
 //                        ad-hoc-probe / on-the-fly static-test escape hatch
+//   trace <url>          Tracing.start/end over the load (+ optional --interact)
+//                        -> a devtools-loadable trace.json AND a compact
+//                        *-summary.json (FCP/LCP, long tasks, total blocking
+//                        time); the model reads the summary, never the raw trace
+//   har <url>            Network domain capture over the load (+ optional
+//                        --interact / --duration; --bodies to include response
+//                        bodies) assembled into a valid HAR 1.2 file for network
+//                        monitoring and cross-run deltas
 //
 // Common options (most primitives accept these so the model can set the
 // condition it wants to observe under, but the harness never decides them):
@@ -471,6 +479,384 @@ async function evaluateCmd(client, url, opts, log) {
   return value;
 }
 
+// trace: record a DevTools performance trace via the Tracing domain over the
+// load (and an optional --interact window), write a devtools-loadable trace.json
+// AND a compact, model-readable summary (key timings, long tasks, blocking).
+// The model reads the summary, never the multi-MB raw trace.
+async function trace(client, url, opts, log) {
+  // The category set DevTools itself records for a performance profile, so the
+  // resulting trace.json loads in chrome://tracing and the DevTools Performance
+  // panel. We keep the devtools.timeline + disabled-by-default-devtools.timeline
+  // families that carry navigation, paint, long-task and main-thread events.
+  const categories = [
+    '-*',
+    'devtools.timeline',
+    'disabled-by-default-devtools.timeline',
+    'disabled-by-default-devtools.timeline.frame',
+    'disabled-by-default-devtools.timeline.stack',
+    'disabled-by-default-v8.cpu_profiler',
+    'v8.execute',
+    'blink.user_timing',
+    'loading',
+    'latencyInfo',
+    'toplevel',
+    'rail',
+  ];
+
+  const events = [];
+  const onData = (params) => {
+    if (params.value) for (const e of params.value) events.push(e);
+  };
+  client.Tracing.dataCollected(onData);
+
+  // Start tracing on a clean about:blank, then navigate so the whole load is in
+  // the trace. navigate() already routes through about:blank, but we begin the
+  // trace first so navigationStart is captured.
+  await client.Page.navigate({ url: 'about:blank' });
+  await sleep(150);
+  await applyConditions(client, opts, log);
+
+  await client.Tracing.start({
+    categories: categories.join(','),
+    transferMode: 'ReportEvents',
+    options: 'sampling-frequency=10000',
+  });
+  log('[evidence] tracing started; navigating');
+
+  const loaded = client.Page.loadEventFired();
+  await client.Page.navigate({ url });
+  await loaded;
+  log(`[evidence] loaded ${url}`);
+
+  if (opts.interact) {
+    try {
+      await evaluate(client, opts.interact);
+    } catch (err) {
+      log(`[evidence] interact script error: ${err.message.split('\n')[0]}`);
+    }
+  }
+  await sleep(opts.wait);
+
+  const done = new Promise((resolve) => client.Tracing.tracingComplete(resolve));
+  await client.Tracing.end();
+  await done;
+  log(`[evidence] tracing complete: ${events.length} events`);
+
+  // The devtools-loadable artifact is the raw event array under { traceEvents }.
+  const traceOut = opts.out || derivedOut(url, 'trace', 'json');
+  writeFileSync(traceOut, JSON.stringify({ traceEvents: events }, null, 0) + '\n');
+
+  const summary = summariseTrace(events);
+  const summaryOut = traceOut.replace(/\.json$/, '') + '-summary.json';
+  writeFileSync(summaryOut, JSON.stringify(summary, null, 2) + '\n');
+
+  return { artifact: traceOut, summaryArtifact: summaryOut, ...summary };
+}
+
+// Reduce a raw DevTools trace to the timings a model needs: navigationStart,
+// First/Largest Contentful Paint (derived from the timeline markers), long
+// tasks, total main-thread blocking time, and the trace window. We never hand
+// the model the raw events.
+function summariseTrace(events) {
+  let navStartTs = null;
+  let fcpTs = null;
+  let lcpTs = null;
+  let domContentLoadedTs = null;
+  let loadTs = null;
+  let minTs = Infinity;
+  let maxTs = -Infinity;
+  const longTasks = [];
+
+  for (const e of events) {
+    // Only count real timeline timestamps. Metadata/global events carry ts 0 (or
+    // a tiny value) which would otherwise blow up the trace-window calculation.
+    if (typeof e.ts === 'number' && e.ts > 0) {
+      if (e.ts < minTs) minTs = e.ts;
+      if (e.ts > maxTs) maxTs = e.ts;
+    }
+    const name = e.name;
+    if (name === 'navigationStart' && navStartTs === null) navStartTs = e.ts;
+    else if (name === 'firstContentfulPaint' && fcpTs === null) fcpTs = e.ts;
+    else if (
+      // LCP candidate markers; keep the last (largest) one seen.
+      name === 'largestContentfulPaint::Candidate' ||
+      name === 'largestContentfulPaint::Main'
+    ) {
+      lcpTs = e.ts;
+    } else if (name === 'domContentLoadedEventEnd' && domContentLoadedTs === null) {
+      domContentLoadedTs = e.ts;
+    } else if (name === 'loadEventEnd' && loadTs === null) {
+      loadTs = e.ts;
+    } else if (name === 'RunTask' && e.ph === 'X' && typeof e.dur === 'number') {
+      // RunTask durations are microseconds; a long task is > 50ms.
+      const ms = e.dur / 1000;
+      if (ms >= 50) longTasks.push({ startMs: e.ts, durationMs: round(ms) });
+    }
+  }
+
+  // navigationStart may not be emitted under every category combo; fall back to
+  // the earliest event ts so the relative timings still make sense.
+  const base = navStartTs ?? (minTs === Infinity ? null : minTs);
+  const rel = (ts) => (base != null && ts != null ? round((ts - base) / 1000) : null);
+
+  const totalBlockingMs = longTasks.reduce((acc, t) => acc + Math.max(0, t.durationMs - 50), 0);
+
+  return {
+    timings: {
+      navigationStartMs: 0,
+      firstContentfulPaintMs: rel(fcpTs),
+      largestContentfulPaintMs: rel(lcpTs),
+      domContentLoadedMs: rel(domContentLoadedTs),
+      loadEventEndMs: rel(loadTs),
+      traceDurationMs: minTs === Infinity ? null : round((maxTs - minTs) / 1000),
+    },
+    mainThread: {
+      longTaskCount: longTasks.length,
+      longestTaskMs: longTasks.reduce((m, t) => Math.max(m, t.durationMs), 0),
+      totalBlockingTimeMs: round(totalBlockingMs),
+      longTasks: longTasks
+        .sort((a, b) => b.durationMs - a.durationMs)
+        .slice(0, 25)
+        .map((t) => ({ durationMs: t.durationMs, startMs: rel(t.startMs) })),
+    },
+    eventCount: events.length,
+    note: 'Compact summary of a DevTools performance trace. Timings are ms from navigationStart (or the first trace event if navigationStart was not recorded). totalBlockingTimeMs sums per-long-task time over 50ms. The raw trace.json artifact loads in the DevTools Performance panel / chrome://tracing.',
+  };
+}
+
+// har: record the network over the load (+ optional --interact / --duration)
+// via the CDP Network domain and assemble a valid HAR 1.2 log. Network.enable is
+// already on from newSession; we attach the lifecycle listeners, navigate, then
+// build entries. Response bodies are fetched as base64 via Network.getResponseBody
+// (CDP returns a string; no Node Buffer involved).
+async function har(client, url, opts, log) {
+  const requests = new Map(); // requestId -> aggregate record
+  const order = [];
+
+  client.Network.requestWillBeSent((p) => {
+    if (!requests.has(p.requestId)) {
+      order.push(p.requestId);
+      requests.set(p.requestId, {});
+    }
+    const rec = requests.get(p.requestId);
+    // A redirect reuses the requestId; keep the latest request but remember the
+    // first wall-clock start.
+    rec.request = p.request;
+    rec.wallTime = rec.wallTime ?? p.wallTime;
+    rec.startTs = rec.startTs ?? p.timestamp;
+    rec.initiator = p.initiator;
+    rec.type = p.type;
+    if (p.redirectResponse) rec.redirectResponse = p.redirectResponse;
+  });
+  client.Network.responseReceived((p) => {
+    const rec = requests.get(p.requestId);
+    if (rec) {
+      rec.response = p.response;
+      rec.type = p.type || rec.type;
+    }
+  });
+  client.Network.loadingFinished((p) => {
+    const rec = requests.get(p.requestId);
+    if (rec) {
+      rec.endTs = p.timestamp;
+      rec.encodedDataLength = p.encodedDataLength;
+    }
+  });
+  client.Network.loadingFailed((p) => {
+    const rec = requests.get(p.requestId);
+    if (rec) {
+      rec.endTs = p.timestamp;
+      rec.failed = p.errorText || 'failed';
+      rec.canceled = p.canceled;
+    }
+  });
+
+  await client.Page.navigate({ url: 'about:blank' });
+  await sleep(150);
+  await applyConditions(client, opts, log);
+
+  const loaded = client.Page.loadEventFired();
+  await client.Page.navigate({ url });
+  await loaded;
+  log(`[evidence] loaded ${url}; recording network`);
+
+  if (opts.interact) {
+    try {
+      await evaluate(client, opts.interact);
+    } catch (err) {
+      log(`[evidence] interact script error: ${err.message.split('\n')[0]}`);
+    }
+  }
+  await sleep(opts.duration || opts.wait);
+
+  // Optionally fetch response bodies (base64 via the CDP string result).
+  if (opts.bodies) {
+    for (const id of order) {
+      const rec = requests.get(id);
+      if (!rec.response || rec.failed) continue;
+      try {
+        const body = await client.Network.getResponseBody({ requestId: id });
+        rec.body = body; // { body: string, base64Encoded: bool }
+      } catch {
+        // Some bodies (e.g. redirects, data: URIs) are not retrievable.
+      }
+    }
+  }
+
+  const har12 = buildHar(requests, order, log);
+  const out = opts.out || derivedOut(url, 'network', 'har');
+  writeFileSync(out, JSON.stringify(har12, null, 2) + '\n');
+
+  const entries = har12.log.entries;
+  const totalBytes = entries.reduce((acc, e) => acc + (e.response._transferSize || 0), 0);
+  return {
+    artifact: out,
+    entryCount: entries.length,
+    totalTransferredBytes: totalBytes,
+    statusBreakdown: tallyStatuses(entries),
+    note: 'Valid HAR 1.2 log of the network over the load. entryCount/totalTransferredBytes/statusBreakdown are a quick read; the .har artifact opens in DevTools Network import and is the basis for cross-run network deltas.',
+  };
+}
+
+function tallyStatuses(entries) {
+  const out = {};
+  for (const e of entries) {
+    const k = String(e.response.status || 0);
+    out[k] = (out[k] || 0) + 1;
+  }
+  return out;
+}
+
+// Assemble HAR 1.2 from the aggregated CDP network records. Timestamps from CDP
+// are monotonic seconds (Network timestamp); we use wallTime for startedDateTime
+// and the monotonic delta for the entry time. Timing detail comes from
+// response.timing where present.
+function buildHar(requests, order, log) {
+  const entries = [];
+  for (const id of order) {
+    const rec = requests.get(id);
+    if (!rec.request) continue;
+    const req = rec.request;
+    const res = rec.response;
+    const startedDateTime = rec.wallTime
+      ? new Date(rec.wallTime * 1000).toISOString()
+      : new Date().toISOString();
+    const totalMs =
+      rec.endTs != null && rec.startTs != null
+        ? round((rec.endTs - rec.startTs) * 1000)
+        : -1;
+
+    const reqHeaders = headerArray(req.headers);
+    const resHeaders = headerArray(res?.headers);
+    const mimeType = res?.mimeType || 'x-unknown';
+    const bodySize = rec.encodedDataLength != null ? Math.round(rec.encodedDataLength) : -1;
+
+    let content = { size: res?.encodedDataLength ? Math.round(res.encodedDataLength) : 0, mimeType };
+    if (rec.body) {
+      if (rec.body.base64Encoded) {
+        content.encoding = 'base64';
+        content.text = rec.body.body;
+        content.size = approxBase64DecodedSize(rec.body.body);
+      } else {
+        content.text = rec.body.body;
+        content.size = byteLength(rec.body.body);
+      }
+    }
+
+    const timings = harTimings(res?.timing, totalMs);
+
+    entries.push({
+      startedDateTime,
+      time: totalMs < 0 ? 0 : totalMs,
+      request: {
+        method: req.method,
+        url: req.url,
+        httpVersion: res?.protocol || 'HTTP/1.1',
+        headers: reqHeaders,
+        queryString: queryString(req.url),
+        cookies: [],
+        headersSize: -1,
+        bodySize: req.postData ? byteLength(req.postData) : 0,
+        ...(req.postData
+          ? { postData: { mimeType: req.headers?.['Content-Type'] || '', text: req.postData } }
+          : {}),
+      },
+      response: {
+        status: rec.failed ? 0 : res?.status || 0,
+        statusText: rec.failed ? rec.failed : res?.statusText || '',
+        httpVersion: res?.protocol || 'HTTP/1.1',
+        headers: resHeaders,
+        cookies: [],
+        content,
+        redirectURL: res?.headers?.Location || res?.headers?.location || '',
+        headersSize: -1,
+        bodySize,
+        _transferSize: bodySize < 0 ? 0 : bodySize,
+        ...(rec.failed ? { _error: rec.failed } : {}),
+      },
+      cache: {},
+      timings,
+      _resourceType: rec.type || 'other',
+      _initiator: rec.initiator?.type || 'other',
+    });
+  }
+  log(`[evidence] HAR assembled: ${entries.length} entries`);
+  return {
+    log: {
+      version: '1.2',
+      creator: { name: 'web-uplift', version: '0.1.0' },
+      pages: [],
+      entries,
+    },
+  };
+}
+
+// CDP response.timing is in ms relative to requestTime (seconds). Convert to the
+// HAR timing phases; missing detail collapses into wait/receive.
+function harTimings(t, totalMs) {
+  if (!t) {
+    return { blocked: -1, dns: -1, connect: -1, send: 0, wait: totalMs < 0 ? 0 : totalMs, receive: 0, ssl: -1 };
+  }
+  const v = (x) => (x != null && x >= 0 ? x : -1);
+  const dns = t.dnsStart >= 0 && t.dnsEnd >= 0 ? round(t.dnsEnd - t.dnsStart) : -1;
+  const connect = t.connectStart >= 0 && t.connectEnd >= 0 ? round(t.connectEnd - t.connectStart) : -1;
+  const ssl = t.sslStart >= 0 && t.sslEnd >= 0 ? round(t.sslEnd - t.sslStart) : -1;
+  const send = t.sendStart >= 0 && t.sendEnd >= 0 ? round(t.sendEnd - t.sendStart) : 0;
+  const wait = t.receiveHeadersEnd >= 0 && t.sendEnd >= 0 ? round(t.receiveHeadersEnd - t.sendEnd) : -1;
+  const accounted = [dns, connect, send, wait].filter((x) => x > 0).reduce((a, b) => a + b, 0);
+  const receive = totalMs > 0 ? Math.max(0, round(totalMs - accounted)) : 0;
+  return { blocked: -1, dns: v(dns), connect: v(connect), ssl: v(ssl), send, wait: v(wait), receive };
+}
+
+function headerArray(headers) {
+  if (!headers) return [];
+  return Object.entries(headers).map(([name, value]) => ({ name, value: String(value) }));
+}
+
+function queryString(url) {
+  try {
+    const u = new URL(url);
+    return [...u.searchParams.entries()].map(([name, value]) => ({ name, value }));
+  } catch {
+    return [];
+  }
+}
+
+function byteLength(str) {
+  return new TextEncoder().encode(str).length;
+}
+
+function approxBase64DecodedSize(b64) {
+  // 4 base64 chars -> 3 bytes, minus padding. No Node Buffer.
+  const len = b64.length;
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((len * 3) / 4) - padding);
+}
+
+function round(n) {
+  return Math.round(n * 100) / 100;
+}
+
 const PRIMITIVES = {
   screenshot,
   video,
@@ -478,6 +864,8 @@ const PRIMITIVES = {
   layout,
   dom,
   evaluate: evaluateCmd,
+  trace,
+  har,
 };
 
 // --- argument plumbing -----------------------------------------------------
@@ -499,6 +887,7 @@ function parseArgs(argv) {
     else if (a === '--interact') args.interact = argv[++i];
     else if (a === '--interact-file') args.interact = readFileSync(argv[++i], 'utf8');
     else if (a === '--full-page') args.fullPage = true;
+    else if (a === '--bodies') args.bodies = true;
     else if (a === '--quiet') args.quiet = true;
     else args._.push(a);
   }
@@ -557,10 +946,10 @@ async function main() {
   const url = args._[1];
   if (!primitive || !url) {
     console.error(
-      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate> <url> [options]\n' +
+      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
-        '         --duration ms --fps n --full-page --quiet',
+        '         --duration ms --fps n --full-page --bodies --quiet',
     );
     process.exit(1);
   }
