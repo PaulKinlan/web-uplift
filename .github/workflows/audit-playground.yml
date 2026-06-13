@@ -1,0 +1,87 @@
+name: audit-playground
+
+# Runs the CDP auditor against the bundled playground on every push to master,
+# then commits the refreshed example report so each run is logged in the repo.
+# Skips the commit when nothing changed.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'auditor/**'
+      - 'fixer/**'
+      - 'playground/**'
+      - 'principles/**'
+      - 'schema/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/audit-playground.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      # GitHub-hosted ubuntu runners ship google-chrome-stable. Confirm and
+      # expose its path so the auditor's CDP launcher can find it.
+      - name: Locate Chrome
+        id: chrome
+        run: |
+          if [ -x /usr/bin/google-chrome-stable ]; then
+            echo "CHROME_BIN=/usr/bin/google-chrome-stable" >> "$GITHUB_ENV"
+          elif command -v google-chrome >/dev/null 2>&1; then
+            echo "CHROME_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
+          else
+            sudo apt-get update
+            sudo apt-get install -y google-chrome-stable || sudo apt-get install -y chromium-browser
+            echo "CHROME_BIN=$(command -v google-chrome-stable || command -v chromium-browser)" >> "$GITHUB_ENV"
+          fi
+          "$CHROME_BIN" --version || true
+
+      - name: Serve the playground
+        run: |
+          npx -y serve playground -l 8080 &
+          echo "SERVE_PID=$!" >> "$GITHUB_ENV"
+          # Wait for the server to answer.
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://localhost:8080/; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null -w "serve=%{http_code}\n" http://localhost:8080/
+
+      - name: Audit (issues mode)
+        run: node auditor/audit.mjs "http://localhost:8080/" --no-guidance --out examples --name playground-report
+
+      - name: Audit (fixed mode, false-positive check)
+        run: node auditor/audit.mjs "http://localhost:8080/?mode=fixed" --no-guidance --out examples --name playground-report-fixed
+
+      - name: Stop the playground server
+        if: always()
+        run: kill "$SERVE_PID" 2>/dev/null || true
+
+      - name: Commit refreshed example report (skip if unchanged)
+        run: |
+          git config user.name "Paul Kinlan"
+          git config user.email "paul.kinlan@gmail.com"
+          git add examples/playground-report.md examples/playground-report.json \
+                  examples/playground-report-fixed.md examples/playground-report-fixed.json
+          if git diff --cached --quiet; then
+            echo "No report changes; skipping commit."
+          else
+            git commit -m "ci: refresh playground audit report
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+            git push
+          fi

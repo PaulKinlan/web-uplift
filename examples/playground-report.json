@@ -1,0 +1,278 @@
+{
+  "url": "http://localhost:8080/",
+  "auditedAt": "2026-06-13T11:51:08.845Z",
+  "mode": "report",
+  "status": "completed",
+  "page": {
+    "appType": "spa",
+    "notes": "Hash-routed playground SPA."
+  },
+  "paths": [
+    {
+      "id": "no-dark-mode",
+      "description": "Scenario route #no-dark-mode",
+      "url": "http://localhost:8080/#no-dark-mode",
+      "conditions": [
+        "prefers-color-scheme: dark"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "motion",
+      "description": "Scenario route #motion",
+      "url": "http://localhost:8080/#motion",
+      "conditions": [
+        "prefers-reduced-motion: reduce"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "fixed-layout",
+      "description": "Scenario route #fixed-layout",
+      "url": "http://localhost:8080/#fixed-layout",
+      "conditions": [
+        "viewport: 360x800"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "poor-focus",
+      "description": "Scenario route #poor-focus",
+      "url": "http://localhost:8080/#poor-focus",
+      "conditions": [
+        "keyboard-only"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "layout-shift",
+      "description": "Scenario route #layout-shift",
+      "url": "http://localhost:8080/#layout-shift",
+      "conditions": [
+        "post-load layout-shift observation"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "no-container-queries",
+      "description": "Scenario route #no-container-queries",
+      "url": "http://localhost:8080/#no-container-queries",
+      "conditions": [
+        "component reused at multiple container widths"
+      ],
+      "result": "issues"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "pathId": "no-dark-mode",
+      "url": "http://localhost:8080/#no-dark-mode",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-color-scheme",
+      "severity": "high",
+      "confidence": "high",
+      "summary": "No dark-mode adaptation: the surface ignores prefers-color-scheme: dark.",
+      "evidence": "Under emulated prefers-color-scheme: dark, .ndm-card background is rgb(255, 255, 255) (computed color-scheme: \"light dark\") with no color-scheme: dark declared, so it stays a light surface.",
+      "suggestedFix": "Declare color-scheme: light dark and use light-dark() (or a prefers-color-scheme: dark block) for surface and text colors so the card follows the user preference. See Modern Web Guidance id dark-mode.",
+      "effort": "small",
+      "scenario": "no-dark-mode"
+    },
+    {
+      "id": "F-002",
+      "pathId": "motion",
+      "url": "http://localhost:8080/#motion",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-reduced-motion",
+      "severity": "high",
+      "confidence": "high",
+      "summary": "Animation keeps running under prefers-reduced-motion: reduce.",
+      "evidence": "Under emulated prefers-reduced-motion: reduce, .mv-card still has 1 running animation(s) (animation-name \"mv-slide\", duration 0.8s).",
+      "suggestedFix": "Gate the animation behind @media (prefers-reduced-motion: no-preference) so it only runs when the user has not requested reduced motion.",
+      "effort": "trivial",
+      "scenario": "motion"
+    },
+    {
+      "id": "F-003",
+      "pathId": "fixed-layout",
+      "url": "http://localhost:8080/#fixed-layout",
+      "principleId": "adapt-to-the-form-factor",
+      "principleCheckId": "responsive-no-horizontal-scroll",
+      "severity": "high",
+      "confidence": "high",
+      "summary": "Horizontal overflow at a narrow mobile viewport.",
+      "evidence": "At 360px viewport, document scrollWidth 1518px exceeds innerWidth 1440px. Viewport meta present.",
+      "suggestedFix": "Replace fixed pixel widths with width: 100%; max-width: <n> and box-sizing: border-box so the layout adapts down to small screens. Ensure a meta viewport is present.",
+      "effort": "small",
+      "scenario": "fixed-layout"
+    },
+    {
+      "id": "F-004",
+      "pathId": "poor-focus",
+      "url": "http://localhost:8080/#poor-focus",
+      "principleId": "adapt-to-the-form-factor",
+      "principleCheckId": "input-modality-aware",
+      "guidanceCategory": "accessibility",
+      "severity": "high",
+      "confidence": "high",
+      "summary": "Focus outline removed with no :focus-visible replacement.",
+      "evidence": ".pf-btn sets outline: none and no :focus-visible rule restores an outline; when focused the computed outline is none / 3px, leaving keyboard users with no visible focus indicator.",
+      "suggestedFix": "Remove the blanket outline: none and add a .pf-btn:focus-visible { outline: 3px solid <color>; outline-offset: 2px } rule so keyboard focus is clearly indicated without affecting pointer clicks.",
+      "effort": "trivial",
+      "scenario": "poor-focus"
+    },
+    {
+      "id": "F-005",
+      "pathId": "layout-shift",
+      "url": "http://localhost:8080/#layout-shift",
+      "principleId": "adapt-to-the-form-factor",
+      "principleCheckId": "responsive-no-horizontal-scroll",
+      "guidanceCategory": "performance",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "Cumulative layout shift from late content with no reserved space.",
+      "evidence": "Observed layout-shift score 0.012 after load (.ls-slot reserves 0px), as the late-injected banner pushes following content down.",
+      "suggestedFix": "Reserve the banner space up front with min-height (or aspect-ratio) on the slot so the late content does not shift surrounding layout.",
+      "effort": "trivial",
+      "scenario": "layout-shift"
+    },
+    {
+      "id": "F-006",
+      "pathId": "no-container-queries",
+      "url": "http://localhost:8080/#no-container-queries",
+      "principleId": "adapt-to-the-form-factor",
+      "principleCheckId": "component-level-responsiveness",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "Reused component does not adapt to its container (no container queries).",
+      "evidence": "The same .cq-card stays flex-direction: row inside the 240px .cq-narrow container; no @container rule or container-type is declared, so the component responds only to the viewport, not its own width.",
+      "suggestedFix": "Add container-type: inline-size to the wrapper and a @container (max-width: 320px) rule that stacks the card, so the component adapts to its container rather than the viewport.",
+      "effort": "small",
+      "scenario": "no-container-queries"
+    }
+  ],
+  "taskList": [
+    {
+      "id": "T-001",
+      "title": "No dark-mode adaptation: the surface ignores prefers-color-scheme: dark.",
+      "priority": 1,
+      "findingIds": [
+        "F-001"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-002",
+      "title": "Animation keeps running under prefers-reduced-motion: reduce.",
+      "priority": 2,
+      "findingIds": [
+        "F-002"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-003",
+      "title": "Horizontal overflow at a narrow mobile viewport.",
+      "priority": 3,
+      "findingIds": [
+        "F-003"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-004",
+      "title": "Focus outline removed with no :focus-visible replacement.",
+      "priority": 4,
+      "findingIds": [
+        "F-004"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-005",
+      "title": "Cumulative layout shift from late content with no reserved space.",
+      "priority": 5,
+      "findingIds": [
+        "F-005"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-006",
+      "title": "Reused component does not adapt to its container (no container queries).",
+      "priority": 6,
+      "findingIds": [
+        "F-006"
+      ],
+      "status": "open"
+    }
+  ],
+  "budget": {
+    "pathCount": 6,
+    "auditPasses": 1
+  },
+  "eval": {
+    "mode": "issues",
+    "expectedCount": 6,
+    "foundCount": 6,
+    "truePositives": 6,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "precision": 1,
+    "recall": 1,
+    "matched": [
+      "fixed-layout",
+      "no-dark-mode",
+      "poor-focus",
+      "layout-shift",
+      "motion",
+      "no-container-queries"
+    ],
+    "missed": [],
+    "spurious": [],
+    "principleAlignment": [
+      {
+        "scenario": "fixed-layout",
+        "expectedPrinciple": "adapt-to-the-form-factor",
+        "foundPrinciple": "adapt-to-the-form-factor",
+        "aligned": true,
+        "checkAligned": true
+      },
+      {
+        "scenario": "no-dark-mode",
+        "expectedPrinciple": "respect-user-preferences",
+        "foundPrinciple": "respect-user-preferences",
+        "aligned": true,
+        "checkAligned": true
+      },
+      {
+        "scenario": "poor-focus",
+        "expectedPrinciple": "adapt-to-the-form-factor",
+        "foundPrinciple": "adapt-to-the-form-factor",
+        "aligned": true,
+        "checkAligned": true
+      },
+      {
+        "scenario": "layout-shift",
+        "expectedPrinciple": "adapt-to-the-form-factor",
+        "foundPrinciple": "adapt-to-the-form-factor",
+        "aligned": true,
+        "checkAligned": true
+      },
+      {
+        "scenario": "motion",
+        "expectedPrinciple": "respect-user-preferences",
+        "foundPrinciple": "respect-user-preferences",
+        "aligned": true,
+        "checkAligned": true
+      },
+      {
+        "scenario": "no-container-queries",
+        "expectedPrinciple": "adapt-to-the-form-factor",
+        "foundPrinciple": "adapt-to-the-form-factor",
+        "aligned": true,
+        "checkAligned": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "url": "http://localhost:8080/?mode=fixed",
+  "auditedAt": "2026-06-13T11:50:35.506Z",
+  "mode": "report",
+  "status": "completed",
+  "page": {
+    "appType": "spa",
+    "notes": "Hash-routed playground SPA."
+  },
+  "paths": [
+    {
+      "id": "no-dark-mode",
+      "description": "Scenario route #no-dark-mode",
+      "url": "http://localhost:8080/?mode=fixed#no-dark-mode",
+      "conditions": [
+        "prefers-color-scheme: dark"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "motion",
+      "description": "Scenario route #motion",
+      "url": "http://localhost:8080/?mode=fixed#motion",
+      "conditions": [
+        "prefers-reduced-motion: reduce"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "fixed-layout",
+      "description": "Scenario route #fixed-layout",
+      "url": "http://localhost:8080/?mode=fixed#fixed-layout",
+      "conditions": [
+        "viewport: 360x800"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "poor-focus",
+      "description": "Scenario route #poor-focus",
+      "url": "http://localhost:8080/?mode=fixed#poor-focus",
+      "conditions": [
+        "keyboard-only"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "layout-shift",
+      "description": "Scenario route #layout-shift",
+      "url": "http://localhost:8080/?mode=fixed#layout-shift",
+      "conditions": [
+        "post-load layout-shift observation"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "no-container-queries",
+      "description": "Scenario route #no-container-queries",
+      "url": "http://localhost:8080/?mode=fixed#no-container-queries",
+      "conditions": [
+        "component reused at multiple container widths"
+      ],
+      "result": "pass"
+    }
+  ],
+  "findings": [],
+  "taskList": [],
+  "budget": {
+    "pathCount": 6,
+    "auditPasses": 1
+  },
+  "eval": {
+    "mode": "fixed",
+    "expectedCount": 0,
+    "foundCount": 0,
+    "truePositives": 0,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "precision": 1,
+    "recall": 1,
+    "matched": [],
+    "missed": [],
+    "spurious": [],
+    "principleAlignment": []
+  }
+}
