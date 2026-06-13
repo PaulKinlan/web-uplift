@@ -26,25 +26,56 @@ This project is the layer above: test-plan generation, principle/guidance
 evaluation, structured output, batch execution, aggregation, the fix-mode
 hill-climb, and ground-truth evals.
 
-## Phase 0 - Skeleton (this commit)
+## Phase 0 - Skeleton
 
 - [x] Repo layout, `.mcp.json`, findings/report schema, runner/aggregator.
-- [x] Principles layer (`principles/principles.json`) - 2 confirmed, 3 TODO.
+- [x] Principles layer (`principles/principles.json`) - all 5 confirmed, each
+  with detectable `checks` + `guidanceQuery`.
 - [x] Guidance integration plan (`guidance/`) - uses the npm feed.
 - [x] Playground with seeded modern-UX issues + `expected-findings.json`.
 - [x] `web-audit` skill draft (report mode + fix mode).
 
+## Phase 0.5 - Deterministic CDP auditor + fix engine (shipped)
+
+Done. The agent skill is great for open-ended exploration, but for a
+repeatable, CI-runnable, scored loop we also ship a deterministic engine that
+drives the system Chrome over the Chrome DevTools Protocol directly
+(`chrome-remote-interface`, no Playwright/Puppeteer):
+
+- [x] `auditor/audit.mjs` (`npm run audit -- <url>`): launches headless Chrome,
+  parses the ephemeral DevTools port, and runs the detectable checks via Page /
+  Runtime / DOM / CSS / Emulation (setEmulatedMedia for color-scheme +
+  reduced-motion, setDeviceMetricsOverride for narrow viewport) and a
+  layout-shift PerformanceObserver.
+- [x] Findings conform to `schema/findings.schema.json` (validated with ajv
+  2020) plus a markdown report; scored for precision/recall against
+  `playground/expected-findings.json`.
+- [x] Real run on the playground: **issues mode precision 100% / recall 100%**
+  (6/6 seeded issues, principle alignment 6/6), **`?mode=fixed` 0 findings**.
+- [x] `fixer/fix.mjs` (`npm run fix -- --target <path>`): the audit -> fix ->
+  re-audit hill-climb. Deterministic, guidance-backed transforms per issue
+  class (light-dark(), prefers-reduced-motion gate, fluid max-width,
+  :focus-visible, reserved min-height, @container). Real run takes the
+  playground **6 findings -> 0 in one pass**. `--pr` opens a demo PR via gh.
+  Architecture leaves a seam for an LLM transform path alongside the
+  deterministic one.
+- [x] Committed example report in `examples/` and a GitHub Actions workflow
+  (`.github/workflows/audit-playground.yml`) that re-audits on push to master
+  and commits the refreshed report.
+
 ## Phase 1 - Single-URL report loop, validated against ground truth
 
-- Run `/web-audit http://localhost:8080` until it reliably finds **all**
-  seeded playground issues mapped to the right principle/guidance, and finds
-  **none** in `?mode=fixed`. The false-positive check matters as much as
-  recall.
-- Tune: how aggressively the agent emulates devices/preferences, how it cites
-  guidance IDs, severity thresholds, token budget.
-- Exit criteria: full recall on the playground's labelled issues, zero
-  findings on fixed mode, report validates against
-  `schema/findings.schema.json`.
+Done by the deterministic auditor (Phase 0.5). Exit criteria met: full recall
+on the playground's labelled issues (6/6), zero findings on fixed mode, and the
+report validates against `schema/findings.schema.json`. The agent-skill variant
+can be tuned on top of the same ground truth.
+
+- [x] Find **all** seeded playground issues mapped to the right principle, and
+  **none** in `?mode=fixed`. The false-positive check matters as much as recall.
+- [x] Severity thresholds and guidance-id citation wired in (guidance ids are
+  resolved live from the `modern-web-guidance` feed when not run with
+  `--no-guidance`).
+- [x] Exit criteria: full recall, zero findings on fixed mode, schema-valid.
 
 ## Phase 2 - Explore + test-plan quality
 
@@ -89,38 +120,42 @@ hill-climb, and ground-truth evals.
   the guidance fix -> edit playground source (or switch to `?mode=fixed`) ->
   re-audit -> show it's gone.
 
+## Resolved
+
+- **Una's five principles (was open #1).** RESOLVED: all five are confirmed
+  from the talk transcript and encoded in `principles/principles.json`
+  (respect-user-preferences, implement-natural-interactions,
+  provide-guided-navigation, maximize-content-reduce-noise,
+  adapt-to-the-form-factor), each with detectable `checks` and a
+  `guidanceQuery`.
+- **Browser engine for the deterministic auditor.** RESOLVED: the system Chrome
+  driven directly over the Chrome DevTools Protocol via `chrome-remote-interface`
+  (a thin CDP client, not an automation framework). No Playwright or Puppeteer.
+  The ephemeral DevTools port is parsed from Chrome's stderr.
+- **Scoring partial matches (was part of open #4).** RESOLVED for v1: the join
+  key is the stable scenario id; principle alignment is reported separately and
+  maps the ground truth's pre-rename principle ids to the current ones. Fixed
+  mode is the false-positive guard (any finding is spurious).
+
 ## Open questions (to discuss)
 
-1. **Una's three remaining principles.** Only two of the five are confirmed
-   here: *adapt to the user* and *adapt to the device*. The other three are
-   placeholders in `principles/principles.json` and MUST be filled in from the
-   talk (https://www.youtube.com/watch?v=uT7MVcCQ4rw) before the principles
-   layer is complete. Do not invent them. Likely candidates from the modern
-   Web UI space (NOT confirmed, do not encode as fact): adapt to context/state
-   (container queries, `:has()`, scroll-driven), respect motion/interaction
-   preferences (reduced motion, smooth view transitions), and resilient/
-   accessible interactions (focus states, popover/dialog semantics) - but the
-   talk is the source of truth.
-2. **How Modern Web Guidance exposes use cases programmatically.** RESOLVED in
-   v1: the `modern-web-guidance` npm package is a machine-readable feed
-   (`search`/`retrieve`/`list`). Remaining sub-questions: version pinning (the
-   skill uses a `--skill-version` stamp), how often the feed updates, and
-   whether to cache `list` output locally for offline batch runs.
-3. **Fix-mode scope for v1.** Three options, in increasing ambition:
-   (a) task-list only (report the fixes, apply nothing); (b) generate a diff /
-   open a PR for human review; (c) apply real source fixes in place and
-   re-audit automatically. v1 ships (a) as the reliable default and (c) behind
-   `--fix` against the local playground; (b) (PR mode) is the natural next
-   step for real repos. Which becomes the default for third-party open-source
-   sites is open.
-4. **Eval ground-truth design.** `playground/expected-findings.json` labels
-   each seeded issue with the principle it violates, the guidance `id` that
-   fixes it, and a `detectableVia` note (e.g. emulate `prefers-color-scheme:
-   dark`). Open: how to score partial matches (right principle, wrong
-   guidance id?), how to handle subjective/aesthetic findings that resist a
-   binary pass/fail, and whether to add a "should NOT flag" list of acceptable
-   patterns to guard against false positives beyond fixed mode.
-5. **Emulation fidelity.** Some modern-UX issues (layout shift, container-query
+1. **Guidance feed caching / version pinning.** The `modern-web-guidance` npm
+   feed is machine-readable (`search`/`retrieve`/`list`). The auditor resolves
+   guidance ids live via `search` (skip with `--no-guidance`, which CI uses for
+   determinism). Remaining: pin a `--skill-version`, decide how often to bump,
+   and cache `list`/`retrieve` payloads locally for offline batch runs.
+2. **Fix-mode scope beyond the playground.** Shipped: (a) report-only task list,
+   (b) PR mode (`--pr`), and (c) in-place source fixes + automatic re-audit, all
+   real on the playground. Open: which becomes the default for third-party
+   open-source sites, and standing up the LLM transform path (the architecture
+   already leaves a seam for it next to the deterministic transforms) for issue
+   classes the deterministic transforms do not cover.
+3. **Eval ground-truth design (remainder).** Scoring of the seeded scenarios is
+   resolved (see Resolved above). Still open: how to handle
+   subjective/aesthetic findings that resist a binary pass/fail, and whether to
+   add a "should NOT flag" list of acceptable patterns to guard against false
+   positives beyond fixed mode.
+4. **Emulation fidelity.** Some modern-UX issues (layout shift, container-query
    breakpoints, focus-visible behaviour) depend on real device characteristics
    and input modality. How faithfully can headless DevTools emulation
    reproduce them, and where do we need real-device or headed runs?
