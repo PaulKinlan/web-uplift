@@ -32,7 +32,8 @@
     ".": "./index.mjs",
     "./evidence": "./evidence/cli.mjs",
     "./agents": "./runner/agents.mjs",
-    "./principles": "./principles/principles.json",
+    "./principles": "./knowledge/principles.json",
+    "./knowledge/principles": "./knowledge/principles.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -43,9 +44,8 @@
     "aggregate/",
     "index.mjs",
     "mcp/",
-    "principles/",
+    "knowledge/",
     "schema/",
-    "guidance/",
     "tests/",
     ".claude/skills/web-audit/SKILL.md",
     ".claude-plugin/",

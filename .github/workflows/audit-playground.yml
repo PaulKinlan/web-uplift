@@ -17,7 +17,7 @@ on:
       - 'evidence/**'
       - 'playground/**'
       - 'eval/**'
-      - 'principles/**'
+      - 'knowledge/**'
       - 'schema/**'
       - 'tests/**'
       - 'package.json'

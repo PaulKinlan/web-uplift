@@ -6,9 +6,8 @@
  *                    [--concurrency 2] [--out reports]
  *                    [--max-turns 80] [--dry-run] [--verbose]
  *
- * URLs come from positional arguments, a --urls file, or both; with neither,
- * urls/sample.txt is used if present. Invalid URLs are warned about and
- * skipped; ending up with zero URLs is an error.
+ * URLs come from positional arguments, a --urls file, or both. Invalid URLs are
+ * warned about and skipped; ending up with zero URLs is an error.
  *
  * Audits run in report mode (critique only). Fix mode is interactive and
  * source-bound (--fix --source <dir>), so it is intentionally not exposed as
@@ -75,8 +74,7 @@ if (!urls.length) {
   console.error(
     'No URLs to audit. Pass them as arguments or via a file:\n' +
     '  npm run batch -- https://example.com https://example.org\n' +
-    '  npm run batch -- --urls urls/sample.txt\n' +
-    '(with neither, urls/sample.txt is used if it exists)'
+    '  npm run batch -- --urls ./urls.txt'
   );
   process.exit(1);
 }
@@ -187,18 +185,14 @@ function linePrinter(prefix, stream) {
 
 async function collectUrls() {
   const candidates = [...args._];
-  const urlsFile = args.urls ?? (candidates.length ? null : 'urls/sample.txt');
+  const urlsFile = args.urls ?? null;
   if (urlsFile) {
     let content = '';
     try {
       content = await readFile(urlsFile, 'utf8');
     } catch (err) {
-      // The implicit sample.txt fallback is allowed to be absent;
-      // an explicitly requested file is not.
-      if (args.urls) {
-        console.error(`Could not read --urls file "${urlsFile}": ${err.message}`);
-        process.exit(1);
-      }
+      console.error(`Could not read --urls file "${urlsFile}": ${err.message}`);
+      process.exit(1);
     }
     candidates.push(
       ...content.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))

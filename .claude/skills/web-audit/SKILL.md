@@ -40,7 +40,9 @@ this project. Nothing decides for you whether a principle passes. You decide,
 by gathering evidence and reasoning over it. The repo gives you two declarative
 inputs and one generic capability:
 
-1. **Principles** - [principles/principles.json](../../../principles/principles.json):
+1. **Principles** - [knowledge/principles.json](../../../knowledge/principles.json)
+   in this repo, or `../knowledge/principles.json` when this skill is installed
+   under `.web-uplift/skill/`:
    the spec of what good looks like, as OUTCOMES. Sixteen principles: Una
    Kravets' five modern-UX principles (respect-user-preferences,
    implement-natural-interactions, provide-guided-navigation,
@@ -61,7 +63,8 @@ inputs and one generic capability:
    rationale for the set is in
    [docs/principles-analysis.md](../../../docs/principles-analysis.md).
 2. **Guidance** - Modern Web Guidance via the `modern-web-guidance` npm feed
-   (the *how*). See [guidance/lookup.md](../../../guidance/lookup.md): `search`
+   (the *how*). See [knowledge/guidance.md](../../../knowledge/guidance.md) in
+   this repo, or `../knowledge/guidance.md` when installed: `search`
    to find the recommended approach, `retrieve` to get the fix detail. Pin the
    catalog version in `principles.json` (`guidanceCatalogVersion`, currently
    `modern-web-guidance@0.0.172`) unless `web-uplift.json` overrides it.

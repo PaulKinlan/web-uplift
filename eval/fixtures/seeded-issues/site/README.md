@@ -9,7 +9,7 @@
 > [`eval/README.md`](../../../README.md).
 
 Six deliberately seeded, labelled modern-UX issues, each tied to a principle
-from [principles/principles.json](../../../../principles/principles.json) and a
+from [knowledge/principles.json](../../../../knowledge/principles.json) and a
 Modern Web Guidance use case:
 
 | Scenario | Principle | Issue | Detectable via |

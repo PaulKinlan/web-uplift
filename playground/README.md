@@ -1,7 +1,7 @@
 # Modern Web UX Playground
 
 Six labelled modern-UX scenarios, each tied to a principle from
-[principles/principles.json](../principles/principles.json) and a Modern Web
+[knowledge/principles.json](../knowledge/principles.json) and a Modern Web
 Guidance use case:
 
 | Scenario | Principle | Technique demonstrated | Inspect under |

@@ -45,7 +45,7 @@ Why, explicitly:
   for network monitoring and cross-run deltas). Each
   accepts emulated conditions (media features, viewport) the model chooses. They
   return data/artifacts and make no decisions.
-- **Principles** ([principles/principles.json](principles/principles.json)) -
+- **Principles** ([knowledge/principles.json](knowledge/principles.json)) -
   sixteen principles: Una Kravets' five modern-UX principles; the Lighthouse
   dimensions with `be-accessible` widened to `be-inclusive` and
   `follow-best-practices` narrowed (`be-fast-and-stable`, `be-discoverable`
@@ -65,7 +65,7 @@ Why, explicitly:
   - how a model recons, plans the evidence per principle, gathers it, reasons,
   judges every principle, reports against the schema, and (with `--source`)
   fixes and re-audits.
-- **Guidance** ([guidance/](guidance/)) - the `modern-web-guidance` npm feed
+- **Guidance** ([knowledge/guidance.md](knowledge/guidance.md)) - the `modern-web-guidance` npm feed
   (`search`/`retrieve`/`list`), queried live for the recommended approach and the
   fix detail.
 - **Runner** ([runner/](runner/)) - a generic fan-out that invokes the model

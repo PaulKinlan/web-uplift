@@ -3,7 +3,7 @@
 Status: ADOPTED 2026-06-13. Paul approved the full expansion - all net-new
 principles including the optional `be-agent-ready`, the `be-accessible` ->
 `be-inclusive` rename, the narrowing of `follow-best-practices`, and the
-guard-criteria design. `principles/principles.json` now reflects this document:
+guard-criteria design. `knowledge/principles.json` now reflects this document:
 15 principles, each check carries a `guides` list of Modern Web Guidance
 pointers, and every one of the 137 guides in the coverage map below is mapped
 (verified none orphaned). Each principle also carries an `applicability` block
@@ -691,7 +691,7 @@ frameworks.
   two secondaries, and a few assignments (e.g. the analytics trio to
   `be-private-and-secure`) are judgement calls flagged in-line.
 - This is intent analysis only. Nothing here has been encoded into
-  `principles/principles.json`, and no checks or `detectableVia` hints have been
+  `knowledge/principles.json`, and no checks or `detectableVia` hints have been
   drafted; that is the next step if you sign off.
 
 ### Sources

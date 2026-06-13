@@ -1,4 +1,0 @@
-# One URL per line. Lines starting with # are ignored.
-# Start with the playground (ground truth) before pointing at real sites.
-http://localhost:8080
-https://paul.kinlan.me/

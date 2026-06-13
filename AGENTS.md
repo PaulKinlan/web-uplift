@@ -50,8 +50,8 @@ The only host requirements: Node, `google-chrome-stable` (override `CHROME_BIN`)
 
 ## Knowledge layers
 
-- Principles (spec, as outcomes): [`principles/principles.json`](principles/principles.json)
-- Guidance (the how): the `modern-web-guidance` feed; [`guidance/lookup.md`](guidance/lookup.md)
+- Principles (spec, as outcomes): [`knowledge/principles.json`](knowledge/principles.json)
+- Guidance (the how): the `modern-web-guidance` feed; [`knowledge/guidance.md`](knowledge/guidance.md)
 - Findings schema: [`schema/findings.schema.json`](schema/findings.schema.json)
 - Eval ground truth: [`eval/README.md`](eval/README.md)
 

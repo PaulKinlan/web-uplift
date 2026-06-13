@@ -59,7 +59,7 @@ An audit writes:
 
 Each finding is tied to:
 
-- a principle from [principles/principles.json](principles/principles.json),
+- a principle from [knowledge/principles.json](knowledge/principles.json),
 - the evidence used to prove it,
 - a suggested fix backed by Modern Web Guidance,
 - and a deduplicated task in `taskList`.
@@ -144,7 +144,7 @@ for personal use.
 ```sh
 # Batch audit one or more URLs.
 web-uplift audit https://example.com
-web-uplift audit --urls urls/sample.txt --concurrency 2 --agent claude
+web-uplift audit --urls ./urls.txt --concurrency 2 --agent claude
 
 # Model-driven fix hill climb against local source.
 web-uplift fix --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4
@@ -160,6 +160,35 @@ web-uplift compare http://localhost:8080 <runId-before> <runId-after>
 
 The headless runner orchestrates. It still does not contain checks. The spawned
 model follows the same [SKILL.md](.claude/skills/web-audit/SKILL.md).
+
+### URL Lists For Batch Audits
+
+`web-uplift audit` accepts URLs as command arguments or from a text file:
+
+```txt
+# urls.txt
+# One URL per line. Lines starting with # are ignored.
+https://example.com
+https://developer.chrome.com/
+```
+
+```sh
+web-uplift audit --urls ./urls.txt --concurrency 2
+web-uplift audit https://example.com https://developer.chrome.com/
+```
+
+For broader surveys, good URL sources are:
+
+1. **CrUX rank via HTTP Archive / BigQuery** - best when you want traffic-weighted
+   origins that reflect real Chrome usage.
+2. **Tranco** - a research-grade ranked list with CSV downloads and little setup.
+3. **A hand-picked pilot set** - useful for calibrating cost, blocked-site rate,
+   and report quality before running many sites.
+
+Lists usually provide origins. The audit should start at the landing page and
+then let recon decide which public paths matter. Logged-in experiences are out
+of scope unless you provide access and explicit instructions. Bot-walled sites
+should be reported as `blocked`, not retried indefinitely.
 
 ## How It Works
 
@@ -217,15 +246,15 @@ These primitives make no quality judgement. They only return evidence.
 
 web-uplift uses two knowledge layers:
 
-1. **Principles** - [principles/principles.json](principles/principles.json)
+1. **Principles** - [knowledge/principles.json](knowledge/principles.json)
    defines sixteen modern web-quality principles. The set covers Una Kravets'
    five modern-UX principles, Lighthouse dimensions, privacy/security,
    resilience, internationalisation, trust, sustainability, agent readiness, and
    memory efficiency. Each check is phrased as an outcome, with evidence hints
    and Modern Web Guidance pointers.
-2. **Modern Web Guidance** - the `modern-web-guidance` npm feed provides the
-   how-to layer the model consults before judging and while fixing. See
-   [guidance/README.md](guidance/README.md).
+2. **Modern Web Guidance** - [knowledge/guidance.md](knowledge/guidance.md)
+   documents how the model queries the `modern-web-guidance` npm feed before
+   judging and while fixing.
 
 Not every principle applies to every site. A project can add
 [web-uplift.json](web-uplift.example.json) to declare `siteType`, `scope`,
@@ -251,16 +280,13 @@ needs a model in the loop.
 ```
 evidence/                   Raw-CDP evidence primitives
 .claude/skills/web-audit/   Canonical audit methodology
-principles/                 Declarative web-quality principles
-guidance/                   Modern Web Guidance lookup protocol
+knowledge/                  Principles and Modern Web Guidance protocol
 schema/                     Findings and config schemas
 playground/                 Fixed demo site
 eval/                       Seeded-issues fixture and expected findings
 examples/                   Committed example reports
 runner/                     Headless batch orchestration
 aggregate/                  Cross-site summaries and run comparison
-urls/                       URL list examples
-testplans/                  Reviewable per-site plans
 reports/                    Retained audit output, gitignored
 ```
 

@@ -30,8 +30,8 @@ Options you choose at inspection time: `--emulate-media k=v,..`, `--viewport WxH
 
 ## Knowledge layers
 
-- Principles (the spec, as outcomes): [`principles/principles.json`](../principles/principles.json)
-- Guidance (the how): the `modern-web-guidance` npm feed; see [`guidance/lookup.md`](../guidance/lookup.md)
+- Principles (the spec, as outcomes): [`knowledge/principles.json`](../knowledge/principles.json)
+- Guidance (the how): the `modern-web-guidance` npm feed; see [`knowledge/guidance.md`](../knowledge/guidance.md)
 - Findings schema: [`schema/findings.schema.json`](../schema/findings.schema.json)
 
 ## House rules

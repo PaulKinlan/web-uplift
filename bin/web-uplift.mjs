@@ -199,9 +199,9 @@ inside your agent session (uses your subscription).`);
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'evidence'), to: join(vendorRoot, 'evidence'), what: 'evidence primitives (raw-CDP CLI)' });
   plan.push(...dependencyCopySteps(['chrome-remote-interface'], join(vendorRoot, 'node_modules')));
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, '.claude/skills/web-audit/SKILL.md'), to: join(vendorRoot, 'skill', 'SKILL.md'), what: 'canonical web-audit SKILL.md' });
-  plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'principles/principles.json'), to: join(vendorRoot, 'principles', 'principles.json'), what: 'principles spec' });
+  plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/principles.json'), to: join(vendorRoot, 'knowledge', 'principles.json'), what: 'principles spec' });
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'schema'), to: join(vendorRoot, 'schema'), what: 'findings + config schema' });
-  plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'guidance'), to: join(vendorRoot, 'guidance'), what: 'guidance lookup protocol' });
+  plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/guidance.md'), to: join(vendorRoot, 'knowledge', 'guidance.md'), what: 'guidance lookup protocol' });
 
   for (const agent of selected) {
     for (const t of targets[agent]) {
@@ -324,7 +324,8 @@ PRIMARY (subscription) path - run it in YOUR agent:
                           fix loop INSIDE your own agent session (uses your plan).
 
 HEADLESS / CI path (uses API tokens):
-  web-uplift audit [urls...] [--agent <name>] [--dry-run]   Batch fan-out audit.
+  web-uplift audit [urls...] [--urls <file>] [--agent <name>] [--dry-run]
+                                                            Batch fan-out audit.
   web-uplift fix --target <dir> --audit-url <url> [...]      Model-driven hill-climb.
   web-uplift aggregate [--reports <dir>]                     Cross-site summary.
   web-uplift compare <host|url> [runA] [runB]                Diff two retained runs (before/after).

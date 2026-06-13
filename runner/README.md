@@ -11,7 +11,7 @@
 
 `web-uplift` is **not Claude-only**. One canonical methodology
 ([SKILL.md](../.claude/skills/web-audit/SKILL.md)) plus one declarative spec
-([principles.json](../principles/principles.json)) plus one generic evidence CLI
+([principles.json](../knowledge/principles.json)) plus one generic evidence CLI
 ([evidence/cli.mjs](../evidence/cli.mjs), plain `node` shell commands over raw
 CDP) are all agent-agnostic. Each agent gets only a **thin wrapper** that points
 at the same canonical skill, so the methodology cannot drift.
@@ -92,9 +92,9 @@ at the server and it has the workflow).
 
 ```sh
 npm run batch -- https://example.com                       # URLs as arguments
-npm run batch -- --urls urls/sample.txt                    # …or from a file (the default file)
+npm run batch -- --urls ./urls.txt                         # ...or from a file
 npm run batch -- https://example.com --agent gemini        # claude | codex | gemini | antigravity | copilot | opencode
-npm run batch -- --urls urls/top-1k.txt --concurrency 4
+npm run batch -- --urls ./top-1k.txt --concurrency 4
 npm run batch -- https://example.com --agent codex --dry-run   # print commands only
 npm run batch -- https://example.com --verbose                 # stream agent output live
 ```

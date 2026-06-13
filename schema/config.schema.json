@@ -58,7 +58,7 @@
     },
     "guidanceCatalogVersion": {
       "type": "string",
-      "description": "Override the Modern Web Guidance catalog version to consult (defaults to the version pinned in principles/principles.json).",
+      "description": "Override the Modern Web Guidance catalog version to consult (defaults to the version pinned in knowledge/principles.json).",
       "examples": ["modern-web-guidance@0.0.172"]
     }
   }

@@ -137,7 +137,7 @@
           "url": { "type": "string", "description": "Specific URL the finding applies to." },
           "principleId": {
             "type": "string",
-            "description": "Principle violated, from principles/principles.json (e.g. adapt-to-the-user). Optional: a finding may be guidance-only."
+            "description": "Principle violated, from knowledge/principles.json (e.g. adapt-to-the-user). Optional: a finding may be guidance-only."
           },
           "principleCheckId": {
             "type": "string",
