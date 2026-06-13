@@ -22,7 +22,10 @@ export default {
       section,
       {
         issue: `
-          .ndm-card { background: #ffffff; color: #111111; border: 1px solid #ddd;
+          .ndm-card { color-scheme: light dark;
+            background: light-dark(#ffffff, #1e1e1e);
+            color: light-dark(#111111, #eeeeee);
+            border: 1px solid light-dark(#dddddd, #444444);
             padding: 1rem; border-radius: 8px; }
         `,
         fixed: `

@@ -1,43 +1,43 @@
 # Modern Web UX Playground
 
-Six deliberately seeded, labelled modern-UX issues, each tied to a principle
-from [principles/principles.json](../principles/principles.json) and a Modern
-Web Guidance use case:
+Six labelled modern-UX scenarios, each tied to a principle from
+[principles/principles.json](../principles/principles.json) and a Modern Web
+Guidance use case:
 
-| Scenario | Principle | Issue | Detectable via |
+| Scenario | Principle | Technique demonstrated | Inspect under |
 |---|---|---|---|
-| `#fixed-layout` | adapt-to-the-device | hard-coded 1200px width, no responsiveness | narrow viewport -> horizontal overflow |
-| `#no-dark-mode` | adapt-to-the-user | hard-coded light theme, no color-scheme | `prefers-color-scheme: dark` |
-| `#poor-focus` | adapt-to-the-device | `outline: none`, no focus indicator | keyboard-only Tab |
-| `#layout-shift` | adapt-to-the-device | late content with no reserved space (CLS) | watch content jump on load |
-| `#motion` | adapt-to-the-user | animates despite reduced-motion preference | `prefers-reduced-motion: reduce` |
-| `#no-container-queries` | adapt-to-the-device | component ignores its container size | same card in wide vs narrow slot |
+| `#fixed-layout` | adapt-to-the-form-factor | fluid `width: 100%; max-width` + `box-sizing` | narrow viewport, no overflow |
+| `#no-dark-mode` | respect-user-preferences | `color-scheme` + `light-dark()` | `prefers-color-scheme: dark` |
+| `#poor-focus` | adapt-to-the-form-factor | `:focus-visible` outline, WCAG-contrast buttons | keyboard-only Tab |
+| `#layout-shift` | be-fast-and-stable | reserved `min-height` (no CLS) | watch content stay put on load |
+| `#motion` | respect-user-preferences | `@media (prefers-reduced-motion: no-preference)` gate | `prefers-reduced-motion: reduce` |
+| `#no-container-queries` | adapt-to-the-form-factor | `container-type` + `@container` | same card in wide vs narrow slot |
 
-Each scenario carries the principle id, the principle check id, and a
-`guidanceQuery` (and, where stable, a guidance `id`) in its source, so the
-audit's findings can be scored against the principle and guidance layers.
-
-**Modes:** default is **issue** (the seeded problems). Append `?mode=fixed`
-to run the corrected implementations - the audit loop must find *nothing* in
-fixed mode (the false-positive check).
+**This playground is genuinely correct by default.** Each scenario ships the
+Modern Web Guidance technique in its default ("issue") stylesheet, so an audit
+of `http://localhost:8080` finds **zero** seeded modern-UX issues, and the
+page-level `index.html` carries a `color-scheme` meta, a meta description, and a
+favicon. `?mode=fixed` runs an equivalent corrected stylesheet (kept as a parity
+check). Each scenario still carries its principle id, principle check id, and a
+`guidanceQuery` in source so its technique is traceable.
 
 ```sh
 npm run playground   # http://localhost:8080
 ```
 
+## Where the seeded issues went (the eval)
+
+The deliberately-broken versions of these scenarios are preserved as the eval
+ground truth in
+[eval/fixtures/seeded-issues/](../eval/fixtures/seeded-issues/). That frozen
+fixture is what proves the auditor's recall: a correct audit of the fixture
+surfaces all nine findings (F-001..F-009), and a correct audit of this live
+playground surfaces none of them. See [eval/README.md](../eval/README.md).
+
 ## Demo script (live)
 
-1. Open `http://localhost:8080` in issue mode.
-2. Ask the agent: `/web-audit http://localhost:8080`.
-3. Watch it: explore the page -> write a test plan with per-condition checks
-   (dark, reduced-motion, narrow viewport, keyboard-only) -> emulate each
-   condition and compare against the principles + Modern Web Guidance -> report
-   each finding with its principle, guidance id, and fix.
-4. The payoff: `/web-audit http://localhost:8080 --fix --source playground`,
-   or just switch to `?mode=fixed`, re-run the audit, show zero findings.
-
-## As an eval
-
-[expected-findings.json](expected-findings.json) is the ground truth: compare
-the audit's `report.json` against it - recall on issue mode, false positives
-on fixed mode. See PLAN.md open question #4 on scoring partial matches.
+1. Audit the eval fixture and watch the model surface the nine seeded findings:
+   `/web-audit http://localhost:8080 --expected eval/fixtures/seeded-issues/expected-findings.json`
+   (serve `eval/fixtures/seeded-issues/site` on `:8080`).
+2. Audit this live playground and watch it report zero seeded findings - the
+   genuinely-fixed product.

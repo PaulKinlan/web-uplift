@@ -21,8 +21,9 @@ export default {
       section,
       {
         issue: `
-          .pf-btn { outline: none; border: 1px solid #888; background: #f2f2f2;
+          .pf-btn { border: 1px solid #595959; background: #f2f2f2; color: #1a1a1a;
             padding: 0.5rem 1rem; border-radius: 6px; margin-right: 0.5rem; }
+          .pf-btn:focus-visible { outline: 3px solid #1a73e8; outline-offset: 2px; }
         `,
         fixed: `
           .pf-btn { border: 1px solid #888; background: #f2f2f2;
