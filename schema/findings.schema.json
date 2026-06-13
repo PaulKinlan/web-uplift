@@ -41,7 +41,7 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["screenshot", "video", "trace", "trace-summary", "har", "heap", "lighthouse", "dom", "layout", "other"],
+            "enum": ["screenshot", "video", "trace", "trace-summary", "har", "har-summary", "heap", "lighthouse", "dom", "layout", "other"],
             "description": "What kind of artifact this is, matching the evidence primitive that produced it."
           },
           "path": {

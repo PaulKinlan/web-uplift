@@ -86,7 +86,7 @@ Primitives, all content- and tool-agnostic:
 | `dom` | DOM, computed styles for `--selector` list, page HTML/CSS, and (`--source <dir>`) the local source files | DOM/CSS/Runtime |
 | `evaluate` | runs your own `--expr "<js>"` in the page: ad-hoc probes and static tests you write on the spot | Runtime.evaluate |
 | `trace` | a DevTools performance trace over the load (+ `--interact`): a devtools-loadable `trace.json` AND a compact `*-summary.json` (FCP/LCP, long tasks, total blocking time). Read the summary, never the raw trace | Tracing.start/end |
-| `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` to include response bodies): per-request status, sizes, mime, timings, initiator. For network monitoring + cross-run deltas | Network domain |
+| `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` to include response bodies) AND a compact `*-summary.json` of network SIGNALS: totals + by-resource-type, first/third-party origins by bytes, render-blocking candidates (heuristic), weight offenders (largest/slowest), and hygiene (uncompressed text, missing cache headers, redirects, HTTP errors). Read the HAR summary, never the raw HAR. Feeds be-fast-and-stable (request weight, render-blocking), be-sustainable (bytes over the wire), and be-private-and-secure (third parties) | Network domain |
 
 Common options the harness simply applies (you choose them, it does not):
 `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
@@ -164,8 +164,11 @@ the actual page):
   in the finding so the perf claim is backed by concrete evidence.
 - network-relevant principles (be-fast-and-stable's request weight,
   be-private-and-secure's transport/third-party surface, be-sustainable's bytes
-  over the wire) -> a `har` capture; read the entry count, transferred bytes,
-  statuses and mime types, and record the `.har` artifact path in the finding.
+  over the wire) -> a `har` capture; read its `*-summary.json` (totals,
+  by-resource-type, first/third-party origins, render-blocking candidates, weight
+  offenders, hygiene signals), NEVER the raw multi-MB HAR, and record the `.har`
+  artifact path in the finding. Note render-blocking candidates are a HAR-derived
+  heuristic (load order + initiator + type); corroborate against the page/trace.
 - be-inclusive -> axe via `evaluate`, and/or Lighthouse a11y, and/or your own
   contrast/label probes; plus a screenshot to judge legibility/alignment.
 - follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for

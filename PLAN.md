@@ -39,7 +39,10 @@ Why, explicitly:
   computed styles + page/source HTML/CSS), `evaluate` (run a model-supplied
   probe in the page), `trace` (CDP Tracing -> a devtools-loadable trace.json + a
   compact summary: FCP/LCP, long tasks, total blocking time), and `har` (CDP
-  Network -> a valid HAR 1.2 for network monitoring and cross-run deltas). Each
+  Network -> a valid HAR 1.2 AND a compact `*-summary.json` of network signals
+  (totals + by-resource-type, first/third-party origins, render-blocking
+  candidates, weight offenders, hygiene) the model reads instead of the raw HAR;
+  for network monitoring and cross-run deltas). Each
   accepts emulated conditions (media features, viewport) the model chooses. They
   return data/artifacts and make no decisions.
 - **Principles** ([principles/principles.json](principles/principles.json)) -

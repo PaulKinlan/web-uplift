@@ -56,7 +56,7 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `dom` | DOM, computed styles for a `--selector` set, page HTML/CSS, and (`--source <dir>`) the local source files | DOM / CSS / Runtime |
 | `evaluate` | the value of a model-supplied `--expr "<js>"` run in the page: ad-hoc probes and static tests the model writes on the spot | Runtime.evaluate |
 | `trace` | a DevTools performance trace over the load (+ `--interact`): a devtools-loadable `trace.json` AND a compact `*-summary.json` (FCP/LCP, long tasks, total blocking time) the model reads instead of the raw trace | Tracing.start/end |
-| `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` for response bodies): per-request status, sizes, mime, timings, initiator, for network monitoring and cross-run deltas | Network domain |
+| `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` for response bodies) AND a compact `*-summary.json` of network signals (totals + by-resource-type, first/third-party origins, render-blocking candidates, weight offenders, hygiene) the model reads instead of the raw HAR; for network monitoring and cross-run deltas | Network domain |
 
 Common options the model chooses and the harness simply applies (it never
 decides them): `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
@@ -74,7 +74,8 @@ scores), network/HAR deltas, and paired before/after screenshots. The fix loop
 emits this comparison automatically at the end (audit -> fix -> re-audit ->
 compare), so a fix run shows the measurable before->after. The
 `artifacts` manifest in `report.json` ties each finding to the concrete evidence
-files (screenshots, trace summaries, HARs) that back it.
+files (screenshots, trace summaries, raw HARs and their network summaries) that
+back it.
 
 ## The two knowledge layers
 
@@ -229,7 +230,7 @@ npm run evidence -- layout     "http://localhost:8080/#fixed-layout" --viewport 
 npm run evidence -- video      "http://localhost:8080/#motion" --out motion.mp4 --duration 2500
 npm run evidence -- evaluate   "http://localhost:8080/#motion" --emulate-media prefers-reduced-motion=reduce --expr "document.querySelector('.mv-card').getAnimations().length"
 npm run evidence -- trace      "http://localhost:8080/#layout-shift" --out trace.json   # + trace-summary.json
-npm run evidence -- har        "http://localhost:8080/" --out network.har --bodies
+npm run evidence -- har        "http://localhost:8080/" --out network.har --bodies   # + network-summary.json
 ```
 
 ## Headless runner (CI / batch) - uses API tokens, NOT the default

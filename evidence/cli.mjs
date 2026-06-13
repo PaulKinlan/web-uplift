@@ -34,8 +34,10 @@
 //                        time); the model reads the summary, never the raw trace
 //   har <url>            Network domain capture over the load (+ optional
 //                        --interact / --duration; --bodies to include response
-//                        bodies) assembled into a valid HAR 1.2 file for network
-//                        monitoring and cross-run deltas
+//                        bodies) assembled into a valid HAR 1.2 file AND a compact
+//                        *-summary.json of network signals (totals, third parties,
+//                        render-blocking candidates, weight offenders, hygiene);
+//                        the model reads the summary, never the raw HAR
 //
 // Common options (most primitives accept these so the model can set the
 // condition it wants to observe under, but the harness never decides them):
@@ -707,14 +709,19 @@ async function har(client, url, opts, log) {
   const out = opts.out || derivedOut(url, 'network', 'har');
   writeFileSync(out, JSON.stringify(har12, null, 2) + '\n');
 
-  const entries = har12.log.entries;
-  const totalBytes = entries.reduce((acc, e) => acc + (e.response._transferSize || 0), 0);
+  // Mirror trace: write a compact, model-readable summary next to the raw .har
+  // (network-summary.json). The model reads the summary; the raw .har stays on
+  // disk for the report, the compare command, and DevTools/HAR viewers.
+  const summary = summariseHar(har12, url);
+  const summaryOut = out.replace(/\.har$/, '') + '-summary.json';
+  writeFileSync(summaryOut, JSON.stringify(summary, null, 2) + '\n');
+
   return {
     artifact: out,
-    entryCount: entries.length,
-    totalTransferredBytes: totalBytes,
-    statusBreakdown: tallyStatuses(entries),
-    note: 'Valid HAR 1.2 log of the network over the load. entryCount/totalTransferredBytes/statusBreakdown are a quick read; the .har artifact opens in DevTools Network import and is the basis for cross-run network deltas.',
+    summaryArtifact: summaryOut,
+    ...summary.totals,
+    statusBreakdown: tallyStatuses(har12.log.entries),
+    note: 'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).',
   };
 }
 
@@ -725,6 +732,244 @@ function tallyStatuses(entries) {
     out[k] = (out[k] || 0) + 1;
   }
   return out;
+}
+
+// Reduce a HAR 1.2 log to the compact network SIGNALS a model needs, the network
+// analogue of summariseTrace / summariseHeapSnapshot (and the in-repo, lightweight
+// analogue of memlab: it surfaces descriptive signals, NOT pass/fail verdicts; the
+// model judges them against the principles). Every list is capped (~10) so the
+// summary stays small and the model never has to load the raw multi-MB HAR.
+function summariseHar(har, mainUrl) {
+  const entries = (har?.log?.entries ?? []).filter((e) => e && e.request);
+
+  // The main document is the first 'document' entry (or the first entry, or the
+  // requested URL). Its origin defines first vs third party.
+  const typeOf = (e) => String(e?._resourceType || '').toLowerCase();
+  const docEntry =
+    entries.find((e) => typeOf(e) === 'document') || entries[0] || null;
+  const mainOrigin = originOf(docEntry?.request?.url || mainUrl);
+
+  // CDP Network.ResourceType values are capitalised (Document, Script,
+  // Stylesheet, Image, Font, XHR, Fetch, Media, ...); normalise to lower case.
+  const TYPE_BUCKETS = {
+    document: 'document',
+    script: 'script',
+    stylesheet: 'stylesheet',
+    image: 'image',
+    font: 'font',
+    fetch: 'xhr-fetch',
+    xhr: 'xhr-fetch',
+    media: 'media',
+  };
+  const bucketFor = (type) => TYPE_BUCKETS[String(type || '').toLowerCase()] || 'other';
+
+  let totalTransferredBytes = 0;
+  let totalContentBytes = 0;
+  const byType = {}; // bucket -> { count, transferredBytes, contentBytes }
+  const byOrigin = new Map(); // origin -> { count, transferredBytes, thirdParty }
+
+  const bySize = []; // weight offenders
+  const bySlow = []; // slowest
+  const renderBlockingCandidates = [];
+  const uncompressed = [];
+  const missingCache = [];
+  const redirects = [];
+  const httpErrors = [];
+
+  // First-paint heuristic: the earliest startedDateTime among entries gives us a
+  // load-order baseline; head scripts/styles requested before the first non-doc
+  // paint-ish resource are render-blocking candidates. With only a HAR we cannot
+  // observe the actual paint, so we approximate by load order + initiator.
+  const sorted = [...entries].sort(
+    (a, b) => startedMs(a) - startedMs(b),
+  );
+
+  for (const e of entries) {
+    const type = e._resourceType || 'other';
+    const bucket = bucketFor(type);
+    const res = e.response || {};
+    const transferred = num(res._transferSize) || num(res.bodySize) || 0;
+    const content = num(res.content?.size) || 0;
+    totalTransferredBytes += transferred;
+    totalContentBytes += content;
+
+    const t = (byType[bucket] = byType[bucket] || {
+      count: 0,
+      transferredBytes: 0,
+      contentBytes: 0,
+    });
+    t.count++;
+    t.transferredBytes += transferred;
+    t.contentBytes += content;
+
+    const origin = originOf(e.request.url);
+    const isThird = origin !== mainOrigin && origin !== 'unknown';
+    const o = byOrigin.get(origin) || {
+      origin,
+      count: 0,
+      transferredBytes: 0,
+      thirdParty: isThird,
+    };
+    o.count++;
+    o.transferredBytes += transferred;
+    byOrigin.set(origin, o);
+
+    bySize.push({ url: e.request.url, type: bucket, transferredBytes: transferred });
+    if (typeof e.time === 'number' && e.time >= 0) {
+      bySlow.push({ url: e.request.url, type: bucket, timeMs: round(e.time) });
+    }
+
+    // Hygiene: text resources served without compression over a size threshold.
+    const headers = headerMap(res.headers);
+    const enc = headers['content-encoding'] || '';
+    const compressed = /\b(gzip|br|deflate|zstd)\b/i.test(enc);
+    const isText =
+      bucket === 'script' ||
+      bucket === 'stylesheet' ||
+      bucket === 'document' ||
+      bucket === 'xhr-fetch' ||
+      /\b(text|json|javascript|xml|svg)\b/i.test(res.content?.mimeType || '');
+    if (isText && !compressed && transferred >= 2048) {
+      uncompressed.push({
+        url: e.request.url,
+        type: bucket,
+        transferredBytes: transferred,
+        contentEncoding: enc || 'none',
+      });
+    }
+
+    // Hygiene: cacheable responses missing cache-control AND expires. Skip
+    // redirects/errors and non-200s where caching is not the relevant signal.
+    const status = num(res.status) || 0;
+    if (status >= 200 && status < 300) {
+      const cc = headers['cache-control'];
+      const exp = headers['expires'];
+      if (!cc && !exp && (bucket === 'script' || bucket === 'stylesheet' || bucket === 'image' || bucket === 'font')) {
+        missingCache.push({ url: e.request.url, type: bucket, transferredBytes: transferred });
+      }
+    }
+
+    // Hygiene: redirect chains (3xx) and HTTP errors (4xx/5xx).
+    if (status >= 300 && status < 400) {
+      redirects.push({
+        url: e.request.url,
+        status,
+        location: headers['location'] || res.redirectURL || '',
+      });
+    } else if (status >= 400) {
+      httpErrors.push({ url: e.request.url, status, type: bucket });
+    }
+    if (res._error) {
+      httpErrors.push({ url: e.request.url, status: 0, type: bucket, error: res._error });
+    }
+  }
+
+  // Render-blocking candidates (HEURISTIC): scripts/stylesheets in the document
+  // <head> load window, before the first image/media paint, classic (non-async,
+  // non-module) by initiator where derivable. We cannot see <head> placement or
+  // async/defer from the HAR alone, so this is a load-order + initiator + type
+  // approximation, not a definitive list. Field naming is honest about that.
+  const firstPaintishMs = (() => {
+    const paintish = sorted.find(
+      (e) => typeOf(e) === 'image' || typeOf(e) === 'media',
+    );
+    return paintish ? startedMs(paintish) : Infinity;
+  })();
+  for (const e of sorted) {
+    const type = typeOf(e);
+    if (type !== 'script' && type !== 'stylesheet') continue;
+    const startedAt = startedMs(e);
+    if (startedAt >= firstPaintishMs) continue;
+    const initiator = e._initiator || 'other';
+    renderBlockingCandidates.push({
+      url: e.request.url,
+      type: bucketFor(type),
+      initiator,
+      startedDateTime: e.startedDateTime,
+    });
+  }
+
+  const topBySize = bySize
+    .sort((a, b) => b.transferredBytes - a.transferredBytes)
+    .slice(0, 10);
+  const topBySlow = bySlow.sort((a, b) => b.timeMs - a.timeMs).slice(0, 10);
+
+  const origins = [...byOrigin.values()].sort(
+    (a, b) => b.transferredBytes - a.transferredBytes,
+  );
+  const thirdPartyOrigins = origins.filter((o) => o.thirdParty);
+  const thirdPartyBytes = thirdPartyOrigins.reduce(
+    (acc, o) => acc + o.transferredBytes,
+    0,
+  );
+  const thirdPartyCount = thirdPartyOrigins.reduce((acc, o) => acc + o.count, 0);
+
+  return {
+    totals: {
+      requestCount: entries.length,
+      totalTransferredBytes,
+      totalContentBytes,
+      byResourceType: byType,
+    },
+    thirdParty: {
+      mainOrigin,
+      thirdPartyRequestCount: thirdPartyCount,
+      thirdPartyTransferredBytes: thirdPartyBytes,
+      topOriginsByBytes: origins.slice(0, 10).map((o) => ({
+        origin: o.origin,
+        party: o.thirdParty ? 'third-party' : 'first-party',
+        count: o.count,
+        transferredBytes: o.transferredBytes,
+      })),
+    },
+    renderBlockingCandidates: renderBlockingCandidates.slice(0, 10),
+    weightOffenders: {
+      largestByBytes: topBySize,
+      slowestByTime: topBySlow,
+    },
+    hygiene: {
+      uncompressedTextOver2KB: uncompressed
+        .sort((a, b) => b.transferredBytes - a.transferredBytes)
+        .slice(0, 10),
+      missingCacheHeaders: missingCache
+        .sort((a, b) => b.transferredBytes - a.transferredBytes)
+        .slice(0, 10),
+      redirects: redirects.slice(0, 10),
+      httpErrors: httpErrors.slice(0, 10),
+    },
+    note:
+      'Compact, model-readable summary of network SIGNALS distilled from a HAR 1.2 log (the network analogue of the trace/heap summaries; the in-repo, lightweight memlab analogue). These are DESCRIPTIVE signals, not pass/fail verdicts: the model judges them against the principles (be-fast-and-stable, be-sustainable, be-private-and-secure). renderBlockingCandidates is a HEURISTIC derived from HAR load order + initiator + resource type (a HAR cannot show <head> placement or async/defer), so treat it as candidates, not a definitive render-blocking list. Read this summary, never the raw .har; the raw .har is retained for the report, cross-run compare, and DevTools/HAR viewers.',
+  };
+}
+
+// Origin (scheme://host[:port]) of a URL, or 'unknown' for data:/blob:/invalid.
+function originOf(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'data:' || u.protocol === 'blob:') return 'unknown';
+    return u.origin;
+  } catch {
+    return 'unknown';
+  }
+}
+
+// Lower-cased header name -> value map from a HAR header array.
+function headerMap(headers) {
+  const out = {};
+  if (!Array.isArray(headers)) return out;
+  for (const h of headers) {
+    if (h && h.name) out[h.name.toLowerCase()] = String(h.value ?? '');
+  }
+  return out;
+}
+
+function startedMs(entry) {
+  const t = Date.parse(entry?.startedDateTime || '');
+  return Number.isNaN(t) ? Infinity : t;
+}
+
+function num(x) {
+  return typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : 0;
 }
 
 // Assemble HAR 1.2 from the aggregated CDP network records. Timestamps from CDP
