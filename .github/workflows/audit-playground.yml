@@ -87,10 +87,23 @@ jobs:
           node evidence/cli.mjs evaluate "http://localhost:8090/#motion" \
             --emulate-media prefers-reduced-motion=reduce \
             --expr "document.querySelector('.mv-card').getAnimations().length" --wait 600 --quiet
+          # Performance trace -> devtools-loadable trace.json + compact summary.
+          node evidence/cli.mjs trace "http://localhost:8090/#layout-shift" \
+            --out scratch/ci/trace.json --wait 1200 --quiet
+          # Network capture -> valid HAR 1.2.
+          node evidence/cli.mjs har "http://localhost:8090/" \
+            --out scratch/ci/network.har --wait 1000 --quiet
           # Assert artifacts exist and have content.
           test -s scratch/ci/dom.json
           test -s scratch/ci/layout.json
           test -s scratch/ci/shot.png
+          test -s scratch/ci/trace.json
+          test -s scratch/ci/trace-summary.json
+          test -s scratch/ci/network.har
+          # trace.json is a devtools-loadable { traceEvents: [...] } with events.
+          node -e 'const t=JSON.parse(require("fs").readFileSync("scratch/ci/trace.json","utf8")); if(!Array.isArray(t.traceEvents)||t.traceEvents.length===0)throw new Error("trace.json has no traceEvents"); console.log("trace.json events:",t.traceEvents.length)'
+          # network.har parses as HAR 1.2 with at least one entry.
+          node -e 'const h=JSON.parse(require("fs").readFileSync("scratch/ci/network.har","utf8")); if(h.log.version!=="1.2")throw new Error("not HAR 1.2"); if((h.log.entries||[]).length===0)throw new Error("HAR has 0 entries"); console.log("HAR 1.2 entries:",h.log.entries.length)'
           echo "evidence primitives OK"
 
       # Ground-truth regression: the fixture must still exhibit its seeded issues

@@ -55,11 +55,26 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `layout` | layout metrics, a CLS/layout-shift observer, long tasks, overflow at the current viewport | Page.getLayoutMetrics + observers |
 | `dom` | DOM, computed styles for a `--selector` set, page HTML/CSS, and (`--source <dir>`) the local source files | DOM / CSS / Runtime |
 | `evaluate` | the value of a model-supplied `--expr "<js>"` run in the page: ad-hoc probes and static tests the model writes on the spot | Runtime.evaluate |
+| `trace` | a DevTools performance trace over the load (+ `--interact`): a devtools-loadable `trace.json` AND a compact `*-summary.json` (FCP/LCP, long tasks, total blocking time) the model reads instead of the raw trace | Tracing.start/end |
+| `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` for response bodies): per-request status, sizes, mime, timings, initiator, for network monitoring and cross-run deltas | Network domain |
 
 Common options the model chooses and the harness simply applies (it never
 decides them): `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
 `--viewport 360x800`, `--wait <ms>`, `--selector <css>`, `--interact "<js>"`,
-`--source <dir>`, `--out <path>`.
+`--duration <ms>`, `--bodies`, `--source <dir>`, `--out <path>`.
+
+### Retained runs and before/after comparison
+
+Runs are RETAINED, not overwritten: each lands in `reports/<host>/<runId>/`
+(`<runId>` is a real timestamp) with a `reports/<host>/latest` pointer. Diff two
+runs with `web-uplift compare <host> [runA] [runB]` (defaults to the two most
+recent) to get `compare.md` + `compare.json`: principle status changes,
+per-finding resolved/new/persisting, metric deltas (LCP/INP/CLS, Lighthouse
+scores), network/HAR deltas, and paired before/after screenshots. The fix loop
+emits this comparison automatically at the end (audit -> fix -> re-audit ->
+compare), so a fix run shows the measurable before->after. The
+`artifacts` manifest in `report.json` ties each finding to the concrete evidence
+files (screenshots, trace summaries, HARs) that back it.
 
 ## The two knowledge layers
 
@@ -167,11 +182,11 @@ schema/                     Findings + report JSON schema
 playground/                 The genuinely-correct demo site (modern-UX techniques applied by default)
 eval/                       Eval ground truth: the frozen seeded-issues fixture + expected-findings (9)
 examples/                   A committed real agentic audit (fixture -> 9 findings; live playground -> 0)
-runner/                     Batch fan-out: one fully-agentic audit per URL (any agent via a single config map)
-aggregate/                  Merge reports into a cross-site summary
+runner/                     Batch fan-out + run-history helpers (retained reports/<host>/<runId>/, latest pointer)
+aggregate/                  Merge reports into a cross-site summary; compare two retained runs (before/after)
 urls/                       URL lists + notes on sourcing top-site lists
 testplans/                  Reviewable per-site plans (when an agent persists one)
-reports/                    Ad-hoc audit output, one directory per site (gitignored)
+reports/                    Retained audit output: reports/<host>/<runId>/ + latest pointer (gitignored)
 .github/workflows/          CI: smoke-tests the evidence primitives against the playground on push
 ```
 
@@ -213,6 +228,8 @@ npm run evidence -- dom        "http://localhost:8080/#no-dark-mode" --selector 
 npm run evidence -- layout     "http://localhost:8080/#fixed-layout" --viewport 360x800
 npm run evidence -- video      "http://localhost:8080/#motion" --out motion.mp4 --duration 2500
 npm run evidence -- evaluate   "http://localhost:8080/#motion" --emulate-media prefers-reduced-motion=reduce --expr "document.querySelector('.mv-card').getAnimations().length"
+npm run evidence -- trace      "http://localhost:8080/#layout-shift" --out trace.json   # + trace-summary.json
+npm run evidence -- har        "http://localhost:8080/" --out network.har --bodies
 ```
 
 ## Headless runner (CI / batch) - uses API tokens, NOT the default
@@ -234,6 +251,10 @@ npm run fix -- --target ./src --audit-url http://localhost:8080 --dry-run   # pr
 
 # Aggregate findings across reports:
 npm run aggregate
+
+# Compare two retained runs of a host (before/after); defaults to the two most recent:
+web-uplift compare localhost_8080
+web-uplift compare http://localhost:8080 <runId-before> <runId-after>
 ```
 
 ## Install

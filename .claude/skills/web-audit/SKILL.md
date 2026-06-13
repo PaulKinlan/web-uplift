@@ -85,6 +85,8 @@ Primitives, all content- and tool-agnostic:
 | `layout` | layout metrics, a CLS/layout-shift observer, long tasks, overflow at the current viewport | Page.getLayoutMetrics + observers |
 | `dom` | DOM, computed styles for `--selector` list, page HTML/CSS, and (`--source <dir>`) the local source files | DOM/CSS/Runtime |
 | `evaluate` | runs your own `--expr "<js>"` in the page: ad-hoc probes and static tests you write on the spot | Runtime.evaluate |
+| `trace` | a DevTools performance trace over the load (+ `--interact`): a devtools-loadable `trace.json` AND a compact `*-summary.json` (FCP/LCP, long tasks, total blocking time). Read the summary, never the raw trace | Tracing.start/end |
+| `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` to include response bodies): per-request status, sizes, mime, timings, initiator. For network monitoring + cross-run deltas | Network domain |
 
 Common options the harness simply applies (you choose them, it does not):
 `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
@@ -156,7 +158,14 @@ the actual page):
   wide vs narrow container, or CSS inspection for `@container`.
 - input-modality-aware (focus) -> an `evaluate` probe that focuses the control
   and reads the computed outline.
-- be-fast-and-stable -> `layout` (CLS + long tasks) and/or Lighthouse.
+- be-fast-and-stable -> `layout` (CLS + long tasks) AND a `trace` (capture a
+  performance trace; read its `*-summary.json` for navigationStart->FCP/LCP, long
+  tasks, total blocking time), and/or Lighthouse. Record the trace artifact path
+  in the finding so the perf claim is backed by concrete evidence.
+- network-relevant principles (be-fast-and-stable's request weight,
+  be-private-and-secure's transport/third-party surface, be-sustainable's bytes
+  over the wire) -> a `har` capture; read the entry count, transferred bytes,
+  statuses and mime types, and record the `.har` artifact path in the finding.
 - be-inclusive -> axe via `evaluate`, and/or Lighthouse a11y, and/or your own
   contrast/label probes; plus a screenshot to judge legibility/alignment.
 - follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for
@@ -220,20 +229,54 @@ reported CLS 0.18 from a banner injected at ~600ms"). Then derive a prioritised,
 deduplicated `taskList` (highest leverage first), each task citing its
 `findingIds` and a `guidanceId`.
 
-### 6. Report
+### 6. Report (and where it goes: retained, comparable runs)
 
-Write two files in `reports/<host>/` (or `--out`):
+Runs are RETAINED so they can be compared over time. Write each run into its own
+timestamped directory and keep a `latest` pointer:
+
+- Default report dir: `reports/<host>/<runId>/` where `<runId>` is a real
+  timestamp (an ISO timestamp with `:`/`.` replaced by `-`, e.g.
+  `2026-06-13T17-30-00-000Z`; use the actual current time). `--out <dir>`
+  overrides this.
+- After writing, point `reports/<host>/latest` at the run dir (a symlink, or a
+  `latest.txt` naming the run dir where symlinks are unavailable). The
+  `runner/run-history.mjs` helpers (`runDir`, `updateLatest`) compute these for
+  you if you drive them from a script; otherwise just follow the layout.
+- Keep evidence artifacts under the run dir (e.g. `<runId>/evidence/...`) so a
+  run is self-contained and its before/after artifacts move with it.
+
+Write two files in the run dir:
 
 - `report.json` - MUST validate against
   [schema/findings.schema.json](../../../schema/findings.schema.json). Set
   `evidenceUsed` (the modalities and tools you actually ran), `config` (whether a
-  `web-uplift.json` was loaded), and `principleOutcomes` (per-principle
+  `web-uplift.json` was loaded), `principleOutcomes` (per-principle
   applicability + status, so `opted-out` and `not-applicable` show distinctly
-  from pass/issue, each with its reason). If scoring against `--expected`,
-  include your own precision/recall under an `eval` field.
-- `report.md` - human-readable: page profile, the evidence you gathered (with
-  artifact paths), findings grouped by principle, the prioritised task list, and
-  anything skipped or low-confidence.
+  from pass/issue, each with its reason), and the structured `artifacts` manifest
+  (one entry per evidence file you kept: `{type, path, caption, condition,
+  findingIds}` with `path` relative to the run dir). Each finding SHOULD list the
+  artifact paths that evidence it in `finding.artifacts`, so every "action to fix"
+  ties back to concrete before-evidence. If scoring against `--expected`, include
+  your own precision/recall under an `eval` field.
+- `report.md` - human-readable: page profile, the evidence you gathered, an
+  artifacts-manifest table, findings grouped by principle (embed screenshots
+  inline with `![](path)` and link video/trace/har/heap), the prioritised task
+  list, and anything skipped or low-confidence.
+
+### 6b. Compare runs (before/after)
+
+To measure progress across runs, diff two retained runs:
+
+```sh
+node aggregate/compare.mjs <host|url> [runA] [runB]   # web-uplift compare ...
+```
+
+Defaults to the two most recent runs (older = before, newer = after) and writes
+`compare.md` + `compare.json` into the newer run: principle status changes,
+per-finding resolved/new/persisting, metric deltas (LCP/INP/CLS, Lighthouse
+scores where present), network/HAR deltas (request count, transferred bytes),
+and PAIRED before/after screenshots (matched by capture condition). Fix mode
+(below) runs this automatically at the end, so a fix run shows the before->after.
 
 ### 7. Fix mode (`--fix --source <dir>`, the model-driven hill-climb)
 
@@ -267,6 +310,12 @@ The loop, highest-leverage task first:
    pass makes no further progress, or `--max-iterations` is hit. Record
    `budget.auditPasses`. Optionally open a PR (branch, commit only the source
    changes, `gh pr create`).
+6. **Emit the before/after comparison.** Preserve the baseline as a `-before`
+   run and the final state as an `-after` run (see step 6's run layout) and run
+   the compare (step 6b) so the fix produces a `compare.md` showing the measurable
+   before->after: outstanding `9 -> 0`, which findings resolved, and the metric /
+   network / screenshot deltas. The headless `web-uplift fix` does this for you;
+   in-session, run `node aggregate/compare.mjs <host> <before> <after>` yourself.
 
 Never edit source outside `<dir>`. Never run fix mode against a site whose
 source you do not have locally.

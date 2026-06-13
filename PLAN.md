@@ -37,8 +37,11 @@ Why, explicitly:
   `screenshot`, `video` (screencast -> MP4), `heap` (snapshot -> readable
   summary), `layout` (metrics + CLS observer + long tasks), `dom` (DOM +
   computed styles + page/source HTML/CSS), `evaluate` (run a model-supplied
-  probe in the page). Each accepts emulated conditions (media features,
-  viewport) the model chooses. They return data/artifacts and make no decisions.
+  probe in the page), `trace` (CDP Tracing -> a devtools-loadable trace.json + a
+  compact summary: FCP/LCP, long tasks, total blocking time), and `har` (CDP
+  Network -> a valid HAR 1.2 for network monitoring and cross-run deltas). Each
+  accepts emulated conditions (media features, viewport) the model chooses. They
+  return data/artifacts and make no decisions.
 - **Principles** ([principles/principles.json](principles/principles.json)) -
   fifteen principles: Una Kravets' five modern-UX principles; the Lighthouse
   dimensions with `be-accessible` widened to `be-inclusive` and
@@ -73,6 +76,19 @@ Why, explicitly:
   Each scenario ships its Modern Web Guidance technique by default, so an audit
   finds zero seeded issues; it is the precision / regression guard. The fixture
   proves recall, the live playground proves precision.
+- **Artifacts manifest** ([schema/findings.schema.json](schema/findings.schema.json))
+  - report.json carries a structured `artifacts[]` manifest (type, path,
+  caption, condition, findingIds) and each finding lists the artifact paths that
+  evidence it, so every "action to fix" ties back to concrete before-evidence;
+  report.md embeds screenshots inline and links video/trace/har/heap.
+- **Run history + compare** ([runner/run-history.mjs](runner/run-history.mjs),
+  [aggregate/compare.mjs](aggregate/compare.mjs)) - runs are RETAINED at
+  `reports/<host>/<runId>/` with a `latest` pointer instead of overwriting.
+  `web-uplift compare <host> [runA] [runB]` diffs two runs into compare.md /
+  compare.json (principle status changes, per-finding resolved/new/persisting,
+  metric + network/HAR deltas, paired before/after screenshots). The fix loop
+  emits this automatically (audit -> fix -> re-audit -> compare), making the
+  hill-climb measurable across runs.
 
 ## What was removed (and stays removed)
 
