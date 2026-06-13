@@ -1,47 +1,186 @@
 # web-uplift
 
-Agent-driven, constant web improvement. Point it at any website and a **model**
-audits it against modern web quality, reports a prioritised task list, and (when
-the source is available) applies fixes and re-audits until the principles are
-satisfied.
+web-uplift is an agentic modern-web quality auditor and fixer.
 
-web-uplift is **fully agentic**. There is no deterministic check runner and no
-fast path. The model is the auditor: at inspection time it gathers multi-modal
-evidence, decides for itself which tools to use, reasons over what it sees, and
-judges every principle. The repo supplies only declarative inputs and generic
-capabilities; all the intelligence is the model's.
+Install it into a web project, then run `/web-audit <url>` inside your coding
+agent. The agent gathers real browser evidence, judges the site against modern
+web-quality principles, writes `report.json` and `report.md`, and, when local
+source is available, can apply fixes and re-audit until the issues are gone.
 
-## The architecture (and why)
+It is not a conventional check runner. There is no fixed list of coded checks
+and no canned fixer. The model is the auditor: it chooses the evidence to gather
+at inspection time, reasons over what it sees, consults Modern Web Guidance, and
+decides what passes or fails.
+
+## Quick Start
+
+Install the audit skill and evidence tools into your project:
+
+```sh
+npx web-uplift install --agent codex
+```
+
+Use the agent you actually run:
+
+```sh
+npx web-uplift install --agent claude        # Claude Code
+npx web-uplift install --agent codex         # Codex
+npx web-uplift install --agent gemini        # Gemini CLI
+npx web-uplift install --agent opencode      # opencode
+npx web-uplift install --agent all           # install every wrapper
+npx web-uplift install --dry-run --agent all # preview files without writing
+```
+
+Then, inside your agent session:
+
+```sh
+/web-audit https://example.com
+```
+
+To fix a local site, pass the served URL and source directory:
+
+```sh
+/web-audit http://localhost:8080 --source ./src --fix
+```
+
+Reports are retained under `reports/<host>/<runId>/`, with a `latest` pointer.
+Fix mode also emits a before/after comparison so you can see what changed.
+
+## What You Get
+
+An audit writes:
+
+- `report.md` - a readable report with evidence, findings, and a prioritised
+  task list.
+- `report.json` - structured findings that validate against
+  [schema/findings.schema.json](schema/findings.schema.json).
+- `evidence/` artifacts - screenshots, layout JSON, trace summaries, HARs,
+  heap summaries, videos, Lighthouse output, or other probes the model chose.
+
+Each finding is tied to:
+
+- a principle from [principles/principles.json](principles/principles.json),
+- the evidence used to prove it,
+- a suggested fix backed by Modern Web Guidance,
+- and a deduplicated task in `taskList`.
+
+## Requirements
+
+The machine running the audit needs:
+
+- Node 20 or newer.
+- Chrome or Chromium. The evidence CLI checks common paths and honours
+  `CHROME_BIN`.
+- `ffmpeg` if the agent records transition videos.
+- Network access for `npx`, Modern Web Guidance, and optional Lighthouse.
+- A coding agent that can read files and run shell commands.
+
+No Playwright, Puppeteer, or browser-automation MCP server is required.
+web-uplift drives Chrome directly over the Chrome DevTools Protocol.
+
+## Agent Install Matrix
+
+`web-uplift install` copies the one canonical audit skill plus the raw-CDP
+evidence tools into your project. Each agent gets only a thin wrapper pointing
+at the same `SKILL.md`, so the method does not drift.
+
+| Agent | Install | What gets placed | Run |
+|---|---|---|---|
+| Claude Code | `npx web-uplift install --agent claude` | `.claude/skills/web-audit/SKILL.md` | `/web-audit <url>` |
+| Codex | `npx web-uplift install --agent codex` | `.codex/skills/web-audit/SKILL.md` + `AGENTS.md` snippet | `/web-audit <url>` |
+| Gemini CLI | `npx web-uplift install --agent gemini` | `.gemini/commands/web-audit.toml` | `/web-audit <url>` |
+| Antigravity | `npx web-uplift install --agent antigravity` | `.agents/skills/web-audit.md` | `/web-audit <url>` |
+| GitHub Copilot | `npx web-uplift install --agent copilot` | `.github/prompts/web-audit.prompt.md` + instructions snippet | `/web-audit <url>` |
+| opencode | `npx web-uplift install --agent opencode` | `.opencode/command/web-audit.md` + `AGENTS.md` snippet | `/web-audit <url>` |
+| all | `npx web-uplift install --agent all` | everything above | per agent |
+
+Every install also vendors the evidence CLI, principles, schemas, and guidance
+lookup notes under `.web-uplift/` so the in-session model can call them
+directly.
+
+### Claude Code Plugin
+
+This repo also ships a Claude plugin manifest at
+[.claude-plugin/plugin.json](.claude-plugin/plugin.json) and marketplace entry
+at [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json). In Claude
+Code you can add the marketplace and install `web-uplift` as a plugin to get the
+same `/web-audit` skill.
+
+## Default Path: Run In Your Agent
+
+For individual use, run the audit inside your normal agent session. That uses
+your existing agent subscription or plan. The agent does the reasoning and calls
+the local evidence CLI only when it needs browser evidence.
+
+```sh
+# Audit a live site.
+/web-audit https://example.com
+
+# Audit a local app.
+/web-audit http://localhost:8080
+
+# Audit and fix local source.
+/web-audit http://localhost:8080 --source ./src --fix
+
+# Choose a report directory.
+/web-audit https://example.com --out reports/example
+```
+
+Fix mode is a model-driven hill climb:
+
+1. Audit the site.
+2. Read the prioritised task list.
+3. Retrieve the relevant Modern Web Guidance.
+4. Edit the source under `--source`.
+5. Re-gather the same evidence.
+6. Repeat until no outstanding `issues` remain, or the iteration cap is hit.
+
+## Headless Runner For CI And Batch Work
+
+For unattended work, use the headless commands. These spawn an agent CLI in
+`-p` or `exec` mode and can bill API tokens, so they are not the default path
+for personal use.
+
+```sh
+# Batch audit one or more URLs.
+web-uplift audit https://example.com
+web-uplift audit --urls urls/sample.txt --concurrency 2 --agent claude
+
+# Model-driven fix hill climb against local source.
+web-uplift fix --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4
+web-uplift fix --target ./src --audit-url http://localhost:8080 --dry-run
+
+# Aggregate findings across retained reports.
+web-uplift aggregate
+
+# Compare the two most recent runs for a host.
+web-uplift compare localhost_8080
+web-uplift compare http://localhost:8080 <runId-before> <runId-after>
+```
+
+The headless runner orchestrates. It still does not contain checks. The spawned
+model follows the same [SKILL.md](.claude/skills/web-audit/SKILL.md).
+
+## How It Works
 
 ```
-principles  ->  the declarative SPEC of what good looks like (outcomes + hints)
-SKILL.md    ->  the METHODOLOGY a model follows to audit a URL
-evidence/   ->  GENERIC, judgement-free primitives the model calls to see the page
-guidance    ->  the live how-to feed the model cites and fixes from
-model       ->  supplies all the intelligence: method selection, reasoning, judging
+principles  ->  declarative spec of what good looks like
+SKILL.md    ->  methodology the model follows
+evidence/   ->  generic raw-CDP browser evidence primitives
+guidance    ->  Modern Web Guidance lookup protocol
+model       ->  method selection, reasoning, judging, and fixing
 ```
 
-**No hard-coded checks. No per-principle registry. No deterministic transforms.
-No "call Lighthouse" baked into a runner.** Earlier versions had a deterministic
-CDP check-runner and a deterministic fixer; both were deleted. The reason is a
-deliberate architectural decision: web quality is open-ended and the platform
-moves fast, so a fixed check registry rots, misses context, and becomes the
-thing tools quietly fall back to. By leaning on the model the method stays
-current (it queries the live guidance feed), it generalises (it can judge a
-principle it has no canned check for), and **tool and test choice is an
-inspection-time decision, not a runtime constant**. The model may run
-Lighthouse, inject axe, take a screenshot, record a transition video, take a
-heap snapshot, read layout metrics, or write its own ad-hoc static test on the
-spot, whatever the situation calls for.
+The important design choice: web-uplift provides the spec, method, and tools,
+but the model supplies the judgement. The model may run Lighthouse, inject axe,
+take screenshots, record video, inspect layout metrics, capture a HAR, compare
+heap snapshots, or write its own ad-hoc probe. Tool choice is an inspection-time
+decision, not a runtime constant.
 
-### Evidence primitives (the model's senses)
+### Evidence Primitives
 
 [evidence/cli.mjs](evidence/cli.mjs) is a small CLI of generic, content-agnostic
-primitives. Each one launches the system Chrome
-(`/usr/bin/google-chrome-stable`, override with `CHROME_BIN`) headless and drives
-it purely over the **Chrome DevTools Protocol** via the thin
-`chrome-remote-interface` client (no Playwright, no Puppeteer). They return data
-and artifacts; they make **no judgements**.
+browser primitives:
 
 ```sh
 node evidence/cli.mjs <primitive> <url> [options]
@@ -49,306 +188,106 @@ node evidence/cli.mjs <primitive> <url> [options]
 
 | Primitive | Returns | CDP |
 |---|---|---|
-| `screenshot` | a PNG (full or `--selector`-clipped) under any emulated condition | Page.captureScreenshot |
-| `video` | an MP4 of an interaction window (frames assembled with the system `ffmpeg`); `--interact "<js>"` triggers the transition | Page.startScreencast |
-| `heap` | a readable heap-snapshot summary (types/constructors by size); never the raw multi-MB snapshot | HeapProfiler.takeHeapSnapshot |
-| `layout` | layout metrics, a CLS/layout-shift observer, long tasks, overflow at the current viewport | Page.getLayoutMetrics + observers |
-| `dom` | DOM, computed styles for a `--selector` set, page HTML/CSS, and (`--source <dir>`) the local source files | DOM / CSS / Runtime |
-| `evaluate` | the value of a model-supplied `--expr "<js>"` run in the page: ad-hoc probes and static tests the model writes on the spot | Runtime.evaluate |
-| `trace` | a DevTools performance trace over the load (+ `--interact`): a devtools-loadable `trace.json` AND a compact `*-summary.json` (FCP/LCP, long tasks, total blocking time) the model reads instead of the raw trace | Tracing.start/end |
-| `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` for response bodies) AND a compact `*-summary.json` of network signals (totals + by-resource-type, first/third-party origins, render-blocking candidates, weight offenders, hygiene) the model reads instead of the raw HAR; for network monitoring and cross-run deltas | Network domain |
+| `screenshot` | PNG screenshot, full viewport or selector clipped | `Page.captureScreenshot` |
+| `video` | MP4 screencast assembled with `ffmpeg` | `Page.startScreencast` |
+| `heap` | readable V8 heap summary | `HeapProfiler.takeHeapSnapshot` |
+| `layout` | layout metrics, CLS observer, long tasks, overflow | `Page.getLayoutMetrics` + observers |
+| `dom` | DOM, computed styles, page HTML/CSS, optional local source | `DOM` / `CSS` / `Runtime` |
+| `evaluate` | model-supplied JavaScript probe result | `Runtime.evaluate` |
+| `trace` | DevTools trace plus compact summary | `Tracing.start/end` |
+| `har` | HAR 1.2 plus compact network summary | `Network` domain |
 
-Common options the model chooses and the harness simply applies (it never
-decides them): `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
-`--viewport 360x800`, `--wait <ms>`, `--selector <css>`, `--interact "<js>"`,
-`--duration <ms>`, `--bodies`, `--source <dir>`, `--out <path>`.
+Common options:
 
-### Retained runs and before/after comparison
+```sh
+--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce
+--viewport 360x800
+--wait <ms>
+--selector <css>
+--interact "<js>"
+--duration <ms>
+--bodies
+--source <dir>
+--out <path>
+```
 
-Runs are RETAINED, not overwritten: each lands in `reports/<host>/<runId>/`
-(`<runId>` is a real timestamp) with a `reports/<host>/latest` pointer. Diff two
-runs with `web-uplift compare <host> [runA] [runB]` (defaults to the two most
-recent) to get `compare.md` + `compare.json`: principle status changes,
-per-finding resolved/new/persisting, metric deltas (LCP/INP/CLS, Lighthouse
-scores), network/HAR deltas, and paired before/after screenshots. The fix loop
-emits this comparison automatically at the end (audit -> fix -> re-audit ->
-compare), so a fix run shows the measurable before->after. The
-`artifacts` manifest in `report.json` ties each finding to the concrete evidence
-files (screenshots, trace summaries, raw HARs and their network summaries) that
-back it.
+These primitives make no quality judgement. They only return evidence.
 
-## The two knowledge layers
+## The Quality Model
 
-1. **Principles** - [principles/principles.json](principles/principles.json):
-   the spec of what good looks like, as OUTCOMES. **Sixteen principles**: Una
-   Kravets' five modern-UX principles from her Google I/O 2026 talk *What's new
-   in Web UI* (https://www.youtube.com/watch?v=uT7MVcCQ4rw); the four
-   Lighthouse-dimension principles, with `be-accessible` widened to
-   `be-inclusive` and `follow-best-practices` narrowed so it is no longer the
-   catch-all for security and forms (`be-fast-and-stable`, `be-discoverable`
-   unchanged); **six framework-derived principles** that close the gaps the
-   original nine left open: `be-private-and-secure`, `be-resilient`,
-   `be-internationalised`, `be-trustworthy`, `be-sustainable`, and
-   `be-agent-ready` (emerging/forward-looking); and `be-memory-efficient`,
-   derived from the sibling `memory-tracer` leak-audit methodology (baseline heap
-   snapshot -> repeat a representative interaction -> post snapshot -> compare
-   retained growth). Each check is phrased as an
-   outcome and carries a `detectableVia` HINT (may *mention* candidate
-   evidence/tools, mandates none) plus a `guides` LIST of Modern Web Guidance
-   ids and/or query strings. Each principle declares an `applicability` block
-   (see "Guard criteria" below). Nothing here is wired to a code path. The full
-   coverage map (all 137 mwg guides -> principles, none orphaned) and the
-   rationale for the expansion is in
-   [docs/principles-analysis.md](docs/principles-analysis.md) (adopted
-   2026-06-13).
+web-uplift uses two knowledge layers:
 
-   | # | Principle | Origin | Change |
-   |---|---|---|---|
-   | 1 | `respect-user-preferences` | una-kravets | unchanged |
-   | 2 | `implement-natural-interactions` | una-kravets | unchanged |
-   | 3 | `provide-guided-navigation` | una-kravets | unchanged |
-   | 4 | `maximize-content-reduce-noise` | una-kravets | unchanged |
-   | 5 | `adapt-to-the-form-factor` | una-kravets | unchanged |
-   | 6 | `be-fast-and-stable` | lighthouse | unchanged |
-   | 7 | `be-inclusive` | lighthouse (a11y) | renamed + widened from `be-accessible` |
-   | 8 | `follow-best-practices` | lighthouse | narrowed (no longer catch-all) |
-   | 9 | `be-discoverable` | lighthouse (SEO) | unchanged |
-   | 10 | `be-private-and-secure` | framework-derived | **net-new** |
-   | 11 | `be-resilient` | framework-derived | **net-new** (contextual) |
-   | 12 | `be-internationalised` | framework-derived | **net-new** (contextual) |
-   | 13 | `be-trustworthy` | framework-derived | **net-new** |
-   | 14 | `be-sustainable` | framework-derived | **net-new** (contextual weight bar) |
-   | 15 | `be-agent-ready` | framework-derived | **net-new** (contextual, emerging) |
-   | 16 | `be-memory-efficient` | memory-tracer | **net-new** (leak-audit methodology; leak-under-repeated-interaction check is contextual) |
-2. **Modern Web Guidance** - the `modern-web-guidance` npm feed
-   (https://developer.chrome.com/docs/modern-web-guidance/): use-case-based best
-   practices, the *how*. Each principle check carries a `guides` LIST (mwg ids
-   and/or query strings); the model consults the mapped guides UP FRONT to set
-   the bar, `search`es ad hoc while auditing, and `retrieve`s while fixing,
-   pinned to `modern-web-guidance@0.0.172`. See
+1. **Principles** - [principles/principles.json](principles/principles.json)
+   defines sixteen modern web-quality principles. The set covers Una Kravets'
+   five modern-UX principles, Lighthouse dimensions, privacy/security,
+   resilience, internationalisation, trust, sustainability, agent readiness, and
+   memory efficiency. Each check is phrased as an outcome, with evidence hints
+   and Modern Web Guidance pointers.
+2. **Modern Web Guidance** - the `modern-web-guidance` npm feed provides the
+   how-to layer the model consults before judging and while fixing. See
    [guidance/README.md](guidance/README.md).
 
-The principles set the goal; the guidance provides the concrete, citable
-techniques to get there.
+Not every principle applies to every site. A project can add
+[web-uplift.json](web-uplift.example.json) to declare `siteType`, `scope`,
+principle opt-outs with reasons, and intent. Reports keep `pass`, `issues`,
+`not-applicable`, and `opted-out` separate so contextual principles are not
+treated as failures.
 
-## Guard criteria and the `web-uplift.json` config (quality without shaming)
+## Example And Eval
 
-Not every principle applies to every site, and the audit must not shame a site
-for legitimately not needing one. Two mechanisms make this honest:
+- [examples/playground-report.md](examples/playground-report.md) is a real
+  agentic audit of the seeded-issues fixture.
+- [examples/playground-report-fixed.md](examples/playground-report-fixed.md) is
+  the product guard against the fixed playground and reports zero findings.
+- [eval/README.md](eval/README.md) explains the ground truth.
 
-- **Per-principle `applicability`.** Each principle in `principles.json`
-  declares `expectation: "default" | "contextual"`. `default` principles are
-  expected of essentially every site (absence is a finding). `contextual`
-  principles (`be-resilient`'s offline/installable aspect, `be-internationalised`,
-  `be-sustainable`'s absolute weight bar, `be-agent-ready`, and public
-  discoverability for a gated site) legitimately may not apply; each records
-  `optOutWhy` explaining when a developer might reasonably skip it.
-- **`web-uplift.json` project config** ([schema/config.schema.json](schema/config.schema.json),
-  documented example [web-uplift.example.json](web-uplift.example.json)). A
-  developer drops this at the site root to declare `siteType`, `scope`,
-  per-principle `optOut` (with a reason), and `intent`. The audit honours it: a
-  declared opt-out is reported as **`opted-out`** (with the reason), never as an
-  issue; `intent` sets context the model judges against.
+The CI workflow at
+[.github/workflows/audit-playground.yml](.github/workflows/audit-playground.yml)
+smoke-tests the evidence primitives and eval ground truth. A full audit still
+needs a model in the loop.
 
-The audit then reports each principle's outcome as one of `pass`, `issues`,
-**`not-applicable`** (the model judged a contextual principle out of scope, with
-a rationale) or **`opted-out`** (the developer declared it) - the last two kept
-distinct from a real issue. See `principleOutcomes` in
-[schema/findings.schema.json](schema/findings.schema.json).
-
-## The audit (model-driven)
-
-The methodology lives in [.claude/skills/web-audit/SKILL.md](.claude/skills/web-audit/SKILL.md).
-In outline, the model:
-
-1. **Recon** - uses `dom` (with `--source` if available) and a `screenshot` to
-   understand the page and its surfaces.
-2. **Plan the evidence** - reads every principle check and decides what evidence
-   would let it judge that check, and under which emulated condition.
-3. **Gather** - runs the primitives and any tools it judges useful (Lighthouse,
-   axe via `evaluate`, its own probes).
-4. **Reason and judge** - weighs the evidence and decides pass / issue /
-   not-applicable for every principle, citing guidance ids.
-5. **Report** - writes findings conforming to
-   [schema/findings.schema.json](schema/findings.schema.json) plus a markdown
-   report, recording the `evidenceUsed` so the method is honest.
-6. **Fix (optional)** - with `--source`, writes guidance-backed fixes, re-gathers
-   the same evidence to verify, and can open a PR. The model is the coding agent;
-   there are no canned transforms.
-
-## Layout
+## Repository Layout
 
 ```
-evidence/                   Generic, judgement-free CDP evidence primitives (the model's senses)
-.claude/skills/web-audit/   The audit METHODOLOGY a model follows (the heart of the system)
-principles/                 The declarative spec: Una's five + Lighthouse dimensions + six framework-derived principles (15 total), each with guard criteria
-guidance/                   Modern Web Guidance feed integration (the how)
-schema/                     Findings + report JSON schema
-playground/                 The genuinely-correct demo site (modern-UX techniques applied by default)
-eval/                       Eval ground truth: the frozen seeded-issues fixture + expected-findings (9)
-examples/                   A committed real agentic audit (fixture -> 9 findings; live playground -> 0)
-runner/                     Batch fan-out + run-history helpers (retained reports/<host>/<runId>/, latest pointer)
-aggregate/                  Merge reports into a cross-site summary; compare two retained runs (before/after)
-urls/                       URL lists + notes on sourcing top-site lists
-testplans/                  Reviewable per-site plans (when an agent persists one)
-reports/                    Retained audit output: reports/<host>/<runId>/ + latest pointer (gitignored)
-.github/workflows/          CI: smoke-tests the evidence primitives against the playground on push
+evidence/                   Raw-CDP evidence primitives
+.claude/skills/web-audit/   Canonical audit methodology
+principles/                 Declarative web-quality principles
+guidance/                   Modern Web Guidance lookup protocol
+schema/                     Findings and config schemas
+playground/                 Fixed demo site
+eval/                       Seeded-issues fixture and expected findings
+examples/                   Committed example reports
+runner/                     Headless batch orchestration
+aggregate/                  Cross-site summaries and run comparison
+urls/                       URL list examples
+testplans/                  Reviewable per-site plans
+reports/                    Retained audit output, gitignored
 ```
 
-## Run it in your agent (uses your subscription) - the DEFAULT path
-
-web-uplift is a **skill** (methodology) plus a few plain-Node evidence CLIs.
-There is nothing to host. The intended way to use it as an individual is to
-**install the skill into your project and run it inside your own running agent
-session** (Claude Code, Codex, Gemini CLI, Antigravity, GitHub Copilot,
-opencode). The in-session agent does the reasoning on YOUR plan and just shells
-out to `node evidence/cli.mjs ...` for evidence, so it uses your **subscription**,
-not metered API tokens.
+## Development
 
 ```sh
-# 0. Install web-uplift's skill + evidence CLIs into your project, for your agent
-#    (one-command in Claude Code via the plugin; see "Install" below). Or via npx:
-npx web-uplift install --agent claude        # or codex|gemini|antigravity|copilot|opencode|all
-npx web-uplift install --dry-run --agent all # show exactly what gets placed where
-
-# 1. Then, INSIDE your agent session, audit a URL (you are the auditor):
-/web-audit http://localhost:8080
-
-# 2. ...and hill-climb fixes against local source, in the SAME session:
-/web-audit http://localhost:8080 --source ./src --fix
-```
-
-Everything below the audit is just the building blocks the in-session model
-calls; you rarely run them by hand:
-
-```sh
-# Verify the Modern Web Guidance feed (fetched on demand via npx; no install):
-npx -y modern-web-guidance@latest list | head
-
-# Serve the demo playground on http://localhost:8080:
+npm test
 npm run playground
-
-# The evidence primitives the model uses (raw CDP):
-npm run evidence -- dom        "http://localhost:8080/#no-dark-mode" --selector ".ndm-card" --emulate-media prefers-color-scheme=dark
-npm run evidence -- layout     "http://localhost:8080/#fixed-layout" --viewport 360x800
-npm run evidence -- video      "http://localhost:8080/#motion" --out motion.mp4 --duration 2500
-npm run evidence -- evaluate   "http://localhost:8080/#motion" --emulate-media prefers-reduced-motion=reduce --expr "document.querySelector('.mv-card').getAnimations().length"
-npm run evidence -- trace      "http://localhost:8080/#layout-shift" --out trace.json   # + trace-summary.json
-npm run evidence -- har        "http://localhost:8080/" --out network.har --bodies   # + network-summary.json
+npm run evidence -- dom "http://localhost:8080/#no-dark-mode" --selector ".ndm-card"
 ```
 
-## Headless runner (CI / batch) - uses API tokens, NOT the default
-
-For unattended CI or surveying many sites, `npm run audit`/`npm run fix` (or
-`web-uplift audit`/`web-uplift fix`) spawn an agent CLI in `-p`/`exec` mode to
-drive the **same** skill. That **bills API tokens**, so it is the automation
-path, not what an individual should reach for first.
+Before publishing:
 
 ```sh
-# Batch audit: one agentic audit per URL (claude default; also
-# --agent codex|gemini|antigravity|copilot|opencode). Orchestrates; no checks.
-npm run audit -- https://example.com
-npm run audit -- --urls urls/sample.txt --concurrency 2 --agent claude
-
-# Model-driven fix hill-climb against local source (NOT canned transforms):
-npm run fix -- --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4
-npm run fix -- --target ./src --audit-url http://localhost:8080 --dry-run   # print per-agent commands
-
-# Aggregate findings across reports:
-npm run aggregate
-
-# Compare two retained runs of a host (before/after); defaults to the two most recent:
-web-uplift compare localhost_8080
-web-uplift compare http://localhost:8080 <runId-before> <runId-after>
+npm test
+npm publish --dry-run
+npm publish --access public
 ```
 
-## Install
+No build step is required. The package ships source ESM files directly.
 
-web-uplift ships as an npm package. `web-uplift install` copies the canonical
-skill plus the evidence CLIs into your project at the right location for each
-agent (thin wrappers that only POINT at the one SKILL.md, so the method can't
-drift), and `--dry-run` prints the placement plan first.
+## More Detail
 
-| Agent | `--agent` | What `install` places | Run it |
-|---|---|---|---|
-| Claude Code | `claude` | `.claude/skills/web-audit/SKILL.md` (+ install the plugin for one-command) | `/web-audit <url>` |
-| Codex | `codex` | `.codex/skills/web-audit/SKILL.md` + `AGENTS.md` snippet | `/web-audit <url>` |
-| Gemini CLI | `gemini` | `.gemini/commands/web-audit.toml` | `/web-audit <url>` |
-| Antigravity | `antigravity` | `.agents/skills/web-audit.md` | `/web-audit <url>` |
-| GitHub Copilot | `copilot` | `.github/prompts/web-audit.prompt.md` + instructions snippet | `/web-audit <url>` |
-| opencode | `opencode` | `.opencode/command/web-audit.md` + `AGENTS.md` snippet | `/web-audit <url>` |
-| all | `all` | everything above | per agent |
-
-Every agent also gets the evidence CLIs + skill + principles + schema vendored
-under `.web-uplift/` so the in-session model can call them directly.
-
-**Claude Code plugin (one command):** this repo carries a Claude plugin manifest
-at [.claude-plugin/plugin.json](.claude-plugin/plugin.json) and a marketplace
-entry at [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json), so
-in Claude Code you can add the marketplace and `/plugin install web-uplift` to
-get the `/web-audit` skill in one step (no manual file copying). The other
-agents use `web-uplift install --agent <name>` above.
-
-**Adding an agent** is one entry in the headless map
-([runner/agents.mjs](runner/agents.mjs)) plus one entry in the install map
-(`agentTargets()` in [bin/web-uplift.mjs](bin/web-uplift.mjs)); see "How to add
-an agent" in [runner/README.md](runner/README.md).
-
-**Publishing (for the maintainer):** the package name `web-uplift` is free on
-npm. To publish: `npm pack --dry-run` to review the file set, then
-`npm publish --access public`. (Not run here.)
-
-## Cross-agent (not Claude-only)
-
-The methodology is one canonical file
-([SKILL.md](.claude/skills/web-audit/SKILL.md)), the spec is one file
-([principles.json](principles/principles.json)), and the way the model sees a
-page is one plain Node CLI ([evidence/cli.mjs](evidence/cli.mjs), raw CDP shell
-commands). All three are agent-agnostic. Each agent gets only a thin wrapper
-pointing at the same skill, so nothing can drift, and **no MCP server is
-required** (the `web-uplift` skills server is an optional convenience, and there
-is no browser-automation MCP anywhere).
-
-| Agent | Entry point | `--agent` | Status |
-|---|---|---|---|
-| Claude Code | `.claude/skills/web-audit/` (native skill) | `claude` | real run verified |
-| Codex | `.codex/skills/web-audit` (symlink to the skill) + `AGENTS.md` | `codex` | dry-run verified |
-| Gemini CLI | `.gemini/commands/web-audit.toml` | `gemini` | dry-run verified |
-| Antigravity | `.agents/skills/web-audit.md` | `agy` | dry-run verified |
-| GitHub Copilot | `.github/copilot-instructions.md` + `.github/prompts/web-audit.prompt.md` | `copilot` | dry-run verified |
-| opencode | `.opencode/command/web-audit.md` + `AGENTS.md` + `opencode.json` | `opencode` | dry-run verified |
-
-**How to add an agent (one thin wrapper):** add the agent's command/instructions
-file saying only "read `.claude/skills/web-audit/SKILL.md` and follow it with
-these arguments", then add one `{ bin, prompt, args }` entry to the `AGENTS` map
-in [runner/run-batch.mjs](runner/run-batch.mjs), and verify with
-`node runner/run-batch.mjs <url> --agent <new> --dry-run`. Full detail in
-[runner/README.md](runner/README.md).
-
-## Example report and the eval
-
-[examples/playground-report.md](examples/playground-report.md) is a real
-agentic audit of the **seeded-issues eval fixture**
-([eval/fixtures/seeded-issues/site](eval/fixtures/seeded-issues/site)): the model
-launched headless Chrome, gathered DOM/computed-styles, screenshots, layout
-metrics, a heap summary and a transition video via the evidence primitives,
-chose to run Lighthouse and axe, reasoned over them, and judged all fifteen
-principles, surfacing the nine ground-truth findings (100% recall) and reporting
-the contextual framework-derived principles as `not-applicable` / `opted-out`
-with a rationale rather than penalising the demo.
-[examples/playground-report-fixed.md](examples/playground-report-fixed.md) is the
-product guard: the same audit against the genuinely-fixed live
-[playground/](playground/), which surfaces **zero** findings (the wider
-principle set adds no false positives; the contextual principles resolve to n/a
-or opted-out via [web-uplift.json](web-uplift.json)). The fixture proves recall;
-the live playground proves the fixes are real. See
-[eval/README.md](eval/README.md). The
-[evidence-smoke workflow](.github/workflows/audit-playground.yml) smoke-tests the
-primitives and the eval ground truth on every push (the full audit needs a model
-in the loop, so it is refreshed by running the agent, not by CI).
-
-See [PLAN.md](PLAN.md) for the roadmap and the rationale for the fully-agentic,
-no-fast-path design.
+- [PLAN.md](PLAN.md) covers the roadmap and architectural rationale.
+- [docs/principles-analysis.md](docs/principles-analysis.md) explains the
+  principle expansion and guidance coverage map.
+- [runner/README.md](runner/README.md) documents headless agent orchestration.
 
 ## License
 
