@@ -58,7 +58,7 @@ findings, 100% recall) and
 | Check | Fixture (`:8090`) | Live playground (`:8080`) |
 |---|---|---|
 | `.ndm-card` bg under dark | rgb(255,255,255) | rgb(30,30,30) |
-| overflow @360px | 1158px | 58px (frame residual) |
+| overflow @360px | 1158px | 0px (shell collapses below 640px) |
 | running anims under reduce | 1 | 0 |
 | focused `.pf-btn` outline-style | none | solid |
 | narrow `.cq-card` flex-direction | row | column |

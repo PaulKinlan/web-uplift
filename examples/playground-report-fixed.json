@@ -39,7 +39,7 @@
     "verifiedConditions": {
       "no-dark-mode": "background under dark = rgb(30, 30, 30) (adapts)",
       "motion": "running animations under reduce = 0",
-      "fixed-layout": "no scenario element overflows the 360px viewport (only the 58px playground-frame residual remains)",
+      "fixed-layout": "no horizontal overflow at the 360px viewport (0px; the shell grid collapses to a single column under 640px)",
       "poor-focus": "focused button computed outline-style = solid; axe color-contrast violations = 0",
       "no-container-queries": "card in the narrow container computes flex-direction = column",
       "layout-shift": "CLS 0.0041 (the slot reserves min-height)",

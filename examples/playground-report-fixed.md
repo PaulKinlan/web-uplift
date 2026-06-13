@@ -19,7 +19,7 @@ six CSS scenarios.)
 |---|---|---|
 | no-dark-mode | computed `.ndm-card` background under `prefers-color-scheme: dark` | `rgb(30, 30, 30)` (adapts) |
 | motion | `.mv-card` running animations under `prefers-reduced-motion: reduce` | 0 |
-| fixed-layout | scenario element overflow at a 360x800 viewport | none (only the 58px playground-frame residual) |
+| fixed-layout | horizontal overflow at a 360x800 viewport | 0px (the shell grid collapses below 640px) |
 | poor-focus | focused `.pf-btn` computed `outline-style`; axe color-contrast | `solid` (+ `:focus-visible`); 0 violations |
 | no-container-queries | `.cq-narrow .cq-card` computed `flex-direction` | `column` |
 | layout-shift | CLS from the layout-shift observer | 0.0041 (slot reserves space) |

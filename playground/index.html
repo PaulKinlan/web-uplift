@@ -19,6 +19,12 @@
     body[data-mode="issue"] #mode-toggle { background: #c62828; color: white; }
     body[data-mode="fixed"] #mode-toggle { background: #2e7d32; color: white; }
     .layout { display: grid; grid-template-columns: 230px 1fr; min-height: calc(100vh - 3.5rem); }
+    /* Collapse the shell to a single column on narrow viewports so the fixed
+       230px sidebar never squeezes main into horizontal overflow. */
+    @media (max-width: 640px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { border-right: none; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+    }
     nav { border-right: 1px solid color-mix(in srgb, currentColor 20%, transparent); padding: 0.75rem 0; }
     nav a { display: block; padding: 0.5rem 1.25rem; text-decoration: none; color: inherit; font-size: 0.9rem; }
     nav a.active { font-weight: 700; border-left: 3px solid currentColor; padding-left: calc(1.25rem - 3px); }

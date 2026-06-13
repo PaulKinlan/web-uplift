@@ -241,6 +241,6 @@
     "missed": [],
     "spurious": [],
     "livePlaygroundSeededFindings": 0,
-    "note": "All nine ground-truth findings were surfaced against the fixture (100% recall, 0 false positives). The genuinely-fixed live playground/ (audited separately) surfaced ZERO of these nine: dark surface re-tints to rgb(30,30,30), 0 running animations under reduced-motion, 58px residual overflow at 360px (playground frame only), solid focus outline, flex-direction column in the narrow container, CLS 0.0041, a meta description present, axe color-contrast violations 0, and Lighthouse 100/100/100/100 (a11y/best-practices/seo/perf). The fixture's ?mode=fixed run is the CSS-scenario false-positive guard."
+    "note": "All nine ground-truth findings were surfaced against the fixture (100% recall, 0 false positives). The genuinely-fixed live playground/ (audited separately) surfaced ZERO of these nine: dark surface re-tints to rgb(30,30,30), 0 running animations under reduced-motion, 0px horizontal overflow at 360px (the shell grid collapses below 640px), solid focus outline, flex-direction column in the narrow container, CLS 0.0041, a meta description present, axe color-contrast violations 0, and Lighthouse 100/100/100/100 (a11y/best-practices/seo/perf). The fixture's ?mode=fixed run is the CSS-scenario false-positive guard."
   }
 }
