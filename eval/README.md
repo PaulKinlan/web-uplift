@@ -67,3 +67,19 @@ findings, 100% recall) and
 | axe color-contrast violations | 1 (serious, 3 nodes) | 0 |
 | Lighthouse a11y / bp / seo / perf | 91 / 96 / 90 / 100 | 100 / 100 / 100 / 100 |
 | **seeded findings** | **9** | **0** |
+
+### Re-baseline for the expanded 15-principle set (2026-06-13)
+
+The principle set grew from 9 to 15 ([docs/principles-analysis.md](../docs/principles-analysis.md),
+adopted). The fixture was re-audited under the wider set. Result: the seeded
+ground truth stays at **9** (only change: F-007's principle id moved
+`be-accessible` -> `be-inclusive` after the rename; F-009's guidance id moved off
+the now-narrowed security framing). No net-new fixture finding was added,
+because the only new-principle observations on the served site (no CSP header; a
+client-rendered no-JS shell) are properties of the bare `npx serve` host and the
+demo harness and are present identically on the genuinely-fixed live playground
+- so they are reported as contextual `not-applicable` / `opted-out` (see
+`expectedPrincipleOutcomes` in
+[expected-findings.json](fixtures/seeded-issues/expected-findings.json)) rather
+than counted as issues. This keeps recall meaningful and the precision guard
+honest.

@@ -7,7 +7,9 @@
 - **Status:** completed
 - **How:** fully agentic. The model (not a deterministic runner) gathered
   multi-modal evidence with the repo's evidence primitives, chose its own tools,
-  reasoned over the evidence, and judged all nine principles.
+  reasoned over the evidence, and judged all fifteen principles (the expanded
+  set, [docs/principles-analysis.md](../docs/principles-analysis.md), adopted
+  2026-06-13).
 - **Browser:** system Chrome (headless) over raw Chrome DevTools Protocol
   (chrome-remote-interface). Video assembled with the system ffmpeg.
 
@@ -27,7 +29,7 @@
 | Transition video | `evidence video --emulate-media prefers-reduced-motion=reduce` | the marquee still sliding under reduced-motion |
 | Layout metrics + CLS + long tasks | `evidence layout` | horizontal overflow at 360px; CLS from the late banner |
 | Heap summary | `evidence heap` | object population baseline (no leak found this run) |
-| Lighthouse | `npx lighthouse` (model's choice) | be-fast-and-stable / be-accessible / follow-best-practices / be-discoverable |
+| Lighthouse | `npx lighthouse` (model's choice) | be-fast-and-stable / be-inclusive / follow-best-practices / be-discoverable |
 | axe-core | injected from CDN via `evidence evaluate` (model's choice) | independent confirmation of the contrast violation |
 
 Artifacts live in [examples/evidence/](evidence/): `no-dark-mode-dark.png`,
@@ -56,8 +58,30 @@ surfaced **none** of them.
 Six findings are the seeded CSS scenarios; three (F-007 contrast, F-008 meta
 description, F-009 console 404) are document-level findings the model surfaced by
 choosing to run Lighthouse and axe. That is the point of the agentic design: the
-model judged principles (be-accessible, be-discoverable, follow-best-practices)
+model judged principles (be-inclusive, be-discoverable, follow-best-practices)
 that no hand-written check covered.
+
+### Applicability under the expanded set (quality without shaming)
+
+The expansion from 9 to 15 principles added no spurious fixture findings. The
+nine default-expectation principles in play were judged for real (six surfaced
+the seeded findings; implement-natural-interactions, provide-guided-navigation,
+maximize-content-reduce-noise and be-trustworthy passed). The contextual
+framework-derived principles were judged **not-applicable** / **opted-out** with
+a rationale rather than penalised:
+
+| Principle | Outcome | Why |
+|---|---|---|
+| be-private-and-secure | not-applicable | bare localhost static host; no transport/headers/auth to assess (the favicon 404 is captured under follow-best-practices as F-009) |
+| be-resilient | not-applicable | client-rendered CSS-scenario demo; offline/installable out of scope, the no-JS shell is a shared harness property |
+| be-internationalised | not-applicable | single-locale English demo, no locale-sensitive data |
+| be-sustainable | not-applicable | tiny hand-authored demo, weight already minimal (judged proportionally) |
+| be-agent-ready | opted-out | static UX demo with no agent-facing surface |
+
+The two new-principle observations on the served site (no CSP header; a blank
+no-JS shell) are properties of the bare `npx serve` host and demo harness, and
+are present identically on the genuinely-fixed live playground. Counting them as
+fixture findings would be dishonest, so the seeded ground truth stays at nine.
 
 ## Findings (9)
 
@@ -116,7 +140,7 @@ that no hand-written check covered.
 
 ### F-007 (high) Buttons fail WCAG colour-contrast minimums
 
-- **Principle:** be-accessible / sufficient-contrast
+- **Principle:** be-inclusive / sufficient-contrast
 - **Evidence:** Lighthouse (accessibility 91) flagged `color-contrast: 0` on the
   three `.pf-btn` buttons; axe-core, injected from CDN via the evaluate
   primitive and run in-page, independently reported one serious

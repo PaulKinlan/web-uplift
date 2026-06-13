@@ -240,12 +240,16 @@ agentic audit of the **seeded-issues eval fixture**
 ([eval/fixtures/seeded-issues/site](eval/fixtures/seeded-issues/site)): the model
 launched headless Chrome, gathered DOM/computed-styles, screenshots, layout
 metrics, a heap summary and a transition video via the evidence primitives,
-chose to run Lighthouse and axe, reasoned over them, and judged the nine
-principles, surfacing all nine ground-truth findings (100% recall).
+chose to run Lighthouse and axe, reasoned over them, and judged all fifteen
+principles, surfacing the nine ground-truth findings (100% recall) and reporting
+the contextual framework-derived principles as `not-applicable` / `opted-out`
+with a rationale rather than penalising the demo.
 [examples/playground-report-fixed.md](examples/playground-report-fixed.md) is the
 product guard: the same audit against the genuinely-fixed live
-[playground/](playground/), which surfaces **zero** of them. The fixture proves
-recall; the live playground proves the fixes are real. See
+[playground/](playground/), which surfaces **zero** findings (the wider
+principle set adds no false positives; the contextual principles resolve to n/a
+or opted-out via [web-uplift.json](web-uplift.json)). The fixture proves recall;
+the live playground proves the fixes are real. See
 [eval/README.md](eval/README.md). The
 [evidence-smoke workflow](.github/workflows/audit-playground.yml) smoke-tests the
 primitives and the eval ground truth on every push (the full audit needs a model

@@ -30,6 +30,24 @@ six CSS scenarios.)
 _No findings. The live playground satisfies every seeded condition and scores
 100 across the Lighthouse dimensions._
 
+## Applicability under the expanded set
+
+The audit honoured the repo's [web-uplift.json](../web-uplift.json). All nine
+default-expectation principles in play **pass**. The contextual framework-derived
+principles are reported **not-applicable** / **opted-out** with a rationale, the
+same way as on the fixture, so nothing is shamed:
+
+| Principle | Outcome | Why |
+|---|---|---|
+| be-private-and-secure | not-applicable | bare localhost static host; no transport/headers/auth to assess |
+| be-resilient | opted-out (web-uplift.json) | client-rendered modern-UX demo; offline/installable out of scope |
+| be-internationalised | not-applicable | single-locale English demo, no locale-sensitive data |
+| be-sustainable | not-applicable | tiny demo, weight already minimal (web-uplift.json intent) |
+| be-agent-ready | opted-out (web-uplift.json) | static UX demo, no agent-facing surface |
+
+This is the precision guard: the wider principle set adds zero false positives,
+and the contextual principles resolve to n/a / opted-out rather than issues.
+
 ## TLDR
 
 Zero findings on the live playground: the product guard passes. Every fixed

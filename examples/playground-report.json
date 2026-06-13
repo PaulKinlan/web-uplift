@@ -3,7 +3,7 @@
   "auditedAt": "2026-06-13T13:45:00.000Z",
   "mode": "report",
   "status": "completed",
-  "statusDetail": "Fully agentic audit of the seeded-issues eval fixture (eval/fixtures/seeded-issues/site). The model gathered multi-modal evidence with the repo's evidence primitives (DOM+source, computed styles, screenshots, a transition video, layout metrics + a CLS/long-task observer, a heap-snapshot summary, and ad-hoc evaluate probes), then chose to run Lighthouse and to inject axe-core (via the evaluate primitive, fetched from a CDN at inspection time) to corroborate the Lighthouse-dimension principles. It judged all nine principles. No deterministic check runner was involved. This fixture is the eval ground truth; the genuinely-fixed live playground/ reports zero of these findings.",
+  "statusDetail": "Fully agentic audit of the seeded-issues eval fixture (eval/fixtures/seeded-issues/site) under the expanded 15-principle set (docs/principles-analysis.md, adopted 2026-06-13). The model gathered multi-modal evidence with the repo's evidence primitives (DOM+source, computed styles, screenshots, a transition video, layout metrics + a CLS/long-task observer, a heap-snapshot summary, and ad-hoc evaluate probes), then chose to run Lighthouse and to inject axe-core (via the evaluate primitive, fetched from a CDN at inspection time) to corroborate the Lighthouse-dimension principles. It judged all fifteen principles: nine were judged for real (six modern-UX + three Lighthouse dimensions, surfacing the nine seeded findings), and the contextual framework-derived principles were judged not-applicable / opted-out with rationale (see principleOutcomes) rather than penalised. No deterministic check runner was involved. This fixture is the eval ground truth; the genuinely-fixed live playground/ reports zero of these findings.",
   "page": {
     "appType": "spa",
     "framework": "vanilla ES modules (hash-routed)",
@@ -19,6 +19,27 @@
     "evaluate-probe (ad-hoc focus/animation/container probes written on the spot)",
     "lighthouse (performance, accessibility, best-practices, seo)",
     "axe-core (injected from CDN via the evaluate primitive and run in-page)"
+  ],
+  "config": {
+    "loaded": false,
+    "path": "(none for the frozen fixture; the repo web-uplift.json targets the live playground, not this fixture)"
+  },
+  "principleOutcomes": [
+    { "principleId": "respect-user-preferences", "expectation": "default", "status": "issues", "findingIds": ["F-001", "F-002"] },
+    { "principleId": "implement-natural-interactions", "expectation": "default", "status": "pass" },
+    { "principleId": "provide-guided-navigation", "expectation": "default", "status": "pass" },
+    { "principleId": "maximize-content-reduce-noise", "expectation": "default", "status": "pass" },
+    { "principleId": "adapt-to-the-form-factor", "expectation": "default", "status": "issues", "findingIds": ["F-003", "F-004", "F-006"] },
+    { "principleId": "be-fast-and-stable", "expectation": "default", "status": "issues", "findingIds": ["F-005"] },
+    { "principleId": "be-inclusive", "expectation": "default", "status": "issues", "findingIds": ["F-007"] },
+    { "principleId": "follow-best-practices", "expectation": "default", "status": "issues", "findingIds": ["F-009"] },
+    { "principleId": "be-discoverable", "expectation": "default", "status": "issues", "findingIds": ["F-008"] },
+    { "principleId": "be-private-and-secure", "expectation": "default", "status": "not-applicable", "reason": "Bare localhost static host (npx serve): no real transport, headers, cookies or auth surface to assess. The missing CSP and the favicon 404 are serving-setup artefacts shared identically by the genuinely-fixed playground, so they are not seeded fixture findings (the favicon 404 is captured under follow-best-practices as F-009)." },
+    { "principleId": "be-resilient", "expectation": "contextual", "status": "not-applicable", "reason": "A deliberately client-rendered CSS-scenario demo; the offline/installable aspect is out of scope and the no-JS blank shell is a shared demo-harness property, not a seeded issue." },
+    { "principleId": "be-internationalised", "expectation": "contextual", "status": "not-applicable", "reason": "Single-locale English demo with lang=en and no locale-sensitive data (dates, numbers, currencies, calendars)." },
+    { "principleId": "be-trustworthy", "expectation": "default", "status": "pass", "reason": "The Save/Cancel/Delete buttons are demo-only with no real action, no forms to validate, and no dark patterns, upsells or consent walls." },
+    { "principleId": "be-sustainable", "expectation": "contextual", "status": "not-applicable", "reason": "A tiny hand-authored demo (a few KB of HTML/CSS/JS); page weight is already minimal, judged proportionally." },
+    { "principleId": "be-agent-ready", "expectation": "contextual", "status": "opted-out", "reason": "Static UX demo with no agent-facing surface; not exposing WebMCP tools or on-device inference (emerging, judged as opportunity not obligation)." }
   ],
   "paths": [
     {
@@ -172,7 +193,7 @@
       "id": "F-007",
       "pathId": "site-wide",
       "url": "http://localhost:8090/#poor-focus",
-      "principleId": "be-accessible",
+      "principleId": "be-inclusive",
       "principleCheckId": "sufficient-contrast",
       "guidanceId": "accessibility",
       "guidanceCategory": "accessibility",
@@ -204,7 +225,7 @@
       "url": "http://localhost:8090/",
       "principleId": "follow-best-practices",
       "principleCheckId": "no-console-errors",
-      "guidanceId": "security",
+      "guidanceId": "html",
       "guidanceCategory": "best-practices",
       "severity": "low",
       "confidence": "medium",
@@ -241,6 +262,6 @@
     "missed": [],
     "spurious": [],
     "livePlaygroundSeededFindings": 0,
-    "note": "All nine ground-truth findings were surfaced against the fixture (100% recall, 0 false positives). The genuinely-fixed live playground/ (audited separately) surfaced ZERO of these nine: dark surface re-tints to rgb(30,30,30), 0 running animations under reduced-motion, 0px horizontal overflow at 360px (the shell grid collapses below 640px), solid focus outline, flex-direction column in the narrow container, CLS 0.0041, a meta description present, axe color-contrast violations 0, and Lighthouse 100/100/100/100 (a11y/best-practices/seo/perf). The fixture's ?mode=fixed run is the CSS-scenario false-positive guard."
+    "note": "All nine ground-truth findings were surfaced against the fixture (100% recall, 0 false positives) under the expanded 15-principle set. The six net-new / changed principles added no spurious fixture findings: be-inclusive (was be-accessible) still owns the contrast finding F-007; follow-best-practices (narrowed) still owns the console-404 F-009; and the contextual framework-derived principles (be-private-and-secure, be-resilient, be-internationalised, be-sustainable, be-agent-ready) were correctly judged not-applicable / opted-out rather than penalised. The genuinely-fixed live playground/ (audited separately) surfaced ZERO of the nine: dark surface re-tints to rgb(30,30,30), 0 running animations under reduced-motion, 0px horizontal overflow at 360px (the shell grid collapses below 640px), solid focus outline, flex-direction column in the narrow container, CLS 0.0041, a meta description present, axe color-contrast violations 0, and Lighthouse 100/100/100/100 (a11y/best-practices/seo/perf); its contextual-principle outcomes match the fixture's (same not-applicable/opted-out rationale). The fixture's ?mode=fixed run is the CSS-scenario false-positive guard."
   }
 }
