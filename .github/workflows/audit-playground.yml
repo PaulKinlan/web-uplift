@@ -112,7 +112,10 @@ jobs:
           fx_ov=$(overflow "http://localhost:8090/#fixed-layout")
           # Live (fixed) expectations.
           lv_bg=$(node evidence/cli.mjs dom "http://localhost:8080/#no-dark-mode" --selector ".ndm-card" --emulate-media prefers-color-scheme=dark --wait 800 --quiet 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).page.computed[".ndm-card"]["background-color"]))')
-          lv_anim=$(probe "http://localhost:8080/#motion" "document.querySelector('.mv-card').getAnimations().length")
+          # Must emulate reduced-motion here: the fixed playground gates the
+          # animation behind @media (prefers-reduced-motion: no-preference), so
+          # the regression only shows under an emulated reduce preference.
+          lv_anim=$(node evidence/cli.mjs evaluate "http://localhost:8080/#motion" --emulate-media prefers-reduced-motion=reduce --expr "document.querySelector('.mv-card').getAnimations().length" --wait 800 --quiet 2>/dev/null)
           lv_meta=$(probe "http://localhost:8080/" "!!document.querySelector('meta[name=description]')")
           echo "fixture: dark-card-bg(default)=$fx_bg overflow@360=$fx_ov"
           echo "live:    dark-card-bg=$lv_bg reduce-anims=$lv_anim metaDesc=$lv_meta"
