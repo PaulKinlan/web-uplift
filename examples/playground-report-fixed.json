@@ -1,86 +1,45 @@
 {
   "url": "http://localhost:8080/?mode=fixed",
-  "auditedAt": "2026-06-13T11:50:35.506Z",
+  "auditedAt": "2026-06-13T13:16:00.000Z",
   "mode": "report",
   "status": "completed",
+  "statusDetail": "Fully agentic false-positive guard. Re-running the same evidence-gathering against ?mode=fixed (where each scenario ships its corrected CSS). The model confirmed every seeded condition is now satisfied, so it reports none of the six seeded findings.",
   "page": {
     "appType": "spa",
-    "notes": "Hash-routed playground SPA."
+    "framework": "vanilla ES modules (hash-routed)",
+    "notes": "?mode=fixed serves the corrected stylesheet for every scenario (light-dark(), prefers-reduced-motion gate, fluid max-width, :focus-visible, reserved min-height, @container)."
   },
+  "evidenceUsed": [
+    "computed-styles probe (evaluate) under prefers-color-scheme: dark and prefers-reduced-motion: reduce",
+    "layout-metrics at a 360x800 viewport",
+    "evaluate-probe (focus outline, container flex-direction)"
+  ],
   "paths": [
-    {
-      "id": "no-dark-mode",
-      "description": "Scenario route #no-dark-mode",
-      "url": "http://localhost:8080/?mode=fixed#no-dark-mode",
-      "conditions": [
-        "prefers-color-scheme: dark"
-      ],
-      "result": "pass"
-    },
-    {
-      "id": "motion",
-      "description": "Scenario route #motion",
-      "url": "http://localhost:8080/?mode=fixed#motion",
-      "conditions": [
-        "prefers-reduced-motion: reduce"
-      ],
-      "result": "pass"
-    },
-    {
-      "id": "fixed-layout",
-      "description": "Scenario route #fixed-layout",
-      "url": "http://localhost:8080/?mode=fixed#fixed-layout",
-      "conditions": [
-        "viewport: 360x800"
-      ],
-      "result": "pass"
-    },
-    {
-      "id": "poor-focus",
-      "description": "Scenario route #poor-focus",
-      "url": "http://localhost:8080/?mode=fixed#poor-focus",
-      "conditions": [
-        "keyboard-only"
-      ],
-      "result": "pass"
-    },
-    {
-      "id": "layout-shift",
-      "description": "Scenario route #layout-shift",
-      "url": "http://localhost:8080/?mode=fixed#layout-shift",
-      "conditions": [
-        "post-load layout-shift observation"
-      ],
-      "result": "pass"
-    },
-    {
-      "id": "no-container-queries",
-      "description": "Scenario route #no-container-queries",
-      "url": "http://localhost:8080/?mode=fixed#no-container-queries",
-      "conditions": [
-        "component reused at multiple container widths"
-      ],
-      "result": "pass"
-    }
+    { "id": "no-dark-mode", "description": "card under dark", "url": "http://localhost:8080/?mode=fixed#no-dark-mode", "conditions": ["prefers-color-scheme: dark"], "result": "pass" },
+    { "id": "motion", "description": "marquee under reduce", "url": "http://localhost:8080/?mode=fixed#motion", "conditions": ["prefers-reduced-motion: reduce"], "result": "pass" },
+    { "id": "fixed-layout", "description": "layout at 360px", "url": "http://localhost:8080/?mode=fixed#fixed-layout", "conditions": ["viewport: 360x800"], "result": "pass" },
+    { "id": "poor-focus", "description": "focus visibility", "url": "http://localhost:8080/?mode=fixed#poor-focus", "conditions": ["keyboard focus"], "result": "pass" },
+    { "id": "layout-shift", "description": "CLS observation", "url": "http://localhost:8080/?mode=fixed#layout-shift", "conditions": ["post-load layout-shift observation"], "result": "pass" },
+    { "id": "no-container-queries", "description": "card in narrow container", "url": "http://localhost:8080/?mode=fixed#no-container-queries", "conditions": ["component reused at two container widths"], "result": "pass" }
   ],
   "findings": [],
   "taskList": [],
-  "budget": {
-    "pathCount": 6,
-    "auditPasses": 1
-  },
+  "budget": { "pathCount": 6, "auditPasses": 1 },
   "eval": {
     "mode": "fixed",
-    "expectedCount": 0,
-    "foundCount": 0,
-    "truePositives": 0,
-    "falsePositives": 0,
-    "falseNegatives": 0,
-    "precision": 1,
-    "recall": 1,
-    "matched": [],
-    "missed": [],
+    "groundTruth": "playground/expected-findings.json",
+    "expectedSeededFindings": 0,
+    "foundSeededFindings": 0,
+    "precision": 1.0,
     "spurious": [],
-    "principleAlignment": []
+    "verifiedConditions": {
+      "no-dark-mode": "background under dark = rgb(30, 30, 30) (adapts)",
+      "motion": "running animations under reduce = 0",
+      "fixed-layout": "no scenario element overflows the 360px viewport (only the 58px playground-frame residual remains)",
+      "poor-focus": "focused button computed outline-style = solid",
+      "no-container-queries": "card in the narrow container computes flex-direction = column",
+      "layout-shift": "CLS 0.0041 (the slot reserves min-height)"
+    },
+    "note": "Zero seeded findings in fixed mode. The false-positive guard passes."
   }
 }

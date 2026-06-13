@@ -1,0 +1,59 @@
+{
+  "note": "Trimmed extract of the Lighthouse run the model chose to execute at inspection time (full report not committed; regenerate with npx lighthouse). Tool choice is the model's, not baked into the runtime.",
+  "fetchTime": "2026-06-13T12:13:58.808Z",
+  "lighthouseVersion": "13.4.0",
+  "requestedUrl": "http://localhost:8080/#poor-focus",
+  "categories": {
+    "performance": 100,
+    "accessibility": 91,
+    "best-practices": 96,
+    "seo": 90
+  },
+  "notableAudits": {
+    "color-contrast": {
+      "score": 0,
+      "displayValue": null
+    },
+    "button-name": {
+      "score": 1,
+      "displayValue": null
+    },
+    "link-name": {
+      "score": 1,
+      "displayValue": null
+    },
+    "document-title": {
+      "score": 1,
+      "displayValue": null
+    },
+    "meta-description": {
+      "score": 0,
+      "displayValue": null
+    },
+    "viewport": null,
+    "cumulative-layout-shift": {
+      "score": 1,
+      "displayValue": "0.004"
+    },
+    "largest-contentful-paint": {
+      "score": 1,
+      "displayValue": "1.2 s"
+    },
+    "total-blocking-time": {
+      "score": 1,
+      "displayValue": "0 ms"
+    },
+    "errors-in-console": {
+      "score": 0,
+      "displayValue": null
+    },
+    "html-has-lang": {
+      "score": 1,
+      "displayValue": null
+    },
+    "is-on-https": {
+      "score": 1,
+      "displayValue": null
+    }
+  }
+}
