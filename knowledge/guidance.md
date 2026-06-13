@@ -42,8 +42,9 @@ code examples, and browser-support notes.
 ## During Audit
 
 Each principle check in [principles.json](principles.json) carries a `guides`
-list: Modern Web Guidance ids and/or free-text query strings. These are
-declarative pointers, not tests.
+list when Modern Web Guidance has relevant material: ids and/or free-text query
+strings. Some checks also carry non-MWG `references` for standards,
+methodologies, or optional tools. These are declarative pointers, not tests.
 
 The model consults them up front, before judging, so the bar comes from the
 current recommended approach rather than memory:
@@ -62,6 +63,13 @@ Use the result to:
 
 The model may also search ad hoc for observations that no principle names
 directly. The guidance feed is broader than any one principle set.
+
+For checks with `references` but no MWG guides, use the referenced method or
+tooling to set the bar. For example, the memory checks point to the
+memory-tracer methodology and the optional Chrome DevTools MCP
+`memory-leak-debugging` skill. That skill documents a baseline, target and final
+snapshot workflow, memlab analysis, and common leak patterns; the repo-native
+`heap` primitive remains the default evidence path when MCP is unavailable.
 
 ## During Fix Mode
 

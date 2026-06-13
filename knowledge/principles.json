@@ -1,8 +1,160 @@
 {
-  "note": "The declarative spec of what good looks like. This file is INTENT, not implementation: it describes OUTCOMES a modern web experience should achieve and offers a `detectableVia` HINT for each check, plus a list of Modern Web Guidance (mwg) `guides` the model should consult to set the bar. The hint may mention candidate evidence modalities or tools (Lighthouse, axe, heap snapshot, layout metrics, screenshot, transition video, ad-hoc probe) but it MANDATES NOTHING. The `guides` entries are DECLARATIVE POINTERS into the modern-web-guidance catalog (intent), NOT hard-coded tests: the model consults them up front to learn the recommended approach before judging, then decides which evidence to gather and which tools to run. Nothing here is wired to a code path; there are no hard-coded checks in the runtime. The first five principles are Una Kravets' modern-UX principles from her Google I/O 2026 talk 'What's new in Web UI' (https://www.youtube.com/watch?v=uT7MVcCQ4rw). The remaining ten extend the set so a single audit judges modern UX, the classic Lighthouse quality bars, and the web-quality dimensions the mwg catalog and external frameworks (WCAG/POUR, Nielsen, Inclusive Design, WSG, Resilient Web Design, security/privacy, i18n, anti-dark-pattern) treat as first-class. The expansion and the full coverage map of all 137 mwg guides to principles is documented and justified in docs/principles-analysis.md (adopted 2026-06-13).",
-  "source": "https://www.youtube.com/watch?v=uT7MVcCQ4rw",
-  "talkTitle": "What's new in Web UI (Google I/O 2026)",
-  "author": "Una Kravets",
+  "note": "The declarative spec of what good looks like. This file is INTENT, not implementation: it describes OUTCOMES a modern web experience should achieve and offers a `detectableVia` HINT for each check, plus Modern Web Guidance (mwg) `guides` and non-mwg `references` the model should consult to set the bar. The hint may mention candidate evidence modalities or tools (Lighthouse, axe, heap snapshot, layout metrics, screenshot, transition video, ad-hoc probe) but it MANDATES NOTHING. The `guides` entries are DECLARATIVE POINTERS into the modern-web-guidance catalog (intent), NOT hard-coded tests: the model consults them up front to learn the recommended approach before judging, then decides which evidence to gather and which tools to run. The `references` entries cover useful non-mwg standards, methods, and optional tooling (for example memory methodology). Nothing here is wired to a code path; there are no hard-coded checks in the runtime. This taxonomy is curated by web-uplift from the sources listed in `sources`; those sources are inputs used to formulate the principles, not authorship of this file. The first five principles adapt Una Kravets' modern-UX framing from her Google I/O 2026 talk 'What's new in Web UI'. The remaining twelve extend the set so a single audit judges modern UX, core task success, the classic Lighthouse quality bars, and the web-quality dimensions the mwg catalog and external frameworks (WCAG/POUR, Nielsen, Inclusive Design, WSG, Resilient Web Design, security/privacy, i18n, anti-dark-pattern) treat as first-class. The expansion and the full coverage map of all 137 mwg guides to principles is documented and justified in docs/principles-analysis.md (adopted 2026-06-13).",
+  "sources": [
+    {
+      "id": "una-kravets-web-ui-io-2026",
+      "type": "talk",
+      "title": "What's new in Web UI (Google I/O 2026)",
+      "speaker": "Una Kravets",
+      "url": "https://www.youtube.com/watch?v=uT7MVcCQ4rw",
+      "usedFor": "Initial modern-UX principle names and framing for the first five principles."
+    },
+    {
+      "id": "modern-web-guidance",
+      "type": "catalog",
+      "title": "Modern Web Guidance",
+      "version": "modern-web-guidance@0.0.172",
+      "usedFor": "Guide mappings and implementation guidance across the principle checks."
+    },
+    {
+      "id": "lighthouse",
+      "type": "audit-framework",
+      "title": "Lighthouse",
+      "url": "https://developer.chrome.com/docs/lighthouse/overview",
+      "usedFor": "Performance, accessibility, best-practices, SEO, and diagnostic quality surfaces."
+    },
+    {
+      "id": "google-rail",
+      "type": "performance-model",
+      "title": "Google RAIL",
+      "url": "https://web.dev/articles/rail",
+      "usedFor": "User-centric performance framing for response, animation, idle work, and load."
+    },
+    {
+      "id": "core-web-vitals",
+      "type": "performance-model",
+      "title": "Core Web Vitals",
+      "url": "https://web.dev/articles/vitals",
+      "usedFor": "LCP, INP, and CLS thresholds for fast and stable experience checks."
+    },
+    {
+      "id": "baseline",
+      "type": "compatibility-model",
+      "title": "Baseline",
+      "url": "https://web.dev/baseline",
+      "usedFor": "Browser-support framing for modern feature adoption and fallbacks."
+    },
+    {
+      "id": "wcag-pour",
+      "type": "standard",
+      "title": "WCAG / POUR",
+      "url": "https://www.w3.org/TR/WCAG22/",
+      "usedFor": "Accessibility and inclusive-experience baseline."
+    },
+    {
+      "id": "nielsen-heuristics",
+      "type": "heuristic-framework",
+      "title": "Nielsen's 10 usability heuristics",
+      "url": "https://www.nngroup.com/articles/ten-usability-heuristics/",
+      "usedFor": "Trustworthy, predictable, recoverable interaction checks."
+    },
+    {
+      "id": "inclusive-design-principles",
+      "type": "framework",
+      "title": "Inclusive Design Principles",
+      "url": "https://inclusivedesignprinciples.info/",
+      "usedFor": "Inclusive and comparable-experience framing beyond automated accessibility."
+    },
+    {
+      "id": "web-sustainability-guidelines",
+      "type": "standard",
+      "title": "W3C Web Sustainability Guidelines",
+      "url": "https://w3c.github.io/sustainableweb-wsg/",
+      "usedFor": "Resource efficiency and sustainability checks."
+    },
+    {
+      "id": "resilient-web-design",
+      "type": "framework",
+      "title": "Resilient Web Design",
+      "url": "https://resilientwebdesign.com/",
+      "usedFor": "Progressive enhancement and resilience framing."
+    },
+    {
+      "id": "progressive-enhancement-mdn",
+      "type": "guidance",
+      "title": "Progressive enhancement",
+      "url": "https://developer.mozilla.org/en-US/docs/Glossary/Progressive_enhancement",
+      "usedFor": "Graceful degradation and no-JavaScript resilience checks."
+    },
+    {
+      "id": "web-security-and-privacy",
+      "type": "guidance",
+      "title": "Web security and privacy",
+      "url": "https://web.dev/articles/security-privacy",
+      "usedFor": "Security, privacy, data-minimisation, and third-party checks."
+    },
+    {
+      "id": "progressive-web-apps",
+      "type": "guidance",
+      "title": "Progressive Web Apps",
+      "url": "https://web.dev/explore/progressive-web-apps",
+      "usedFor": "Installability, service worker, and offline fallback checks for app-like sites."
+    },
+    {
+      "id": "w3c-internationalisation",
+      "type": "guidance",
+      "title": "W3C Internationalisation techniques",
+      "url": "https://www.w3.org/International/techniques/authoring-html",
+      "usedFor": "Language, direction, locale, and internationalisation checks."
+    },
+    {
+      "id": "intl-mdn",
+      "type": "api-reference",
+      "title": "Intl",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl",
+      "usedFor": "Locale-aware dates, numbers, currencies, durations, calendars, and time-zone handling."
+    },
+    {
+      "id": "deceptive-design",
+      "type": "framework",
+      "title": "Deceptive Design",
+      "url": "https://www.deceptive.design/",
+      "usedFor": "Dark-pattern taxonomy for trustworthy interaction checks."
+    },
+    {
+      "id": "ftc-dark-patterns",
+      "type": "regulatory-guidance",
+      "title": "Bringing dark patterns to light",
+      "url": "https://www.ftc.gov/business-guidance/blog/2022/09/bringing-dark-patterns-light",
+      "usedFor": "Consumer-protection framing for deceptive design and consent/continuity checks."
+    },
+    {
+      "id": "memory-tracer",
+      "type": "methodology",
+      "title": "Memory-tracer leak-audit methodology",
+      "usedFor": "Heap growth, detached DOM, listener accumulation, and bounded-footprint checks."
+    },
+    {
+      "id": "chrome-devtools-mcp-skills",
+      "type": "skill-catalog",
+      "title": "Chrome DevTools MCP skills",
+      "url": "https://github.com/ChromeDevTools/chrome-devtools-mcp/tree/main/skills",
+      "usedFor": "Optional agent-side debugging workflows for browser evidence, including accessibility, LCP, DevTools usage, troubleshooting, and memory leaks."
+    },
+    {
+      "id": "chrome-devtools-mcp-memory-leak-debugging",
+      "type": "skill",
+      "title": "Chrome DevTools MCP memory-leak-debugging skill",
+      "url": "https://github.com/ChromeDevTools/chrome-devtools-mcp/tree/main/skills/memory-leak-debugging",
+      "references": [
+        "https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/skills/memory-leak-debugging/SKILL.md",
+        "https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/skills/memory-leak-debugging/references/memlab.md",
+        "https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/skills/memory-leak-debugging/references/common-leaks.md"
+      ],
+      "tool": "mcp__chrome_devtools.take_heapsnapshot",
+      "usedFor": "Optional memory-leak workflow for heap snapshots, baseline/target/final comparison, memlab analysis, and common leak-pattern diagnosis when an agent has Chrome DevTools MCP available."
+    }
+  ],
   "guidanceCatalogVersion": "modern-web-guidance@0.0.172",
   "appliesAnalysis": "docs/principles-analysis.md",
   "applicabilityModel": {
@@ -165,6 +317,37 @@
       ]
     },
     {
+      "id": "support-core-task-success",
+      "title": "Support core task success",
+      "origin": "framework-derived",
+      "status": "confirmed",
+      "applicability": {
+        "expectation": "default",
+        "criteria": "Applies to every site: users should understand the purpose of the page, find the next useful action, complete the primary task, and recover when the flow cannot proceed."
+      },
+      "description": "The experience should help people accomplish the thing they came to do. A page can use modern APIs, pass accessibility checks and still fail if the purpose is unclear, primary actions are buried, loading or empty states are confusing, or the key journey dead-ends. This principle makes task success explicit: understand the offer, find the path, complete the flow, see system state, and recover.",
+      "checks": [
+        {
+          "id": "clear-purpose-and-primary-action",
+          "summary": "The page communicates what it is for and exposes the primary next action without requiring users to hunt through decorative content, generic copy, or competing calls to action.",
+          "detectableVia": "HINT: screenshot the first viewport and key scrolled states; inspect heading structure, nav labels, button text, and visual hierarchy; a task walkthrough can show whether the next action is obvious. The model chooses.",
+          "guides": ["direct user attention primary action visual hierarchy task success", "improve-text-layout-and-legibility", "scrollability-affordance-hints"]
+        },
+        {
+          "id": "primary-flow-completion",
+          "summary": "The representative primary flow can be completed end-to-end with predictable steps, no avoidable dead ends, no hidden required information, and no needless detours through modals, account walls, or upsells.",
+          "detectableVia": "HINT: run the flow manually with screenshots/DOM snapshots at each step; compare expected vs actual path length; inspect form requirements, navigation continuity, and blockers. The model chooses.",
+          "guides": ["forms", "declarative-button-actions", "persistent-toast-notifications", "primary user journey task completion"]
+        },
+        {
+          "id": "clear-system-state-and-recovery",
+          "summary": "Loading, empty, success, error, offline, and partial-completion states are visible and actionable; users can retry, undo, cancel, go back, or continue without losing context.",
+          "detectableVia": "HINT: exercise network delay/failure, invalid input, empty data and success states; screenshot the state messaging and recovery controls; inspect whether browser history and focus remain sensible. The model chooses.",
+          "guides": ["accessible-error-announcement", "required-field-feedback", "validate-input-after-interaction", "persistent-toast-notifications", "loading empty error success retry undo cancel state"]
+        }
+      ]
+    },
+    {
       "id": "be-fast-and-stable",
       "title": "Be fast and stable",
       "origin": "lighthouse-performance",
@@ -192,6 +375,18 @@
           "summary": "The main thread is not blocked by long tasks or heavy scripting; work is deferred, chunked, prioritised, or moved off-thread.",
           "detectableVia": "HINT: the layout primitive records long tasks; a heap summary shows the object population; Lighthouse reports TBT. The model chooses.",
           "guides": ["break-up-long-tasks", "identify-heavy-scripts", "optimize-script-priority", "defer-rendering-heavy-content", "defer-work-until-scroll-ends", "reduce main thread work long tasks total blocking time"]
+        },
+        {
+          "id": "efficient-resource-delivery",
+          "summary": "Critical resources are delivered efficiently: cache headers are useful, render-blocking chains are short, fonts do not block or shift text, HTTP delivery is modern, and network dependency trees do not delay the main content.",
+          "detectableVia": "HINT: a HAR summary can reveal cache headers, redirects, render-blocking candidates, weight offenders and dependency shape; a trace/Lighthouse insight report can corroborate LCP discovery, render-blocking, font-display and document latency. The model chooses.",
+          "guides": ["optimize-image-priority", "optimize-preload-priority", "optimize-script-priority", "visually-stable-font-fallbacks", "cache headers render blocking font display modern http network dependency tree"]
+        },
+        {
+          "id": "trim-unused-and-duplicate-code",
+          "summary": "The page does not ship large unused or duplicated JavaScript/CSS, avoidable legacy bundles, or third-party code that dominates the load without user value.",
+          "detectableVia": "HINT: Lighthouse/trace/code-coverage style evidence can flag unused JS/CSS, duplicated JavaScript and legacy code; a HAR summary shows third-party byte cost and request count. The model chooses.",
+          "guides": ["identify-heavy-scripts", "conditional-async-dependencies", "defer-rendering-heavy-content", "unused javascript css duplicated javascript third party cost"]
         }
       ]
     },
@@ -230,6 +425,12 @@
           "summary": "Text is legible and inclusively rendered: comfortable line layout, precise alignment, stable rendering across mixed fonts, no clipping or cramped wrapping that harms comprehension.",
           "detectableVia": "HINT: a screenshot of body and heading text, plus CSS inspection for text-wrap / text alignment / font fallback handling. The model chooses.",
           "guides": ["improve-text-layout-and-legibility", "precise-text-alignment", "visually-stable-mixed-fonts", "legible text layout reading comfort"]
+        },
+        {
+          "id": "zoom-reflow-targets-and-media",
+          "summary": "The experience remains usable when zoomed or reflowed, touch targets are large enough, media has captions or equivalents where needed, and the viewport does not prevent user scaling.",
+          "detectableVia": "HINT: Lighthouse/axe target-size, meta-viewport and media-caption audits are useful signals; screenshots at narrow and zoomed conditions plus DOM/media inspection can corroborate. The model chooses.",
+          "guides": ["accessibility", "fluid-scaling", "calculate-with-intrinsic-sizes", "target size zoom reflow captions viewport user scalable"]
         }
       ]
     },
@@ -255,6 +456,12 @@
           "summary": "Valid doctype and charset, images sized with correct aspect ratio, no deprecated APIs misused, and CSS/HTML are well structured and not needlessly repetitive. (HTTPS, CSP and permission hygiene are judged under be-private-and-secure, not here.)",
           "detectableVia": "HINT: a DOM/source probe for doctype/charset/img dimensions; CSS inspection for repetition; Lighthouse best-practices audits cover the rest. The model chooses.",
           "guides": ["css", "html", "reduce-style-repetition", "valid doctype charset image aspect ratio deprecated api best practices"]
+        },
+        {
+          "id": "browser-platform-hygiene",
+          "summary": "The page uses the platform cleanly: no deprecated APIs, no avoidable BFCache blockers, no broken source maps or inspector issues, no stale vulnerable libraries, no paste-prevention on inputs, and no notification/geolocation prompts on load.",
+          "detectableVia": "HINT: Lighthouse best-practices audits and DevTools inspector/deprecation signals can surface these; DOM/source probes can verify paste handlers and prompt timing. The model chooses.",
+          "guides": ["html", "security", "baseline deprecated api bfcache source maps inspector issues paste prevention geolocation notification on load"]
         }
       ]
     },
@@ -280,6 +487,18 @@
           "summary": "Links are crawlable (real href), there is a viewport meta tag, robots does not block indexing, and link text is descriptive.",
           "detectableVia": "HINT: a DOM probe for anchor hrefs, viewport meta, and robots; Lighthouse SEO audits corroborate. The model chooses.",
           "guides": ["crawlable links viewport meta robots descriptive link text"]
+        },
+        {
+          "id": "canonical-and-indexing-signals",
+          "summary": "Public pages expose the indexing signals search engines need: successful HTTP status, canonical URL when appropriate, hreflang for localized variants, robots/sitemap consistency, and no accidental noindex/noarchive policy.",
+          "detectableVia": "HINT: inspect response status and headers, <link rel=canonical>, hreflang links, robots meta, robots.txt and sitemap.xml; Lighthouse SEO audits cover several of these. The model chooses.",
+          "guides": ["canonical hreflang http status robots sitemap noindex seo indexing"]
+        },
+        {
+          "id": "structured-and-shareable-metadata",
+          "summary": "Where the page represents an article, product, organization, event, place or other rich entity, structured data and share-preview metadata accurately describe the visible content.",
+          "detectableVia": "HINT: inspect JSON-LD/microdata and social preview tags against visible content; Lighthouse has a manual structured-data audit, and ad-hoc probes can parse schema.org blocks. The model chooses.",
+          "guides": ["structured data schema.org json-ld open graph social preview metadata"]
         }
       ]
     },
@@ -311,6 +530,12 @@
           "summary": "Permission prompts are requested in context (not on load), and authentication uses modern, phishing-resistant methods (passkeys / WebAuthn) where relevant rather than passwords alone.",
           "detectableVia": "HINT: a probe for permission requests fired on load; source inspection for passkey / WebAuthn / navigator.credentials usage in auth flows. The model chooses.",
           "guides": ["passkeys", "passkey-registration", "passkey-authentication", "passkey-reauthentication", "passkey-conditional-create", "passkey-management", "in-context permission prompt passkeys webauthn"]
+        },
+        {
+          "id": "defensive-browser-policies",
+          "summary": "Browser-enforced defenses are configured where appropriate: HSTS, clickjacking protection (frame-ancestors / X-Frame-Options), Trusted Types for XSS-sensitive apps, origin isolation, privacy-preserving third-party cookie posture, and sensible Referrer-Policy / Permissions-Policy.",
+          "detectableVia": "HINT: inspect response headers and browser security state; Lighthouse/DevTools security audits can corroborate HSTS, clickjacking, Trusted Types, origin isolation and third-party cookie findings. The model chooses.",
+          "guides": ["security", "privacy", "hsts clickjacking frame-ancestors trusted types origin isolation referrer policy permissions policy third-party cookies"]
         }
       ]
     },
@@ -343,6 +568,12 @@
           "summary": "Where the site is an app, it is installable (web app manifest) and offers an offline fallback and works on flaky networks. (Contextual: a brochure or intrinsically-online site may reasonably not need this.)",
           "detectableVia": "HINT: a probe for a service worker registration and a web app manifest; test behaviour offline. The model chooses.",
           "guides": ["offline fallback service worker web app manifest installable pwa"]
+        },
+        {
+          "id": "network-and-http-failure-states",
+          "summary": "HTTP errors, network failures, timeouts and stale data states are handled intentionally: users see useful recovery options rather than blank screens, infinite spinners, broken shells, or misleading success states.",
+          "detectableVia": "HINT: simulate failed fetches/offline mode or inspect representative 404/500 routes; screenshots and DOM snapshots of error/loading/empty states show whether recovery is possible. The model chooses.",
+          "guides": ["persistent-toast-notifications", "detect-initial-visibility-state", "conditional-async-dependencies", "http error network failure timeout retry stale data resilient state"]
         }
       ]
     },
@@ -406,6 +637,12 @@
           "summary": "Input is assisted, not obstructed: correct autocomplete tokens so address, payment, sign-in and sign-up fields autofill, and inputs are highlighted/sized to help the user rather than trip them up.",
           "detectableVia": "HINT: source/DOM inspection for autocomplete attributes on form fields; a probe of autofill affordances. The model chooses.",
           "guides": ["autofill-address-form", "autofill-payment-form", "autofill-sign-in-form", "autofill-sign-up-form", "autofill-highlight-inputs", "autocomplete autofill address payment sign-in input assistance"]
+        },
+        {
+          "id": "safe-commercial-and-account-flows",
+          "summary": "Checkout, subscription, consent, authentication and account-management flows are clear, reversible, and proportionate: pricing and commitments are visible, cancellation is findable, sensitive actions re-authenticate when appropriate, and users are not tricked into continuity.",
+          "detectableVia": "HINT: walkthrough checkout/subscription/auth/account flows when present; screenshot pricing, confirmation, cancellation and reauthentication states; inspect passkey/autocomplete support for sign-in and payment. The model chooses.",
+          "guides": ["autofill-payment-form", "autofill-sign-in-form", "passkey-reauthentication", "passkey-management", "clear pricing consent cancellation subscription checkout account flow"]
         }
       ]
     },
@@ -432,6 +669,12 @@
           "summary": "Background work and fetching are not wasteful: background processing is efficient and de-prioritised, and the lightest technique that achieves the result is preferred over heavy or redundant work.",
           "detectableVia": "HINT: a long-task / network probe for background fetches and processing while idle or backgrounded. The model chooses.",
           "guides": ["deprioritize-background-fetches", "efficient-background-processing", "avoid wasteful background work over-fetching carbon efficiency"]
+        },
+        {
+          "id": "third-party-and-media-budget",
+          "summary": "Third-party scripts, fonts, video, audio, animation and heavy media are proportionate to the user value they provide; autoplay or background media is avoided unless essential and resource use is cached or deferred where possible.",
+          "detectableVia": "HINT: a HAR summary shows third-party bytes, font/media weight and caching; screenshots/video reveal autoplay and decorative media; trace/layout evidence shows whether media/animation keeps work running. The model chooses.",
+          "guides": ["deliver-optimized-decorative-images", "deprioritize-background-fetches", "efficient-background-processing", "third-party scripts fonts video autoplay media budget cache resource efficiency"]
         }
       ]
     },
@@ -471,25 +714,58 @@
         "criteria": "Memory hygiene applies to every site: a page should not leak memory or grow its footprint without bound. The bounded-footprint and no-detached-dom-or-unbounded-listeners checks are judgeable on any page from a single state. The no-leak-under-repeated-interaction check is CONTEXTUAL on whether the page actually HAS a representative interaction to repeat: it is most meaningful for long-lived and SPA sessions (single-page apps, infinite feeds, editors, dashboards) where listeners, detached DOM, caches, and timers accumulate over a session. For a static one-shot page with no repeated interaction, do not force a synthetic interaction: mark that check not-applicable WITH a rationale (lower-risk, nothing to repeat) rather than penalising the page.",
         "optOutWhy": "The principle as a whole is default (every page should be free of leaks and unbounded growth), but the leak-under-repeated-interaction test depends on there being a real, representative interaction to repeat ~10x. A static page with no such interaction legitimately has nothing to exercise, so that specific check is judged not-applicable with a rationale; the bounded-footprint and detached-DOM/listener checks still apply."
       },
-      "description": "The page should not leak memory or grow its footprint without bound, especially under repeated interaction. Long-lived and single-page-app sessions degrade and eventually crash when event listeners, detached DOM nodes, caches, observers, and timers accumulate and are never released. Memory hygiene is part of modern UX: a session that gets slower and heavier the longer it is used is a broken experience even if the first paint was fast. Derived from the memory-tracer leak-audit methodology (baseline heap snapshot, repeat a representative interaction, post snapshot, compare retained growth).",
+      "description": "The page should not leak memory or grow its footprint without bound, especially under repeated interaction. Long-lived and single-page-app sessions degrade and eventually crash when event listeners, detached DOM nodes, caches, observers, and timers accumulate and are never released. Memory hygiene is part of modern UX: a session that gets slower and heavier the longer it is used is a broken experience even if the first paint was fast. Derived from the memory-tracer leak-audit methodology (baseline heap snapshot, repeat a representative interaction, post snapshot, compare retained growth), with the Chrome DevTools MCP memory-leak-debugging skill listed as an optional corroborating workflow when that server is available.",
       "checks": [
         {
           "id": "no-leak-under-repeated-interaction",
           "summary": "Repeating a representative interaction (open/close a modal, navigate a route and back, infinite-scroll a list) about 10 times does not grow retained heap without bound; what is allocated during the interaction is released when it ends.",
-          "detectableVia": "HINT (not mandatory): two `heap` snapshots compared for retained growth - a baseline, then one taken after repeating the interaction with `--interact` about 10x (the memory-tracer methodology: baseline -> repeat -> post -> compare). Performance.getMetrics (JSHeapUsedSize, Nodes) across the same before/after window is corroboration. Read the heap SUMMARY (totals + by-constructor), never the raw .heapsnapshot. This check is only meaningful where the page has a real interaction to repeat; for a static page with none, mark it not-applicable with a rationale rather than fabricating one. The model chooses.",
-          "guides": []
+          "detectableVia": "HINT (not mandatory): compare heap snapshots for retained growth - a baseline, then one taken after repeating the interaction with `--interact` about 10x (the memory-tracer methodology: baseline -> repeat -> post -> compare). Performance.getMetrics (JSHeapUsedSize, Nodes) across the same before/after window is corroboration. If Chrome DevTools MCP is available, follow its memory-leak-debugging skill: capture baseline, target, and final snapshots, then use memlab or the provided comparison workflow rather than reading raw .heapsnapshot files directly. The package-native `heap` primitive remains the default path. This check is only meaningful where the page has a real interaction to repeat; for a static page with none, mark it not-applicable with a rationale rather than fabricating one. The model chooses.",
+          "guides": [],
+          "references": [
+            {
+              "source": "memory-tracer",
+              "usedFor": "Baseline -> repeated interaction -> post snapshot comparison of retained heap growth."
+            },
+            {
+              "source": "chrome-devtools-mcp-memory-leak-debugging",
+              "tool": "mcp__chrome_devtools.take_heapsnapshot",
+              "usedFor": "Optional Chrome DevTools MCP skill workflow: baseline, target and final snapshots, memlab analysis, and leak trace investigation."
+            }
+          ]
         },
         {
           "id": "bounded-footprint",
           "summary": "Heap size and DOM node count are reasonable for what the page is; the footprint is proportionate rather than bloated.",
-          "detectableVia": "HINT: a single `heap` summary's totals (nodeCount, totalSelfSizeBytes, constructor population) plus Performance.getMetrics (Nodes, JSHeapUsedSize) give the current footprint to judge against the page's purpose. Read the summary, never the raw snapshot. The model chooses.",
-          "guides": []
+          "detectableVia": "HINT: a single `heap` summary's totals (nodeCount, totalSelfSizeBytes, constructor population) plus Performance.getMetrics (Nodes, JSHeapUsedSize) give the current footprint to judge against the page's purpose. Chrome DevTools MCP heap snapshots and memlab snapshot analysis can provide the same memory distribution when available. Read summaries or derived analysis, never raw snapshots unless a dedicated heap-analysis tool is doing the analysis. The model chooses.",
+          "guides": [],
+          "references": [
+            {
+              "source": "memory-tracer",
+              "usedFor": "Proportionate footprint judgement from heap totals and constructor distribution."
+            },
+            {
+              "source": "chrome-devtools-mcp-memory-leak-debugging",
+              "tool": "mcp__chrome_devtools.take_heapsnapshot",
+              "usedFor": "Optional Chrome DevTools MCP skill workflow for heap snapshot capture and memlab-based footprint analysis."
+            }
+          ]
         },
         {
           "id": "no-detached-dom-or-unbounded-listeners",
           "summary": "No growing population of detached DOM nodes, and no ever-accumulating event listeners or timers that are added but never removed across a session.",
-          "detectableVia": "HINT: the `heap` summary by constructor (Detached* nodes) compared across a before/after pair shows a growing detached-DOM population; an `evaluate` probe can sample listener/timer counts (e.g. getEventListeners-style counting, or instrumenting addEventListener/setInterval) before and after the repeated interaction to spot growth. Caveat from the memory-tracer methodology: detached nodes are sometimes intentional caches, so judge confidence rather than asserting a bug. The model chooses.",
-          "guides": []
+          "detectableVia": "HINT: the `heap` summary by constructor (Detached* nodes) compared across a before/after pair shows a growing detached-DOM population; an `evaluate` probe can sample listener/timer counts (e.g. getEventListeners-style counting, or instrumenting addEventListener/setInterval) before and after the repeated interaction to spot growth. Chrome DevTools MCP heap snapshots plus the memory-leak-debugging skill's common-leak guidance can corroborate detached DOM, listeners, closures, globals, and unbounded caches. Caveat from the memory-tracer and Chrome DevTools MCP guidance: detached nodes can be intentional caches, so judge confidence rather than asserting a bug. The model chooses.",
+          "guides": [],
+          "references": [
+            {
+              "source": "memory-tracer",
+              "usedFor": "Before/after detached DOM, listener and timer accumulation checks."
+            },
+            {
+              "source": "chrome-devtools-mcp-memory-leak-debugging",
+              "tool": "mcp__chrome_devtools.take_heapsnapshot",
+              "usedFor": "Optional Chrome DevTools MCP skill workflow for retained detached DOM, listener, closure, global and cache leak investigation."
+            }
+          ]
         }
       ]
     }

@@ -43,10 +43,11 @@ inputs and one generic capability:
 1. **Principles** - [knowledge/principles.json](../../../knowledge/principles.json)
    in this repo, or `../knowledge/principles.json` when this skill is installed
    under `.web-uplift/skill/`:
-   the spec of what good looks like, as OUTCOMES. Sixteen principles: Una
+   the spec of what good looks like, as OUTCOMES. Seventeen principles: Una
    Kravets' five modern-UX principles (respect-user-preferences,
    implement-natural-interactions, provide-guided-navigation,
-   maximize-content-reduce-noise, adapt-to-the-form-factor); two
+   maximize-content-reduce-noise, adapt-to-the-form-factor);
+   support-core-task-success; two
    widened/narrowed Lighthouse-dimension principles (be-inclusive - the former
    be-accessible, widened beyond WCAG conformance; follow-best-practices -
    narrowed so it is no longer the catch-all for security and forms); two
@@ -55,9 +56,10 @@ inputs and one generic capability:
    (be-private-and-secure, be-resilient, be-internationalised, be-trustworthy,
    be-sustainable, be-agent-ready); and be-memory-efficient (derived from the
    memory-tracer leak-audit methodology). Each check has a `detectableVia` HINT (may
-   MENTION candidate evidence/tools, MANDATES nothing) and a `guides` list of
-   Modern Web Guidance ids and/or query strings - declarative pointers you
-   consult to set the bar, not hard-coded tests. Each principle also has an
+   MENTION candidate evidence/tools, MANDATES nothing), a `guides` list of
+   Modern Web Guidance ids and/or query strings, and may have `references` for
+   non-MWG standards, methods, or optional tools. These are declarative pointers
+   you consult to set the bar, not hard-coded tests. Each principle also has an
    `applicability` block (`expectation: default | contextual`); see step 0 and
    step 4. The full coverage map (all 137 mwg guides -> principles) and the
    rationale for the set is in
@@ -108,6 +110,12 @@ these is wired into the runtime; you invoke them yourself when they help:
 - **axe-core**: inject it and run it via the `evaluate` primitive, e.g. fetch
   the script text and `--expr` a call to `axe.run()`, to enumerate accessibility
   violations. Or write your own contrast/label/role probes with `evaluate`.
+- **Chrome DevTools MCP skills** (optional): if your agent environment exposes
+  Chrome DevTools MCP, its `memory-leak-debugging` skill provides a stronger
+  workflow for `be-memory-efficient`: baseline, target and final heap snapshots,
+  memlab analysis, and common leak-pattern diagnosis. Do not make it a
+  dependency; the package native `heap` primitive is still the default evidence
+  path.
 - **Your own static tests**: when no tool fits, write a probe with `evaluate`
   (e.g. focus an element and read its computed outline; diff two heap summaries;
   measure the same component in two containers). This is the point of leaning on
@@ -132,9 +140,12 @@ Before anything else:
    look at its checks' `guides` lists and `search`/`retrieve` the relevant
    Modern Web Guidance guides from the live feed (at the pinned
    `guidanceCatalogVersion`) BEFORE you judge, so you set the bar from the
-   current recommended approach rather than from memory. The `guides` entries
-   are declarative pointers (mwg ids and/or query strings), not tests; you still
-   decide what evidence proves the outcome. Cache `list`/`retrieve` for the run.
+   current recommended approach rather than from memory. Also read any
+   check-level `references`; these cover non-MWG standards, methods, and optional
+   tools such as the Chrome DevTools MCP memory-leak-debugging skill for memory
+   analysis. The `guides` and `references` entries are declarative pointers, not
+   tests; you still decide what evidence proves the outcome. Cache
+   `list`/`retrieve` for the run.
 
 ### 1. Recon and coverage (decide which pages to audit)
 
@@ -175,10 +186,10 @@ came from.
 
 ### 2. Plan the evidence you need, per principle
 
-Read every principle check, its `detectableVia` HINT, and its `guides` (which
-you already consulted up front in step 0). For each, decide what evidence WOULD
-let you judge it, and under which condition. Examples (not a script; you adapt to
-the actual page):
+Read every principle check, its `detectableVia` HINT, its `guides`, and any
+`references` (which you already consulted up front in step 0). For each, decide
+what evidence WOULD let you judge it, and under which condition. Examples (not a
+script; you adapt to the actual page):
 
 - respects-color-scheme -> `screenshot`/`dom --selector` under
   `--emulate-media prefers-color-scheme=dark`; does the surface re-tint?
@@ -218,14 +229,19 @@ the actual page):
   summaries for retained growth (totals: nodeCount/totalSelfSizeBytes; and by
   constructor: a growing Detached* population). Corroborate with
   Performance.getMetrics (JSHeapUsedSize, Nodes) across the same window, and an
-  `evaluate` probe sampling listener/timer counts before vs after. Read the heap
-  SUMMARY, never the raw .heapsnapshot. This pairs naturally with the multi-page
-  coverage (step 1): run the leak test on the INTERACTIVE archetypes (SPA routes,
-  feeds, editors, modal-heavy pages), not a static content page. If a page has no
-  representative interaction to repeat, do not fabricate one - mark
-  no-leak-under-repeated-interaction not-applicable with a rationale (bounded-footprint
-  and the detached-DOM/listener check still apply from a single state). detached
-  nodes can be intentional caches, so judge confidence rather than asserting a bug.
+  `evaluate` probe sampling listener/timer counts before vs after. If Chrome
+  DevTools MCP is available, consult its `memory-leak-debugging` skill: capture
+  baseline, target and final snapshots, then use memlab or the provided compare
+  workflow to identify leak traces. The package-native `heap` primitive remains
+  the default path. Read the heap SUMMARY, never the raw .heapsnapshot unless a
+  dedicated heap-analysis tool is doing the analysis. This pairs naturally with
+  the multi-page coverage (step 1): run the leak test on the INTERACTIVE
+  archetypes (SPA routes, feeds, editors, modal-heavy pages), not a static
+  content page. If a page has no representative interaction to repeat, do not
+  fabricate one - mark no-leak-under-repeated-interaction not-applicable with a
+  rationale (bounded-footprint and the detached-DOM/listener check still apply
+  from a single state). detached nodes can be intentional caches, so judge
+  confidence rather than asserting a bug.
 - be-inclusive -> axe via `evaluate`, and/or Lighthouse a11y, and/or your own
   contrast/label probes; plus a screenshot to judge legibility/alignment.
 - follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for

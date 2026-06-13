@@ -247,11 +247,12 @@ These primitives make no quality judgement. They only return evidence.
 web-uplift uses two knowledge layers:
 
 1. **Principles** - [knowledge/principles.json](knowledge/principles.json)
-   defines sixteen modern web-quality principles. The set covers Una Kravets'
-   five modern-UX principles, Lighthouse dimensions, privacy/security,
-   resilience, internationalisation, trust, sustainability, agent readiness, and
-   memory efficiency. Each check is phrased as an outcome, with evidence hints
-   and Modern Web Guidance pointers.
+   defines seventeen modern web-quality principles. The set draws from Una
+   Kravets' five modern-UX principles, Lighthouse dimensions, privacy/security,
+   resilience, internationalisation, core task success, trust, sustainability,
+   agent readiness, and memory efficiency. Each check is phrased as an outcome,
+   with evidence hints, source metadata, Modern Web Guidance pointers, and
+   non-MWG references where useful.
 2. **Modern Web Guidance** - [knowledge/guidance.md](knowledge/guidance.md)
    documents how the model queries the `modern-web-guidance` npm feed before
    judging and while fixing.

@@ -3,14 +3,21 @@
 Status: ADOPTED 2026-06-13. Paul approved the full expansion - all net-new
 principles including the optional `be-agent-ready`, the `be-accessible` ->
 `be-inclusive` rename, the narrowing of `follow-best-practices`, and the
-guard-criteria design. `knowledge/principles.json` now reflects this document:
-15 principles, each check carries a `guides` list of Modern Web Guidance
-pointers, and every one of the 137 guides in the coverage map below is mapped
-(verified none orphaned). Each principle also carries an `applicability` block
-(`expectation: default | contextual`), backed by the `web-uplift.json` project
-config ([schema/config.schema.json](../schema/config.schema.json)) for declared
-opt-outs/intent. This document remains the rationale and the canonical coverage
-map; the sections below are preserved as written for that record.
+guard-criteria design. `knowledge/principles.json` now reflects this document
+plus follow-up coverage work: `be-memory-efficient`, `support-core-task-success`,
+and expanded checks for Lighthouse SEO, best-practices, performance diagnostics,
+security policy, resilience, trustworthy flows and sustainability. The current
+model has 17 principles. Each check carries a `guides` list of Modern Web
+Guidance pointers where that catalog has a useful match, and may carry
+non-MWG `references` for standards, methods, or optional tools. Every one of the
+137 guides in the coverage map below is mapped (verified none orphaned). Each
+principle also carries an `applicability` block (`expectation: default |
+contextual`), backed by the `web-uplift.json` project config
+([schema/config.schema.json](../schema/config.schema.json)) for declared
+opt-outs/intent. The JSON file's `sources` array records the inputs used to
+formulate the principles; those sources are not authorship of the taxonomy. This
+document remains the rationale and the canonical coverage map; earlier sections
+below are preserved as written for that record.
 
 Author: Paul Kinlan. Analysis assembled by Claude.
 
@@ -19,9 +26,9 @@ Author: Paul Kinlan. Analysis assembled by Claude.
 - The Modern Web Guidance (mwg) catalog has **137 guides across 12 categories**
   (pinned: `modern-web-guidance@0.0.172`). Enumerated bottom-up, they cluster
   into ~13 themes.
-- The current 9 principles cover the bulk of the **user-experience**,
+- The original 9 principles covered the bulk of the **user-experience**,
   **performance**, **accessibility**, **css/layout** and **html** clusters well.
-- They do **not** cover several whole clusters that the catalog and external
+- They did **not** cover several whole clusters that the catalog and external
   frameworks both treat as first-class web quality: **privacy and security**
   (3 guides: `privacy`, `security`, plus the 6 `passkeys` guides), **forms as a
   trust/correctness surface** (15 `forms` guides, only thinly touched today),
@@ -30,10 +37,8 @@ Author: Paul Kinlan. Analysis assembled by Claude.
   graceful degradation**, **agentic/machine readability** (the 3 `webmcp`
   guides), and **sustainability** (not in the catalog at all, but a recognised
   external framework).
-- Recommendation: keep all 9, lightly rename 2, and add **5 net-new
-  principles**: be private and secure; be resilient; be internationalised; be
-  trustworthy (no dark patterns); be sustainable. A 6th candidate, be agent
-  ready, is flagged as optional/forward-looking.
+- The adopted model now has 17 principles, including the original expansion,
+  `be-agent-ready`, `be-memory-efficient`, and `support-core-task-success`.
 
 ---
 
@@ -636,7 +641,8 @@ All 137 guides are assigned a primary principle; none orphaned. If the optional
 orphans, since nothing else fits them. That is itself a data point: those 5
 guides have no home in the current 9 and would remain unowned without N6.
 
-Per-principle guide counts (primary assignment, with N6 included):
+Per-principle guide counts (primary assignment at the time this map was
+adopted, with N6 included):
 
 | Principle | New? | Primary guides |
 |---|---|---|
@@ -659,27 +665,41 @@ Per-principle guide counts (primary assignment, with N6 included):
 Note: `be-discoverable` gets 0 primary mwg guides because the catalog has no
 SEO-specific guidance; it remains justified by the Lighthouse SEO dimension and
 is judged from the page itself (title, meta, crawlable links), not from mwg.
+Follow-up checks added under `support-core-task-success` reuse existing
+cross-cutting guides rather than claiming a new primary guide assignment.
+`be-memory-efficient` is intentionally backed by non-MWG references instead:
+memory-tracer methodology and the optional Chrome DevTools MCP
+`memory-leak-debugging` skill.
 
 ---
 
-## Recommendation summary
+## Adopted outcome summary
 
-- **Keep** the 5 Una Kravets principles and `be-fast-and-stable`,
-  `be-discoverable` unchanged.
-- **Rename** `be-accessible` -> `be-inclusive` (widen framing; optional, low
-  churn alternative: keep the id, widen the description).
-- **Narrow** `follow-best-practices` so it stops being a weak catch-all for
-  security and forms.
-- **Add 5 net-new principles**: `be-private-and-secure`, `be-resilient`,
-  `be-internationalised`, `be-trustworthy`, `be-sustainable`.
-- **Optionally add** `be-agent-ready` (forward-looking; the only thing that
-  homes the WebMCP/on-device-AI guides).
+- **Keep** the 5 Una Kravets principles as the modern-UX starting point.
+- **Add** `support-core-task-success` so the model judges whether users can
+  understand the purpose, find the primary action, complete the main flow, and
+  recover from blocked states.
+- **Rename** `be-accessible` -> `be-inclusive` and expand it with zoom, reflow,
+  target-size and media-equivalent coverage.
+- **Narrow but deepen** `follow-best-practices`: keep it out of security/forms
+  ownership, but explicitly cover browser/platform hygiene such as BFCache,
+  deprecated APIs, source maps, inspector issues, old libraries, paste
+  prevention and prompt timing.
+- **Expand** `be-fast-and-stable`, `be-discoverable`, `be-private-and-secure`,
+  `be-resilient`, `be-trustworthy`, and `be-sustainable` with the missing
+  Lighthouse and UX coverage identified during review.
+- **Add** `be-private-and-secure`, `be-resilient`, `be-internationalised`,
+  `be-trustworthy`, `be-sustainable`, `be-agent-ready`, and
+  `be-memory-efficient`.
+- **Use non-MWG references** where the Modern Web Guidance catalog has no direct
+  guide, notably memory-tracer and the optional Chrome DevTools MCP
+  `memory-leak-debugging` skill for memory analysis.
 
-This takes the set from 9 to 14 (or 15 with the optional agent principle) and
-brings every one of the 137 mwg guides under a principle, while aligning with
-WCAG/POUR, Nielsen, Inclusive Design, WSG, RAIL/CWV, Baseline, progressive
-enhancement, PWA/offline, i18n, security/privacy, and anti-dark-pattern
-frameworks.
+The current model has 17 principles and brings every one of the 137 mwg guides
+under a principle, while aligning with WCAG/POUR, Nielsen, Inclusive Design,
+WSG, RAIL/CWV, Baseline, progressive enhancement, PWA/offline, i18n,
+security/privacy, anti-dark-pattern frameworks, memory methodology, and
+Chrome DevTools MCP memory-leak guidance.
 
 ### Honest caveats
 
@@ -690,12 +710,14 @@ frameworks.
 - Some guides are dual-purpose; the coverage map records a primary and one or
   two secondaries, and a few assignments (e.g. the analytics trio to
   `be-private-and-secure`) are judgement calls flagged in-line.
-- This is intent analysis only. Nothing here has been encoded into
-  `knowledge/principles.json`, and no checks or `detectableVia` hints have been
-  drafted; that is the next step if you sign off.
+- This began as intent analysis. The adopted taxonomy is now encoded in
+  `knowledge/principles.json`, including checks, evidence hints, source
+  metadata, and Modern Web Guidance pointers.
 
 ### Sources
 
+- Una Kravets, What's new in Web UI (Google I/O 2026): https://www.youtube.com/watch?v=uT7MVcCQ4rw
+- Modern Web Guidance catalog: `modern-web-guidance@0.0.172`
 - WCAG 2.2 / POUR: https://www.w3.org/TR/WCAG22/
 - Nielsen's 10 usability heuristics: https://www.nngroup.com/articles/ten-usability-heuristics/
 - Google RAIL: https://web.dev/articles/rail
@@ -712,3 +734,6 @@ frameworks.
 - Intl (MDN): https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl
 - Deceptive Design (dark patterns): https://www.deceptive.design/
 - FTC on dark patterns: https://www.ftc.gov/business-guidance/blog/2022/09/bringing-dark-patterns-light
+- memory-tracer leak-audit methodology
+- Chrome DevTools MCP skills: https://github.com/ChromeDevTools/chrome-devtools-mcp/tree/main/skills
+- Chrome DevTools MCP memory-leak-debugging skill: https://github.com/ChromeDevTools/chrome-devtools-mcp/tree/main/skills/memory-leak-debugging
