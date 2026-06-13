@@ -1,0 +1,20 @@
+{
+  "name": "web-uplift",
+  "version": "0.1.0",
+  "description": "Fully agentic modern-web quality auditing and fixing. The model gathers multi-modal evidence via raw-CDP primitives, judges 15 declarative principles against Modern Web Guidance, and hill-climbs guidance-backed fixes. No hard-coded checks, no fast path. Runs in your own agent session (your subscription).",
+  "author": {
+    "name": "Paul Kinlan"
+  },
+  "homepage": "https://github.com/PaulKinlan/web-uplift",
+  "license": "Apache-2.0",
+  "keywords": [
+    "web-quality",
+    "audit",
+    "accessibility",
+    "core-web-vitals",
+    "modern-web"
+  ],
+  "skills": [
+    "./.claude/skills/web-audit/SKILL.md"
+  ]
+}

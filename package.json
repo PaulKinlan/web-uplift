@@ -1,15 +1,63 @@
 {
   "name": "web-uplift",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
   "license": "Apache-2.0",
-  "description": "Fully agentic modern-web-quality auditing and fixing for websites: the model gathers multi-modal evidence via raw-CDP primitives and judges declarative principles. No hard-coded checks, no fast path.",
+  "description": "Fully agentic modern-web-quality auditing and fixing for websites: the model gathers multi-modal evidence via raw-CDP primitives and judges declarative principles, then hill-climbs fixes. Install the skill and run it in your own agent session (your subscription), or use the headless CI runner. No hard-coded checks, no fast path.",
+  "keywords": [
+    "web-quality",
+    "audit",
+    "accessibility",
+    "core-web-vitals",
+    "modern-web",
+    "agent",
+    "skill",
+    "claude",
+    "cdp",
+    "lighthouse"
+  ],
+  "homepage": "https://github.com/PaulKinlan/web-uplift#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PaulKinlan/web-uplift.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PaulKinlan/web-uplift/issues"
+  },
+  "author": "Paul Kinlan",
+  "bin": {
+    "web-uplift": "bin/web-uplift.mjs"
+  },
+  "exports": {
+    ".": "./bin/web-uplift.mjs",
+    "./evidence": "./evidence/cli.mjs",
+    "./agents": "./runner/agents.mjs",
+    "./principles": "./principles/principles.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin/",
+    "evidence/",
+    "runner/",
+    "fixer/",
+    "aggregate/",
+    "mcp/",
+    "principles/",
+    "schema/",
+    "guidance/",
+    ".claude/skills/web-audit/SKILL.md",
+    ".claude-plugin/",
+    "AGENTS.md",
+    "README.md",
+    "PLAN.md",
+    "LICENSE"
+  ],
   "scripts": {
     "playground": "npx -y serve playground -l 8080",
     "evidence": "node evidence/cli.mjs",
     "audit": "node runner/run-batch.mjs",
     "batch": "node runner/run-batch.mjs",
+    "fix": "node fixer/fix.mjs",
     "aggregate": "node aggregate/aggregate.mjs"
   },
   "dependencies": {
@@ -17,5 +65,8 @@
     "chrome-remote-interface": "^0.33.3",
     "serve": "^14.2.4",
     "zod": "^4.4.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
