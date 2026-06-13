@@ -1,21 +1,27 @@
 #!/usr/bin/env node
 import http from 'node:http';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import Ajv2020 from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 import { gather } from '../evidence/cli.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
+const SKIP_DIRS = new Set(['.git', 'node_modules', 'reports', 'scratch']);
 
 try {
+  testSyntaxChecks();
+  testPackageRootImportIsSideEffectFree();
+  testSchemaValidation();
   testInstalledEvidenceCli();
   await testPreNavigationEmulation();
   await testHarRedirects();
   testBatchDryRunUsesRetainedDirs();
-  console.log('regression tests OK');
+  console.log('tests OK');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
@@ -30,6 +36,38 @@ function run(command, args, opts = {}) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function testSyntaxChecks() {
+  for (const file of listFiles(repoRoot, (p) => p.endsWith('.mjs'))) {
+    const result = run(process.execPath, ['--check', file]);
+    assert(result.status === 0, `syntax check failed for ${file}:\n${result.stderr || result.stdout}`);
+  }
+}
+
+function testPackageRootImportIsSideEffectFree() {
+  const result = run(process.execPath, [
+    '--input-type=module',
+    '-e',
+    "import 'web-uplift'; console.log('import-ok')",
+  ]);
+  assert(result.status === 0, `package root import failed:\n${result.stderr || result.stdout}`);
+  assert(result.stdout.trim() === 'import-ok', `package root import produced side effects:\n${result.stdout}`);
+}
+
+function testSchemaValidation() {
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  addFormats(ajv);
+
+  const configSchema = readJson('schema/config.schema.json');
+  const findingsSchema = readJson('schema/findings.schema.json');
+  ajv.compile(configSchema);
+  ajv.compile(findingsSchema);
+
+  validateJson(ajv, configSchema, 'web-uplift.json');
+  validateJson(ajv, configSchema, 'web-uplift.example.json');
+  validateJson(ajv, findingsSchema, 'examples/playground-report.json');
+  validateJson(ajv, findingsSchema, 'examples/playground-report-fixed.json');
 }
 
 function testInstalledEvidenceCli() {
@@ -124,4 +162,27 @@ function testBatchDryRunUsesRetainedDirs() {
     `batch dry-run did not use retained run dir:\n${result.stdout}`,
   );
   assert(!result.stdout.includes(`${reports}/codex/`), `batch dry-run still used old agent prefix:\n${result.stdout}`);
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(join(repoRoot, path), 'utf8'));
+}
+
+function validateJson(ajv, schema, path) {
+  const validate = ajv.compile(schema);
+  const data = readJson(path);
+  if (!validate(data)) {
+    throw new Error(`${path} failed schema validation:\n${ajv.errorsText(validate.errors, { separator: '\n' })}`);
+  }
+}
+
+function listFiles(dir, predicate, out = []) {
+  for (const name of readdirSync(dir)) {
+    if (SKIP_DIRS.has(name)) continue;
+    const full = join(dir, name);
+    const st = statSync(full);
+    if (st.isDirectory()) listFiles(full, predicate, out);
+    else if (predicate(full)) out.push(full);
+  }
+  return out;
 }

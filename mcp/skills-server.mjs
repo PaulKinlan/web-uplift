@@ -42,7 +42,7 @@ server.registerPrompt(
         .string()
         .optional()
         .describe(
-          'Optional flags: --plan-only | --path <id> | --out <dir> | --replan | --fix | --source <dir>'
+          'Optional flags: --out <dir> | --source <dir> | --fix | --findings <path> | --max-iterations <n> | --expected <file>'
         ),
     },
   },

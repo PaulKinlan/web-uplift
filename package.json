@@ -29,7 +29,7 @@
     "web-uplift": "bin/web-uplift.mjs"
   },
   "exports": {
-    ".": "./bin/web-uplift.mjs",
+    ".": "./index.mjs",
     "./evidence": "./evidence/cli.mjs",
     "./agents": "./runner/agents.mjs",
     "./principles": "./principles/principles.json",
@@ -41,6 +41,7 @@
     "runner/",
     "fixer/",
     "aggregate/",
+    "index.mjs",
     "mcp/",
     "principles/",
     "schema/",
