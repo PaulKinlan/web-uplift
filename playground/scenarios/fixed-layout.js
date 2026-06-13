@@ -21,8 +21,8 @@ export default {
       section,
       {
         issue: `
-          .fl-hero { width: 1200px; padding: 2rem; background: #1a73e8; color: #fff; border-radius: 8px; }
-          .fl-body { width: 1200px; margin-top: 1rem; }
+          .fl-hero { width: 100%; max-width: 1200px; box-sizing: border-box; padding: 2rem; background: #1a73e8; color: #fff; border-radius: 8px; }
+          .fl-body { width: 100%; max-width: 1200px; margin-top: 1rem; }
         `,
         fixed: `
           .fl-hero { width: 100%; max-width: 1200px; box-sizing: border-box; padding: 2rem; background: #1a73e8; color: #fff; border-radius: 8px; }
