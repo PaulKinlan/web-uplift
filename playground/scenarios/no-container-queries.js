@@ -23,10 +23,15 @@ export default {
       section,
       {
         issue: `
-          .cq-wide, .cq-narrow { border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; }
+          .cq-wide, .cq-narrow { border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; container-type: inline-size; }
           .cq-narrow { width: 240px; }
           .cq-card { display: flex; gap: 0.75rem; align-items: center; }
           .cq-thumb { width: 80px; height: 80px; background: #1a73e8; border-radius: 6px; flex: none; }
+        
+          @container (max-width: 320px) {
+            .cq-card { flex-direction: column; align-items: stretch; }
+            .cq-thumb { width: 100%; }
+          }
         `,
         fixed: `
           .cq-wide, .cq-narrow { border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; container-type: inline-size; }

@@ -21,7 +21,7 @@ export default {
       section,
       {
         issue: `
-          .ls-slot { }
+          .ls-slot { min-height: 76px; }
           .ls-banner { background: #fbbc04; color: #111; padding: 1rem; border-radius: 8px; }
         `,
         fixed: `

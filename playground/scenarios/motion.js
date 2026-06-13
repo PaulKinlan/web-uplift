@@ -22,8 +22,10 @@ export default {
       {
         issue: `
           @keyframes mv-slide { from { transform: translateX(0); } to { transform: translateX(40px); } }
-          .mv-card { background: #34a853; color: #fff; padding: 1.5rem; border-radius: 8px;
-            animation: mv-slide 0.8s ease-in-out infinite alternate; }
+          .mv-card { background: #34a853; color: #fff; padding: 1.5rem; border-radius: 8px; }
+          @media (prefers-reduced-motion: no-preference) {
+            .mv-card { animation: mv-slide 0.8s ease-in-out infinite alternate; }
+          }
         `,
         fixed: `
           @keyframes mv-slide { from { transform: translateX(0); } to { transform: translateX(40px); } }
