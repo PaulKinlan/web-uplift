@@ -20,7 +20,8 @@
  * compare just diffs them.
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, isAbsolute, relative } from 'node:path';
+import { join, isAbsolute, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { hostSlug, pickRuns } from '../runner/run-history.mjs';
 
 export function compareReports(reportA, reportB, { dirA, dirB } = {}) {
@@ -360,7 +361,8 @@ function signed(n) {
 
 // --- CLI --------------------------------------------------------------------
 
-const invokedDirectly = process.argv[1] && process.argv[1].endsWith('compare.mjs');
+const invokedDirectly =
+  process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   main().catch((err) => {
     console.error(err.message || err);

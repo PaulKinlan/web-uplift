@@ -28,14 +28,22 @@
  *      re-audit --audit-url and read the fresh report.json.
  *   3. Stop when issues == 0 or --max-iterations reached. Honour web-uplift.json
  *      opt-outs / not-applicable (those never count as outstanding issues).
+ *   4. Snapshot the baseline (`<runId>-before`) and final (`<runId>-after`) into
+ *      RETAINED run dirs under reports/<host>/ and emit the before -> after
+ *      comparison automatically (audit -> fix -> re-audit -> compare), so a fix
+ *      run shows the measurable before->after (status/finding/metric/network
+ *      deltas + paired screenshots) in compare.md / compare.json.
  *
  * --dry-run prints the exact per-iteration command for the chosen agent (and,
  * with --agent all is NOT a thing here, you pass one agent) without spawning.
  */
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access, cp } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { AGENTS, AGENT_NAMES } from '../runner/agents.mjs';
+import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
+import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -118,6 +126,15 @@ const baseline = await readReport(findingsPath);
 const startIssues = countOutstanding(baseline);
 console.log(`Baseline: ${startIssues} outstanding issue-findings to climb down.`);
 
+// Snapshot the baseline into a RETAINED `before` run under reports/<host>/ so
+// the final compare has the pre-fix state with its artifacts. The live working
+// report stays at outDir/report.json for the iterations; we just preserve a copy.
+const reportsRoot = args['reports-root'] ?? 'reports';
+const beforeRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-before`);
+await snapshotRun(dirOf(findingsPath), beforeRun.dir, baseline);
+updateLatest(beforeRun.hostRoot, beforeRun.runId);
+console.log(`Preserved baseline run at ${beforeRun.dir}`);
+
 // 2. Hill-climb.
 let lastCount = startIssues;
 let passed = startIssues === 0;
@@ -149,6 +166,34 @@ for (const h of history) {
   console.log(`  iteration ${h.iteration}: ${h.outstanding} outstanding`);
 }
 console.log(passed ? 'PASS: no outstanding issues remain.' : `STOPPED with ${lastCount} outstanding issue(s).`);
+
+// 3. Snapshot the final state into a RETAINED `after` run and emit the
+// before -> after comparison automatically (audit -> fix -> re-audit -> compare).
+try {
+  const finalReport = await readReport(join(outDir, 'report.json'));
+  const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
+  await snapshotRun(outDir, afterRun.dir, finalReport);
+  updateLatest(afterRun.hostRoot, afterRun.runId);
+
+  const cmp = compareReports(baseline, finalReport, { dirA: beforeRun.dir, dirB: afterRun.dir });
+  const md = renderCompareMd(cmp, {
+    hostName: beforeRun.host,
+    runAId: beforeRun.runId,
+    runBId: afterRun.runId,
+    dirA: beforeRun.dir,
+    dirB: afterRun.dir,
+  });
+  await writeFile(join(afterRun.dir, 'compare.json'), JSON.stringify({ host: beforeRun.host, runA: beforeRun.runId, runB: afterRun.runId, ...cmp }, null, 2) + '\n');
+  await writeFile(join(afterRun.dir, 'compare.md'), md);
+  // A copy at the working outDir too, for convenience.
+  await writeFile(join(outDir, 'compare.md'), md);
+  console.log(`\nBefore -> after comparison written to ${join(afterRun.dir, 'compare.md')}`);
+  console.log(`  outstanding ${cmp.summary.outstandingBefore} -> ${cmp.summary.outstandingAfter}, ` +
+    `resolved ${cmp.summary.resolved}, new ${cmp.summary.newlyIntroduced}, persisting ${cmp.summary.persisting}`);
+} catch (err) {
+  console.error(`Could not emit before/after comparison: ${err.message}`);
+}
+
 process.exitCode = passed ? 0 : 1;
 
 // --- helpers ---------------------------------------------------------------
@@ -188,6 +233,28 @@ async function readReport(path) {
   }
 }
 
+// The directory a report.json lives in (its artifacts are relative to it).
+function dirOf(reportPath) {
+  return reportPath.replace(/[/\\][^/\\]*$/, '') || '.';
+}
+
+// Copy a report dir's report.json + report.md + evidence/ into a retained run
+// dir so the comparison can reference the run's own before/after artifacts.
+async function snapshotRun(fromDir, toDir, report) {
+  await mkdir(toDir, { recursive: true });
+  await writeFile(join(toDir, 'report.json'), JSON.stringify(report, null, 2) + '\n');
+  for (const name of ['report.md', 'evidence']) {
+    const src = join(fromDir, name);
+    if (existsSync(src)) {
+      try {
+        await cp(src, join(toDir, name), { recursive: true });
+      } catch {
+        /* best effort: artifacts may be elsewhere */
+      }
+    }
+  }
+}
+
 // "Outstanding" = findings tied to a principle the report did NOT mark
 // not-applicable or opted-out. A clean audit (only pass / n-a / opted-out)
 // returns 0 even though contextual principles exist. We read principleOutcomes
@@ -214,7 +281,7 @@ function slugify(s) {
 
 function parseArgs(argv) {
   const out = { _: [] };
-  const valueFlags = new Set(['target', 'audit-url', 'agent', 'max-iterations', 'findings', 'out']);
+  const valueFlags = new Set(['target', 'audit-url', 'agent', 'max-iterations', 'findings', 'out', 'reports-root']);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
       const key = argv[i].slice(2);
@@ -249,6 +316,7 @@ Options:
   --max-iterations <n>    Hill-climb cap (default: 4).
   --findings <path>       Pre-aggregated findings/report.json (skip baseline audit).
   --out <dir>             Report directory (default: reports/fix-<host>/).
+  --reports-root <dir>    Root for retained before/after run dirs (default: reports).
   --dry-run               Print the per-iteration command for each agent; do not run.
   --verbose               Stream agent stdout/stderr live.
   -h, --help              This help.
