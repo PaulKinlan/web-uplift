@@ -32,10 +32,28 @@
 | Lighthouse | `npx lighthouse` (model's choice) | be-fast-and-stable / be-inclusive / follow-best-practices / be-discoverable |
 | axe-core | injected from CDN via `evidence evaluate` (model's choice) | independent confirmation of the contrast violation |
 
-Artifacts live in [examples/evidence/](evidence/): `no-dark-mode-dark.png`,
-`fixed-layout-360.png`, `poor-focus.png`, `motion-under-reduce.mp4`,
-`heap-summary.json`, `lighthouse-summary.json` (a trimmed extract of the full
-Lighthouse run against the fixture).
+### Artifacts manifest
+
+Each artifact below is recorded in `report.json` under `artifacts[]` with its
+type, path, capture condition, and the findings it evidences. Screenshots are
+embedded inline at the findings they back; the rest are linked. All paths are
+under [examples/evidence/](evidence/).
+
+| Type | Artifact | Condition | Evidences |
+|---|---|---|---|
+| screenshot | [no-dark-mode-dark.png](evidence/no-dark-mode-dark.png) | prefers-color-scheme: dark | F-001 |
+| video | [motion-under-reduce.mp4](evidence/motion-under-reduce.mp4) | prefers-reduced-motion: reduce | F-002 |
+| screenshot | [fixed-layout-360.png](evidence/fixed-layout-360.png) | viewport: 360x800 | F-003 |
+| screenshot | [poor-focus.png](evidence/poor-focus.png) | keyboard focus | F-004, F-007 |
+| trace | [trace.json](evidence/trace.json) (devtools-loadable) + [trace-summary.json](evidence/trace-summary.json) | default load | F-005 |
+| har | [network.har](evidence/network.har) (HAR 1.2) | default load | F-009 |
+| heap | [heap-summary.json](evidence/heap-summary.json) | default load | - |
+| lighthouse | [lighthouse-summary.json](evidence/lighthouse-summary.json) | default load | F-007, F-008, F-009 |
+
+The `trace` primitive recorded FCP/LCP at ~33ms with 0 long tasks and 0ms total
+blocking time over a ~1.7s window; the `har` primitive captured 11 requests
+(10x 200, 1x 404 - the favicon, which backs F-009). The raw `trace.json` opens
+in the DevTools Performance panel; the model reads `trace-summary.json` instead.
 
 ## Eval vs ground truth
 
@@ -95,6 +113,8 @@ fixture findings would be dishonest, so the seeded ground truth stays at nine.
 - **Fix:** declare `color-scheme: light dark` and use
   `light-dark(#ffffff, #1e1e1e)` for surfaces. Guidance id `dark-mode`.
 
+![.ndm-card white under prefers-color-scheme: dark](evidence/no-dark-mode-dark.png)
+
 ### F-002 (high) Animation keeps running under prefers-reduced-motion: reduce
 
 - **Principle:** respect-user-preferences / respects-reduced-motion
@@ -103,6 +123,8 @@ fixture findings would be dishonest, so the seeded ground truth stays at nine.
   transition video recorded under the reduce preference shows it still sliding.
 - **Fix:** gate the animation behind
   `@media (prefers-reduced-motion: no-preference)`.
+- **Artifact:** [motion-under-reduce.mp4](evidence/motion-under-reduce.mp4)
+  (transition video under the reduce preference).
 
 ### F-003 (high) Fixed 1200px layout overflows a narrow mobile viewport
 
@@ -112,6 +134,8 @@ fixture findings would be dishonest, so the seeded ground truth stays at nine.
   360px screenshot shows `.fl-hero` (~1264px) clipped.
 - **Fix:** `width: 100%; max-width: 1200px; box-sizing: border-box`.
 
+![.fl-hero clipped at a 360px viewport](evidence/fixed-layout-360.png)
+
 ### F-004 (high) Focus outline removed with no :focus-visible replacement
 
 - **Principle:** adapt-to-the-form-factor / input-modality-aware
@@ -119,6 +143,8 @@ fixture findings would be dishonest, so the seeded ground truth stays at nine.
   `outline-style: none`; CSS has `outline: none` and no `:focus-visible` rule.
 - **Fix:** add
   `.pf-btn:focus-visible { outline: 3px solid #1a73e8; outline-offset: 2px }`.
+
+![focused .pf-btn with no visible outline](evidence/poor-focus.png)
 
 ### F-005 (medium) Cumulative layout shift from a late banner with no reserved space
 
@@ -128,6 +154,9 @@ fixture findings would be dishonest, so the seeded ground truth stays at nine.
   `.ls-slot` reserves no height.
 - **Fix:** reserve the banner's height up front with `min-height` (or
   `aspect-ratio`) on `.ls-slot`.
+- **Artifact:** [trace-summary.json](evidence/trace-summary.json) (FCP/LCP ~33ms,
+  0 long tasks, 0ms total blocking) and the devtools-loadable
+  [trace.json](evidence/trace.json).
 
 ### F-006 (medium) Reused component does not adapt to its container
 
@@ -163,6 +192,8 @@ fixture findings would be dishonest, so the seeded ground truth stays at nine.
   with one 404 (the favicon, under the bare static server with no
   `<link rel=icon>`). Adding a favicon eliminates it.
 - **Fix:** add a favicon (e.g. an inline `data:` SVG `<link rel="icon">`).
+- **Artifact:** [network.har](evidence/network.har) - the 404 entry (request 11
+  of 11) is the missing favicon.
 
 ## Prioritised task list
 

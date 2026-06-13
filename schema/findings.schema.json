@@ -32,6 +32,38 @@
       "description": "The evidence modalities and tools the model actually ran for this audit (e.g. 'screenshot', 'layout-metrics', 'transition-video', 'heap-summary', 'dom+source', 'evaluate-probe', 'lighthouse', 'axe-core'). Makes the audit honest about its method, since method selection is the model's at inspection time, not pre-baked.",
       "items": { "type": "string" }
     },
+    "artifacts": {
+      "type": "array",
+      "description": "The concrete evidence files the audit produced (the artifacts manifest). Each entry ties an artifact type to its on-disk path (relative to the report directory) and a caption. report.md embeds screenshots inline and links the rest (video/trace/har/heap/lighthouse). Findings reference these paths via finding.artifacts so each 'fix this' task is backed by concrete before-evidence.",
+      "items": {
+        "type": "object",
+        "required": ["type", "path"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["screenshot", "video", "trace", "trace-summary", "har", "heap", "lighthouse", "dom", "layout", "other"],
+            "description": "What kind of artifact this is, matching the evidence primitive that produced it."
+          },
+          "path": {
+            "type": "string",
+            "description": "Path to the artifact, relative to the report directory (e.g. 'evidence/no-dark-mode-dark.png', 'evidence/trace-summary.json')."
+          },
+          "caption": {
+            "type": "string",
+            "description": "Short human-readable description of what the artifact shows and under which condition."
+          },
+          "condition": {
+            "type": "string",
+            "description": "Emulated condition the artifact was captured under (e.g. 'prefers-color-scheme: dark', 'viewport: 360x800'), if any."
+          },
+          "findingIds": {
+            "type": "array",
+            "description": "Findings this artifact evidences (the inverse of finding.artifacts; either or both may be populated).",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
     "config": {
       "type": "object",
       "description": "The web-uplift.json project config the audit honoured, if present (see schema/config.schema.json). Records declared scope/opt-outs/intent so the report is honest about what the developer asked for.",
@@ -128,6 +160,11 @@
           "evidence": {
             "type": "string",
             "description": "Concrete observation backing the finding (e.g. 'No color-scheme declared; background stays #fff under prefers-color-scheme: dark', or 'horizontal scrollbar at 360px viewport; .hero has width: 1200px')."
+          },
+          "artifacts": {
+            "type": "array",
+            "description": "Artifact paths (matching entries in the report-level `artifacts` manifest) that concretely evidence this finding, so the report ties each 'action to fix' to its before-evidence (e.g. the dark-mode screenshot, the reduced-motion video, the trace summary). Paths are relative to the report directory.",
+            "items": { "type": "string" }
           },
           "suggestedFix": {
             "type": "string",

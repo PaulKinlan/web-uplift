@@ -24,71 +24,253 @@
     "loaded": false,
     "path": "(none for the frozen fixture; the repo web-uplift.json targets the live playground, not this fixture)"
   },
+  "artifacts": [
+    {
+      "type": "screenshot",
+      "path": "evidence/no-dark-mode-dark.png",
+      "condition": "prefers-color-scheme: dark",
+      "caption": ".ndm-card stays a white surface under an emulated dark preference",
+      "findingIds": [
+        "F-001"
+      ]
+    },
+    {
+      "type": "video",
+      "path": "evidence/motion-under-reduce.mp4",
+      "condition": "prefers-reduced-motion: reduce",
+      "caption": "the marquee card still sliding under reduced-motion",
+      "findingIds": [
+        "F-002"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/fixed-layout-360.png",
+      "condition": "viewport: 360x800",
+      "caption": ".fl-hero clipped off-screen at a narrow mobile viewport",
+      "findingIds": [
+        "F-003"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/poor-focus.png",
+      "condition": "keyboard focus",
+      "caption": "focused .pf-btn with no visible outline",
+      "findingIds": [
+        "F-004",
+        "F-007"
+      ]
+    },
+    {
+      "type": "trace",
+      "path": "evidence/trace.json",
+      "condition": "default load of #layout-shift",
+      "caption": "devtools-loadable performance trace over the load"
+    },
+    {
+      "type": "trace-summary",
+      "path": "evidence/trace-summary.json",
+      "condition": "default load of #layout-shift",
+      "caption": "compact trace summary (FCP/LCP, long tasks, total blocking time)",
+      "findingIds": [
+        "F-005"
+      ]
+    },
+    {
+      "type": "har",
+      "path": "evidence/network.har",
+      "condition": "default load",
+      "caption": "HAR 1.2 of the network over the load; the favicon 404 entry backs F-009",
+      "findingIds": [
+        "F-009"
+      ]
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-summary.json",
+      "condition": "default load",
+      "caption": "heap-snapshot summary by type/constructor (no leak found this run)"
+    },
+    {
+      "type": "lighthouse",
+      "path": "evidence/lighthouse-summary.json",
+      "condition": "default load",
+      "caption": "trimmed Lighthouse extract (perf/a11y/best-practices/seo)",
+      "findingIds": [
+        "F-007",
+        "F-008",
+        "F-009"
+      ]
+    }
+  ],
   "principleOutcomes": [
-    { "principleId": "respect-user-preferences", "expectation": "default", "status": "issues", "findingIds": ["F-001", "F-002"] },
-    { "principleId": "implement-natural-interactions", "expectation": "default", "status": "pass" },
-    { "principleId": "provide-guided-navigation", "expectation": "default", "status": "pass" },
-    { "principleId": "maximize-content-reduce-noise", "expectation": "default", "status": "pass" },
-    { "principleId": "adapt-to-the-form-factor", "expectation": "default", "status": "issues", "findingIds": ["F-003", "F-004", "F-006"] },
-    { "principleId": "be-fast-and-stable", "expectation": "default", "status": "issues", "findingIds": ["F-005"] },
-    { "principleId": "be-inclusive", "expectation": "default", "status": "issues", "findingIds": ["F-007"] },
-    { "principleId": "follow-best-practices", "expectation": "default", "status": "issues", "findingIds": ["F-009"] },
-    { "principleId": "be-discoverable", "expectation": "default", "status": "issues", "findingIds": ["F-008"] },
-    { "principleId": "be-private-and-secure", "expectation": "default", "status": "not-applicable", "reason": "Bare localhost static host (npx serve): no real transport, headers, cookies or auth surface to assess. The missing CSP and the favicon 404 are serving-setup artefacts shared identically by the genuinely-fixed playground, so they are not seeded fixture findings (the favicon 404 is captured under follow-best-practices as F-009)." },
-    { "principleId": "be-resilient", "expectation": "contextual", "status": "not-applicable", "reason": "A deliberately client-rendered CSS-scenario demo; the offline/installable aspect is out of scope and the no-JS blank shell is a shared demo-harness property, not a seeded issue." },
-    { "principleId": "be-internationalised", "expectation": "contextual", "status": "not-applicable", "reason": "Single-locale English demo with lang=en and no locale-sensitive data (dates, numbers, currencies, calendars)." },
-    { "principleId": "be-trustworthy", "expectation": "default", "status": "pass", "reason": "The Save/Cancel/Delete buttons are demo-only with no real action, no forms to validate, and no dark patterns, upsells or consent walls." },
-    { "principleId": "be-sustainable", "expectation": "contextual", "status": "not-applicable", "reason": "A tiny hand-authored demo (a few KB of HTML/CSS/JS); page weight is already minimal, judged proportionally." },
-    { "principleId": "be-agent-ready", "expectation": "contextual", "status": "opted-out", "reason": "Static UX demo with no agent-facing surface; not exposing WebMCP tools or on-device inference (emerging, judged as opportunity not obligation)." }
+    {
+      "principleId": "respect-user-preferences",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F-001",
+        "F-002"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F-003",
+        "F-004",
+        "F-006"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F-005"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F-007"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F-009"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F-008"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "expectation": "default",
+      "status": "not-applicable",
+      "reason": "Bare localhost static host (npx serve): no real transport, headers, cookies or auth surface to assess. The missing CSP and the favicon 404 are serving-setup artefacts shared identically by the genuinely-fixed playground, so they are not seeded fixture findings (the favicon 404 is captured under follow-best-practices as F-009)."
+    },
+    {
+      "principleId": "be-resilient",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "A deliberately client-rendered CSS-scenario demo; the offline/installable aspect is out of scope and the no-JS blank shell is a shared demo-harness property, not a seeded issue."
+    },
+    {
+      "principleId": "be-internationalised",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "Single-locale English demo with lang=en and no locale-sensitive data (dates, numbers, currencies, calendars)."
+    },
+    {
+      "principleId": "be-trustworthy",
+      "expectation": "default",
+      "status": "pass",
+      "reason": "The Save/Cancel/Delete buttons are demo-only with no real action, no forms to validate, and no dark patterns, upsells or consent walls."
+    },
+    {
+      "principleId": "be-sustainable",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "A tiny hand-authored demo (a few KB of HTML/CSS/JS); page weight is already minimal, judged proportionally."
+    },
+    {
+      "principleId": "be-agent-ready",
+      "expectation": "contextual",
+      "status": "opted-out",
+      "reason": "Static UX demo with no agent-facing surface; not exposing WebMCP tools or on-device inference (emerging, judged as opportunity not obligation)."
+    }
   ],
   "paths": [
     {
       "id": "no-dark-mode",
       "description": "Account-settings card under an emulated dark preference",
       "url": "http://localhost:8090/#no-dark-mode",
-      "conditions": ["prefers-color-scheme: dark"],
+      "conditions": [
+        "prefers-color-scheme: dark"
+      ],
       "result": "issues"
     },
     {
       "id": "motion",
       "description": "Sliding marquee card under an emulated reduced-motion preference",
       "url": "http://localhost:8090/#motion",
-      "conditions": ["prefers-reduced-motion: reduce"],
+      "conditions": [
+        "prefers-reduced-motion: reduce"
+      ],
       "result": "issues"
     },
     {
       "id": "fixed-layout",
       "description": "Fixed 1200px hero/column at an emulated narrow mobile viewport",
       "url": "http://localhost:8090/#fixed-layout",
-      "conditions": ["viewport: 360x800"],
+      "conditions": [
+        "viewport: 360x800"
+      ],
       "result": "issues"
     },
     {
       "id": "poor-focus",
       "description": "Buttons with outline removed; keyboard focus visibility and contrast",
       "url": "http://localhost:8090/#poor-focus",
-      "conditions": ["keyboard focus", "default"],
+      "conditions": [
+        "keyboard focus",
+        "default"
+      ],
       "result": "issues"
     },
     {
       "id": "layout-shift",
       "description": "Late-injected banner with no reserved space; CLS observation",
       "url": "http://localhost:8090/#layout-shift",
-      "conditions": ["post-load layout-shift observation"],
+      "conditions": [
+        "post-load layout-shift observation"
+      ],
       "result": "issues"
     },
     {
       "id": "no-container-queries",
       "description": "A reused media card in a wide vs a 240px-narrow container",
       "url": "http://localhost:8090/#no-container-queries",
-      "conditions": ["component reused at two container widths"],
+      "conditions": [
+        "component reused at two container widths"
+      ],
       "result": "issues"
     },
     {
       "id": "site-wide",
       "description": "Document-level accessibility / best-practices / SEO signal via Lighthouse + axe",
       "url": "http://localhost:8090/",
-      "conditions": ["default"],
+      "conditions": [
+        "default"
+      ],
       "result": "issues"
     }
   ],
@@ -107,7 +289,10 @@
       "evidence": "Under emulated prefers-color-scheme: dark, a computed-style probe and a clipped screenshot of .ndm-card show background rgb(255, 255, 255) (a glaring white surface). The card hard-codes background: #ffffff; color: #111111 with no light-dark() and no per-element color-scheme. Re-tinting fails purely because the adaptation is missing.",
       "suggestedFix": "Declare color-scheme: light dark on the card (or root) and use light-dark(#ffffff, #1e1e1e) for surfaces and light-dark(#111111, #eeeeee) for text so the card follows the user preference. See Modern Web Guidance id dark-mode.",
       "effort": "small",
-      "scenario": "no-dark-mode"
+      "scenario": "no-dark-mode",
+      "artifacts": [
+        "evidence/no-dark-mode-dark.png"
+      ]
     },
     {
       "id": "F-002",
@@ -123,7 +308,10 @@
       "evidence": "Under emulated prefers-reduced-motion: reduce, an evaluate probe of .mv-card.getAnimations() returned 1 running animation (animation-name mv-slide); a 2.5s transition video recorded under the reduce preference shows the card still sliding. The animation is applied unconditionally rather than gated behind a no-preference media query.",
       "suggestedFix": "Gate the marquee animation behind @media (prefers-reduced-motion: no-preference) so it only runs when the user has not requested reduced motion.",
       "effort": "trivial",
-      "scenario": "motion"
+      "scenario": "motion",
+      "artifacts": [
+        "evidence/motion-under-reduce.mp4"
+      ]
     },
     {
       "id": "F-003",
@@ -139,7 +327,10 @@
       "evidence": "At an emulated 360x800 viewport the layout primitive reported horizontal overflow of 1158px (document scrollWidth far exceeds visualViewport.width 360); a screenshot at 360px shows the blue .fl-hero (computed width ~1264px) clipped off-screen. The hero and body hard-code width: 1200px.",
       "suggestedFix": "Replace the fixed width: 1200px with width: 100%; max-width: 1200px; box-sizing: border-box so the layout adapts down to small screens.",
       "effort": "small",
-      "scenario": "fixed-layout"
+      "scenario": "fixed-layout",
+      "artifacts": [
+        "evidence/fixed-layout-360.png"
+      ]
     },
     {
       "id": "F-004",
@@ -155,7 +346,10 @@
       "evidence": "An evaluate probe that focuses .pf-btn and reads the computed outline returned outline-style: none; CSS inspection found .pf-btn { outline: none } and no :focus-visible rule restoring an outline. Keyboard users get no visible focus indicator.",
       "suggestedFix": "Remove the blanket outline: none and add .pf-btn:focus-visible { outline: 3px solid #1a73e8; outline-offset: 2px } so keyboard focus is clearly indicated without affecting pointer clicks.",
       "effort": "trivial",
-      "scenario": "poor-focus"
+      "scenario": "poor-focus",
+      "artifacts": [
+        "evidence/poor-focus.png"
+      ]
     },
     {
       "id": "F-005",
@@ -171,7 +365,10 @@
       "evidence": "The layout primitive's layout-shift observer recorded CLS 0.0118 across 2 shifts as the banner injected at ~600ms pushed following content down; the .ls-slot reserves no height. CLS is small here because the page is tall, but the mechanism (unreserved late content) is the classic CLS anti-pattern and scales with banner size.",
       "suggestedFix": "Reserve the banner's space up front with min-height (or aspect-ratio) on .ls-slot so the late content does not shift surrounding layout.",
       "effort": "trivial",
-      "scenario": "layout-shift"
+      "scenario": "layout-shift",
+      "artifacts": [
+        "evidence/trace-summary.json"
+      ]
     },
     {
       "id": "F-006",
@@ -202,7 +399,11 @@
       "summary": "Buttons fail WCAG colour-contrast minimums.",
       "evidence": "Lighthouse (accessibility 91) flagged color-contrast: score 0 on the three .pf-btn buttons; axe-core, injected from CDN via the evaluate primitive and run in-page, independently reported one serious color-contrast violation across 3 nodes. The grey #f2f2f2 button background with the default text does not meet the contrast threshold. This was not one of the playground's six explicitly seeded CSS scenarios; the agentic audit surfaced it from the Lighthouse-dimension principles.",
       "suggestedFix": "Raise the button text/background contrast to at least 4.5:1 for body text (e.g. darken the label or the border, or use a higher-contrast surface). Verify with axe / Lighthouse after the change.",
-      "effort": "small"
+      "effort": "small",
+      "artifacts": [
+        "evidence/poor-focus.png",
+        "evidence/lighthouse-summary.json"
+      ]
     },
     {
       "id": "F-008",
@@ -217,7 +418,10 @@
       "summary": "No meta description.",
       "evidence": "Lighthouse SEO (90) reported meta-description: score 0 (missing); the recon DOM dump confirms <head> has a <title> but no <meta name=\"description\">. A descriptive title is present, so this is a single missing tag.",
       "suggestedFix": "Add a concise, descriptive <meta name=\"description\"> to the document head so search and share previews have summary text.",
-      "effort": "trivial"
+      "effort": "trivial",
+      "artifacts": [
+        "evidence/lighthouse-summary.json"
+      ]
     },
     {
       "id": "F-009",
@@ -232,21 +436,102 @@
       "summary": "A resource 404s in the console on load.",
       "evidence": "Lighthouse best-practices (96) reported errors-in-console: score 0, with one entry: 'Failed to load resource: the server responded with a status of 404 (Not Found)' (a missing resource, the favicon, under the bare serve setup with no <link rel=icon>). Adding a favicon eliminates it, so it is a real, fixable defect rather than a pure environment artefact.",
       "suggestedFix": "Add a favicon (e.g. an inline data: SVG <link rel=\"icon\">) or otherwise resolve the missing resource so the page loads without console errors.",
-      "effort": "trivial"
+      "effort": "trivial",
+      "artifacts": [
+        "evidence/network.har",
+        "evidence/lighthouse-summary.json"
+      ]
     }
   ],
   "taskList": [
-    { "id": "T-001", "title": "Adopt color-scheme + light-dark() so the card follows the dark preference", "priority": 1, "findingIds": ["F-001"], "guidanceId": "dark-mode", "status": "open" },
-    { "id": "T-002", "title": "Gate the marquee animation behind prefers-reduced-motion: no-preference", "priority": 2, "findingIds": ["F-002"], "status": "open" },
-    { "id": "T-003", "title": "Make the fixed 1200px layout fluid (width 100% + max-width)", "priority": 3, "findingIds": ["F-003"], "status": "open" },
-    { "id": "T-004", "title": "Restore a visible keyboard focus indicator with :focus-visible", "priority": 4, "findingIds": ["F-004"], "status": "open" },
-    { "id": "T-005", "title": "Raise button colour contrast to meet WCAG AA", "priority": 5, "findingIds": ["F-007"], "status": "open" },
-    { "id": "T-006", "title": "Reserve space for the late banner to remove the layout shift", "priority": 6, "findingIds": ["F-005"], "status": "open" },
-    { "id": "T-007", "title": "Use a container query so the reused card adapts to its container", "priority": 7, "findingIds": ["F-006"], "guidanceId": "size-aware-styling", "status": "open" },
-    { "id": "T-008", "title": "Add a meta description", "priority": 8, "findingIds": ["F-008"], "status": "open" },
-    { "id": "T-009", "title": "Add a favicon to eliminate the console 404 on load", "priority": 9, "findingIds": ["F-009"], "status": "open" }
+    {
+      "id": "T-001",
+      "title": "Adopt color-scheme + light-dark() so the card follows the dark preference",
+      "priority": 1,
+      "findingIds": [
+        "F-001"
+      ],
+      "guidanceId": "dark-mode",
+      "status": "open"
+    },
+    {
+      "id": "T-002",
+      "title": "Gate the marquee animation behind prefers-reduced-motion: no-preference",
+      "priority": 2,
+      "findingIds": [
+        "F-002"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-003",
+      "title": "Make the fixed 1200px layout fluid (width 100% + max-width)",
+      "priority": 3,
+      "findingIds": [
+        "F-003"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-004",
+      "title": "Restore a visible keyboard focus indicator with :focus-visible",
+      "priority": 4,
+      "findingIds": [
+        "F-004"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-005",
+      "title": "Raise button colour contrast to meet WCAG AA",
+      "priority": 5,
+      "findingIds": [
+        "F-007"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-006",
+      "title": "Reserve space for the late banner to remove the layout shift",
+      "priority": 6,
+      "findingIds": [
+        "F-005"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-007",
+      "title": "Use a container query so the reused card adapts to its container",
+      "priority": 7,
+      "findingIds": [
+        "F-006"
+      ],
+      "guidanceId": "size-aware-styling",
+      "status": "open"
+    },
+    {
+      "id": "T-008",
+      "title": "Add a meta description",
+      "priority": 8,
+      "findingIds": [
+        "F-008"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T-009",
+      "title": "Add a favicon to eliminate the console 404 on load",
+      "priority": 9,
+      "findingIds": [
+        "F-009"
+      ],
+      "status": "open"
+    }
   ],
-  "budget": { "pathCount": 7, "auditPasses": 1 },
+  "budget": {
+    "pathCount": 7,
+    "auditPasses": 1
+  },
   "eval": {
     "mode": "issues",
     "subject": "eval/fixtures/seeded-issues/site (the frozen ground-truth fixture)",
@@ -256,9 +541,19 @@
     "truePositives": 9,
     "falseNegatives": 0,
     "falsePositives": 0,
-    "precision": 1.0,
-    "recall": 1.0,
-    "matched": ["F-001", "F-002", "F-003", "F-004", "F-005", "F-006", "F-007", "F-008", "F-009"],
+    "precision": 1,
+    "recall": 1,
+    "matched": [
+      "F-001",
+      "F-002",
+      "F-003",
+      "F-004",
+      "F-005",
+      "F-006",
+      "F-007",
+      "F-008",
+      "F-009"
+    ],
     "missed": [],
     "spurious": [],
     "livePlaygroundSeededFindings": 0,
