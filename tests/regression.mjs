@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import http from 'node:http';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -72,8 +72,14 @@ function testSchemaValidation() {
 
 function testInstalledEvidenceCli() {
   const target = join(tmp, 'installed-target');
-  const install = run(process.execPath, [
-    'bin/web-uplift.mjs',
+  const tarball = packTarball();
+  const install = run('npm', [
+    'exec',
+    '--yes',
+    '--package',
+    tarball,
+    '--',
+    'web-uplift',
     'install',
     '--agent',
     'codex',
@@ -162,6 +168,16 @@ function testBatchDryRunUsesRetainedDirs() {
     `batch dry-run did not use retained run dir:\n${result.stdout}`,
   );
   assert(!result.stdout.includes(`${reports}/codex/`), `batch dry-run still used old agent prefix:\n${result.stdout}`);
+}
+
+function packTarball() {
+  const packDir = join(tmp, 'pack');
+  mkdirSync(packDir, { recursive: true });
+  const result = run('npm', ['pack', '--quiet', '--pack-destination', packDir]);
+  assert(result.status === 0, `npm pack failed:\n${result.stderr || result.stdout}`);
+  const file = result.stdout.trim().split('\n').filter(Boolean).pop();
+  assert(file, `npm pack did not print a tarball name:\n${result.stdout}`);
+  return join(packDir, file);
 }
 
 function readJson(path) {

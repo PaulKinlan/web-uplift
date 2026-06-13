@@ -22,6 +22,7 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, relative } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import {
   mkdirSync,
   copyFileSync,
@@ -35,6 +36,7 @@ import { AGENT_NAMES } from '../runner/agents.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
+const require = createRequire(import.meta.url);
 
 const argv = process.argv.slice(2);
 const command = argv[0];
@@ -264,14 +266,16 @@ function dependencyCopySteps(rootNames, destNodeModules) {
     if (seen.has(name)) return;
     seen.add(name);
 
-    const pkgDir = join(PKG_ROOT, 'node_modules', ...name.split('/'));
-    const pkgJsonPath = join(pkgDir, 'package.json');
-    if (!existsSync(pkgJsonPath)) {
+    let pkgJsonPath;
+    try {
+      pkgJsonPath = require.resolve(`${name}/package.json`);
+    } catch {
       throw new Error(
-        `Cannot vendor dependency "${name}" because ${pkgJsonPath} does not exist. ` +
+        `Cannot vendor dependency "${name}" because it could not be resolved. ` +
           'Run npm install in the web-uplift package first.',
       );
     }
+    const pkgDir = dirname(pkgJsonPath);
 
     const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
     for (const dep of Object.keys(pkg.dependencies ?? {})) visit(dep);
