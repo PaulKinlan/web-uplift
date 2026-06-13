@@ -1,0 +1,10 @@
+# Project-scoped Codex config. Loaded only once you've marked this project
+# as trusted in Codex (it ignores .codex/ layers in untrusted repos).
+
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp", "--isolated"]
+
+[mcp_servers.web-uplift]
+command = "node"
+args = ["mcp/skills-server.mjs"]

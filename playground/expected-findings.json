@@ -1,0 +1,54 @@
+{
+  "description": "Ground truth for evaluating the web-audit loop against the playground. In issue mode (default) every scenario below must be found with the right principle and a sensible Modern Web Guidance id; in ?mode=fixed the audit must report zero findings. See PLAN.md open question #4 on scoring partial matches.",
+  "scenarios": [
+    {
+      "id": "fixed-layout",
+      "principleId": "adapt-to-the-device",
+      "principleCheckId": "responsive-no-horizontal-scroll",
+      "expectedGuidanceQuery": "responsive layout adapt to viewport mobile",
+      "detectableVia": "Resize to viewport 360x800; issue mode produces horizontal overflow and clips .fl-hero (width: 1200px).",
+      "fix": "Replace fixed width with width: 100%; max-width: 1200px and box-sizing: border-box so the layout adapts to narrow viewports."
+    },
+    {
+      "id": "no-dark-mode",
+      "principleId": "adapt-to-the-user",
+      "principleCheckId": "respects-color-scheme",
+      "expectedGuidanceId": "dark-mode",
+      "detectableVia": "Emulate prefers-color-scheme: dark; the .ndm-card background stays #ffffff with no color-scheme declared.",
+      "fix": "Declare color-scheme: light dark and use light-dark() for surface and text colors so the card follows the user preference. Guidance id: dark-mode."
+    },
+    {
+      "id": "poor-focus",
+      "principleId": "adapt-to-the-device",
+      "principleCheckId": "input-modality-aware",
+      "expectedGuidanceQuery": "visible focus indicator focus-visible keyboard accessibility",
+      "detectableVia": "Tab through .pf-btn controls with keyboard-only; issue mode sets outline: none with no replacement, so there is no visible focus indicator.",
+      "fix": "Remove the blanket outline: none and add a :focus-visible outline so keyboard focus is clearly indicated without affecting pointer clicks."
+    },
+    {
+      "id": "layout-shift",
+      "principleId": "adapt-to-the-device",
+      "principleCheckId": "responsive-no-horizontal-scroll",
+      "expectedGuidanceQuery": "prevent layout shift reserve space CLS aspect-ratio",
+      "detectableVia": "Observe the paragraph below .ls-slot shift down ~600ms after load when the banner injects; issue mode reserves no space.",
+      "fix": "Reserve the banner's space up front with min-height (or aspect-ratio) on the slot so the late content does not shift surrounding layout."
+    },
+    {
+      "id": "motion",
+      "principleId": "adapt-to-the-user",
+      "principleCheckId": "respects-reduced-motion",
+      "expectedGuidanceQuery": "respect reduced motion preference accessible animation",
+      "detectableVia": "Emulate prefers-reduced-motion: reduce; the .mv-card keeps its infinite slide animation in issue mode.",
+      "fix": "Gate the animation behind @media (prefers-reduced-motion: no-preference) so it only runs when the user has not requested reduced motion."
+    },
+    {
+      "id": "no-container-queries",
+      "principleId": "adapt-to-the-device",
+      "principleCheckId": "component-level-responsiveness",
+      "expectedGuidanceQuery": "container queries component responsive",
+      "detectableVia": "The same .cq-card stays in a side-by-side flex layout inside the 240px .cq-narrow container, cramping content; the component does not respond to its container width.",
+      "fix": "Add container-type: inline-size to the wrapper and a @container (max-width: 320px) rule that stacks the card, so the component adapts to its container rather than the viewport."
+    }
+  ],
+  "falsePositiveCheck": "Run the same audit on ?mode=fixed. Each scenario above ships a corrected stylesheet (light-dark(), :focus-visible, reserved min-height, prefers-reduced-motion gate, @container, fluid max-width). The audit must report zero findings in fixed mode."
+}

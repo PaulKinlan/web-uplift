@@ -1,0 +1,6 @@
+description = "Audit a URL for modern web UX quality (explore -> test plan -> principles + Modern Web Guidance -> findings -> task list; --fix to hill-climb)"
+
+prompt = """
+Read the file .claude/skills/web-audit/SKILL.md and follow its
+instructions exactly, with these arguments: {{args}}
+"""

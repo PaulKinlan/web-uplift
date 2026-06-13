@@ -1,0 +1,20 @@
+{
+  "name": "web-uplift",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Agent-driven modern-web-quality auditing and fixing for websites via chrome-devtools-mcp and Modern Web Guidance",
+  "scripts": {
+    "playground": "npx -y serve playground -l 8080",
+    "batch": "node runner/run-batch.mjs",
+    "aggregate": "node aggregate/aggregate.mjs"
+  },
+  "devDependencies": {
+    "chrome-devtools-mcp": "^1.2.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}

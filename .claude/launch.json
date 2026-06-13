@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "playground",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "serve", "playground", "-l", "8080"],
+      "port": 8080
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Audit output - large and regenerable; keep it local, publish only
+# aggregates. (testplans/ stays tracked by design: plans are reviewed and
+# reused across runs.)
+reports/
+
+# Agent scratch space - ad-hoc helper scripts/screenshots written mid-audit
+# (the web-audit skill directs agents here)
+scratch/
+
+# Local secrets / environment
+.env
+.env.*
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS noise
+.DS_Store
+Thumbs.db

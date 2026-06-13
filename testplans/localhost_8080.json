@@ -1,0 +1,49 @@
+[
+  {
+    "id": "landing",
+    "description": "Playground landing page: the scenario navigation and first scenario view",
+    "url": "http://localhost:8080/",
+    "steps": "Load the page, read the visible scenario, take a snapshot and screenshot",
+    "conditions": [
+      "prefers-color-scheme: dark",
+      "prefers-reduced-motion: reduce",
+      "viewport: 360x800",
+      "keyboard-only"
+    ]
+  },
+  {
+    "id": "fixed-layout",
+    "description": "Fixed, non-adaptive layout that does not respond to narrow viewports",
+    "url": "http://localhost:8080/#fixed-layout",
+    "steps": "Open the fixed-layout scenario, resize to a mobile viewport, check for horizontal overflow",
+    "conditions": ["viewport: 360x800", "viewport: 1280x800"]
+  },
+  {
+    "id": "no-dark-mode",
+    "description": "Hard-coded light theme that ignores the user's color-scheme preference",
+    "url": "http://localhost:8080/#no-dark-mode",
+    "steps": "Open the no-dark-mode scenario and compare rendering under light vs dark preference",
+    "conditions": ["prefers-color-scheme: dark", "prefers-color-scheme: light"]
+  },
+  {
+    "id": "poor-focus",
+    "description": "Custom controls with focus outlines removed; not keyboard-reachable/visible",
+    "url": "http://localhost:8080/#poor-focus",
+    "steps": "Open the poor-focus scenario and Tab through the controls, observing focus indication",
+    "conditions": ["keyboard-only"]
+  },
+  {
+    "id": "layout-shift",
+    "description": "Content that injects late without reserved space, shifting layout (CLS)",
+    "url": "http://localhost:8080/#layout-shift",
+    "steps": "Open the layout-shift scenario, observe content shift as the deferred block loads",
+    "conditions": ["viewport: 360x800"]
+  },
+  {
+    "id": "motion",
+    "description": "Auto-playing, large-motion animation that ignores prefers-reduced-motion",
+    "url": "http://localhost:8080/#motion",
+    "steps": "Open the motion scenario and check whether animation continues under reduced-motion",
+    "conditions": ["prefers-reduced-motion: reduce"]
+  }
+]

@@ -1,0 +1,84 @@
+{
+  "note": "Una Kravets' five core principles for modern UX, from her Google I/O 2026 talk 'What's new in Web UI' (https://www.youtube.com/watch?v=uT7MVcCQ4rw). That talk is the SOURCE OF TRUTH for this file. IMPORTANT: only two principles are confirmed here ('adapt-to-the-user' and 'adapt-to-the-device'). The remaining three are TODO placeholders and MUST be filled in from the talk; do NOT invent them. See PLAN.md open question #1.",
+  "source": "https://www.youtube.com/watch?v=uT7MVcCQ4rw",
+  "talkTitle": "What's new in Web UI (Google I/O 2026)",
+  "author": "Una Kravets",
+  "principles": [
+    {
+      "id": "adapt-to-the-user",
+      "title": "Adapt to the user",
+      "status": "confirmed",
+      "description": "The interface should respect and respond to the user's stated and system-level preferences (theme, motion, contrast, language, reduced data) rather than imposing a single fixed experience. A modern site reads the signals the platform already provides and adjusts.",
+      "checks": [
+        {
+          "id": "respects-color-scheme",
+          "summary": "Honours prefers-color-scheme: a usable dark mode exists and is driven by the user's preference (color-scheme / prefers-color-scheme / light-dark()), not hard-coded light only.",
+          "detectableVia": "Emulate prefers-color-scheme: dark and compare rendered colors; check for a color-scheme declaration.",
+          "guidanceQuery": "dark mode prefers-color-scheme"
+        },
+        {
+          "id": "respects-reduced-motion",
+          "summary": "Honours prefers-reduced-motion: large or essential animations are reduced or removed when the user asks for less motion.",
+          "detectableVia": "Emulate prefers-reduced-motion: reduce and check that non-essential animation/auto-advance stops.",
+          "guidanceQuery": "respect reduced motion preference accessible animation"
+        },
+        {
+          "id": "respects-contrast",
+          "summary": "Honours prefers-contrast / forced-colors: controls and scrollbars remain visible under high-contrast preferences.",
+          "detectableVia": "Emulate prefers-contrast: more / forced-colors and check control visibility.",
+          "guidanceQuery": "high contrast prefers-contrast scrollbar visibility"
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-the-device",
+      "title": "Adapt to the device",
+      "status": "confirmed",
+      "description": "The interface should respond to the device and context it is rendered in (viewport size, input modality, capabilities) using modern responsive techniques, so layout and interaction work from small touch screens to large pointer-driven displays without breaking.",
+      "checks": [
+        {
+          "id": "responsive-no-horizontal-scroll",
+          "summary": "Layout adapts to narrow viewports with no horizontal overflow, no fixed pixel widths forcing a desktop layout on mobile, and a viewport meta tag present.",
+          "detectableVia": "Resize to a narrow mobile viewport and check for horizontal scrollbar / clipped content; check meta viewport.",
+          "guidanceQuery": "responsive layout adapt to viewport mobile"
+        },
+        {
+          "id": "component-level-responsiveness",
+          "summary": "Components adapt to their container (container queries) where a component is reused at different sizes, rather than relying only on global viewport breakpoints.",
+          "detectableVia": "Inspect for @container usage where components are reused at multiple widths; resize containers.",
+          "guidanceQuery": "container queries component responsive"
+        },
+        {
+          "id": "input-modality-aware",
+          "summary": "Touch targets are adequately sized and hover-only affordances have a non-hover fallback, so the UI works for both touch and pointer.",
+          "detectableVia": "Check tap target sizes at mobile viewport; check that hover-revealed controls are reachable without hover.",
+          "guidanceQuery": "touch target size hover fallback pointer input"
+        }
+      ]
+    },
+    {
+      "id": "principle-3-todo",
+      "title": "TODO: confirm from talk",
+      "status": "todo",
+      "comment": "PLACEHOLDER. Do not invent. Fill in from Una Kravets' 'What's new in Web UI' (Google I/O 2026): https://www.youtube.com/watch?v=uT7MVcCQ4rw . Replace id, title, description, and checks with the real third principle once confirmed.",
+      "description": "",
+      "checks": []
+    },
+    {
+      "id": "principle-4-todo",
+      "title": "TODO: confirm from talk",
+      "status": "todo",
+      "comment": "PLACEHOLDER. Do not invent. Fill in from Una Kravets' 'What's new in Web UI' (Google I/O 2026): https://www.youtube.com/watch?v=uT7MVcCQ4rw . Replace id, title, description, and checks with the real fourth principle once confirmed.",
+      "description": "",
+      "checks": []
+    },
+    {
+      "id": "principle-5-todo",
+      "title": "TODO: confirm from talk",
+      "status": "todo",
+      "comment": "PLACEHOLDER. Do not invent. Fill in from Una Kravets' 'What's new in Web UI' (Google I/O 2026): https://www.youtube.com/watch?v=uT7MVcCQ4rw . Replace id, title, description, and checks with the real fifth principle once confirmed.",
+      "description": "",
+      "checks": []
+    }
+  ]
+}
