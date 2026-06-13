@@ -1,8 +1,8 @@
 {
-  "note": "Trimmed extract of the Lighthouse run the model chose to execute at inspection time (full report not committed; regenerate with npx lighthouse). Tool choice is the model's, not baked into the runtime.",
-  "fetchTime": "2026-06-13T12:13:58.808Z",
+  "note": "Trimmed extract of the Lighthouse run the model chose to execute at inspection time against the seeded-issues eval fixture (eval/fixtures/seeded-issues/site). Full report not committed; regenerate with npx lighthouse. Tool choice is the model's, not baked into the runtime.",
+  "fetchTime": "2026-06-13T12:44:33.445Z",
   "lighthouseVersion": "13.4.0",
-  "requestedUrl": "http://localhost:8080/#poor-focus",
+  "requestedUrl": "http://localhost:8090/#poor-focus",
   "categories": {
     "performance": 100,
     "accessibility": 91,
@@ -37,11 +37,11 @@
     },
     "largest-contentful-paint": {
       "score": 1,
-      "displayValue": "1.2 s"
+      "displayValue": "1.2\u00a0s"
     },
     "total-blocking-time": {
       "score": 1,
-      "displayValue": "0 ms"
+      "displayValue": "0\u00a0ms"
     },
     "errors-in-console": {
       "score": 0,

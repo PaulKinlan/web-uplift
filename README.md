@@ -108,9 +108,10 @@ evidence/                   Generic, judgement-free CDP evidence primitives (the
 principles/                 The declarative spec: Una's five + the four Lighthouse-dimension principles
 guidance/                   Modern Web Guidance feed integration (the how)
 schema/                     Findings + report JSON schema
-playground/                 Seeded modern-UX issues, issue vs fixed mode, ground truth for the eval
-examples/                   A committed real agentic audit of the playground (report + fixed-mode check)
-runner/                     Batch fan-out: one fully-agentic audit per URL (claude/codex/gemini/antigravity)
+playground/                 The genuinely-correct demo site (modern-UX techniques applied by default)
+eval/                       Eval ground truth: the frozen seeded-issues fixture + expected-findings (9)
+examples/                   A committed real agentic audit (fixture -> 9 findings; live playground -> 0)
+runner/                     Batch fan-out: one fully-agentic audit per URL (any agent via a single config map)
 aggregate/                  Merge reports into a cross-site summary
 urls/                       URL lists + notes on sourcing top-site lists
 testplans/                  Reviewable per-site plans (when an agent persists one)
@@ -149,17 +150,23 @@ npm run batch -- --urls urls/sample.txt --concurrency 2 --agent claude
 npm run aggregate
 ```
 
-## Example report
+## Example report and the eval
 
 [examples/playground-report.md](examples/playground-report.md) is a real
-agentic audit of the playground: the model launched headless Chrome, gathered
-DOM/computed-styles, screenshots, layout metrics, a heap summary and a
-transition video via the evidence primitives, reasoned over them, and judged the
-nine principles. [examples/playground-report-fixed.md](examples/playground-report-fixed.md)
-is the `?mode=fixed` false-positive check. The
+agentic audit of the **seeded-issues eval fixture**
+([eval/fixtures/seeded-issues/site](eval/fixtures/seeded-issues/site)): the model
+launched headless Chrome, gathered DOM/computed-styles, screenshots, layout
+metrics, a heap summary and a transition video via the evidence primitives,
+chose to run Lighthouse and axe, reasoned over them, and judged the nine
+principles, surfacing all nine ground-truth findings (100% recall).
+[examples/playground-report-fixed.md](examples/playground-report-fixed.md) is the
+product guard: the same audit against the genuinely-fixed live
+[playground/](playground/), which surfaces **zero** of them. The fixture proves
+recall; the live playground proves the fixes are real. See
+[eval/README.md](eval/README.md). The
 [evidence-smoke workflow](.github/workflows/audit-playground.yml) smoke-tests the
-primitives on every push (the full audit needs a model in the loop, so it is
-refreshed by running the agent, not by CI).
+primitives and the eval ground truth on every push (the full audit needs a model
+in the loop, so it is refreshed by running the agent, not by CI).
 
 See [PLAN.md](PLAN.md) for the roadmap and the rationale for the fully-agentic,
 no-fast-path design.

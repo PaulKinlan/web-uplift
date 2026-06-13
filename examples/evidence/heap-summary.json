@@ -1,8 +1,8 @@
 {
   "totals": {
-    "nodeCount": 22781,
-    "edgeCount": 92102,
-    "totalSelfSizeBytes": 606763
+    "nodeCount": 22789,
+    "edgeCount": 92114,
+    "totalSelfSizeBytes": 606947
   },
   "topNodeTypesBySize": [
     {
@@ -27,8 +27,8 @@
     },
     {
       "name": "native",
-      "count": 873,
-      "selfSize": 41675
+      "count": 881,
+      "selfSize": 41859
     },
     {
       "name": "code",

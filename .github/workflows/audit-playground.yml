@@ -4,9 +4,11 @@ name: evidence-smoke
 # principles (see .claude/skills/web-audit/SKILL.md). There is no deterministic
 # check runner to exercise in CI. What CI CAN verify without a model in the loop
 # is that the generic evidence primitives still launch Chrome over raw CDP and
-# return data/artifacts against the bundled playground. That is the smoke test
-# below. The real agentic report lives in examples/playground-report.md, refreshed
-# by running the agent (a person or a scheduled agent run), not by CI.
+# return data/artifacts, AND that the eval ground truth holds: the seeded-issues
+# fixture still exhibits its issues while the live playground is genuinely fixed.
+# That is the smoke + regression test below. The real agentic report lives in
+# examples/playground-report.md, refreshed by running the agent (a person or a
+# scheduled agent run), not by CI.
 
 on:
   push:
@@ -14,6 +16,7 @@ on:
     paths:
       - 'evidence/**'
       - 'playground/**'
+      - 'eval/**'
       - 'principles/**'
       - 'schema/**'
       - 'package.json'
@@ -50,32 +53,38 @@ jobs:
           fi
           "$CHROME_BIN" --version || true
 
-      - name: Serve the playground
+      - name: Serve the live playground and the eval fixture
         run: |
+          # Live playground (genuinely fixed) on :8080.
           npx -y serve playground -l 8080 &
           echo "SERVE_PID=$!" >> "$GITHUB_ENV"
-          for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://localhost:8080/; then break; fi
-            sleep 1
+          # Seeded-issues eval fixture (frozen ground truth) on :8090.
+          npx -y serve eval/fixtures/seeded-issues/site -l 8090 &
+          echo "FIXTURE_PID=$!" >> "$GITHUB_ENV"
+          for port in 8080 8090; do
+            for i in $(seq 1 30); do
+              if curl -fsS -o /dev/null "http://localhost:$port/"; then break; fi
+              sleep 1
+            done
+            curl -fsS -o /dev/null -w "serve $port=%{http_code}\n" "http://localhost:$port/"
           done
-          curl -fsS -o /dev/null -w "serve=%{http_code}\n" http://localhost:8080/
 
-      - name: Evidence primitive smoke tests
+      - name: Evidence primitive smoke tests (against the fixture)
         run: |
           set -e
           mkdir -p scratch/ci
           # DOM + computed styles under emulated dark preference.
-          node evidence/cli.mjs dom "http://localhost:8080/#no-dark-mode" \
+          node evidence/cli.mjs dom "http://localhost:8090/#no-dark-mode" \
             --selector ".ndm-card" --emulate-media prefers-color-scheme=dark \
             --out scratch/ci/dom.json --wait 800 --quiet
           # Layout metrics + overflow at an emulated mobile viewport.
-          node evidence/cli.mjs layout "http://localhost:8080/#fixed-layout" \
+          node evidence/cli.mjs layout "http://localhost:8090/#fixed-layout" \
             --viewport 360x800 --out scratch/ci/layout.json --wait 800 --quiet
           # Screenshot artifact.
-          node evidence/cli.mjs screenshot "http://localhost:8080/#no-dark-mode" \
+          node evidence/cli.mjs screenshot "http://localhost:8090/#no-dark-mode" \
             --emulate-media prefers-color-scheme=dark --out scratch/ci/shot.png --wait 800 --quiet
           # Ad-hoc in-page probe (the model's escape hatch).
-          node evidence/cli.mjs evaluate "http://localhost:8080/#motion" \
+          node evidence/cli.mjs evaluate "http://localhost:8090/#motion" \
             --emulate-media prefers-reduced-motion=reduce \
             --expr "document.querySelector('.mv-card').getAnimations().length" --wait 600 --quiet
           # Assert artifacts exist and have content.
@@ -84,6 +93,39 @@ jobs:
           test -s scratch/ci/shot.png
           echo "evidence primitives OK"
 
-      - name: Stop the playground server
+      # Ground-truth regression: the fixture must still exhibit its seeded issues
+      # and the live playground must be genuinely fixed. This guards the eval
+      # without needing a model in the loop (it checks the raw, judgement-free
+      # signal the model would reason over, not the model's findings).
+      - name: Eval ground-truth regression
+        run: |
+          set -e
+          probe() {  # url + expr -> trimmed JSON value on stdout
+            node evidence/cli.mjs evaluate "$1" --expr "$2" --wait 800 --quiet 2>/dev/null
+          }
+          overflow() {
+            node evidence/cli.mjs layout "$1" --viewport 360x800 --wait 800 --quiet 2>/dev/null \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).observed.horizontalOverflowPx))'
+          }
+          # Fixture (broken) expectations.
+          fx_bg=$(probe "http://localhost:8090/#no-dark-mode" "getComputedStyle(document.querySelector('.ndm-card')).backgroundColor")
+          fx_ov=$(overflow "http://localhost:8090/#fixed-layout")
+          # Live (fixed) expectations.
+          lv_bg=$(node evidence/cli.mjs dom "http://localhost:8080/#no-dark-mode" --selector ".ndm-card" --emulate-media prefers-color-scheme=dark --wait 800 --quiet 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).page.computed[".ndm-card"]["background-color"]))')
+          lv_anim=$(probe "http://localhost:8080/#motion" "document.querySelector('.mv-card').getAnimations().length")
+          lv_meta=$(probe "http://localhost:8080/" "!!document.querySelector('meta[name=description]')")
+          echo "fixture: dark-card-bg(default)=$fx_bg overflow@360=$fx_ov"
+          echo "live:    dark-card-bg=$lv_bg reduce-anims=$lv_anim metaDesc=$lv_meta"
+          # The fixture's overflow must be large (seeded issue intact).
+          [ "$fx_ov" -gt 500 ] || { echo "FAIL: fixture lost its fixed-layout overflow"; exit 1; }
+          # The live playground must be fixed.
+          [ "$lv_bg" = "rgb(30, 30, 30)" ] || { echo "FAIL: live dark mode regressed"; exit 1; }
+          [ "$lv_anim" = "0" ] || { echo "FAIL: live reduced-motion regressed"; exit 1; }
+          [ "$lv_meta" = "true" ] || { echo "FAIL: live meta description missing"; exit 1; }
+          echo "eval ground truth OK (fixture broken, live fixed)"
+
+      - name: Stop the servers
         if: always()
-        run: kill "$SERVE_PID" 2>/dev/null || true
+        run: |
+          kill "$SERVE_PID" 2>/dev/null || true
+          kill "$FIXTURE_PID" 2>/dev/null || true

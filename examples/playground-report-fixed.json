@@ -1,33 +1,37 @@
 {
-  "url": "http://localhost:8080/?mode=fixed",
-  "auditedAt": "2026-06-13T13:16:00.000Z",
+  "url": "http://localhost:8080/",
+  "auditedAt": "2026-06-13T13:46:00.000Z",
   "mode": "report",
   "status": "completed",
-  "statusDetail": "Fully agentic false-positive guard. Re-running the same evidence-gathering against ?mode=fixed (where each scenario ships its corrected CSS). The model confirmed every seeded condition is now satisfied, so it reports none of the six seeded findings.",
+  "statusDetail": "Fully agentic false-positive / product guard. Re-running the same evidence-gathering against the genuinely-fixed live playground/ (served at :8080, default mode). The model confirmed every seeded condition is now satisfied, so it reports none of the nine ground-truth findings. The fixture's ?mode=fixed run gives the same result for the six CSS scenarios.",
   "page": {
     "appType": "spa",
     "framework": "vanilla ES modules (hash-routed)",
-    "notes": "?mode=fixed serves the corrected stylesheet for every scenario (light-dark(), prefers-reduced-motion gate, fluid max-width, :focus-visible, reserved min-height, @container)."
+    "notes": "The live playground/ is correct by default: each scenario ships its Modern Web Guidance technique in its default stylesheet (light-dark(), prefers-reduced-motion gate, fluid max-width, :focus-visible + WCAG-contrast buttons, reserved min-height, @container) and index.html carries a color-scheme meta, a meta description, and a favicon."
   },
   "evidenceUsed": [
     "computed-styles probe (evaluate) under prefers-color-scheme: dark and prefers-reduced-motion: reduce",
     "layout-metrics at a 360x800 viewport",
-    "evaluate-probe (focus outline, container flex-direction)"
+    "evaluate-probe (focus outline, container flex-direction)",
+    "lighthouse (accessibility, best-practices, seo, performance)",
+    "axe-core (injected via the evaluate primitive, color-contrast)"
   ],
   "paths": [
-    { "id": "no-dark-mode", "description": "card under dark", "url": "http://localhost:8080/?mode=fixed#no-dark-mode", "conditions": ["prefers-color-scheme: dark"], "result": "pass" },
-    { "id": "motion", "description": "marquee under reduce", "url": "http://localhost:8080/?mode=fixed#motion", "conditions": ["prefers-reduced-motion: reduce"], "result": "pass" },
-    { "id": "fixed-layout", "description": "layout at 360px", "url": "http://localhost:8080/?mode=fixed#fixed-layout", "conditions": ["viewport: 360x800"], "result": "pass" },
-    { "id": "poor-focus", "description": "focus visibility", "url": "http://localhost:8080/?mode=fixed#poor-focus", "conditions": ["keyboard focus"], "result": "pass" },
-    { "id": "layout-shift", "description": "CLS observation", "url": "http://localhost:8080/?mode=fixed#layout-shift", "conditions": ["post-load layout-shift observation"], "result": "pass" },
-    { "id": "no-container-queries", "description": "card in narrow container", "url": "http://localhost:8080/?mode=fixed#no-container-queries", "conditions": ["component reused at two container widths"], "result": "pass" }
+    { "id": "no-dark-mode", "description": "card under dark", "url": "http://localhost:8080/#no-dark-mode", "conditions": ["prefers-color-scheme: dark"], "result": "pass" },
+    { "id": "motion", "description": "marquee under reduce", "url": "http://localhost:8080/#motion", "conditions": ["prefers-reduced-motion: reduce"], "result": "pass" },
+    { "id": "fixed-layout", "description": "layout at 360px", "url": "http://localhost:8080/#fixed-layout", "conditions": ["viewport: 360x800"], "result": "pass" },
+    { "id": "poor-focus", "description": "focus visibility + contrast", "url": "http://localhost:8080/#poor-focus", "conditions": ["keyboard focus", "axe color-contrast"], "result": "pass" },
+    { "id": "layout-shift", "description": "CLS observation", "url": "http://localhost:8080/#layout-shift", "conditions": ["post-load layout-shift observation"], "result": "pass" },
+    { "id": "no-container-queries", "description": "card in narrow container", "url": "http://localhost:8080/#no-container-queries", "conditions": ["component reused at two container widths"], "result": "pass" },
+    { "id": "site-wide", "description": "Lighthouse + axe document-level signal", "url": "http://localhost:8080/", "conditions": ["default"], "result": "pass" }
   ],
   "findings": [],
   "taskList": [],
-  "budget": { "pathCount": 6, "auditPasses": 1 },
+  "budget": { "pathCount": 7, "auditPasses": 1 },
   "eval": {
-    "mode": "fixed",
-    "groundTruth": "playground/expected-findings.json",
+    "mode": "live-product",
+    "subject": "playground/ (the genuinely-fixed live playground)",
+    "groundTruth": "eval/fixtures/seeded-issues/expected-findings.json",
     "expectedSeededFindings": 0,
     "foundSeededFindings": 0,
     "precision": 1.0,
@@ -36,10 +40,11 @@
       "no-dark-mode": "background under dark = rgb(30, 30, 30) (adapts)",
       "motion": "running animations under reduce = 0",
       "fixed-layout": "no scenario element overflows the 360px viewport (only the 58px playground-frame residual remains)",
-      "poor-focus": "focused button computed outline-style = solid",
+      "poor-focus": "focused button computed outline-style = solid; axe color-contrast violations = 0",
       "no-container-queries": "card in the narrow container computes flex-direction = column",
-      "layout-shift": "CLS 0.0041 (the slot reserves min-height)"
+      "layout-shift": "CLS 0.0041 (the slot reserves min-height)",
+      "site-wide": "meta description present; favicon present (no console 404); Lighthouse a11y/best-practices/seo/perf = 100/100/100/100"
     },
-    "note": "Zero seeded findings in fixed mode. The false-positive guard passes."
+    "note": "Zero of the nine ground-truth findings on the live playground. The product guard passes."
   }
 }

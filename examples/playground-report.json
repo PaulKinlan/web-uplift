@@ -1,16 +1,16 @@
 {
-  "url": "http://localhost:8080/",
-  "auditedAt": "2026-06-13T13:15:00.000Z",
+  "url": "http://localhost:8090/",
+  "auditedAt": "2026-06-13T13:45:00.000Z",
   "mode": "report",
   "status": "completed",
-  "statusDetail": "Fully agentic audit. The model gathered multi-modal evidence with the repo's evidence primitives (DOM+source, computed styles, screenshots, a transition video, layout metrics + a CLS/long-task observer, a heap-snapshot summary, and ad-hoc evaluate probes), then chose to run Lighthouse and to inject axe-core (via the evaluate primitive, fetched from a CDN at inspection time) to corroborate the Lighthouse-dimension principles. It judged all nine principles. No deterministic check runner was involved.",
+  "statusDetail": "Fully agentic audit of the seeded-issues eval fixture (eval/fixtures/seeded-issues/site). The model gathered multi-modal evidence with the repo's evidence primitives (DOM+source, computed styles, screenshots, a transition video, layout metrics + a CLS/long-task observer, a heap-snapshot summary, and ad-hoc evaluate probes), then chose to run Lighthouse and to inject axe-core (via the evaluate primitive, fetched from a CDN at inspection time) to corroborate the Lighthouse-dimension principles. It judged all nine principles. No deterministic check runner was involved. This fixture is the eval ground truth; the genuinely-fixed live playground/ reports zero of these findings.",
   "page": {
     "appType": "spa",
     "framework": "vanilla ES modules (hash-routed)",
-    "notes": "Modern Web UX Playground: a hash-routed SPA. Six scenarios mount scoped CSS per route. lang=en and a meta viewport are present. Audited in default (issue) mode; the ?mode=fixed run is the false-positive guard."
+    "notes": "Seeded-issues eval fixture: a hash-routed SPA where six scenarios mount scoped CSS per route. lang=en and a meta viewport are present. Audited in default (issue) mode; the ?mode=fixed run is the CSS-scenario false-positive guard. This fixture is frozen ground truth, not the live product."
   },
   "evidenceUsed": [
-    "dom+source (DOM, computed styles, page HTML/CSS, local playground/ source)",
+    "dom+source (DOM, computed styles, page HTML/CSS, local fixture source)",
     "computed-styles probe (evaluate)",
     "screenshot (clipped, under emulated prefers-color-scheme: dark and a 360x800 viewport)",
     "transition-video (screencast -> MP4 under prefers-reduced-motion: reduce)",
@@ -24,49 +24,49 @@
     {
       "id": "no-dark-mode",
       "description": "Account-settings card under an emulated dark preference",
-      "url": "http://localhost:8080/#no-dark-mode",
+      "url": "http://localhost:8090/#no-dark-mode",
       "conditions": ["prefers-color-scheme: dark"],
       "result": "issues"
     },
     {
       "id": "motion",
       "description": "Sliding marquee card under an emulated reduced-motion preference",
-      "url": "http://localhost:8080/#motion",
+      "url": "http://localhost:8090/#motion",
       "conditions": ["prefers-reduced-motion: reduce"],
       "result": "issues"
     },
     {
       "id": "fixed-layout",
       "description": "Fixed 1200px hero/column at an emulated narrow mobile viewport",
-      "url": "http://localhost:8080/#fixed-layout",
+      "url": "http://localhost:8090/#fixed-layout",
       "conditions": ["viewport: 360x800"],
       "result": "issues"
     },
     {
       "id": "poor-focus",
       "description": "Buttons with outline removed; keyboard focus visibility and contrast",
-      "url": "http://localhost:8080/#poor-focus",
+      "url": "http://localhost:8090/#poor-focus",
       "conditions": ["keyboard focus", "default"],
       "result": "issues"
     },
     {
       "id": "layout-shift",
       "description": "Late-injected banner with no reserved space; CLS observation",
-      "url": "http://localhost:8080/#layout-shift",
+      "url": "http://localhost:8090/#layout-shift",
       "conditions": ["post-load layout-shift observation"],
       "result": "issues"
     },
     {
       "id": "no-container-queries",
       "description": "A reused media card in a wide vs a 240px-narrow container",
-      "url": "http://localhost:8080/#no-container-queries",
+      "url": "http://localhost:8090/#no-container-queries",
       "conditions": ["component reused at two container widths"],
       "result": "issues"
     },
     {
       "id": "site-wide",
       "description": "Document-level accessibility / best-practices / SEO signal via Lighthouse + axe",
-      "url": "http://localhost:8080/",
+      "url": "http://localhost:8090/",
       "conditions": ["default"],
       "result": "issues"
     }
@@ -75,7 +75,7 @@
     {
       "id": "F-001",
       "pathId": "no-dark-mode",
-      "url": "http://localhost:8080/#no-dark-mode",
+      "url": "http://localhost:8090/#no-dark-mode",
       "principleId": "respect-user-preferences",
       "principleCheckId": "respects-color-scheme",
       "guidanceId": "dark-mode",
@@ -83,7 +83,7 @@
       "severity": "high",
       "confidence": "high",
       "summary": "Surface ignores prefers-color-scheme: dark and stays a light card.",
-      "evidence": "Under emulated prefers-color-scheme: dark, a computed-style probe and a clipped screenshot of .ndm-card show background rgb(255, 255, 255) (a glaring white surface). The card hard-codes background: #ffffff; color: #111111 with no light-dark() and no per-element color-scheme. In ?mode=fixed the same probe returns rgb(30, 30, 30), confirming the issue is the missing adaptation, not a measurement artefact.",
+      "evidence": "Under emulated prefers-color-scheme: dark, a computed-style probe and a clipped screenshot of .ndm-card show background rgb(255, 255, 255) (a glaring white surface). The card hard-codes background: #ffffff; color: #111111 with no light-dark() and no per-element color-scheme. Re-tinting fails purely because the adaptation is missing.",
       "suggestedFix": "Declare color-scheme: light dark on the card (or root) and use light-dark(#ffffff, #1e1e1e) for surfaces and light-dark(#111111, #eeeeee) for text so the card follows the user preference. See Modern Web Guidance id dark-mode.",
       "effort": "small",
       "scenario": "no-dark-mode"
@@ -91,7 +91,7 @@
     {
       "id": "F-002",
       "pathId": "motion",
-      "url": "http://localhost:8080/#motion",
+      "url": "http://localhost:8090/#motion",
       "principleId": "respect-user-preferences",
       "principleCheckId": "respects-reduced-motion",
       "guidanceId": "accessibility",
@@ -99,7 +99,7 @@
       "severity": "high",
       "confidence": "high",
       "summary": "Animation keeps running under prefers-reduced-motion: reduce.",
-      "evidence": "Under emulated prefers-reduced-motion: reduce, an evaluate probe of .mv-card.getAnimations() returned 1 running animation (animation-name mv-slide); a 2.5s transition video recorded under the reduce preference shows the card still sliding. In ?mode=fixed the same probe returns 0 running animations (animation-name none) because the animation is gated behind @media (prefers-reduced-motion: no-preference).",
+      "evidence": "Under emulated prefers-reduced-motion: reduce, an evaluate probe of .mv-card.getAnimations() returned 1 running animation (animation-name mv-slide); a 2.5s transition video recorded under the reduce preference shows the card still sliding. The animation is applied unconditionally rather than gated behind a no-preference media query.",
       "suggestedFix": "Gate the marquee animation behind @media (prefers-reduced-motion: no-preference) so it only runs when the user has not requested reduced motion.",
       "effort": "trivial",
       "scenario": "motion"
@@ -107,7 +107,7 @@
     {
       "id": "F-003",
       "pathId": "fixed-layout",
-      "url": "http://localhost:8080/#fixed-layout",
+      "url": "http://localhost:8090/#fixed-layout",
       "principleId": "adapt-to-the-form-factor",
       "principleCheckId": "responsive-no-horizontal-scroll",
       "guidanceId": "css",
@@ -115,7 +115,7 @@
       "severity": "high",
       "confidence": "high",
       "summary": "Fixed 1200px layout overflows a narrow mobile viewport.",
-      "evidence": "At an emulated 360x800 viewport the layout primitive reported horizontal overflow of 1158px (document scrollWidth far exceeds visualViewport.width 360); a screenshot at 360px shows the blue .fl-hero (computed width ~1264px) clipped off-screen. The hero and body hard-code width: 1200px. In ?mode=fixed the same route reports only the playground frame's residual 58px (no scenario element overflows), confirming the fluid width + max-width fix resolves it.",
+      "evidence": "At an emulated 360x800 viewport the layout primitive reported horizontal overflow of 1158px (document scrollWidth far exceeds visualViewport.width 360); a screenshot at 360px shows the blue .fl-hero (computed width ~1264px) clipped off-screen. The hero and body hard-code width: 1200px.",
       "suggestedFix": "Replace the fixed width: 1200px with width: 100%; max-width: 1200px; box-sizing: border-box so the layout adapts down to small screens.",
       "effort": "small",
       "scenario": "fixed-layout"
@@ -123,7 +123,7 @@
     {
       "id": "F-004",
       "pathId": "poor-focus",
-      "url": "http://localhost:8080/#poor-focus",
+      "url": "http://localhost:8090/#poor-focus",
       "principleId": "adapt-to-the-form-factor",
       "principleCheckId": "input-modality-aware",
       "guidanceId": "accessibility",
@@ -131,7 +131,7 @@
       "severity": "high",
       "confidence": "high",
       "summary": "Focus outline removed with no :focus-visible replacement.",
-      "evidence": "An evaluate probe that focuses .pf-btn and reads the computed outline returned outline-style: none; CSS inspection found .pf-btn { outline: none } and no :focus-visible rule restoring an outline. Keyboard users get no visible focus indicator. In ?mode=fixed the focused button computes outline-style: solid and a .pf-btn:focus-visible rule is present.",
+      "evidence": "An evaluate probe that focuses .pf-btn and reads the computed outline returned outline-style: none; CSS inspection found .pf-btn { outline: none } and no :focus-visible rule restoring an outline. Keyboard users get no visible focus indicator.",
       "suggestedFix": "Remove the blanket outline: none and add .pf-btn:focus-visible { outline: 3px solid #1a73e8; outline-offset: 2px } so keyboard focus is clearly indicated without affecting pointer clicks.",
       "effort": "trivial",
       "scenario": "poor-focus"
@@ -139,7 +139,7 @@
     {
       "id": "F-005",
       "pathId": "layout-shift",
-      "url": "http://localhost:8080/#layout-shift",
+      "url": "http://localhost:8090/#layout-shift",
       "principleId": "be-fast-and-stable",
       "principleCheckId": "visual-stability",
       "guidanceId": "css",
@@ -147,7 +147,7 @@
       "severity": "medium",
       "confidence": "high",
       "summary": "Cumulative layout shift from a late banner with no reserved space.",
-      "evidence": "The layout primitive's layout-shift observer recorded CLS 0.0118 across 2 shifts (stable over 3 runs) as the banner injected at ~600ms pushed following content down; the .ls-slot reserves no height. In ?mode=fixed CLS drops to 0.0041 (1 shift) because the slot reserves min-height: 76px. CLS is small here because the page is tall, but the mechanism (unreserved late content) is the classic CLS anti-pattern and scales with banner size.",
+      "evidence": "The layout primitive's layout-shift observer recorded CLS 0.0118 across 2 shifts as the banner injected at ~600ms pushed following content down; the .ls-slot reserves no height. CLS is small here because the page is tall, but the mechanism (unreserved late content) is the classic CLS anti-pattern and scales with banner size.",
       "suggestedFix": "Reserve the banner's space up front with min-height (or aspect-ratio) on .ls-slot so the late content does not shift surrounding layout.",
       "effort": "trivial",
       "scenario": "layout-shift"
@@ -155,7 +155,7 @@
     {
       "id": "F-006",
       "pathId": "no-container-queries",
-      "url": "http://localhost:8080/#no-container-queries",
+      "url": "http://localhost:8090/#no-container-queries",
       "principleId": "adapt-to-the-form-factor",
       "principleCheckId": "component-level-responsiveness",
       "guidanceId": "size-aware-styling",
@@ -163,7 +163,7 @@
       "severity": "medium",
       "confidence": "high",
       "summary": "Reused component does not adapt to its container (no container queries).",
-      "evidence": "An evaluate probe found the same .cq-card stays flex-direction: row inside the 266px-wide .cq-narrow container (cramping the 80px thumbnail against the text), and no @container rule or container-type is declared. In ?mode=fixed the card switches to flex-direction: column and container-type is present, so the component adapts to its own width rather than the viewport.",
+      "evidence": "An evaluate probe found the same .cq-card stays flex-direction: row inside the 240px-wide .cq-narrow container (cramping the 80px thumbnail against the text), and no @container rule or container-type is declared. The component responds only to the viewport, not its container.",
       "suggestedFix": "Add container-type: inline-size to the wrapper and a @container (max-width: 320px) rule that stacks the card (flex-direction: column; thumb width: 100%). See guidance id size-aware-styling.",
       "effort": "small",
       "scenario": "no-container-queries"
@@ -171,7 +171,7 @@
     {
       "id": "F-007",
       "pathId": "site-wide",
-      "url": "http://localhost:8080/#poor-focus",
+      "url": "http://localhost:8090/#poor-focus",
       "principleId": "be-accessible",
       "principleCheckId": "sufficient-contrast",
       "guidanceId": "accessibility",
@@ -179,14 +179,14 @@
       "severity": "high",
       "confidence": "high",
       "summary": "Buttons fail WCAG colour-contrast minimums.",
-      "evidence": "Lighthouse (accessibility 91) flagged color-contrast: score 0 on the three .pf-btn buttons; axe-core, injected from CDN via the evaluate primitive and run in-page, independently reported one serious color-contrast violation across 3 nodes. The grey #f2f2f2 button background with the default text does not meet the contrast threshold. This was not one of the playground's six explicitly seeded scenarios; the agentic audit surfaced it from the Lighthouse-dimension principles.",
+      "evidence": "Lighthouse (accessibility 91) flagged color-contrast: score 0 on the three .pf-btn buttons; axe-core, injected from CDN via the evaluate primitive and run in-page, independently reported one serious color-contrast violation across 3 nodes. The grey #f2f2f2 button background with the default text does not meet the contrast threshold. This was not one of the playground's six explicitly seeded CSS scenarios; the agentic audit surfaced it from the Lighthouse-dimension principles.",
       "suggestedFix": "Raise the button text/background contrast to at least 4.5:1 for body text (e.g. darken the label or the border, or use a higher-contrast surface). Verify with axe / Lighthouse after the change.",
       "effort": "small"
     },
     {
       "id": "F-008",
       "pathId": "site-wide",
-      "url": "http://localhost:8080/",
+      "url": "http://localhost:8090/",
       "principleId": "be-discoverable",
       "principleCheckId": "title-and-description",
       "guidanceId": "accessibility",
@@ -201,7 +201,7 @@
     {
       "id": "F-009",
       "pathId": "site-wide",
-      "url": "http://localhost:8080/",
+      "url": "http://localhost:8090/",
       "principleId": "follow-best-practices",
       "principleCheckId": "no-console-errors",
       "guidanceId": "security",
@@ -209,8 +209,8 @@
       "severity": "low",
       "confidence": "medium",
       "summary": "A resource 404s in the console on load.",
-      "evidence": "Lighthouse best-practices (96) reported errors-in-console: score 0, with one entry: 'Failed to load resource: the server responded with a status of 404 (Not Found)' (a missing resource, most likely the favicon under the bare serve setup). Low severity and partly an artefact of the static dev server, hence medium confidence that it is an app defect rather than environment.",
-      "suggestedFix": "Add the missing resource (e.g. a favicon) or remove the reference so the page loads without console errors.",
+      "evidence": "Lighthouse best-practices (96) reported errors-in-console: score 0, with one entry: 'Failed to load resource: the server responded with a status of 404 (Not Found)' (a missing resource, the favicon, under the bare serve setup with no <link rel=icon>). Adding a favicon eliminates it, so it is a real, fixable defect rather than a pure environment artefact.",
+      "suggestedFix": "Add a favicon (e.g. an inline data: SVG <link rel=\"icon\">) or otherwise resolve the missing resource so the page loads without console errors.",
       "effort": "trivial"
     }
   ],
@@ -223,23 +223,24 @@
     { "id": "T-006", "title": "Reserve space for the late banner to remove the layout shift", "priority": 6, "findingIds": ["F-005"], "status": "open" },
     { "id": "T-007", "title": "Use a container query so the reused card adapts to its container", "priority": 7, "findingIds": ["F-006"], "guidanceId": "size-aware-styling", "status": "open" },
     { "id": "T-008", "title": "Add a meta description", "priority": 8, "findingIds": ["F-008"], "status": "open" },
-    { "id": "T-009", "title": "Eliminate the console 404 on load", "priority": 9, "findingIds": ["F-009"], "status": "open" }
+    { "id": "T-009", "title": "Add a favicon to eliminate the console 404 on load", "priority": 9, "findingIds": ["F-009"], "status": "open" }
   ],
   "budget": { "pathCount": 7, "auditPasses": 1 },
   "eval": {
     "mode": "issues",
-    "groundTruth": "playground/expected-findings.json",
-    "joinKey": "scenario id for the six seeded scenarios; the three Lighthouse-dimension findings (contrast, meta description, console 404) are extra signal beyond ground truth and are not counted against recall",
-    "expectedCount": 6,
-    "truePositives": 6,
+    "subject": "eval/fixtures/seeded-issues/site (the frozen ground-truth fixture)",
+    "groundTruth": "eval/fixtures/seeded-issues/expected-findings.json",
+    "joinKey": "findingId / scenario id; all nine expected findings (six CSS scenarios + three page-level Lighthouse-dimension findings) are counted",
+    "expectedCount": 9,
+    "truePositives": 9,
     "falseNegatives": 0,
     "falsePositives": 0,
-    "precisionOnSeeded": 1.0,
+    "precision": 1.0,
     "recall": 1.0,
-    "matched": ["no-dark-mode", "motion", "fixed-layout", "poor-focus", "layout-shift", "no-container-queries"],
+    "matched": ["F-001", "F-002", "F-003", "F-004", "F-005", "F-006", "F-007", "F-008", "F-009"],
     "missed": [],
     "spurious": [],
-    "extraFindingsBeyondGroundTruth": ["F-007 button contrast (Lighthouse + axe)", "F-008 missing meta description (Lighthouse SEO)", "F-009 console 404 (Lighthouse best-practices)"],
-    "note": "All six seeded scenarios were found and mapped to the correct principle check. Ground truth uses the pre-rename principle ids (adapt-to-the-user -> respect-user-preferences, adapt-to-the-device -> adapt-to-the-form-factor; layout-shift now maps to be-fast-and-stable / visual-stability rather than the old responsive-no-horizontal-scroll). The fixed-mode run (examples/playground-report-fixed.md) found zero of these six, the false-positive guard."
+    "livePlaygroundSeededFindings": 0,
+    "note": "All nine ground-truth findings were surfaced against the fixture (100% recall, 0 false positives). The genuinely-fixed live playground/ (audited separately) surfaced ZERO of these nine: dark surface re-tints to rgb(30,30,30), 0 running animations under reduced-motion, 58px residual overflow at 360px (playground frame only), solid focus outline, flex-direction column in the narrow container, CLS 0.0041, a meta description present, axe color-contrast violations 0, and Lighthouse 100/100/100/100 (a11y/best-practices/seo/perf). The fixture's ?mode=fixed run is the CSS-scenario false-positive guard."
   }
 }
