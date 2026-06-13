@@ -41,7 +41,7 @@ by gathering evidence and reasoning over it. The repo gives you two declarative
 inputs and one generic capability:
 
 1. **Principles** - [principles/principles.json](../../../principles/principles.json):
-   the spec of what good looks like, as OUTCOMES. Fifteen principles: Una
+   the spec of what good looks like, as OUTCOMES. Sixteen principles: Una
    Kravets' five modern-UX principles (respect-user-preferences,
    implement-natural-interactions, provide-guided-navigation,
    maximize-content-reduce-noise, adapt-to-the-form-factor); two
@@ -49,9 +49,10 @@ inputs and one generic capability:
    be-accessible, widened beyond WCAG conformance; follow-best-practices -
    narrowed so it is no longer the catch-all for security and forms); two
    unchanged Lighthouse-dimension principles (be-fast-and-stable,
-   be-discoverable); and six framework-derived principles
+   be-discoverable); six framework-derived principles
    (be-private-and-secure, be-resilient, be-internationalised, be-trustworthy,
-   be-sustainable, be-agent-ready). Each check has a `detectableVia` HINT (may
+   be-sustainable, be-agent-ready); and be-memory-efficient (derived from the
+   memory-tracer leak-audit methodology). Each check has a `detectableVia` HINT (may
    MENTION candidate evidence/tools, MANDATES nothing) and a `guides` list of
    Modern Web Guidance ids and/or query strings - declarative pointers you
    consult to set the bar, not hard-coded tests. Each principle also has an
@@ -81,7 +82,7 @@ Primitives, all content- and tool-agnostic:
 |---|---|---|
 | `screenshot` | a PNG (full or `--selector`-clipped) under any emulated condition | Page.captureScreenshot |
 | `video` | an MP4 of an interaction window, frames assembled with ffmpeg; `--interact "<js>"` triggers the transition/animation | Page.startScreencast |
-| `heap` | a readable heap summary (types/constructors by size); `--interact` to exercise first, for leak hunting | HeapProfiler.takeHeapSnapshot |
+| `heap` | a readable heap summary (types/constructors by size); `--interact` to exercise first, for leak hunting. Take a baseline and a post-interaction snapshot and compare retained growth (the memory-tracer methodology) to judge `be-memory-efficient` | HeapProfiler.takeHeapSnapshot |
 | `layout` | layout metrics, a CLS/layout-shift observer, long tasks, overflow at the current viewport | Page.getLayoutMetrics + observers |
 | `dom` | DOM, computed styles for `--selector` list, page HTML/CSS, and (`--source <dir>`) the local source files | DOM/CSS/Runtime |
 | `evaluate` | runs your own `--expr "<js>"` in the page: ad-hoc probes and static tests you write on the spot | Runtime.evaluate |
@@ -207,6 +208,21 @@ the actual page):
   a resource is render-blocking (e.g. a parser-inserted module script is deferred
   by spec and is not render-blocking). The harness as a whole CAN determine this;
   combine the HAR initiator/priority with the DOM.
+- be-memory-efficient -> the memory-tracer-style before/after methodology with
+  the `heap` primitive: take a BASELINE `heap` snapshot, then take a POST snapshot
+  after repeating a representative interaction ~10x via `--interact` (open/close a
+  modal, navigate a route and back, infinite-scroll a list), and COMPARE the two
+  summaries for retained growth (totals: nodeCount/totalSelfSizeBytes; and by
+  constructor: a growing Detached* population). Corroborate with
+  Performance.getMetrics (JSHeapUsedSize, Nodes) across the same window, and an
+  `evaluate` probe sampling listener/timer counts before vs after. Read the heap
+  SUMMARY, never the raw .heapsnapshot. This pairs naturally with the multi-page
+  coverage (step 1): run the leak test on the INTERACTIVE archetypes (SPA routes,
+  feeds, editors, modal-heavy pages), not a static content page. If a page has no
+  representative interaction to repeat, do not fabricate one - mark
+  no-leak-under-repeated-interaction not-applicable with a rationale (bounded-footprint
+  and the detached-DOM/listener check still apply from a single state). detached
+  nodes can be intentional caches, so judge confidence rather than asserting a bug.
 - be-inclusive -> axe via `evaluate`, and/or Lighthouse a11y, and/or your own
   contrast/label probes; plus a screenshot to judge legibility/alignment.
 - follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for
@@ -236,8 +252,10 @@ both in `principleOutcomes`:
     implement-natural-interactions, provide-guided-navigation,
     maximize-content-reduce-noise, adapt-to-the-form-factor, be-fast-and-stable,
     be-inclusive, follow-best-practices, be-discoverable, be-private-and-secure,
-    be-trustworthy) are expected of essentially every site; absence is a
-    finding.
+    be-trustworthy, be-memory-efficient) are expected of essentially every site;
+    absence is a finding. (be-memory-efficient is `default`, but its
+    no-leak-under-repeated-interaction check is contextual on the page having a
+    representative interaction to repeat - see below.)
   - `contextual` principles (be-resilient's offline/installable aspect,
     be-internationalised, be-sustainable's absolute weight bar, be-agent-ready,
     and public discoverability for a deliberately gated site) legitimately may

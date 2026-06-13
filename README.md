@@ -80,16 +80,19 @@ back it.
 ## The two knowledge layers
 
 1. **Principles** - [principles/principles.json](principles/principles.json):
-   the spec of what good looks like, as OUTCOMES. **Fifteen principles**: Una
+   the spec of what good looks like, as OUTCOMES. **Sixteen principles**: Una
    Kravets' five modern-UX principles from her Google I/O 2026 talk *What's new
    in Web UI* (https://www.youtube.com/watch?v=uT7MVcCQ4rw); the four
    Lighthouse-dimension principles, with `be-accessible` widened to
    `be-inclusive` and `follow-best-practices` narrowed so it is no longer the
    catch-all for security and forms (`be-fast-and-stable`, `be-discoverable`
-   unchanged); and **six framework-derived principles** that close the gaps the
+   unchanged); **six framework-derived principles** that close the gaps the
    original nine left open: `be-private-and-secure`, `be-resilient`,
    `be-internationalised`, `be-trustworthy`, `be-sustainable`, and
-   `be-agent-ready` (emerging/forward-looking). Each check is phrased as an
+   `be-agent-ready` (emerging/forward-looking); and `be-memory-efficient`,
+   derived from the sibling `memory-tracer` leak-audit methodology (baseline heap
+   snapshot -> repeat a representative interaction -> post snapshot -> compare
+   retained growth). Each check is phrased as an
    outcome and carries a `detectableVia` HINT (may *mention* candidate
    evidence/tools, mandates none) plus a `guides` LIST of Modern Web Guidance
    ids and/or query strings. Each principle declares an `applicability` block
@@ -116,6 +119,7 @@ back it.
    | 13 | `be-trustworthy` | framework-derived | **net-new** |
    | 14 | `be-sustainable` | framework-derived | **net-new** (contextual weight bar) |
    | 15 | `be-agent-ready` | framework-derived | **net-new** (contextual, emerging) |
+   | 16 | `be-memory-efficient` | memory-tracer | **net-new** (leak-audit methodology; leak-under-repeated-interaction check is contextual) |
 2. **Modern Web Guidance** - the `modern-web-guidance` npm feed
    (https://developer.chrome.com/docs/modern-web-guidance/): use-case-based best
    practices, the *how*. Each principle check carries a `guides` LIST (mwg ids
