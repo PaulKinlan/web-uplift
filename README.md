@@ -17,18 +17,18 @@ decides what passes or fails.
 Install the audit skill and evidence tools into your project:
 
 ```sh
-npx web-uplift install --agent codex
+npx -y web-uplift@latest install --agent codex
 ```
 
 Use the agent you actually run:
 
 ```sh
-npx web-uplift install --agent claude        # Claude Code
-npx web-uplift install --agent codex         # Codex
-npx web-uplift install --agent gemini        # Gemini CLI
-npx web-uplift install --agent opencode      # opencode
-npx web-uplift install --agent all           # install every wrapper
-npx web-uplift install --dry-run --agent all # preview files without writing
+npx -y web-uplift@latest install --agent claude        # Claude Code
+npx -y web-uplift@latest install --agent codex         # Codex
+npx -y web-uplift@latest install --agent gemini        # Gemini CLI
+npx -y web-uplift@latest install --agent opencode      # opencode
+npx -y web-uplift@latest install --agent all           # install every wrapper
+npx -y web-uplift@latest install --dry-run --agent all # preview files without writing
 ```
 
 Then, inside your agent session:
@@ -86,17 +86,37 @@ at the same `SKILL.md`, so the method does not drift.
 
 | Agent | Install | What gets placed | Run |
 |---|---|---|---|
-| Claude Code | `npx web-uplift install --agent claude` | `.claude/skills/web-audit/SKILL.md` | `/web-audit <url>` |
-| Codex | `npx web-uplift install --agent codex` | `.codex/skills/web-audit/SKILL.md` + `AGENTS.md` snippet | `/web-audit <url>` |
-| Gemini CLI | `npx web-uplift install --agent gemini` | `.gemini/commands/web-audit.toml` | `/web-audit <url>` |
-| Antigravity | `npx web-uplift install --agent antigravity` | `.agents/skills/web-audit.md` | `/web-audit <url>` |
-| GitHub Copilot | `npx web-uplift install --agent copilot` | `.github/prompts/web-audit.prompt.md` + instructions snippet | `/web-audit <url>` |
-| opencode | `npx web-uplift install --agent opencode` | `.opencode/command/web-audit.md` + `AGENTS.md` snippet | `/web-audit <url>` |
-| all | `npx web-uplift install --agent all` | everything above | per agent |
+| Claude Code | `npx -y web-uplift@latest install --agent claude` | `.claude/skills/web-audit/SKILL.md` | `/web-audit <url>` |
+| Codex | `npx -y web-uplift@latest install --agent codex` | `.codex/skills/web-audit/SKILL.md` + `AGENTS.md` snippet | `/web-audit <url>` |
+| Gemini CLI | `npx -y web-uplift@latest install --agent gemini` | `.gemini/commands/web-audit.toml` | `/web-audit <url>` |
+| Antigravity | `npx -y web-uplift@latest install --agent antigravity` | `.agents/skills/web-audit.md` | `/web-audit <url>` |
+| GitHub Copilot | `npx -y web-uplift@latest install --agent copilot` | `.github/prompts/web-audit.prompt.md` + instructions snippet | `/web-audit <url>` |
+| opencode | `npx -y web-uplift@latest install --agent opencode` | `.opencode/command/web-audit.md` + `AGENTS.md` snippet | `/web-audit <url>` |
+| all | `npx -y web-uplift@latest install --agent all` | everything above | per agent |
 
 Every install also vendors the evidence CLI, principles, schemas, and guidance
 lookup notes under `.web-uplift/` so the in-session model can call them
-directly.
+directly. It also writes `.web-uplift/manifest.json` with the package version
+that produced the installed copy.
+
+## Keeping Installs Current
+
+Use `@latest` whenever you install or refresh the skill:
+
+```sh
+npx -y web-uplift@latest update --agent all
+```
+
+`web-uplift update` refreshes the canonical skill, evidence CLI, schemas,
+principles, guidance notes, wrappers, and `.web-uplift/manifest.json`. If an
+older manifest is present, the CLI prints the installed version and the version
+it is updating to.
+
+The CLI also performs a lightweight npm registry update check at most once every
+24 hours and prints a warning to stderr when a newer package is available. Set
+`WEB_UPLIFT_NO_UPDATE_CHECK=1` to disable it. For serious broken releases,
+maintainers can additionally use `npm deprecate` on old versions so npm itself
+warns during install.
 
 ### Claude Code Plugin
 

@@ -7,6 +7,7 @@
  * Commands:
  *   install [--agent <name>|all] [--dry-run]   Place the web-audit skill + evidence
  *                                              CLIs into a project for an agent.
+ *   update  [--agent <name>|all] [--dry-run]   Refresh an existing project install.
  *   audit  [...]    Passthrough to the headless batch runner (runner/run-batch.mjs).
  *   fix    [...]    Passthrough to the model-driven hill-climb (fixer/fix.mjs).
  *   aggregate [...] Passthrough to the cross-site aggregator (aggregate/aggregate.mjs).
@@ -23,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, relative } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
 import {
   mkdirSync,
   copyFileSync,
@@ -37,14 +39,21 @@ import { AGENT_NAMES } from '../runner/agents.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
 const require = createRequire(import.meta.url);
+const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_CHECK_TIMEOUT_MS = 800;
 
 const argv = process.argv.slice(2);
 const command = argv[0];
 const rest = argv.slice(1);
 
+await maybeWarnForUpdate(command, rest);
+
 switch (command) {
   case 'install':
     await install(rest);
+    break;
+  case 'update':
+    await install(rest, { mode: 'update' });
     break;
   case 'audit':
   case 'batch':
@@ -158,13 +167,13 @@ function copilotSnippet() {
   );
 }
 
-async function install(flags) {
+async function install(flags, { mode = 'install' } = {}) {
   const opts = parseFlags(flags, new Set(['agent', 'target']));
   if (opts.help || opts.h) {
-    console.log(`web-uplift install - place the web-audit skill + evidence CLIs into a project.
+    console.log(`web-uplift ${mode} - ${mode === 'update' ? 'refresh' : 'place'} the web-audit skill + evidence CLIs ${mode === 'update' ? 'in' : 'into'} a project.
 
 Usage:
-  web-uplift install [--agent ${AGENT_NAMES.join('|')}|all] [--dry-run] [--target <dir>]
+  web-uplift ${mode} [--agent ${AGENT_NAMES.join('|')}|all] [--dry-run] [--target <dir>]
 
 Options:
   --agent <name>   Which agent to wire up (default: all).
@@ -180,6 +189,7 @@ inside your agent session (uses your subscription).`);
   }
   const dryRun = Boolean(opts['dry-run']);
   const projectRoot = resolve(opts.target ?? process.cwd());
+  const pkg = packageInfo();
   let agents = opts.agent ?? 'all';
   const selected = agents === 'all' ? AGENT_NAMES : [agents];
   for (const a of selected) {
@@ -202,6 +212,12 @@ inside your agent session (uses your subscription).`);
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/principles.json'), to: join(vendorRoot, 'knowledge', 'principles.json'), what: 'principles spec' });
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'schema'), to: join(vendorRoot, 'schema'), what: 'findings + config schema' });
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/guidance.md'), to: join(vendorRoot, 'knowledge', 'guidance.md'), what: 'guidance lookup protocol' });
+  plan.push({
+    action: 'write',
+    to: join(vendorRoot, 'manifest.json'),
+    content: installManifest({ pkg, selected }),
+    what: `install manifest (${pkg.version})`,
+  });
 
   for (const agent of selected) {
     for (const t of targets[agent]) {
@@ -216,8 +232,9 @@ inside your agent session (uses your subscription).`);
     }
   }
 
-  console.log(`web-uplift install -> ${projectRoot}`);
+  console.log(`web-uplift ${mode} -> ${projectRoot}`);
   console.log(`agents: ${selected.join(', ')}${dryRun ? '  (dry-run)' : ''}\n`);
+  printExistingInstallNotice(vendorRoot, pkg);
   for (const step of plan) {
     const relTo = relative(projectRoot, step.to) || step.to;
     if (dryRun) {
@@ -228,7 +245,53 @@ inside your agent session (uses your subscription).`);
     console.log(`  ${step.action.padEnd(9)} ${relTo}   (${step.what})`);
   }
   if (!dryRun) {
-    console.log('\nInstalled. Now run /web-audit <url> inside your agent session (uses your subscription).');
+    const verb = mode === 'update' ? 'Updated' : 'Installed';
+    console.log(`\n${verb}. Now run /web-audit <url> inside your agent session (uses your subscription).`);
+  }
+}
+
+function packageInfo() {
+  return JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
+}
+
+function installManifest({ pkg, selected }) {
+  return JSON.stringify({
+    package: pkg.name,
+    version: pkg.version,
+    installedAt: new Date().toISOString(),
+    agents: selected,
+    updateCommand: 'npx -y web-uplift@latest update --agent all',
+  }, null, 2) + '\n';
+}
+
+function readInstallManifest(vendorRoot) {
+  const path = join(vendorRoot, 'manifest.json');
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return { invalid: true };
+  }
+}
+
+function printExistingInstallNotice(vendorRoot, pkg) {
+  if (!existsSync(vendorRoot)) return;
+  const manifest = readInstallManifest(vendorRoot);
+  if (!manifest) {
+    console.log(`Existing web-uplift install found without a manifest. Writing ${pkg.version} metadata.\n`);
+    return;
+  }
+  if (manifest.invalid) {
+    console.log(`Existing web-uplift manifest is invalid. Rewriting with ${pkg.version} metadata.\n`);
+    return;
+  }
+  if (manifest.version && manifest.version !== pkg.version) {
+    console.log(`Existing web-uplift install found: ${manifest.version}`);
+    console.log(`Updating to: ${pkg.version}\n`);
+    return;
+  }
+  if (manifest.version) {
+    console.log(`Existing web-uplift install found: ${manifest.version} (current)\n`);
   }
 }
 
@@ -298,6 +361,99 @@ function passthrough(scriptPath, scriptArgs) {
   child.on('error', (err) => { console.error(err); process.exit(1); });
 }
 
+async function maybeWarnForUpdate(cmd, args = []) {
+  if (!shouldCheckForUpdate(cmd, args)) return;
+  try {
+    const pkg = packageInfo();
+    const cached = readUpdateCache();
+    const now = Date.now();
+    if (cached && now - cached.checkedAt < UPDATE_CHECK_TTL_MS) {
+      printUpdateWarning(pkg.version, cached.latest);
+      return;
+    }
+    const latest = await fetchLatestVersion(pkg.name);
+    writeUpdateCache({ latest, checkedAt: now });
+    printUpdateWarning(pkg.version, latest);
+  } catch {
+    // Update checks should never block normal CLI use.
+  }
+}
+
+function shouldCheckForUpdate(cmd, args = []) {
+  if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help' || cmd === '--version' || cmd === '-v') return false;
+  if (args.includes('--help') || args.includes('-h')) return false;
+  if (process.env.WEB_UPLIFT_NO_UPDATE_CHECK || process.env.NO_UPDATE_NOTIFIER || process.env.CI) return false;
+  return true;
+}
+
+function updateCachePath() {
+  const root = process.env.XDG_CACHE_HOME || join(homedir(), '.cache');
+  return join(root, 'web-uplift', 'update-check.json');
+}
+
+function readUpdateCache() {
+  const path = updateCachePath();
+  if (!existsSync(path)) return null;
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'));
+    if (typeof data.latest !== 'string' || typeof data.checkedAt !== 'number') return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function writeUpdateCache(data) {
+  const path = updateCachePath();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
+}
+
+async function fetchLatestVersion(packageName) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
+  try {
+    const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`, {
+      signal: controller.signal,
+      headers: { accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`npm registry returned ${response.status}`);
+    const data = await response.json();
+    if (typeof data.version !== 'string') throw new Error('npm registry response had no version');
+    return data.version;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function printUpdateWarning(current, latest) {
+  if (!latest || compareVersions(latest, current) <= 0) return;
+  console.error(
+    `web-uplift ${latest} is available. Current: ${current}.\n` +
+      'Run: npx -y web-uplift@latest update --agent all\n' +
+      'Set WEB_UPLIFT_NO_UPDATE_CHECK=1 to disable this check.',
+  );
+}
+
+function compareVersions(a, b) {
+  const pa = versionParts(a);
+  const pb = versionParts(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] > pb[i]) return 1;
+    if (pa[i] < pb[i]) return -1;
+  }
+  return 0;
+}
+
+function versionParts(version) {
+  return String(version)
+    .replace(/^v/, '')
+    .split('-')[0]
+    .split('.')
+    .slice(0, 3)
+    .map((part) => Number.parseInt(part, 10) || 0);
+}
+
 function parseFlags(flags, valueFlags) {
   const out = {};
   for (let i = 0; i < flags.length; i++) {
@@ -322,6 +478,9 @@ PRIMARY (subscription) path - run it in YOUR agent:
                           Place the web-audit skill + evidence CLIs into a project
                           for the chosen agent(s), then run /web-audit <url> and the
                           fix loop INSIDE your own agent session (uses your plan).
+  web-uplift update  [--agent ${AGENT_NAMES.join('|')}|all] [--dry-run] [--target <dir>]
+                          Refresh an existing project install with the current
+                          package's skill, evidence CLI, schemas and knowledge.
 
 HEADLESS / CI path (uses API tokens):
   web-uplift audit [urls...] [--urls <file>] [--agent <name>] [--dry-run]

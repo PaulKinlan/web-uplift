@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import http from 'node:http';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -18,6 +18,8 @@ try {
   testPackageRootImportIsSideEffectFree();
   testSchemaValidation();
   testInstalledEvidenceCli();
+  testUpdateDryRunReadsInstallManifest();
+  testCachedUpdateWarning();
   await testPreNavigationEmulation();
   await testHarRedirects();
   testBatchDryRunUsesRetainedDirs();
@@ -85,8 +87,14 @@ function testInstalledEvidenceCli() {
     'codex',
     '--target',
     target,
-  ]);
+  ], { env: noUpdateEnv() });
   assert(install.status === 0, `install failed: ${install.stderr || install.stdout}`);
+
+  const manifest = JSON.parse(readFileSync(join(target, '.web-uplift/manifest.json'), 'utf8'));
+  const pkg = readJson('package.json');
+  assert(manifest.package === pkg.name, `installed manifest package mismatch: ${JSON.stringify(manifest)}`);
+  assert(manifest.version === pkg.version, `installed manifest version mismatch: ${JSON.stringify(manifest)}`);
+  assert(manifest.agents.includes('codex'), `installed manifest missed selected agent: ${JSON.stringify(manifest)}`);
 
   const evidenceUsage = run(process.execPath, ['.web-uplift/evidence/cli.mjs'], {
     cwd: target,
@@ -97,6 +105,61 @@ function testInstalledEvidenceCli() {
       !evidenceUsage.stderr.includes('ERR_MODULE_NOT_FOUND'),
     `installed evidence CLI did not load cleanly:\n${evidenceUsage.stderr}`,
   );
+}
+
+function testUpdateDryRunReadsInstallManifest() {
+  const target = join(tmp, 'update-target');
+  mkdirSync(join(target, '.web-uplift'), { recursive: true });
+  writeFileSync(join(target, '.web-uplift/manifest.json'), JSON.stringify({
+    package: 'web-uplift',
+    version: '0.0.1',
+    installedAt: '2026-01-01T00:00:00.000Z',
+    agents: ['codex'],
+  }, null, 2) + '\n');
+
+  const pkg = readJson('package.json');
+  const result = run(process.execPath, [
+    'bin/web-uplift.mjs',
+    'update',
+    '--agent',
+    'codex',
+    '--target',
+    target,
+    '--dry-run',
+  ], { env: noUpdateEnv() });
+  assert(result.status === 0, `update dry-run failed: ${result.stderr || result.stdout}`);
+  assert(result.stdout.includes('Existing web-uplift install found: 0.0.1'), `update did not read old manifest:\n${result.stdout}`);
+  assert(result.stdout.includes(`Updating to: ${pkg.version}`), `update did not print target version:\n${result.stdout}`);
+  assert(result.stdout.includes('.web-uplift/manifest.json'), `update dry-run did not include manifest write:\n${result.stdout}`);
+}
+
+function testCachedUpdateWarning() {
+  const cacheRoot = join(tmp, 'update-cache');
+  mkdirSync(join(cacheRoot, 'web-uplift'), { recursive: true });
+  writeFileSync(join(cacheRoot, 'web-uplift/update-check.json'), JSON.stringify({
+    latest: '999.0.0',
+    checkedAt: Date.now(),
+  }, null, 2) + '\n');
+
+  const result = run(process.execPath, [
+    'bin/web-uplift.mjs',
+    'install',
+    '--agent',
+    'codex',
+    '--target',
+    join(tmp, 'cached-update-target'),
+    '--dry-run',
+  ], {
+    env: {
+      ...process.env,
+      XDG_CACHE_HOME: cacheRoot,
+      CI: '',
+      WEB_UPLIFT_NO_UPDATE_CHECK: '',
+    },
+  });
+  assert(result.status === 0, `cached update warning command failed: ${result.stderr || result.stdout}`);
+  assert(result.stderr.includes('web-uplift 999.0.0 is available'), `cached update warning was not printed:\n${result.stderr}`);
+  assert(result.stderr.includes('npx -y web-uplift@latest update --agent all'), `cached update warning missed update command:\n${result.stderr}`);
 }
 
 async function testPreNavigationEmulation() {
@@ -182,6 +245,10 @@ function packTarball() {
 
 function readJson(path) {
   return JSON.parse(readFileSync(join(repoRoot, path), 'utf8'));
+}
+
+function noUpdateEnv() {
+  return { ...process.env, WEB_UPLIFT_NO_UPDATE_CHECK: '1' };
 }
 
 function validateJson(ajv, schema, path) {
