@@ -394,6 +394,46 @@ principle opt-outs with reasons, and intent. Reports keep `pass`, `issues`,
 `not-applicable`, and `opted-out` separate so contextual principles are not
 treated as failures.
 
+## Why one skill, not seventeen?
+
+Every agent now has a skills mechanism, so the obvious question is: why isn't
+this just seventeen skills, one per principle? web-uplift *is* a skill - but
+deliberately **one** skill (the audit method) over a **declarative** principle
+set and a **shared** evidence/scoring/fix engine. The principles aren't skills
+because they're the *rubric the one skill applies*, not tasks in their own
+right. Four reasons that matters:
+
+1. **Evidence is gathered once and shared.** The expensive part of an audit is
+   gathering evidence - launch Chrome, screenshot, trace, HAR, heap, the no-JS
+   crawler view. One trace feeds `be-fast-and-stable` *and* `be-sustainable`;
+   one HAR feeds performance, sustainability, *and* third-party privacy; the
+   rendered DOM feeds inclusivity, discoverability, and forms. Seventeen
+   independent skills would each re-gather (17× the Chrome launches) or share no
+   evidence at all. web-uplift gathers once and judges every principle over it.
+2. **The value lives *above* any single principle.** A set of skills gives you
+   seventeen disconnected checklists; you still have to run each, weigh them, and
+   assemble a picture - the "another long list of findings" problem. The whole
+   point here is the cross-principle synthesis: one prioritised top-3, one
+   [scorecard](#the-scorecard) rolling seventeen principles into six outcomes,
+   before/after deltas, a trend over time, a CI gate. None of that can live in a
+   per-principle skill, because it only exists when something sees *all* the
+   findings together.
+3. **The fix loop is cross-cutting.** Hill-climbing to a goal means re-judging
+   the *whole* set after each edit, because a fix for one principle can regress
+   another (killing render-blocking JS can shift layout). That needs an
+   orchestrator tracking the aggregate, not seventeen independent skills.
+4. **Principles as data buy what prose can't.** Because they're declarative
+   (outcomes + guidance pointers + applicability), they're versioned, mapped 1:1
+   to Modern Web Guidance, scored, reweighted, and opted-out per project - all
+   without touching the method or the tools. A skill-per-principle recouples the
+   *what* to the *how* every time, and tends to ossify into "here's how to check
+   X" - the checklist tool this is positioned against.
+
+The honest boundary: at small scale a single skill *is* enough - if you only
+want "check my colour contrast," one skill does it. web-uplift's architecture
+earns its keep the moment you care about more than one dimension at once, where
+the shared-evidence and synthesis layer is the whole point.
+
 ## Example And Eval
 
 - [examples/playground-report.md](examples/playground-report.md) is a real
