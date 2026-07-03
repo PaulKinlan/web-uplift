@@ -23,9 +23,42 @@ try {
   await testPreNavigationEmulation();
   await testHarRedirects();
   testBatchDryRunUsesRetainedDirs();
+  await testScorecardScoringAndRender();
   console.log('tests OK');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
+}
+
+async function testScorecardScoringAndRender() {
+  const { scoreReport, renderScorecard, OUTCOMES } = await import('../aggregate/scorecard.mjs');
+  const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
+
+  const scored = scoreReport(report);
+  // The 9-finding playground should not be perfect, and must not exceed 100.
+  assert(typeof scored.overall === 'number', 'scorecard: overall should be numeric for the playground report');
+  assert(scored.overall > 0 && scored.overall < 100, `scorecard: expected an imperfect overall, got ${scored.overall}`);
+  assert(scored.outcomes.length === OUTCOMES.length, 'scorecard: every outcome should be represented');
+  for (const o of scored.outcomes) {
+    assert(o.score === null || (o.score >= 0 && o.score <= 100), `scorecard: ${o.key} score out of range: ${o.score}`);
+  }
+  // A clean report scores 100 with no findings.
+  const fixed = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
+  assert(scoreReport(fixed).overall === 100, 'scorecard: a findings-free report should score 100');
+
+  // The rendered page must be self-contained and well-formed enough to open.
+  report.__runId = 'r1';
+  const html = renderScorecard({
+    host: 'example',
+    generatedAt: '2026-01-01 00:00',
+    runs: [{ runId: 'r1', dir: join(repoRoot, 'examples'), report, compare: null, ...scored }],
+    latest: { runId: 'r1', dir: join(repoRoot, 'examples'), report, compare: null, ...scored },
+  });
+  assert(html.startsWith('<!doctype html>'), 'scorecard: HTML should start with a doctype');
+  assert(!html.includes('${'), 'scorecard: HTML contains an unresolved template placeholder');
+  assert(!/>\s*undefined\s*</.test(html), 'scorecard: HTML contains a literal undefined');
+  const openDialogs = (html.match(/<dialog /g) || []).length;
+  const closeDialogs = (html.match(/<\/dialog>/g) || []).length;
+  assert(openDialogs === closeDialogs && openDialogs >= report.findings.length, 'scorecard: dialog tags are unbalanced');
 }
 
 function run(command, args, opts = {}) {

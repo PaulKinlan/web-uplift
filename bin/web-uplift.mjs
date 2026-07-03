@@ -12,6 +12,7 @@
  *   fix    [...]    Passthrough to the model-driven hill-climb (fixer/fix.mjs).
  *   aggregate [...] Passthrough to the cross-site aggregator (aggregate/aggregate.mjs).
  *   compare <host> [runA] [runB]  Diff two retained runs (aggregate/compare.mjs).
+ *   scorecard <host>  Build the interactive scorecard.html from a host's runs (aggregate/scorecard.mjs).
  *   evidence <primitive> <url> [...]  Passthrough to the evidence primitives.
  *
  * The PRIMARY, subscription-friendly path is to `install` the skill and then run
@@ -67,6 +68,9 @@ switch (command) {
     break;
   case 'compare':
     passthrough(join(PKG_ROOT, 'aggregate', 'compare.mjs'), rest);
+    break;
+  case 'scorecard':
+    passthrough(join(PKG_ROOT, 'aggregate', 'scorecard.mjs'), rest);
     break;
   case 'evidence':
     passthrough(join(PKG_ROOT, 'evidence', 'cli.mjs'), rest);
@@ -488,6 +492,7 @@ HEADLESS / CI path (uses API tokens):
   web-uplift fix --target <dir> --audit-url <url> [...]      Model-driven hill-climb.
   web-uplift aggregate [--reports <dir>]                     Cross-site summary.
   web-uplift compare <host|url> [runA] [runB]                Diff two retained runs (before/after).
+  web-uplift scorecard <host|url> [--out <file>]             Interactive scorecard.html from a host's runs.
   web-uplift evidence <primitive> <url> [options]            Raw-CDP evidence primitives.
 
   web-uplift --help | --version

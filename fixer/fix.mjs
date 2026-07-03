@@ -44,6 +44,7 @@ import { join } from 'node:path';
 import { AGENTS, AGENT_NAMES } from '../runner/agents.mjs';
 import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
+import { buildScorecardData, renderScorecard } from '../aggregate/scorecard.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -190,6 +191,15 @@ try {
   console.log(`\nBefore -> after comparison written to ${join(afterRun.dir, 'compare.md')}`);
   console.log(`  outstanding ${cmp.summary.outstandingBefore} -> ${cmp.summary.outstandingAfter}, ` +
     `resolved ${cmp.summary.resolved}, new ${cmp.summary.newlyIntroduced}, persisting ${cmp.summary.persisting}`);
+  // Roll the retained runs into the interactive scorecard.html (gauges, top-3,
+  // deep-dive, history, before/after) so a fix run leaves a shareable summary.
+  try {
+    const data = buildScorecardData(beforeRun.hostRoot, beforeRun.host, new Date().toISOString().slice(0, 16).replace('T', ' '));
+    await writeFile(join(beforeRun.hostRoot, 'scorecard.html'), renderScorecard(data));
+    console.log(`Scorecard written to ${join(beforeRun.hostRoot, 'scorecard.html')}`);
+  } catch (err) {
+    console.error(`Could not emit scorecard: ${err.message}`);
+  }
 } catch (err) {
   console.error(`Could not emit before/after comparison: ${err.message}`);
 }

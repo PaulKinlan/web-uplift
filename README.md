@@ -56,6 +56,31 @@ An audit writes:
   [schema/findings.schema.json](schema/findings.schema.json).
 - `evidence/` artifacts - screenshots, layout JSON, trace summaries, HARs,
   heap summaries, videos, Lighthouse output, or other probes the model chose.
+- `scorecard.html` - a self-contained, shareable interactive scorecard that
+  leads with outcomes an owner cares about (see below).
+
+### The scorecard
+
+`web-uplift scorecard <host>` rolls a site's retained runs into a single
+`reports/<host>/scorecard.html` that leads with **outcomes**, not a raw list of
+findings. `fix` runs emit it automatically. It shows:
+
+- Lighthouse-style circular score gauges, one per owner outcome - **Speed &
+  Stability, Memory Health, Usability & UX, Inclusivity & Reach, Discoverability
+  & AI, Trust & Resilience** - each 0-100, computed from the model's principle
+  verdicts weighted by finding severity (not-applicable / opted-out principles
+  are excluded, never penalised).
+- A **"if you do nothing else, do these"** top-3 pulled from the prioritised
+  task list.
+- A findings deep-dive where every finding opens a native dialog with its
+  evidence, suggested fix, effort, and the actual screenshots/video captured.
+- A **history** chart of the overall score across every retained run.
+- A **before/after** panel from the latest `compare.json` (resolved count, Core
+  Web Vitals deltas, paired before/after screenshots).
+
+The page is a single HTML file with all CSS/JS inline and screenshots inlined as
+data URIs, so it makes no external requests and is safe to publish as a CI
+artifact.
 
 Each finding is tied to:
 
@@ -307,7 +332,7 @@ playground/                 Fixed demo site
 eval/                       Seeded-issues fixture and expected findings
 examples/                   Committed example reports
 runner/                     Headless batch orchestration
-aggregate/                  Cross-site summaries and run comparison
+aggregate/                  Cross-site summaries, run comparison, scorecard
 reports/                    Retained audit output, gitignored
 ```
 

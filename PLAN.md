@@ -97,6 +97,16 @@ Why, explicitly:
   metric + network/HAR deltas, paired before/after screenshots). The fix loop
   emits this automatically (audit -> fix -> re-audit -> compare), making the
   hill-climb measurable across runs.
+- **Interactive scorecard** ([aggregate/scorecard.mjs](aggregate/scorecard.mjs))
+  - `web-uplift scorecard <host>` rolls a host's retained runs into a
+  self-contained `reports/<host>/scorecard.html` that leads with owner OUTCOMES
+  rather than a flat findings list: Lighthouse-style ring gauges for the six
+  outcome groups (the 17 principles mapped 1:1, N/A excluded), a top-3 "do these
+  first", a per-finding deep-dive (native `<dialog>` with evidence + fix +
+  screenshots/video), a score-over-time history chart, and a before/after panel
+  from compare.json (resolved count, Core Web Vitals deltas, paired shots). All
+  CSS/JS inline, screenshots inlined as data URIs - no external requests, safe as
+  a CI artifact. The fix loop emits it automatically alongside the compare.
 
 ## What was removed (and stays removed)
 
