@@ -1374,6 +1374,30 @@ async function discoverability(client, url, opts, log) {
     coveragePct != null &&
     ((emptyMounts.length > 0 && coveragePct < 25) || (renderedTokens.size >= 50 && coveragePct < 10));
 
+  // Visual proof: a browser view (JS on, already loaded) vs a crawler view (JS
+  // disabled, reloaded). For a shell site the crawler view is blank/near-empty -
+  // the single most legible evidence for this finding. Unless --no-screenshots.
+  let screenshots = null;
+  if (opts.screenshots !== false) {
+    try {
+      const base = (opts.out ? opts.out.replace(/\.json$/i, '') : derivedOut(url, 'discoverability', '').replace(/\.$/, ''));
+      const renderedPng = `${base}-rendered.png`;
+      const crawlerPng = `${base}-crawler.png`;
+      const shotOn = await client.Page.captureScreenshot({ format: 'png' });
+      writeFileSync(renderedPng, uint8FromBase64(shotOn.data));
+      // Reload with JavaScript disabled to see exactly what a non-JS crawler gets.
+      await client.Emulation.setScriptExecutionDisabled({ value: true });
+      await navigate(client, url, { settleMs: Math.max(opts.wait ?? 0, 1200), log });
+      const shotOff = await client.Page.captureScreenshot({ format: 'png' });
+      writeFileSync(crawlerPng, uint8FromBase64(shotOff.data));
+      await client.Emulation.setScriptExecutionDisabled({ value: false });
+      screenshots = { rendered: renderedPng, crawler: crawlerPng };
+      log(`[evidence] discoverability: wrote browser + crawler screenshots`);
+    } catch (e) {
+      log(`[evidence] discoverability: screenshot capture failed: ${String(e?.message || e)}`);
+    }
+  }
+
   const summary = {
     type: 'discoverability',
     url,
@@ -1401,6 +1425,7 @@ async function discoverability(client, url, opts, log) {
       textChars: rawText.length,
       contentTokens: rawTokens.size,
     },
+    screenshots, // { rendered, crawler } - browser view (JS on) vs crawler view (JS off)
     signalsFor: ['be-discoverable', 'be-agent-ready'],
     note:
       'coveragePct = the share of the rendered page\'s content words that also appear in the RAW server HTML - what a crawler that does not run JavaScript (many AI crawlers, per the url-influence research) can see. Low coverage with an empty SPA mount means the content is effectively invisible to non-JS crawlers and unlikely to enter model training or search. High coverage means it is server-rendered and reachable. Descriptive signal, not a verdict: judge against be-discoverable / be-agent-ready, and confirm surprising results against the raw HTML and the dom primitive.',
@@ -1441,6 +1466,7 @@ function parseArgs(argv) {
     else if (a === '--interact') args.interact = argv[++i];
     else if (a === '--interact-file') args.interact = readFileSync(argv[++i], 'utf8');
     else if (a === '--full-page') args.fullPage = true;
+    else if (a === '--no-screenshots') args.screenshots = false;
     else if (a === '--bodies') args.bodies = true;
     else if (a === '--quiet') args.quiet = true;
     else args._.push(a);
