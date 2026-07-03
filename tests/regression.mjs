@@ -30,7 +30,7 @@ try {
 }
 
 async function testScorecardScoringAndRender() {
-  const { scoreReport, renderScorecard, OUTCOMES } = await import('../aggregate/scorecard.mjs');
+  const { scoreReport, renderScorecard, renderTextScorecard, OUTCOMES } = await import('../aggregate/scorecard.mjs');
   const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
 
   const scored = scoreReport(report);
@@ -59,6 +59,15 @@ async function testScorecardScoringAndRender() {
   const openDialogs = (html.match(/<dialog /g) || []).length;
   const closeDialogs = (html.match(/<\/dialog>/g) || []).length;
   assert(openDialogs === closeDialogs && openDialogs >= report.findings.length, 'scorecard: dialog tags are unbalanced');
+
+  // The inline text scorecard leads with the overall + a link, same numbers.
+  const text = renderTextScorecard(
+    { host: 'example', latest: { runId: 'r1', dir: join(repoRoot, 'examples'), report, ...scored } },
+    { htmlPath: 'reports/example/scorecard.html' },
+  );
+  assert(text.includes(`Overall: ${scored.overall}/100`), 'scorecard text: overall line missing/mismatched');
+  assert(text.includes('reports/example/scorecard.html'), 'scorecard text: HTML link missing');
+  assert(text.includes('Do these first:'), 'scorecard text: top-3 section missing');
 }
 
 function run(command, args, opts = {}) {

@@ -74,13 +74,20 @@ findings. `fix` runs emit it automatically. It shows:
   task list.
 - A findings deep-dive where every finding opens a native dialog with its
   evidence, suggested fix, effort, and the actual screenshots/video captured.
-- A **history** chart of the overall score across every retained run.
+- A **history** view: the overall score across every retained run, a per-run
+  **delta** column, and a per-outcome trend (sparkline + change since the first
+  run) - so you can see the deltas over time, not just the latest state.
 - A **before/after** panel from the latest `compare.json` (resolved count, Core
   Web Vitals deltas, paired before/after screenshots).
 
 The page is a single HTML file with all CSS/JS inline and screenshots inlined as
 data URIs, so it makes no external requests and is safe to publish as a CI
 artifact.
+
+Running `web-uplift scorecard <host>` also prints a compact **text scorecard**
+to stdout (overall + the six outcome scores + the top-3). An in-agent `/web-audit`
+run ends by showing that inline and linking the HTML, so you get the headline in
+chat and the deep-dive one click away.
 
 Each finding is tied to:
 

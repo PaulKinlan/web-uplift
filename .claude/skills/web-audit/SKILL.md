@@ -356,6 +356,32 @@ scores where present), network/HAR deltas (request count, transferred bytes),
 and PAIRED before/after screenshots (matched by capture condition). Fix mode
 (below) runs this automatically at the end, so a fix run shows the before->after.
 
+### 6c. Scorecard (build it, then present it — this is how a run ends)
+
+After the report is written (and after any compare in fix mode), generate the
+interactive scorecard and use it as the close of your reply:
+
+```sh
+node aggregate/scorecard.mjs <host|url>   # web-uplift scorecard <host>
+```
+
+This rolls ALL retained runs for the host into a self-contained
+`reports/<host>/scorecard.html` (Lighthouse-style outcome gauges, a top-3, a
+per-finding deep-dive, a score-over-time history with per-run and per-outcome
+deltas, and a before/after panel). It also prints a compact **text scorecard**
+to stdout.
+
+End your run by:
+
+1. Showing that text scorecard inline (overall score, the six outcome scores,
+   and the top-3 "do these first"). It leads with outcomes, not a raw findings
+   dump. Do NOT re-type a long list of every finding above it.
+2. Linking the interactive report: `reports/<host>/scorecard.html` (and mention
+   the History tab shows the deltas over time once there is more than one run).
+
+Fix mode emits the scorecard automatically; for a report-only run, run the
+command above yourself so the user always gets the same close.
+
 ### 7. Fix mode (`--fix --source <dir>`, the model-driven hill-climb)
 
 Only with local source. This is a MODEL-DRIVEN hill-climb: YOU write every edit

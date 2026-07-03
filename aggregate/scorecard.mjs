@@ -228,6 +228,26 @@ function historyChart(runs, { w = 640, h = 180, pad = 28 } = {}) {
 </svg>`;
 }
 
+// A tiny inline sparkline for one outcome's score across runs (0-100). Nulls
+// (not-applicable that run) break the line into segments.
+function miniSpark(series, { w = 120, h = 24, pad = 2 } = {}) {
+  const n = series.length;
+  if (n < 2) return '<span class="muted">—</span>';
+  const x = (i) => pad + (i * (w - 2 * pad)) / (n - 1);
+  const y = (s) => h - pad - (s / 100) * (h - 2 * pad);
+  let d = '';
+  let pen = false;
+  series.forEach((s, i) => {
+    if (typeof s !== 'number') { pen = false; return; }
+    d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(s).toFixed(1)} `;
+    pen = true;
+  });
+  const last = series.filter((s) => typeof s === 'number').slice(-1)[0];
+  const li = series.map((s, i) => (typeof s === 'number' ? i : -1)).filter((i) => i >= 0).slice(-1)[0];
+  const dot = typeof last === 'number' ? `<circle class="${gradeClass(last)}" cx="${x(li).toFixed(1)}" cy="${y(last).toFixed(1)}" r="2.5"/>` : '';
+  return `<svg class="mini" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><path d="${d.trim()}"/>${dot}</svg>`;
+}
+
 const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
 
 // Display metadata for the metrics compare.mjs emits (lcp/inp/cls/fcp/tbt +
@@ -350,19 +370,50 @@ export function renderScorecard(data) {
 
   const dialogs = (report.findings ?? []).map((f) => findingDialog(report, latest.dir, f)).join('\n');
 
-  // History rows.
+  // History rows, newest first, each with its delta vs the previous run.
+  const deltaCell = (cur, prev) => {
+    if (typeof cur !== 'number' || typeof prev !== 'number') return '<span class="muted">—</span>';
+    const d = cur - prev;
+    if (d === 0) return '<span class="muted">0</span>';
+    const cls = d > 0 ? 'good' : 'poor';
+    const arrow = d > 0 ? ICON.arrowUp : ICON.arrowDown;
+    return `<span class="delta ${cls}">${arrow} ${d > 0 ? '+' : ''}${d}</span>`;
+  };
   const historyRows = runs
     .map((r, i) => {
       const d = r.report.auditedAt ? new Date(r.report.auditedAt).toISOString().slice(0, 16).replace('T', ' ') : r.runId;
       const outstanding = (r.report.findings ?? []).length;
-      return `<tr${r.runId === latest.runId ? ' class="current"' : ''}>
+      const prev = i > 0 ? runs[i - 1].overall : null;
+      return { i, html: `<tr${r.runId === latest.runId ? ' class="current"' : ''}>
       <td>${i + 1}</td>
       <td>${esc(d)}</td>
       <td><span class="pill ${r.report.mode === 'fix' ? 'fix' : 'report'}">${esc(r.report.mode ?? 'report')}</span></td>
       <td><span class="score-chip ${gradeClass(r.overall)}">${r.overall == null ? 'N/A' : r.overall}</span></td>
+      <td>${deltaCell(r.overall, prev)}</td>
       <td>${outstanding} finding${outstanding === 1 ? '' : 's'}</td>
-    </tr>`;
+    </tr>` };
     })
+    .reverse()
+    .map((x) => x.html)
+    .join('\n');
+
+  // Per-outcome trend: first -> latest delta plus a mini sparkline, so a reader
+  // sees which outcomes moved over time, not just the overall number.
+  const outcomeTrends = OUTCOMES.map((o) => {
+    const series = runs.map((r) => r.outcomes.find((x) => x.key === o.key)?.score ?? null);
+    const scored = series.filter((s) => typeof s === 'number');
+    if (scored.length < 1) return '';
+    const first = scored[0];
+    const last = scored[scored.length - 1];
+    const delta = scored.length >= 2 ? last - first : null;
+    return `<tr>
+      <td>${esc(o.label)}</td>
+      <td class="spark-cell">${miniSpark(series)}</td>
+      <td><span class="score-chip ${gradeClass(last)}">${last == null ? 'N/A' : last}</span></td>
+      <td>${delta == null ? '<span class="muted">—</span>' : deltaCell(last, first)}</td>
+    </tr>`;
+  })
+    .filter(Boolean)
     .join('\n');
 
   // Before/after from the latest compare.
@@ -451,8 +502,12 @@ export function renderScorecard(data) {
   </section>
 
   <section class="panel" id="history" role="tabpanel">
+    <h3>Overall score over time</h3>
     ${historyChart(runs)}
-    <table class="runs"><thead><tr><th>#</th><th>Audited</th><th>Mode</th><th>Score</th><th>Findings</th></tr></thead><tbody>${historyRows}</tbody></table>
+    ${outcomeTrends ? `<h3>Per-outcome trend</h3>
+    <table class="trends"><thead><tr><th>Outcome</th><th>Trend</th><th>Now</th><th>Since first</th></tr></thead><tbody>${outcomeTrends}</tbody></table>` : ''}
+    <h3>Runs</h3>
+    <table class="runs"><thead><tr><th>#</th><th>Audited</th><th>Mode</th><th>Score</th><th>&Delta;</th><th>Findings</th></tr></thead><tbody>${historyRows}</tbody></table>
   </section>
 
   <section class="panel" id="beforeafter" role="tabpanel">
@@ -466,6 +521,47 @@ ${dialogs}
 <script>${JS}</script>
 </body>
 </html>`;
+}
+
+// --- Text scorecard (for the inline chat / terminal summary) ----------------
+// A compact markdown scorecard the audit prints inline at the end of a run,
+// alongside a link to the full interactive scorecard.html. Same numbers as the
+// gauges (one scoring source), so the two never disagree.
+export function renderTextScorecard(data, { htmlPath } = {}) {
+  const { host, latest } = data;
+  const bar = (score) => {
+    if (score == null) return '----------';
+    const filled = Math.round(score / 10);
+    return '#'.repeat(filled) + '.'.repeat(10 - filled);
+  };
+  const band = (score) => (score == null ? 'n/a' : score >= 90 ? 'good' : score >= 50 ? 'needs work' : 'poor');
+  const lines = [];
+  lines.push(`## web-uplift scorecard — ${host}`);
+  lines.push('');
+  lines.push(`Overall: ${latest.overall == null ? 'N/A' : `${latest.overall}/100`} (${band(latest.overall)})`);
+  lines.push('');
+  const width = Math.max(...latest.outcomes.map((o) => o.label.length));
+  for (const o of latest.outcomes) {
+    const s = o.score == null ? 'N/A' : String(o.score).padStart(3);
+    lines.push(`${o.label.padEnd(width)}  ${s}  ${bar(o.score)}  ${band(o.score)}`);
+  }
+  const report = latest.report;
+  const findingById = new Map((report.findings ?? []).map((f) => [f.id, f]));
+  const top3 = [...(report.taskList ?? [])]
+    .filter((t) => t.status !== 'done')
+    .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+    .slice(0, 3);
+  if (top3.length) {
+    lines.push('');
+    lines.push('Do these first:');
+    top3.forEach((t, i) => {
+      const f = (t.findingIds ?? []).map((id) => findingById.get(id)).find(Boolean);
+      lines.push(`  ${i + 1}. [${f?.severity ?? 'medium'}] ${t.title}`);
+    });
+  }
+  lines.push('');
+  lines.push(`Full interactive scorecard: ${htmlPath ?? `reports/${host}/scorecard.html`}`);
+  return lines.join('\n');
 }
 
 // --- Inline CSS -------------------------------------------------------------
@@ -524,6 +620,12 @@ table{width:100%;border-collapse:collapse;font-size:.9rem}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
 th{color:var(--muted);font-weight:600}
 tr.current{background:#12161c}
+.delta{font-weight:700;display:inline-flex;align-items:center;gap:2px}
+.delta.good{color:var(--good)}.delta.poor{color:var(--poor)}
+.spark-cell{width:130px}
+svg.mini{display:block}
+svg.mini path{fill:none;stroke:var(--accent);stroke-width:1.5}
+svg.mini circle.good{fill:var(--good)}svg.mini circle.ok{fill:var(--ok)}svg.mini circle.poor{fill:var(--poor)}svg.mini circle.na{fill:var(--na)}
 .pill{font-size:.72rem;padding:1px 8px;border-radius:20px;border:1px solid var(--line)}
 .pill.fix{background:#12261a;color:#8ee0ad}
 .score-chip{font-weight:700;padding:2px 9px;border-radius:8px}
@@ -618,5 +720,8 @@ async function main() {
   const html = renderScorecard(data);
   const dest = out ?? join(hostRoot, 'scorecard.html');
   writeFileSync(dest, html);
-  console.log(`[scorecard] wrote ${dest} (${(html.length / 1024).toFixed(0)} KB)`);
+  console.log(`[scorecard] wrote ${dest} (${(html.length / 1024).toFixed(0)} KB)\n`);
+  // Print the inline text scorecard to stdout so the caller (a coding agent
+  // finishing a run, or a terminal user) can show it inline and link the HTML.
+  console.log(renderTextScorecard(data, { htmlPath: dest }));
 }
