@@ -18,7 +18,7 @@
  *
  * The PRIMARY, subscription-friendly path is to `install` the skill and then run
  * `/web-audit <url>` and the fix loop INSIDE your own agent session (Claude Code,
- * Codex, Gemini, Antigravity, Copilot, opencode). audit/fix/aggregate/evidence
+ * Codex, Gemini, Antigravity, Copilot, opencode, pi). audit/fix/aggregate/evidence
  * here are the HEADLESS conveniences; audit and fix shell out to an agent CLI in
  * -p/exec mode, which uses API tokens.
  */
@@ -150,6 +150,13 @@ function agentTargets() {
           '---\ndescription: web-uplift - audit a URL for modern web quality; --fix to hill-climb.\n---\n\n' +
           pointAtSkill + '\n\nArguments: $ARGUMENTS\n',
       },
+      { rel: 'AGENTS.md', kind: 'append-marker', content: agentsMdSnippet() },
+    ],
+    // pi (Earendil pi-coding-agent) loads project skills from `.pi/skills/`
+    // (a dir with SKILL.md, per the Agent Skills standard - surfaced as
+    // `/skill:web-audit`) and reads AGENTS.md. Same shape as codex.
+    pi: [
+      { rel: '.pi/skills/web-audit/SKILL.md', kind: 'skill-copy' },
       { rel: 'AGENTS.md', kind: 'append-marker', content: agentsMdSnippet() },
     ],
   };

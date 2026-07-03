@@ -74,6 +74,15 @@ export const AGENTS = {
     // from the repo; here we pass the skill prompt directly for batch use.
     args: (prompt) => ['run', prompt],
   },
+  pi: {
+    bin: 'pi',
+    prompt: skillPrompt,
+    // pi print mode. -a (--approve) trusts project resources so an installed
+    // .pi/skills/web-audit + AGENTS.md load in non-interactive mode; pi's default
+    // tools include the shell it needs to run `node evidence/cli.mjs ...`. Run
+    // untrusted sites in a container.
+    args: (prompt) => ['-p', prompt, '-a'],
+  },
 };
 
 export const AGENT_NAMES = Object.keys(AGENTS);

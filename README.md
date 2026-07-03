@@ -35,6 +35,7 @@ Use the agent you actually run:
 npx -y web-uplift@latest install --agent claude        # Claude Code
 npx -y web-uplift@latest install --agent codex         # Codex
 npx -y web-uplift@latest install --agent gemini        # Gemini CLI
+npx -y web-uplift@latest install --agent pi            # pi (Earendil pi-coding-agent)
 npx -y web-uplift@latest install --agent opencode      # opencode
 npx -y web-uplift@latest install --agent all           # install every wrapper
 npx -y web-uplift@latest install --dry-run --agent all # preview files without writing
@@ -133,6 +134,7 @@ at the same `SKILL.md`, so the method does not drift.
 | Antigravity | `npx -y web-uplift@latest install --agent antigravity` | `.agents/skills/web-audit.md` | `/web-audit <url>` |
 | GitHub Copilot | `npx -y web-uplift@latest install --agent copilot` | `.github/prompts/web-audit.prompt.md` + instructions snippet | `/web-audit <url>` |
 | opencode | `npx -y web-uplift@latest install --agent opencode` | `.opencode/command/web-audit.md` + `AGENTS.md` snippet | `/web-audit <url>` |
+| pi | `npx -y web-uplift@latest install --agent pi` | `.pi/skills/web-audit/SKILL.md` + `AGENTS.md` snippet | `/skill:web-audit <url>` |
 | all | `npx -y web-uplift@latest install --agent all` | everything above | per agent |
 
 Every install also vendors the evidence CLI, principles, schemas, and guidance

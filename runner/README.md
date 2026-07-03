@@ -24,6 +24,7 @@ at the same canonical skill, so the methodology cannot drift.
 | Antigravity | `.agents/skills/web-audit.md` (wrapper) | `agy` | wired (dry-run verified) |
 | GitHub Copilot | `.github/copilot-instructions.md` + `.github/prompts/web-audit.prompt.md` | `copilot` | wired (dry-run verified) |
 | opencode | `.opencode/command/web-audit.md` + `AGENTS.md` + `opencode.json` | `opencode` | wired (dry-run verified) |
+| pi | `.pi/skills/web-audit/SKILL.md` (`/skill:web-audit`) + `AGENTS.md` | `pi` (`pi -p ... -a`) | wired (install + dry-run verified) |
 | anything else | raw prompt (below) | add one map entry | n/a |
 
 From the repo root, `/web-audit <url>` works in every CLI that surfaces commands
