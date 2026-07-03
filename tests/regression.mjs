@@ -210,6 +210,15 @@ function testInstalledEvidenceCli() {
       !evidenceUsage.stderr.includes('ERR_MODULE_NOT_FOUND'),
     `installed evidence CLI did not load cleanly:\n${evidenceUsage.stderr}`,
   );
+
+  // The scorecard must be vendored too (aggregate/ + the runner/ it imports), so
+  // an installed project can generate the interactive scorecard. A clean load
+  // prints its usage; a missing aggregate/ or runner/ would throw at import.
+  const scorecardUsage = run(process.execPath, ['.web-uplift/aggregate/scorecard.mjs'], { cwd: target });
+  assert(
+    !scorecardUsage.stderr.includes('ERR_MODULE_NOT_FOUND') && scorecardUsage.stderr.includes('scorecard'),
+    `installed scorecard did not load (aggregate/ or runner/ not vendored?):\n${scorecardUsage.stderr}`,
+  );
 }
 
 function testUpdateDryRunReadsInstallManifest() {

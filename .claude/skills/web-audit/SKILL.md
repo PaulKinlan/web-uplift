@@ -94,6 +94,20 @@ Use whichever invocation resolves in your context (they run the SAME CLI):
 Pick the first that exists; the rest of this file writes `node evidence/cli.mjs`
 for brevity, but the `web-uplift evidence ...` form is equivalent everywhere.
 
+**This applies to EVERY web-uplift command this skill uses**, not just evidence.
+The scorecard, run-compare, and user-flow scripts are vendored alongside the
+evidence CLI, so translate the same three ways:
+
+| In this repo | Per-project install | Global package |
+|---|---|---|
+| `node aggregate/scorecard.mjs <host>` | `node .web-uplift/aggregate/scorecard.mjs <host>` | `web-uplift scorecard <host>` |
+| `node aggregate/compare.mjs <host>` | `node .web-uplift/aggregate/compare.mjs <host>` | `web-uplift compare <host>` |
+| `node runner/flow.mjs replay <flow>` | `node .web-uplift/runner/flow.mjs replay <flow>` | `web-uplift flow replay <flow>` |
+
+If none resolves (an older install that predates these scripts), say so in the
+report rather than skipping silently, and point the user at `web-uplift
+scorecard <host>` via `npx -y web-uplift`.
+
 Primitives, all content- and tool-agnostic:
 
 | Primitive | What it gives you | Key CDP |

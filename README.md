@@ -137,10 +137,11 @@ at the same `SKILL.md`, so the method does not drift.
 | pi | `npx -y web-uplift@latest install --agent pi` | `.pi/skills/web-audit/SKILL.md` + `AGENTS.md` snippet | `/skill:web-audit <url>` |
 | all | `npx -y web-uplift@latest install --agent all` | everything above | per agent |
 
-Every install also vendors the evidence CLI, principles, schemas, and guidance
-lookup notes under `.web-uplift/` so the in-session model can call them
-directly. It also writes `.web-uplift/manifest.json` with the package version
-that produced the installed copy.
+Every install also vendors the evidence CLI, the scorecard/compare scripts, the
+user-flow record/replay scripts, principles, schemas, and guidance lookup notes
+under `.web-uplift/` so the in-session model can call them directly (generate the
+scorecard, diff runs, replay a journey). It also writes `.web-uplift/manifest.json`
+with the package version that produced the installed copy.
 
 ### pi: per-project or global package
 

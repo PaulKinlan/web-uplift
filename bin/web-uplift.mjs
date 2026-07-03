@@ -195,11 +195,12 @@ Options:
   --target <dir>   Project root to install into (default: cwd).
   --dry-run        Print the placement plan without writing anything.
 
-Copies the canonical skill + evidence CLIs under .web-uplift/ with the small
-runtime dependency closure needed by the raw-CDP evidence CLI, then writes each
-agent's thin command wrapper (which only POINTS at the skill). Idempotent: an
-existing instructions snippet is not duplicated. Then run /web-audit <url>
-inside your agent session (uses your subscription).`);
+Copies the canonical skill + the evidence CLIs, the scorecard/compare scripts,
+and the user-flow record/replay scripts under .web-uplift/ (with the small
+runtime dependency closure the raw-CDP tools need), then writes each agent's thin
+command wrapper (which only POINTS at the skill). Idempotent: an existing
+instructions snippet is not duplicated. Then run /web-audit <url> inside your
+agent session (uses your subscription).`);
     return;
   }
   const dryRun = Boolean(opts['dry-run']);
@@ -222,6 +223,12 @@ inside your agent session (uses your subscription).`);
   // without depending on this package's checkout layout.
   const vendorRoot = join(projectRoot, '.web-uplift');
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'evidence'), to: join(vendorRoot, 'evidence'), what: 'evidence primitives (raw-CDP CLI)' });
+  // Vendor aggregate/ (scorecard, compare, aggregate) and runner/ (run-history,
+  // flow, flow-record) too, so the in-session agent can generate the scorecard,
+  // diff runs, and replay flows. Their cross-dir relative imports (../evidence,
+  // ../runner) resolve because the layout is preserved under .web-uplift/.
+  plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'aggregate'), to: join(vendorRoot, 'aggregate'), what: 'scorecard + compare + aggregate' });
+  plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'runner'), to: join(vendorRoot, 'runner'), what: 'run history + user-flow record/replay' });
   plan.push(...dependencyCopySteps(['chrome-remote-interface'], join(vendorRoot, 'node_modules')));
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, '.claude/skills/web-audit/SKILL.md'), to: join(vendorRoot, 'skill', 'SKILL.md'), what: 'canonical web-audit SKILL.md' });
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/principles.json'), to: join(vendorRoot, 'knowledge', 'principles.json'), what: 'principles spec' });
