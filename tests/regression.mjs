@@ -31,7 +31,7 @@ try {
 }
 
 async function testScorecardScoringAndRender() {
-  const { scoreReport, renderScorecard, renderTextScorecard, OUTCOMES } = await import('../aggregate/scorecard.mjs');
+  const { scoreReport, renderScorecard, renderTextScorecard, scorecardSummary, evaluateGates, OUTCOMES } = await import('../aggregate/scorecard.mjs');
   const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
 
   const scored = scoreReport(report);
@@ -69,6 +69,22 @@ async function testScorecardScoringAndRender() {
   assert(text.includes(`Overall: ${scored.overall}/100`), 'scorecard text: overall line missing/mismatched');
   assert(text.includes('reports/example/scorecard.html'), 'scorecard text: HTML link missing');
   assert(text.includes('Do these first:'), 'scorecard text: top-3 section missing');
+
+  // CI gate: machine summary + threshold evaluation.
+  const data = { host: 'example', generatedAt: 'now', latest: { runId: 'r1', dir: join(repoRoot, 'examples'), report, ...scored } };
+  const summary = scorecardSummary(data);
+  assert(summary.overall === scored.overall, 'scorecardSummary: overall mismatch');
+  assert(summary.findingsTotal === report.findings.length, 'scorecardSummary: findings total mismatch');
+  assert(typeof summary.outcomes.discoverable !== 'undefined', 'scorecardSummary: outcomes map missing keys');
+
+  // An impossible bar fails; a trivially-met bar passes.
+  const fail = evaluateGates(summary, { min: {}, minOverall: 100, maxCritical: 0 });
+  assert(fail.passed === false && fail.checks.some((c) => !c.ok), 'gate: overall=100 should fail an imperfect report');
+  const pass = evaluateGates(summary, { min: {}, minOverall: 1, maxHigh: 999 });
+  assert(pass.passed === true, 'gate: trivial thresholds should pass');
+  // A not-applicable outcome never fails its gate.
+  const naGate = evaluateGates({ overall: 50, outcomes: { memory: null }, findingsBySeverity: { critical: 0, high: 0 } }, { min: { memory: 90 } });
+  assert(naGate.passed === true, 'gate: a null (N/A) outcome must not fail its gate');
 }
 
 async function testDiscoverabilityHelpers() {

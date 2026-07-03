@@ -564,6 +564,49 @@ export function renderTextScorecard(data, { htmlPath } = {}) {
   return lines.join('\n');
 }
 
+// --- Machine-readable summary + CI gating -----------------------------------
+// A compact JSON a CI job can consume: overall + per-outcome scores and the
+// finding counts by severity. Written next to the HTML as scorecard.json.
+export function scorecardSummary(data) {
+  const { host, generatedAt, latest } = data;
+  const sev = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const f of latest.report.findings ?? []) if (sev[f.severity] != null) sev[f.severity]++;
+  return {
+    host,
+    generatedAt,
+    runId: latest.runId,
+    url: latest.report.url,
+    overall: latest.overall,
+    outcomes: Object.fromEntries(latest.outcomes.map((o) => [o.key, o.score])),
+    findingsBySeverity: sev,
+    findingsTotal: (latest.report.findings ?? []).length,
+  };
+}
+
+// Evaluate CI gate thresholds against the summary. `gates`:
+//   { minOverall, min: {key: n}, maxCritical, maxHigh }
+// Returns { passed, checks: [{name, ok, detail}] }.
+export function evaluateGates(summary, gates) {
+  const checks = [];
+  const add = (name, ok, detail) => checks.push({ name, ok, detail });
+  if (gates.minOverall != null) {
+    const v = summary.overall;
+    add(`overall >= ${gates.minOverall}`, v != null && v >= gates.minOverall, `overall=${v == null ? 'N/A' : v}`);
+  }
+  for (const [key, min] of Object.entries(gates.min ?? {})) {
+    const v = summary.outcomes[key];
+    // A not-applicable outcome (null) does not fail its gate - it was excluded.
+    add(`${key} >= ${min}`, v == null || v >= min, `${key}=${v == null ? 'N/A' : v}`);
+  }
+  if (gates.maxCritical != null) {
+    add(`critical <= ${gates.maxCritical}`, summary.findingsBySeverity.critical <= gates.maxCritical, `critical=${summary.findingsBySeverity.critical}`);
+  }
+  if (gates.maxHigh != null) {
+    add(`high <= ${gates.maxHigh}`, summary.findingsBySeverity.high <= gates.maxHigh, `high=${summary.findingsBySeverity.high}`);
+  }
+  return { passed: checks.every((c) => c.ok), checks };
+}
+
 // --- Inline CSS -------------------------------------------------------------
 const CSS = `
 :root{--bg:#0f1216;--panel:#171b21;--line:#262c35;--txt:#e6e9ee;--muted:#9aa4b2;--good:#12b76a;--ok:#f79009;--poor:#f04438;--na:#5b6472;--accent:#5b8def}
@@ -700,15 +743,26 @@ async function main() {
   let reportsRoot = 'reports';
   let out = null;
   let generatedAt = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  const gates = { min: {} };
+  let gating = false;
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--reports') reportsRoot = argv[++i];
-    else if (argv[i] === '--out') out = argv[++i];
-    else if (argv[i] === '--generated-at') generatedAt = argv[++i];
-    else positional.push(argv[i]);
+    const a = argv[i];
+    if (a === '--reports') reportsRoot = argv[++i];
+    else if (a === '--out') out = argv[++i];
+    else if (a === '--generated-at') generatedAt = argv[++i];
+    else if (a === '--min-overall') { gates.minOverall = Number(argv[++i]); gating = true; }
+    else if (a === '--max-critical') { gates.maxCritical = Number(argv[++i]); gating = true; }
+    else if (a === '--max-high') { gates.maxHigh = Number(argv[++i]); gating = true; }
+    else if (a === '--min') {
+      // --min <outcomeKey>=<n>, e.g. --min discoverable=70
+      const [key, n] = String(argv[++i]).split('=');
+      if (key && n != null) { gates.min[key] = Number(n); gating = true; }
+    } else positional.push(a);
   }
   const hostArg = positional[0];
   if (!hostArg) {
-    console.error('Usage: web-uplift scorecard <host|url> [--reports <dir>] [--out <file>]');
+    console.error('Usage: web-uplift scorecard <host|url> [--reports <dir>] [--out <file>]\n' +
+      '  CI gate: --min-overall <n> --min <outcome>=<n> --max-critical <n> --max-high <n>');
     process.exit(1);
   }
   const host = hostSlug(hostArg);
@@ -720,8 +774,21 @@ async function main() {
   const html = renderScorecard(data);
   const dest = out ?? join(hostRoot, 'scorecard.html');
   writeFileSync(dest, html);
-  console.log(`[scorecard] wrote ${dest} (${(html.length / 1024).toFixed(0)} KB)\n`);
+  // Always emit the machine-readable summary next to the HTML for CI to consume.
+  const summary = scorecardSummary(data);
+  const jsonDest = dest.replace(/\.html?$/i, '') + '.json';
+  writeFileSync(jsonDest, JSON.stringify(summary, null, 2) + '\n');
+  console.log(`[scorecard] wrote ${dest} (${(html.length / 1024).toFixed(0)} KB) and ${jsonDest}\n`);
   // Print the inline text scorecard to stdout so the caller (a coding agent
   // finishing a run, or a terminal user) can show it inline and link the HTML.
   console.log(renderTextScorecard(data, { htmlPath: dest }));
+
+  // CI gate: if any threshold was set, evaluate and exit non-zero on failure.
+  if (gating) {
+    const result = evaluateGates(summary, gates);
+    console.log('\n[scorecard] CI gate:');
+    for (const c of result.checks) console.log(`  ${c.ok ? 'PASS' : 'FAIL'}  ${c.name}  (${c.detail})`);
+    console.log(`[scorecard] gate ${result.passed ? 'PASSED' : 'FAILED'}`);
+    if (!result.passed) process.exitCode = 1;
+  }
 }

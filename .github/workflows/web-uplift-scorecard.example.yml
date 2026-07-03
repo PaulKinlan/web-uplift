@@ -1,0 +1,69 @@
+# Example: audit a deployed/preview URL with web-uplift, gate the build on the
+# outcome scores, and publish the scorecard as a build artifact.
+#
+# This is a TEMPLATE (`.example.yml` is not picked up by Actions). Copy it to
+# `web-uplift-scorecard.yml`, set AUDIT_URL, and wire your agent credentials.
+#
+# A full audit needs a model in the loop (web-uplift is model-driven - it has no
+# canned checks). Provide whichever agent CLI you use via `--agent` and its API
+# key as a secret. The gate + scorecard steps are pure Node and need no model.
+
+name: web-uplift scorecard
+
+on:
+  # Run on PRs (e.g. against a deploy preview) and on demand.
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      audit_url:
+        description: URL to audit
+        required: true
+
+env:
+  AUDIT_URL: ${{ github.event.inputs.audit_url || 'https://example.com' }}
+
+jobs:
+  scorecard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # web-uplift drives the system Chrome via CDP (no Playwright/Puppeteer).
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install web-uplift
+        run: npm install -g web-uplift
+
+      # Run the audit with your agent of choice. The spawned model writes
+      # reports/<host>/<runId>/report.json. Swap --agent + the API key secret
+      # for whatever you run (claude / codex / gemini / ...).
+      - name: Audit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: web-uplift audit "$AUDIT_URL" --agent claude
+
+      # Build the scorecard AND gate the build on thresholds. Non-zero exit here
+      # fails the job. Tune the thresholds to your standards.
+      - name: Scorecard + gate
+        run: |
+          web-uplift scorecard "$AUDIT_URL" \
+            --min-overall 80 \
+            --min discoverable=70 \
+            --max-critical 0 \
+            --max-high 3
+
+      # Publish the self-contained scorecard.html + the machine-readable JSON,
+      # even if the gate failed, so reviewers can see where the site stands.
+      - name: Upload scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-uplift-scorecard
+          path: |
+            reports/**/scorecard.html
+            reports/**/scorecard.json

@@ -492,7 +492,8 @@ HEADLESS / CI path (uses API tokens):
   web-uplift fix --target <dir> --audit-url <url> [...]      Model-driven hill-climb.
   web-uplift aggregate [--reports <dir>]                     Cross-site summary.
   web-uplift compare <host|url> [runA] [runB]                Diff two retained runs (before/after).
-  web-uplift scorecard <host|url> [--out <file>]             Interactive scorecard.html from a host's runs.
+  web-uplift scorecard <host|url> [--out <file>]             Interactive scorecard.html + scorecard.json from a host's runs.
+     CI gate: [--min-overall n] [--min <outcome>=n] [--max-critical n] [--max-high n]  (exits non-zero on failure)
   web-uplift evidence <primitive> <url> [options]            Raw-CDP evidence primitives.
 
   web-uplift --help | --version

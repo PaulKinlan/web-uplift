@@ -1,16 +1,25 @@
 # web-uplift
 
-web-uplift is an agentic modern-web quality auditor and fixer.
+**Find the handful of changes that make your site faster, easier to use, and
+more visible to search and AI - then fix them, and prove the improvement.**
 
-Install it into a web project, then run `/web-audit <url>` inside your coding
-agent. The agent gathers real browser evidence, judges the site against modern
-web-quality principles, writes `report.json` and `report.md`, and, when local
-source is available, can apply fixes and re-audit until the issues are gone.
+Point web-uplift at a URL and it tells you where the site stands on the outcomes
+that matter to your visitors and to search & AI crawlers - **Speed & Stability,
+Memory Health, Usability, Inclusivity, Discoverability & AI, Trust &
+Resilience** - scores each out of 100, and hands you the top three things to do
+first. When it can reach your source it applies the fixes and re-audits until
+the score climbs. You get a shareable [scorecard](#the-scorecard), not an
+80-item list you have to triage.
 
-It is not a conventional check runner. There is no fixed list of coded checks
-and no canned fixer. The model is the auditor: it chooses the evidence to gather
-at inspection time, reasons over what it sees, consults Modern Web Guidance, and
-decides what passes or fails.
+It is not another checklist tool. There is no fixed list of coded checks and no
+canned fixer: the model is the auditor. It gathers real browser evidence
+(screenshots, traces, network, memory, a no-JS crawler view), reasons over what
+it sees, consults Modern Web Guidance, and judges the site against modern
+web-quality principles - then, with local source, fixes and re-audits until the
+issues are gone.
+
+Install it into a web project and run `/web-audit <url>` inside your coding
+agent, or run it headless in CI (see [CI](#continuous-integration-gate-on-score)).
 
 ## Quick Start
 
@@ -212,6 +221,31 @@ web-uplift compare http://localhost:8080 <runId-before> <runId-after>
 
 The headless runner orchestrates. It still does not contain checks. The spawned
 model follows the same [SKILL.md](.claude/skills/web-audit/SKILL.md).
+
+## Continuous integration: gate on score
+
+`web-uplift scorecard <host>` always writes a machine-readable `scorecard.json`
+(overall + per-outcome scores, finding counts by severity) next to the HTML, and
+can **fail the build** when the site slips below thresholds you set:
+
+```sh
+web-uplift scorecard http://localhost:8080 \
+  --min-overall 80 \        # fail if the overall score drops below 80
+  --min discoverable=70 \   # fail if the Discoverability & AI outcome drops below 70
+  --max-critical 0 \        # fail on any critical finding
+  --max-high 2              # fail if more than two high findings
+```
+
+It prints a PASS/FAIL line per threshold and **exits non-zero** if any gate
+fails (exit 0 when all pass, or when no gate flags are given). A not-applicable
+outcome (`null`) never fails its gate. Outcome keys: `speed`, `memory`,
+`usability`, `inclusive`, `discoverable`, `trust`.
+
+A GitHub Actions recipe lives at
+[.github/workflows/web-uplift-scorecard.example.yml](.github/workflows/web-uplift-scorecard.example.yml):
+audit a preview URL, generate the scorecard, gate on thresholds, and upload
+`scorecard.html` + `scorecard.json` as build artifacts (the self-contained HTML
+is safe to publish and share).
 
 ### URL Lists For Batch Audits
 
