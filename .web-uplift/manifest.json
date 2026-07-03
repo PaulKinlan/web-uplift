@@ -1,8 +1,14 @@
 {
   "package": "web-uplift",
-  "version": "0.1.2",
-  "installedAt": "2026-07-03T12:56:04.031Z",
+  "version": "0.1.3",
+  "installedAt": "2026-07-03T12:59:47.753Z",
   "agents": [
+    "claude",
+    "codex",
+    "gemini",
+    "antigravity",
+    "copilot",
+    "opencode",
     "pi"
   ],
   "updateCommand": "npx -y web-uplift@latest update --agent all"

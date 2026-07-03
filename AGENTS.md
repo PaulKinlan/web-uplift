@@ -75,6 +75,60 @@ edits inside the repo.
 `.opencode/command/web-audit.md` is the `/web-audit` command (it points here and
 at the skill). opencode also reads this `AGENTS.md` for project context.
 
+## Releases & versioning
+
+The single source of truth for the version is `package.json` (`version` field).
+`bin/web-uplift.mjs` reads it via `pkg.version` and stamps it into the install
+manifest at install/update time, so bumping `package.json` is the only manual
+edit. `.web-uplift/manifest.json` is tracked and should be kept in sync (it is
+also regenerated on every `install`/`update`).
+
+**Where the version literal must agree** (grep `0.1.x` before tagging):
+
+- `package.json` (canonical)
+- `.web-uplift/manifest.json` (regenerated on install; keep in sync in-repo)
+
+**Skill files are version-coupled.** `.claude/skills/web-audit/SKILL.md` is the
+canonical skill; every per-agent entry point (`.codex`, `.opencode`, `.github`,
+`.agents`, `.pi`, the vendored `.web-uplift/skill/SKILL.md`) is a copy produced by
+`web-uplift install`. If you change the skill, bump the version and republish so
+`npx web-uplift install` ships the fix.
+
+**SKILL.md frontmatter must be valid YAML.** The `description:` value is a long
+single-line scalar that frequently contains `word: word` (colon + space). An
+unquoted plain scalar with `: ` inside is parsed as a nested mapping and throws
+`Nested mappings are not allowed in compact mappings`, which makes agent skill
+loaders (pi, Claude Code, Codex) silently reject the skill. Therefore:
+
+- Keep `description` wrapped in double quotes: `description: "..."`.
+- Before tagging, sanity-check with the agent's own parser, e.g.
+  `node -e 'import("yaml").then(y=>y.parse(require("fs").readFileSync(".claude/skills/web-audit/SKILL.md","utf8").split("---")[1]))'`
+  must not throw.
+- Avoid em dashes in the description and body (house rule).
+
+**Bump procedure** (use semver: patch for fixes, minor for new features, major
+for breaking skill/schema changes):
+
+1. Edit `package.json` and `.web-uplift/manifest.json` to the new version.
+2. Regenerate installed skill copies so the repo is self-consistent:
+   `node bin/web-uplift.mjs install --agent all`.
+3. `npm test` (regression suite) and spot-check the frontmatter parser above.
+4. `git commit -m "chore: release v<VERSION>"`.
+5. `npm publish` (publishes `bin/`, `evidence/`, `runner/`, `fixer/`,
+   `aggregate/`, `index.mjs`, `mcp/`, `knowledge/`, `schema/`, `tests/`, and the
+   `.claude/skills/web-audit/SKILL.md` per the `files` allowlist).
+6. `git tag v<VERSION> && git push && git push --tags`.
+
+### Current release: v0.1.3
+
+Patch over v0.1.2. Fixes the SKILL.md YAML frontmatter bug: the `description`
+field was an unquoted plain scalar containing `audit: YOU` and
+`no fast path: the principles`, which YAML parses as nested mappings, throwing
+`Nested mappings are not allowed in compact mappings`. The thrown error caused
+pi (and other frontmatter-strict loaders) to reject the whole skill, so
+`/web-audit` never registered. The description is now double-quoted and the two
+offending clauses rewritten as plain sentences (no em dashes).
+
 <!-- web-uplift:install -->
 ## web-uplift (modern-web audit + fix)
 

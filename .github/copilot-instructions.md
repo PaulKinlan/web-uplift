@@ -41,3 +41,8 @@ Options you choose at inspection time: `--emulate-media k=v,..`, `--viewport WxH
 - No em dashes in prose.
 - Write `report.json` (valid against the schema) and `report.md` to the report
   directory, recording the `evidenceUsed` so the method stays honest.
+
+<!-- web-uplift:install -->
+## web-uplift
+
+Audit a URL for modern web quality by following `.web-uplift/skill/SKILL.md`. Gather evidence with `node .web-uplift/evidence/cli.mjs <primitive> <url>`.

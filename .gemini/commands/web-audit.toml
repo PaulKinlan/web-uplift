@@ -1,6 +1,6 @@
-description = "Audit a URL for modern web quality, fully agentically: gather evidence via raw-CDP primitives, choose tools, reason, judge every principle (Una's five + Lighthouse dimensions) against Modern Web Guidance; --fix to hill-climb"
+description = "Audit a URL for modern web quality (web-uplift); --fix to hill-climb"
 
 prompt = """
-Read the file .claude/skills/web-audit/SKILL.md and follow its
-instructions exactly, with these arguments: {{args}}
+Read the file `.web-uplift/skill/SKILL.md` (or `.claude/skills/web-audit/SKILL.md` if present) and follow its instructions exactly, with the arguments the user provides (a URL, plus optional flags like --out <dir>, --source <dir>, --fix, --findings <path>).
+Arguments: {{args}}
 """

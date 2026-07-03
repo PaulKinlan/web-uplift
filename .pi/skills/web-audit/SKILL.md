@@ -81,6 +81,19 @@ inputs and one generic capability:
 node evidence/cli.mjs <primitive> <url> [options]
 ```
 
+Use whichever invocation resolves in your context (they run the SAME CLI):
+
+- **In this repo:** `node evidence/cli.mjs <primitive> <url> [options]`.
+- **Per-project install** (files vendored under `.web-uplift/`):
+  `node .web-uplift/evidence/cli.mjs <primitive> <url> [options]`.
+- **Global package install** (e.g. this skill loaded from a pi package, so no
+  local copy exists): `web-uplift evidence <primitive> <url> [options]`, or
+  `npx -y web-uplift evidence <primitive> <url> [options]` if `web-uplift` is not
+  on `PATH`. This form works from any cwd and needs nothing vendored.
+
+Pick the first that exists; the rest of this file writes `node evidence/cli.mjs`
+for brevity, but the `web-uplift evidence ...` form is equivalent everywhere.
+
 Primitives, all content- and tool-agnostic:
 
 | Primitive | What it gives you | Key CDP |
