@@ -13,6 +13,7 @@
  *   aggregate [...] Passthrough to the cross-site aggregator (aggregate/aggregate.mjs).
  *   compare <host> [runA] [runB]  Diff two retained runs (aggregate/compare.mjs).
  *   scorecard <host>  Build the interactive scorecard.html from a host's runs (aggregate/scorecard.mjs).
+ *   flow <record|replay> ...  Record a user journey (headed) or replay one with per-step shots (runner/flow.mjs).
  *   evidence <primitive> <url> [...]  Passthrough to the evidence primitives.
  *
  * The PRIMARY, subscription-friendly path is to `install` the skill and then run
@@ -71,6 +72,9 @@ switch (command) {
     break;
   case 'scorecard':
     passthrough(join(PKG_ROOT, 'aggregate', 'scorecard.mjs'), rest);
+    break;
+  case 'flow':
+    passthrough(join(PKG_ROOT, 'runner', 'flow.mjs'), rest);
     break;
   case 'evidence':
     passthrough(join(PKG_ROOT, 'evidence', 'cli.mjs'), rest);
@@ -494,6 +498,8 @@ HEADLESS / CI path (uses API tokens):
   web-uplift compare <host|url> [runA] [runB]                Diff two retained runs (before/after).
   web-uplift scorecard <host|url> [--out <file>]             Interactive scorecard.html + scorecard.json from a host's runs.
      CI gate: [--min-overall n] [--min <outcome>=n] [--max-critical n] [--max-high n]  (exits non-zero on failure)
+  web-uplift flow record <url> [--out <flow.json>]           Record a user journey (headed browser + on-page overlay).
+  web-uplift flow replay <flow.json> [--url <start>] [--out <dir>]  Replay a journey (or Chrome Recorder JSON), screenshot per step.
   web-uplift evidence <primitive> <url> [options]            Raw-CDP evidence primitives.
 
   web-uplift --help | --version

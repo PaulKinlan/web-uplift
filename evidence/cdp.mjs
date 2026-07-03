@@ -38,15 +38,16 @@ export function resolveChromePath() {
 // Launch headless Chrome with an ephemeral remote-debugging port and return a
 // handle. We parse the actual port from the "DevTools listening on ws://..."
 // line Chrome prints to stderr (remote-debugging-port=0 picks a free port).
-export async function launchChrome({ log = () => {} } = {}) {
+export async function launchChrome({ log = () => {}, headless = true } = {}) {
   const chromePath = resolveChromePath();
   const userDataDir = mkdtempSync(join(tmpdir(), 'web-uplift-cdp-'));
-  log(`[browser] launching ${chromePath} (profile ${userDataDir})`);
+  log(`[browser] launching ${chromePath} (${headless ? 'headless' : 'headed'}, profile ${userDataDir})`);
 
   const proc = spawn(
     chromePath,
     [
-      '--headless=new',
+      // Headed for `flow record` (the user interacts); headless everywhere else.
+      ...(headless ? ['--headless=new'] : []),
       '--remote-debugging-port=0',
       '--no-sandbox',
       `--user-data-dir=${userDataDir}`,

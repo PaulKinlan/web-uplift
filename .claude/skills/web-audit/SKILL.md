@@ -185,6 +185,14 @@ headings, content, forms) and must be checked on the representative pages, not
 only the entry URL. Aggregate findings across pages and record which page each
 came from.
 
+**User flows.** When the important surfaces are reached by a JOURNEY (a checkout,
+a signup, a search, an SPA route sequence) rather than a static URL, replay a
+recorded flow instead of guessing selectors: `node runner/flow.mjs replay
+<flow.json> --out <dir>` (accepts web-uplift's own `flow record` output, a Chrome
+DevTools Recorder export, or a hand-authored flow.json). It drives the steps over
+CDP and captures a screenshot per step into `<dir>`; judge the per-step states as
+additional paths and record the flow in `paths`.
+
 ### 2. Plan the evidence you need, per principle
 
 Read every principle check, its `detectableVia` HINT, its `guides`, and any

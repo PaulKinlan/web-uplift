@@ -25,6 +25,7 @@ try {
   testBatchDryRunUsesRetainedDirs();
   await testScorecardScoringAndRender();
   await testDiscoverabilityHelpers();
+  await testFlowNormalize();
   console.log('tests OK');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
@@ -105,6 +106,30 @@ async function testDiscoverabilityHelpers() {
   assert(detectEmptyMounts('<div id="root"></div>').includes('#root'), 'should detect empty #root');
   assert(detectEmptyMounts('<div id="root"><h1>hi</h1></div>').length === 0, 'should not flag a filled #root');
   assert(detectEmptyMounts('<div id="__next">   </div>').includes('#__next'), 'should detect empty #__next');
+}
+
+async function testFlowNormalize() {
+  const { normalizeFlow } = await import('../runner/flow.mjs');
+
+  // A Chrome DevTools Recorder export normalises cleanly (same shape we use).
+  const recorderJson = {
+    title: 'Search',
+    steps: [
+      { type: 'setViewport', width: 1200, height: 800 },
+      { type: 'navigate', url: 'https://example.com/' },
+      { type: 'click', selectors: [['aria/Search'], ['#go']], target: 'main' },
+      null, // stray/empty entries are dropped
+    ],
+  };
+  const flow = normalizeFlow(recorderJson);
+  assert(flow.title === 'Search', 'flow: title should carry through');
+  assert(flow.steps.length === 3, `flow: empty steps should be dropped, got ${flow.steps.length}`);
+  assert(flow.steps[2].selectors[0][0] === 'aria/Search', 'flow: selectors preserved');
+
+  // Not-a-flow inputs throw.
+  let threw = false;
+  try { normalizeFlow({ nope: true }); } catch { threw = true; }
+  assert(threw, 'flow: an object without steps[] must throw');
 }
 
 function run(command, args, opts = {}) {

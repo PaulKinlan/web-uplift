@@ -226,6 +226,28 @@ web-uplift compare http://localhost:8080 <runId-before> <runId-after>
 The headless runner orchestrates. It still does not contain checks. The spawned
 model follows the same [SKILL.md](.claude/skills/web-audit/SKILL.md).
 
+## User flows (audit a journey, not just a page)
+
+Audit a real journey - checkout, signup, search - for MPA **and** SPA sites, so
+the audit covers the pages a user actually reaches.
+
+```sh
+# Record a journey. Opens a headed browser with a small "Recording... Done"
+# overlay - just click through your journey and press Done. No DevTools needed.
+web-uplift flow record https://example.com --out checkout.json
+
+# Replay it (or a Chrome DevTools Recorder export, or a hand-authored flow.json),
+# capturing a screenshot per step.
+web-uplift flow replay checkout.json --out reports/checkout/evidence
+```
+
+The flow format **is** Chrome DevTools' Recorder JSON (`{ title, steps }`), so
+three inputs feed one replayer: web-uplift's own recorder, a Chrome DevTools
+Recorder export, or a hand-authored `flow.json` for CI. Replay drives the steps
+over raw CDP (resilient selectors - `data-testid` / `aria` / role+text before a
+CSS path - so SPA re-renders don't break it) and writes `flow-result.json` plus
+a screenshot per step; an audit then judges the principles at each stop.
+
 ## Continuous integration: gate on score
 
 `web-uplift scorecard <host>` always writes a machine-readable `scorecard.json`

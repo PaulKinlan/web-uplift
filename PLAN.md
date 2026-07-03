@@ -112,6 +112,17 @@ Why, explicitly:
   CSS/JS inline, screenshots inlined as data URIs - no external requests, safe as
   a CI artifact. The fix loop emits it automatically alongside the compare.
 
+- **User flows** ([runner/flow.mjs](runner/flow.mjs),
+  [runner/flow-record.mjs](runner/flow-record.mjs)) - audit a journey, not just a
+  landing page, for MPA and SPA. `web-uplift flow record <url>` opens a headed
+  browser and injects a tiny recorder + a "Done" overlay (zero DevTools
+  knowledge) that captures clicks/inputs/navigations with resilient selectors
+  (`data-testid`/`aria`/role+text before a CSS path). The flow format IS Chrome
+  DevTools Recorder JSON, so a Recorder export or a hand-authored `flow.json`
+  replay through the same runner. `web-uplift flow replay <flow>` drives the
+  steps over raw CDP and writes `flow-result.json` + a screenshot per step; an
+  audit judges the principles at each stop.
+
 ## What was removed (and stays removed)
 
 - The deterministic CDP check runner (`auditor/audit.mjs`, `checks.mjs`,
