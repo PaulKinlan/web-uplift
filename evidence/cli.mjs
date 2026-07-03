@@ -1310,11 +1310,39 @@ async function discoverability(client, url, opts, log) {
   const rendered = await evaluate(
     client,
     `(() => {
-      const txt = (document.body ? document.body.innerText : '') || '';
+      // Collect rendered visible text, DESCENDING into open shadow roots so
+      // web-component sites (Lit/Polymer/Stencil) aren't mistaken for empty -
+      // document.body.innerText does not pierce shadow DOM.
+      const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD']);
+      const parts = [];
+      const walk = (node) => {
+        if (!node) return;
+        if (node.nodeType === 3) {
+          const t = (node.nodeValue || '').trim();
+          if (t) {
+            const p = node.parentElement;
+            if (!p || p.getClientRects().length) parts.push(t);
+          }
+          return;
+        }
+        if (node.nodeType === 1) {
+          if (SKIP.has(node.tagName)) return;
+          if (node.shadowRoot) node.shadowRoot.childNodes.forEach(walk);
+        }
+        (node.childNodes || []).forEach(walk);
+      };
+      walk(document.body);
+      const txt = parts.join(' ');
+      const h1s = [];
+      const collectH1 = (root) => {
+        root.querySelectorAll && root.querySelectorAll('h1').forEach((h) => { const t = (h.innerText || h.textContent || '').trim(); if (t) h1s.push(t); });
+        root.querySelectorAll && root.querySelectorAll('*').forEach((el) => { if (el.shadowRoot) collectH1(el.shadowRoot); });
+      };
+      collectH1(document);
       return {
         title: document.title || '',
         metaDescription: (document.querySelector('meta[name="description"]') || {}).content || '',
-        h1: Array.from(document.querySelectorAll('h1')).map((h) => (h.innerText || '').trim()).filter(Boolean),
+        h1: h1s,
         text: txt.replace(/\\s+/g, ' ').trim(),
         framework: (window.__NEXT_DATA__ ? 'Next.js' : window.__NUXT__ ? 'Nuxt'
           : document.querySelector('[ng-version]') ? 'Angular'
