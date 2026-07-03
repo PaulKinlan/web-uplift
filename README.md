@@ -277,6 +277,7 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `evaluate` | model-supplied JavaScript probe result | `Runtime.evaluate` |
 | `trace` | DevTools trace plus compact summary | `Tracing.start/end` |
 | `har` | HAR 1.2 plus compact network summary | `Network` domain |
+| `discoverability` | raw server HTML (no JS) vs the rendered DOM: how much content a non-JS crawler sees (`coveragePct`, `isJsShell`, empty SPA mounts) | `fetch` + `DOM` |
 
 Common options:
 

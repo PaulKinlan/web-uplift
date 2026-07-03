@@ -42,7 +42,11 @@ Why, explicitly:
   Network -> a valid HAR 1.2 AND a compact `*-summary.json` of network signals
   (totals + by-resource-type, first/third-party origins, render-blocking
   candidates, weight offenders, hygiene) the model reads instead of the raw HAR;
-  for network monitoring and cross-run deltas). Each
+  for network monitoring and cross-run deltas), and `discoverability` (fetches
+  the RAW server HTML with a plain no-JS request and diffs it against the
+  rendered DOM -> `coveragePct`, `isJsShell`, empty SPA mounts, title/h1/meta
+  survival: the url-influence "invisible to non-JS crawlers" failure mode made
+  measurable per-site; feeds be-discoverable / be-agent-ready). Each
   accepts emulated conditions (media features, viewport) the model chooses. They
   return data/artifacts and make no decisions.
 - **Principles** ([knowledge/principles.json](knowledge/principles.json)) -

@@ -38,6 +38,12 @@
 //                        *-summary.json of network signals (totals, third parties,
 //                        render-blocking candidates, weight offenders, hygiene);
 //                        the model reads the summary, never the raw HAR
+//   discoverability <url> fetches the RAW server HTML (no JS) and diffs it against
+//                        the rendered DOM: coveragePct (rendered content words
+//                        present in the raw HTML), isJsShell, empty SPA mounts,
+//                        title/h1/meta survival. The url-influence "invisible to
+//                        non-JS crawlers" failure mode, per-site. Feeds
+//                        be-discoverable / be-agent-ready
 //
 // Common options (most primitives accept these so the model can set the
 // condition it wants to observe under, but the harness never decides them):
@@ -1225,6 +1231,157 @@ function round(n) {
   return Math.round(n * 100) / 100;
 }
 
+// --- discoverability / AI-crawlability probe --------------------------------
+// How much of a page's content is visible to a crawler that fetches the raw
+// HTML but does NOT execute JavaScript - the failure mode from the URL-influence
+// research, where JS-rendered SPAs reach models and search as empty shells.
+// Fetches the raw server HTML with a plain request (no JS), renders the same URL
+// via CDP, and reports how much of the rendered content survives in the raw
+// HTML. Descriptive signals only; the model judges be-discoverable /
+// be-agent-ready.
+const CRAWLER_UA =
+  'Mozilla/5.0 (compatible; web-uplift-discoverability/1.0; +https://github.com/PaulKinlan/web-uplift)';
+
+export function stripHtmlToText(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<template[\s\S]*?<\/template>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Meaningful content words (>=4 chars, lowercased) for the overlap measure, so
+// coverage reflects real content rather than boilerplate/markup.
+export function contentTokens(text) {
+  const set = new Set();
+  for (const w of String(text || '').toLowerCase().match(/[a-z0-9]{4,}/g) || []) set.add(w);
+  return set;
+}
+
+// Known SPA mount roots that ship EMPTY in the server HTML and are filled by JS
+// - a strong "invisible to non-JS crawlers" tell.
+export function detectEmptyMounts(html) {
+  const found = [];
+  const patterns = [
+    ['#root', /<div[^>]+id=["']root["'][^>]*>\s*<\/div>/i],
+    ['#app', /<div[^>]+id=["']app["'][^>]*>\s*<\/div>/i],
+    ['#__next', /<div[^>]+id=["']__next["'][^>]*>\s*<\/div>/i],
+    ['#__nuxt', /<div[^>]+id=["']__nuxt["'][^>]*>\s*<\/div>/i],
+  ];
+  for (const [name, re] of patterns) if (re.test(html)) found.push(name);
+  return found;
+}
+
+async function discoverability(client, url, opts, log) {
+  // 1. Raw HTML as a non-JS crawler sees it: a plain fetch, no JS execution.
+  let rawHtml = '';
+  let rawStatus = null;
+  let fetchError = null;
+  let finalUrl = url;
+  try {
+    const res = await fetch(url, { redirect: 'follow', headers: { 'user-agent': CRAWLER_UA, accept: 'text/html' } });
+    rawStatus = res.status;
+    finalUrl = res.url || url;
+    rawHtml = await res.text();
+    log(`[evidence] discoverability: raw HTML ${rawStatus}, ${byteLength(rawHtml)} bytes`);
+  } catch (e) {
+    fetchError = String(e?.message || e);
+    log(`[evidence] discoverability: raw fetch failed: ${fetchError}`);
+  }
+
+  // 2. Rendered DOM after JS runs, via CDP. SPAs often need more than the
+  // default 1s to hydrate and paint their content, so settle for longer here
+  // unless the caller asked for a specific --wait.
+  await navigate(client, url, {
+    settleMs: Math.max(opts.wait ?? 0, 3500),
+    log,
+    beforeTargetNavigate: () => applyConditions(client, opts, log),
+  });
+  await sleep(150);
+  const rendered = await evaluate(
+    client,
+    `(() => {
+      const txt = (document.body ? document.body.innerText : '') || '';
+      return {
+        title: document.title || '',
+        metaDescription: (document.querySelector('meta[name="description"]') || {}).content || '',
+        h1: Array.from(document.querySelectorAll('h1')).map((h) => (h.innerText || '').trim()).filter(Boolean),
+        text: txt.replace(/\\s+/g, ' ').trim(),
+        framework: (window.__NEXT_DATA__ ? 'Next.js' : window.__NUXT__ ? 'Nuxt'
+          : document.querySelector('[ng-version]') ? 'Angular'
+          : (window.React || document.querySelector('[data-reactroot],#root')) ? 'React-like' : null),
+      };
+    })()`,
+  );
+
+  // 3. Compare rendered content against the raw HTML.
+  const rawText = stripHtmlToText(rawHtml);
+  const renderedTokens = contentTokens(rendered.text);
+  const rawTokens = contentTokens(rawText);
+  let overlap = 0;
+  for (const t of renderedTokens) if (rawTokens.has(t)) overlap++;
+  // If the rendered page produced essentially no content, coverage is undefined
+  // (not 100%) - the render likely failed, redirected, or the page is genuinely
+  // empty. Surface that honestly rather than manufacture a perfect score.
+  const renderedEmpty = renderedTokens.size < 3;
+  const coveragePct = renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100);
+  const emptyMounts = detectEmptyMounts(rawHtml);
+  const rawLower = rawText.toLowerCase();
+  const titleInRaw = rendered.title ? rawLower.includes(rendered.title.toLowerCase().slice(0, 60)) : null;
+  const h1InRaw = rendered.h1.length ? rendered.h1.some((h) => rawLower.includes(h.toLowerCase().slice(0, 40))) : null;
+  const metaInRaw = rendered.metaDescription ? /name=["']description["']/i.test(rawHtml) : null;
+  // A JS shell: an empty SPA mount with almost no content in the raw HTML, or a
+  // content-rich rendered page whose text is essentially absent from the raw.
+  // Only assertable when we actually got rendered content to compare against.
+  const isJsShell =
+    coveragePct != null &&
+    ((emptyMounts.length > 0 && coveragePct < 25) || (renderedTokens.size >= 50 && coveragePct < 10));
+
+  const summary = {
+    type: 'discoverability',
+    url,
+    finalUrl,
+    fetchedStatus: rawStatus,
+    fetchError,
+    crawlerUserAgent: CRAWLER_UA,
+    coveragePct, // share of rendered content words that also appear in the raw server HTML (null if the render was empty)
+    contentVisibleWithoutJs: coveragePct,
+    isJsShell,
+    renderedEmpty,
+    emptyMounts,
+    titlePresentInRaw: titleInRaw,
+    h1PresentInRaw: h1InRaw,
+    metaDescriptionPresentInRaw: metaInRaw,
+    rendered: {
+      textChars: rendered.text.length,
+      contentTokens: renderedTokens.size,
+      title: rendered.title,
+      h1Count: rendered.h1.length,
+      framework: rendered.framework,
+    },
+    raw: {
+      htmlBytes: byteLength(rawHtml),
+      textChars: rawText.length,
+      contentTokens: rawTokens.size,
+    },
+    signalsFor: ['be-discoverable', 'be-agent-ready'],
+    note:
+      'coveragePct = the share of the rendered page\'s content words that also appear in the RAW server HTML - what a crawler that does not run JavaScript (many AI crawlers, per the url-influence research) can see. Low coverage with an empty SPA mount means the content is effectively invisible to non-JS crawlers and unlikely to enter model training or search. High coverage means it is server-rendered and reachable. Descriptive signal, not a verdict: judge against be-discoverable / be-agent-ready, and confirm surprising results against the raw HTML and the dom primitive.',
+  };
+
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
 const PRIMITIVES = {
   screenshot,
   video,
@@ -1234,6 +1391,7 @@ const PRIMITIVES = {
   evaluate: evaluateCmd,
   trace,
   har,
+  discoverability,
 };
 
 // --- argument plumbing -----------------------------------------------------
@@ -1314,7 +1472,7 @@ async function main() {
   const url = args._[1];
   if (!primitive || !url) {
     console.error(
-      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har> <url> [options]\n' +
+      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
         '         --duration ms --fps n --full-page --bodies --quiet',

@@ -93,6 +93,7 @@ Primitives, all content- and tool-agnostic:
 | `evaluate` | runs your own `--expr "<js>"` in the page: ad-hoc probes and static tests you write on the spot | Runtime.evaluate |
 | `trace` | a DevTools performance trace over the load (+ `--interact`): a devtools-loadable `trace.json` AND a compact `*-summary.json` (FCP/LCP, long tasks, total blocking time). Read the summary, never the raw trace | Tracing.start/end |
 | `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` to include response bodies) AND a compact `*-summary.json` of network SIGNALS: totals + by-resource-type, first/third-party origins by bytes, render-blocking candidates (grounded in the CDP initiator + priority + renderBlockingStatus when exposed, each with a stated `basis`; confirm against the DOM), weight offenders (largest/slowest), and hygiene (uncompressed text, missing cache headers, redirects, HTTP errors). Read the HAR summary, never the raw HAR. Feeds be-fast-and-stable (request weight, render-blocking), be-sustainable (bytes over the wire), and be-private-and-secure (third parties) | Network domain |
+| `discoverability` | how much of the page a crawler that does NOT run JavaScript can see: fetches the RAW server HTML (a plain request, no JS) and diffs it against the rendered DOM, reporting `coveragePct` (share of rendered content words also present in the raw HTML), `isJsShell`, empty SPA mounts (`#root`/`#app`/`#__next` shipped empty), and whether the title/h1/meta-description survive without JS. This is the url-influence failure mode (JS-rendered SPAs reach AI crawlers and search as empty shells) made measurable per-site. Feeds `be-discoverable` and `be-agent-ready` | fetch + DOM |
 
 Common options the harness simply applies (you choose them, it does not):
 `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
@@ -247,6 +248,13 @@ script; you adapt to the actual page):
 - follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for
   doctype, charset, title, meta description, viewport, anchor hrefs; and/or
   Lighthouse.
+- be-discoverable / be-agent-ready -> the `discoverability` primitive: it
+  reports how much of the rendered content is present in the RAW server HTML
+  (`coveragePct`), whether the page is a JS shell, and whether title/h1/meta
+  survive without JavaScript. A low coverage / `isJsShell: true` means AI
+  crawlers and search see little to nothing (the url-influence failure mode) -
+  a real `be-discoverable`/`be-agent-ready` finding. Confirm a surprising result
+  against the raw HTML and the `dom` primitive before asserting it.
 
 You own this mapping. If the HINT names a tool you do not want to use, use a
 different one. If you want evidence the HINT does not mention, gather it.

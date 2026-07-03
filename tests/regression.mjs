@@ -24,6 +24,7 @@ try {
   await testHarRedirects();
   testBatchDryRunUsesRetainedDirs();
   await testScorecardScoringAndRender();
+  await testDiscoverabilityHelpers();
   console.log('tests OK');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
@@ -68,6 +69,26 @@ async function testScorecardScoringAndRender() {
   assert(text.includes(`Overall: ${scored.overall}/100`), 'scorecard text: overall line missing/mismatched');
   assert(text.includes('reports/example/scorecard.html'), 'scorecard text: HTML link missing');
   assert(text.includes('Do these first:'), 'scorecard text: top-3 section missing');
+}
+
+async function testDiscoverabilityHelpers() {
+  const { stripHtmlToText, contentTokens, detectEmptyMounts } = await import('../evidence/cli.mjs');
+
+  // stripHtmlToText drops scripts/styles/markup, keeps visible text.
+  const text = stripHtmlToText('<html><head><style>.x{color:red}</style></head><body><h1>Hello There</h1><script>var a=1</script><p>Body &amp; content</p></body></html>');
+  assert(text.includes('Hello There') && text.includes('Body & content'), `stripHtmlToText missed content: ${text}`);
+  assert(!text.includes('color:red') && !text.includes('var a'), `stripHtmlToText leaked script/style: ${text}`);
+
+  // contentTokens keeps >=4-char words, lowercased, de-duped.
+  const toks = contentTokens('The Thylakoid MEMBRANE membrane a to');
+  assert(toks.has('thylakoid') && toks.has('membrane'), 'contentTokens missing expected words');
+  assert(!toks.has('the') && !toks.has('to'), 'contentTokens should skip short words');
+  assert(toks.size === 2, `contentTokens should de-dupe case-insensitively, got ${toks.size}`);
+
+  // detectEmptyMounts flags an empty SPA root but not a filled one.
+  assert(detectEmptyMounts('<div id="root"></div>').includes('#root'), 'should detect empty #root');
+  assert(detectEmptyMounts('<div id="root"><h1>hi</h1></div>').length === 0, 'should not flag a filled #root');
+  assert(detectEmptyMounts('<div id="__next">   </div>').includes('#__next'), 'should detect empty #__next');
 }
 
 function run(command, args, opts = {}) {
