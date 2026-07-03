@@ -211,6 +211,10 @@ web-uplift audit --urls ./urls.txt --concurrency 2 --agent claude
 web-uplift fix --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4
 web-uplift fix --target ./src --audit-url http://localhost:8080 --dry-run
 
+# Hill-climb to a SCORE target instead of chasing every last issue.
+web-uplift fix --target ./src --audit-url http://localhost:8080 \
+  --goal-overall 80 --goal-min discoverable=70 --goal-max-critical 0
+
 # Aggregate findings across retained reports.
 web-uplift aggregate
 

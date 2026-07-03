@@ -422,6 +422,11 @@ The loop, highest-leverage task first:
    pass makes no further progress, or `--max-iterations` is hit. Record
    `budget.auditPasses`. Optionally open a PR (branch, commit only the source
    changes, `gh pr create`).
+   - **Goal-directed stop (`--goal-overall <n>` / `--goal-min <outcome>=<n>` /
+     `--goal-max-critical <n>` / `--goal-max-high <n>`):** when a goal is set,
+     also stop as soon as the scorecard meets it, so you can climb to a target
+     (e.g. `overall>=80`, no criticals) without chasing every last low-severity
+     issue. Print the score per pass.
 6. **Emit the before/after comparison.** Preserve the baseline as a `-before`
    run and the final state as an `-after` run (see step 6's run layout) and run
    the compare (step 6b) so the fix produces a `compare.md` showing the measurable

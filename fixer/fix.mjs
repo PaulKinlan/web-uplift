@@ -3,7 +3,7 @@
  * web-uplift fix: the MODEL-DRIVEN hill-climb. NOT canned transforms.
  *
  *   npm run fix -- --target <dir> --audit-url <url> [--agent claude]
- *                  [--max-iterations 4] [--findings <path>] [--out <dir>]
+ *                  [--max-iterations 4] [--goal-overall 80] [--findings <path>] [--out <dir>]
  *                  [--dry-run] [--verbose]
  *
  * Mirrors the audit runner's design (runner/run-batch.mjs): it ORCHESTRATES,
@@ -44,9 +44,34 @@ import { join } from 'node:path';
 import { AGENTS, AGENT_NAMES } from '../runner/agents.mjs';
 import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
-import { buildScorecardData, renderScorecard } from '../aggregate/scorecard.mjs';
+import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
 
 const args = parseArgs(process.argv.slice(2));
+
+// --goal defines a SCORE target to hill-climb to, an alternative stop condition
+// to "every issue fixed". Same shape as the CI gate:
+//   --goal-overall <n>  --goal-min <outcome>=<n>  --goal-max-critical <n>  --goal-max-high <n>
+// With no --goal-* flags the loop behaves as before (stop at zero issues).
+function parseGoal(a) {
+  const goal = { min: {} };
+  let active = false;
+  if (a['goal-overall'] != null) { goal.minOverall = Number(a['goal-overall']); active = true; }
+  if (a['goal-max-critical'] != null) { goal.maxCritical = Number(a['goal-max-critical']); active = true; }
+  if (a['goal-max-high'] != null) { goal.maxHigh = Number(a['goal-max-high']); active = true; }
+  for (const g of [].concat(a['goal-min'] ?? [])) {
+    const [key, n] = String(g).split('=');
+    if (key && n != null) { goal.min[key] = Number(n); active = true; }
+  }
+  return { goal, active };
+}
+
+// Score summary for one report (single-report analogue of scorecardSummary).
+function reportSummary(report) {
+  const s = scoreReport(report);
+  const sev = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const f of report.findings ?? []) if (sev[f.severity] != null) sev[f.severity]++;
+  return { overall: s.overall, outcomes: Object.fromEntries(s.outcomes.map((o) => [o.key, o.score])), findingsBySeverity: sev };
+}
 
 if (args.help || args.h) {
   printHelp();
@@ -66,6 +91,7 @@ const maxIterations = Number(args['max-iterations'] ?? 4);
 const outDir = args.out ?? `reports/fix-${slugify(auditUrl ?? 'site')}`;
 const verbose = Boolean(args.verbose);
 const dryRun = Boolean(args['dry-run']);
+const { goal, active: goalActive } = parseGoal(args);
 
 if (!dryRun && (!target || !auditUrl)) {
   console.error(
@@ -125,7 +151,13 @@ if (!findingsPath) {
 }
 const baseline = await readReport(findingsPath);
 const startIssues = countOutstanding(baseline);
+const goalOf = (report) => (goalActive ? evaluateGates(reportSummary(report), goal) : null);
+const scoreOf = (report) => reportSummary(report).overall;
 console.log(`Baseline: ${startIssues} outstanding issue-findings to climb down.`);
+if (goalActive) {
+  const g = goalOf(baseline);
+  console.log(`Goal: hill-climb until met -> ${g.checks.map((c) => c.name).join(', ')}. Baseline score ${scoreOf(baseline) ?? 'N/A'}, goal ${g.passed ? 'ALREADY met' : 'not met'}.`);
+}
 
 // Snapshot the baseline into a RETAINED `before` run under reports/<host>/ so
 // the final compare has the pre-fix state with its artifacts. The live working
@@ -136,10 +168,14 @@ await snapshotRun(dirOf(findingsPath), beforeRun.dir, baseline);
 updateLatest(beforeRun.hostRoot, beforeRun.runId);
 console.log(`Preserved baseline run at ${beforeRun.dir}`);
 
-// 2. Hill-climb.
+// 2. Hill-climb. Stop condition is zero outstanding issues OR, when --goal is
+// set, the score goal being met (so you can climb to "overall>=80, no critical"
+// without chasing every last low-severity issue).
 let lastCount = startIssues;
-let passed = startIssues === 0;
-const history = [{ iteration: 0, outstanding: startIssues }];
+const goalReached = (report) => goalActive && goalOf(report).passed;
+let passed = startIssues === 0 || goalReached(baseline);
+let stoppedOnGoal = goalReached(baseline);
+const history = [{ iteration: 0, outstanding: startIssues, score: scoreOf(baseline) }];
 
 for (let i = 1; i <= maxIterations && !passed; i++) {
   console.log(`\n--- iteration ${i}/${maxIterations} ---`);
@@ -148,12 +184,18 @@ for (let i = 1; i <= maxIterations && !passed; i++) {
 
   const report = await readReport(join(outDir, 'report.json'));
   const outstanding = countOutstanding(report);
-  history.push({ iteration: i, outstanding });
-  console.log(`iteration ${i}: outstanding issue-findings = ${outstanding} (was ${lastCount})`);
+  const score = scoreOf(report);
+  history.push({ iteration: i, outstanding, score });
+  console.log(`iteration ${i}: outstanding issue-findings = ${outstanding} (was ${lastCount}), score = ${score ?? 'N/A'}`);
 
+  if (goalActive) {
+    const g = goalOf(report);
+    console.log(`  goal: ${g.checks.map((c) => `${c.ok ? 'PASS' : 'FAIL'} ${c.name} (${c.detail})`).join(', ')}`);
+    if (g.passed) { passed = true; stoppedOnGoal = true; }
+  }
   if (outstanding === 0) {
     passed = true;
-  } else if (outstanding >= lastCount && i > 1) {
+  } else if (!passed && outstanding >= lastCount && i > 1) {
     console.log('No further progress this iteration; stopping the climb.');
     break;
   }
@@ -164,14 +206,24 @@ for (let i = 1; i <= maxIterations && !passed; i++) {
 
 console.log('\nHill-climb summary:');
 for (const h of history) {
-  console.log(`  iteration ${h.iteration}: ${h.outstanding} outstanding`);
+  console.log(`  iteration ${h.iteration}: ${h.outstanding} outstanding, score ${h.score ?? 'N/A'}`);
 }
-console.log(passed ? 'PASS: no outstanding issues remain.' : `STOPPED with ${lastCount} outstanding issue(s).`);
+console.log(
+  stoppedOnGoal
+    ? 'PASS: score goal met.'
+    : passed
+      ? 'PASS: no outstanding issues remain.'
+      : `STOPPED with ${lastCount} outstanding issue(s)${goalActive ? ' (goal not met)' : ''}.`,
+);
 
 // 3. Snapshot the final state into a RETAINED `after` run and emit the
 // before -> after comparison automatically (audit -> fix -> re-audit -> compare).
+// If no iteration ran (e.g. the goal was already met at baseline), the working
+// report was never written; fall back to the baseline as the final state.
 try {
-  const finalReport = await readReport(join(outDir, 'report.json'));
+  const finalReport = existsSync(join(outDir, 'report.json'))
+    ? await readReport(join(outDir, 'report.json'))
+    : baseline;
   const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
   await snapshotRun(outDir, afterRun.dir, finalReport);
   updateLatest(afterRun.hostRoot, afterRun.runId);
@@ -291,13 +343,19 @@ function slugify(s) {
 
 function parseArgs(argv) {
   const out = { _: [] };
-  const valueFlags = new Set(['target', 'audit-url', 'agent', 'max-iterations', 'findings', 'out', 'reports-root']);
+  const valueFlags = new Set([
+    'target', 'audit-url', 'agent', 'max-iterations', 'findings', 'out', 'reports-root',
+    'goal-overall', 'goal-min', 'goal-max-critical', 'goal-max-high',
+  ]);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
       const key = argv[i].slice(2);
       const next = argv[i + 1];
-      if (valueFlags.has(key) && next !== undefined && !next.startsWith('--')) { out[key] = next; i++; }
-      else out[key] = true;
+      if (valueFlags.has(key) && next !== undefined && !next.startsWith('--')) {
+        // Accumulate repeated value flags (e.g. multiple --goal-min) into an array.
+        out[key] = out[key] === undefined ? next : [].concat(out[key], next);
+        i++;
+      } else out[key] = true;
     } else if (argv[i].startsWith('-') && argv[i].length === 2) {
       out[argv[i].slice(1)] = true;
     } else {
@@ -324,6 +382,11 @@ Options:
   --audit-url <url>       URL the audit + re-audit run against (required).
   --agent <name>          ${AGENT_NAMES.join(' | ')} (default: claude).
   --max-iterations <n>    Hill-climb cap (default: 4).
+  --goal-overall <n>      Stop when the overall score reaches n (score target,
+                          instead of only stopping at zero issues).
+  --goal-min <key>=<n>    Stop-condition: an outcome must reach n (repeatable).
+                          keys: speed memory usability inclusive discoverable trust
+  --goal-max-critical <n> / --goal-max-high <n>  Ceilings that must be met to stop.
   --findings <path>       Pre-aggregated findings/report.json (skip baseline audit).
   --out <dir>             Report directory (default: reports/fix-<host>/).
   --reports-root <dir>    Root for retained before/after run dirs (default: reports).
