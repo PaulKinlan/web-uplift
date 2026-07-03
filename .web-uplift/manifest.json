@@ -1,0 +1,9 @@
+{
+  "package": "web-uplift",
+  "version": "0.1.2",
+  "installedAt": "2026-07-03T12:56:04.031Z",
+  "agents": [
+    "pi"
+  ],
+  "updateCommand": "npx -y web-uplift@latest update --agent all"
+}

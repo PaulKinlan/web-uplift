@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/PaulKinlan/web-uplift/schema/findings.schema.json",
+  "title": "Web-uplift audit report",
+  "description": "A modern-UX audit report for a single site: the explored paths, the findings (each tied to a violated principle and/or a Modern Web Guidance use case), and a prioritised task list.",
+  "type": "object",
+  "required": ["url", "auditedAt", "status", "paths", "findings"],
+  "properties": {
+    "url": { "type": "string", "format": "uri" },
+    "auditedAt": { "type": "string", "format": "date-time" },
+    "mode": {
+      "type": "string",
+      "enum": ["report", "fix"],
+      "description": "report = critique only; fix = source fixes were applied and the audit re-run"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "blocked", "error"],
+      "description": "blocked = bot wall / login required; partial = some paths failed"
+    },
+    "statusDetail": { "type": "string" },
+    "page": {
+      "type": "object",
+      "properties": {
+        "appType": { "type": "string", "enum": ["spa", "mpa", "hybrid", "unknown"] },
+        "framework": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "evidenceUsed": {
+      "type": "array",
+      "description": "The evidence modalities and tools the model actually ran for this audit (e.g. 'screenshot', 'layout-metrics', 'transition-video', 'heap-summary', 'dom+source', 'evaluate-probe', 'lighthouse', 'axe-core'). Makes the audit honest about its method, since method selection is the model's at inspection time, not pre-baked.",
+      "items": { "type": "string" }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "The concrete evidence files the audit produced (the artifacts manifest). Each entry ties an artifact type to its on-disk path (relative to the report directory) and a caption. report.md embeds screenshots inline and links the rest (video/trace/har/heap/lighthouse). Findings reference these paths via finding.artifacts so each 'fix this' task is backed by concrete before-evidence.",
+      "items": {
+        "type": "object",
+        "required": ["type", "path"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["screenshot", "video", "trace", "trace-summary", "har", "har-summary", "heap", "lighthouse", "dom", "layout", "discoverability", "other"],
+            "description": "What kind of artifact this is, matching the evidence primitive that produced it."
+          },
+          "path": {
+            "type": "string",
+            "description": "Path to the artifact, relative to the report directory (e.g. 'evidence/no-dark-mode-dark.png', 'evidence/trace-summary.json')."
+          },
+          "caption": {
+            "type": "string",
+            "description": "Short human-readable description of what the artifact shows and under which condition."
+          },
+          "condition": {
+            "type": "string",
+            "description": "Emulated condition the artifact was captured under (e.g. 'prefers-color-scheme: dark', 'viewport: 360x800'), if any."
+          },
+          "findingIds": {
+            "type": "array",
+            "description": "Findings this artifact evidences (the inverse of finding.artifacts; either or both may be populated).",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "description": "The web-uplift.json project config the audit honoured, if present (see schema/config.schema.json). Records declared scope/opt-outs/intent so the report is honest about what the developer asked for.",
+      "properties": {
+        "loaded": { "type": "boolean", "description": "Whether a web-uplift.json was found and applied." },
+        "path": { "type": "string" }
+      }
+    },
+    "principleOutcomes": {
+      "type": "array",
+      "description": "Per-principle applicability + verdict, so the audit reports 'opted-out' and 'n/a (judged)' DISTINCTLY from pass/issue. This is the 'quality without shaming' record: a contextual principle that legitimately does not apply is not penalised, but the rationale is captured.",
+      "items": {
+        "type": "object",
+        "required": ["principleId", "status"],
+        "properties": {
+          "principleId": { "type": "string" },
+          "expectation": {
+            "type": "string",
+            "enum": ["default", "contextual"],
+            "description": "From principles.json applicability.expectation."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "issues", "not-applicable", "opted-out"],
+            "description": "pass = met; issues = one or more findings; not-applicable = the model judged the principle does not apply (contextual, no declared intent); opted-out = the developer declared an opt-out in web-uplift.json."
+          },
+          "reason": {
+            "type": "string",
+            "description": "REQUIRED when status is not-applicable (the model's judgement-call rationale) or opted-out (the developer's declared reason, echoed from web-uplift.json)."
+          },
+          "findingIds": { "type": "array", "items": { "type": "string" } }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "enum": ["not-applicable", "opted-out"] } } },
+            "then": { "required": ["reason"] }
+          }
+        ]
+      }
+    },
+    "paths": {
+      "type": "array",
+      "description": "The user paths / test cases exercised (mirrors the test plan).",
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "result"],
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "url": { "type": "string" },
+          "conditions": {
+            "type": "array",
+            "description": "Emulated conditions evaluated for this path (e.g. 'prefers-color-scheme: dark', 'viewport: 360x800', 'keyboard-only').",
+            "items": { "type": "string" }
+          },
+          "result": { "type": "string", "enum": ["pass", "issues", "failed", "skipped"] }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "summary", "evidence", "suggestedFix"],
+        "properties": {
+          "id": { "type": "string" },
+          "pathId": {
+            "type": "string",
+            "description": "Which exercised path this finding came from."
+          },
+          "url": { "type": "string", "description": "Specific URL the finding applies to." },
+          "principleId": {
+            "type": "string",
+            "description": "Principle violated, from knowledge/principles.json (e.g. adapt-to-the-user). Optional: a finding may be guidance-only."
+          },
+          "principleCheckId": {
+            "type": "string",
+            "description": "The specific check within the principle (e.g. respects-color-scheme)."
+          },
+          "guidanceId": {
+            "type": "string",
+            "description": "Modern Web Guidance use-case id that addresses this (from `modern-web-guidance search`/`list`), e.g. dark-mode."
+          },
+          "guidanceCategory": {
+            "type": "string",
+            "description": "Guidance category (e.g. user-experience, performance, accessibility, css, forms)."
+          },
+          "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+          "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+          "summary": {
+            "type": "string",
+            "description": "What diverges from the modern approach, in one or two sentences."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete observation backing the finding (e.g. 'No color-scheme declared; background stays #fff under prefers-color-scheme: dark', or 'horizontal scrollbar at 360px viewport; .hero has width: 1200px')."
+          },
+          "artifacts": {
+            "type": "array",
+            "description": "Artifact paths (matching entries in the report-level `artifacts` manifest) that concretely evidence this finding, so the report ties each 'action to fix' to its before-evidence (e.g. the dark-mode screenshot, the reduced-motion video, the trace summary). Paths are relative to the report directory.",
+            "items": { "type": "string" }
+          },
+          "suggestedFix": {
+            "type": "string",
+            "description": "Concrete remediation following Modern Web Guidance, not a restatement of the problem (e.g. 'Add color-scheme: light dark and use light-dark() for surface colors; see guidance id dark-mode')."
+          },
+          "effort": {
+            "type": "string",
+            "enum": ["trivial", "small", "medium", "large"],
+            "description": "Rough implementation effort, used for prioritisation."
+          }
+        }
+      }
+    },
+    "taskList": {
+      "type": "array",
+      "description": "Prioritised, deduplicated list of fixes derived from the findings (highest leverage first). The unit of work handed to fix mode.",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "priority"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "priority": { "type": "integer", "minimum": 1, "description": "1 = do first." },
+          "findingIds": { "type": "array", "items": { "type": "string" } },
+          "guidanceId": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["open", "applied", "verified", "wontfix"],
+            "description": "Updated by fix mode as the hill-climb progresses."
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "wallClockSeconds": { "type": "number" },
+        "pathCount": { "type": "integer" },
+        "auditPasses": {
+          "type": "integer",
+          "description": "How many audit passes ran (fix mode re-audits, so >1)."
+        }
+      }
+    }
+  }
+}

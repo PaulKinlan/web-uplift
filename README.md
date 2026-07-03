@@ -142,6 +142,17 @@ lookup notes under `.web-uplift/` so the in-session model can call them
 directly. It also writes `.web-uplift/manifest.json` with the package version
 that produced the installed copy.
 
+### pi: per-project or global package
+
+The `--agent pi` install above is per-project. Because web-uplift also declares
+a `pi.skills` entry in its `package.json`, pi can instead load the skill from the
+**installed package globally** - add web-uplift as a pi package once and
+`/skill:web-audit` is available in every project, with no per-repo file drop. In
+that global mode nothing is vendored locally, so the skill calls the evidence CLI
+through the `web-uplift evidence <primitive> <url>` bin (or `npx -y web-uplift
+evidence ...`), which resolves from any directory. web-uplift needs no pi
+*extension* (custom tools/commands) - a skill is all it is.
+
 ## Keeping Installs Current
 
 Use `@latest` whenever you install or refresh the skill:

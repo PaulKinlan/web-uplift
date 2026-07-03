@@ -28,6 +28,11 @@
   "bin": {
     "web-uplift": "bin/web-uplift.mjs"
   },
+  "pi": {
+    "skills": [
+      ".claude/skills/web-audit"
+    ]
+  },
   "exports": {
     ".": "./index.mjs",
     "./evidence": "./evidence/cli.mjs",
