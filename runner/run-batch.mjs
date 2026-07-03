@@ -3,11 +3,16 @@
  * Batch web-uplift audits: one headless agent run per URL.
  *
  *   npm run batch -- [urls...] [--urls <file>] [--agent claude]
- *                    [--concurrency 2] [--out reports]
+ *                    [--concurrency 2] [--out reports] [--flow <flow.json>]
  *                    [--max-turns 80] [--dry-run] [--verbose]
  *
  * URLs come from positional arguments, a --urls file, or both. Invalid URLs are
  * warned about and skipped; ending up with zero URLs is an error.
+ *
+ * --flow replays a user journey (web-uplift `flow record` output, a Chrome
+ * DevTools Recorder export, or a hand-authored flow.json) into each run's
+ * evidence/flow/ BEFORE the agent audits, and tells the agent to judge the
+ * journey's per-step states as additional paths.
  *
  * Audits run in report mode (critique only). Fix mode is interactive and
  * source-bound (--fix --source <dir>), so it is intentionally not exposed as
@@ -35,9 +40,12 @@
  */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { join, relative, resolve as resolvePath } from 'node:path';
 import { AGENTS } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
+import { loadFlow, replayFlow } from './flow.mjs';
+import { launchChrome, newSession } from '../evidence/cdp.mjs';
 
 // The one canonical methodology is .claude/skills/web-audit/SKILL.md. Agents
 // that surface it as a slash command invoke /web-audit; the rest are pointed at
@@ -68,6 +76,11 @@ const outDir = args.out ?? 'reports';
 const concurrency = Number(args.concurrency ?? 2);
 const maxTurns = Number(args['max-turns'] ?? 80);
 const verbose = Boolean(args.verbose);
+// --flow <path>: a user journey (web-uplift flow record output, a Chrome
+// DevTools Recorder export, or a hand-authored flow.json) is replayed into each
+// run before the agent audits, so the model judges the journey's per-step states.
+const flowPath = args.flow;
+const flow = flowPath ? loadFlow(flowPath) : null;
 
 const urls = await collectUrls();
 if (!urls.length) {
@@ -100,7 +113,9 @@ async function worker() {
     const siteDir = planned.dir;
 
     if (args['dry-run']) {
-      const prompt = agent.prompt(url, siteDir);
+      const extra = flow ? flowExtra(siteDir) : '';
+      const prompt = agent.prompt(url, siteDir, extra);
+      if (flow) console.log(`would replay   flow "${flow.title}" (${flow.steps.length} steps) into ${join(siteDir, 'evidence', 'flow')}`);
       console.log(`would run      ${agent.bin} ${agent.args(prompt, { maxTurns }).join(' ')}`);
       continue;
     }
@@ -108,7 +123,15 @@ async function worker() {
     await mkdir(siteDir, { recursive: true });
     console.log(`auditing       ${url}`);
     try {
-      const result = await runAgent(url, siteDir);
+      let extra = '';
+      if (flow) {
+        console.log(`replaying flow ${flow.title} (${flow.steps.length} steps)`);
+        const res = await replayFlowIntoRun(url, siteDir);
+        const failed = res.steps.filter((s) => !s.ok).length;
+        console.log(`flow replayed  ${res.steps.length} step(s), ${failed} failed`);
+        extra = flowExtra(siteDir);
+      }
+      const result = await runAgent(url, siteDir, extra);
       await writeFile(join(siteDir, 'run.json'), result);
       const ok = await exists(join(siteDir, 'report.json'));
       if (ok) {
@@ -144,8 +167,39 @@ async function annotateReport(siteDir, meta) {
   }
 }
 
-function runAgent(url, siteDir) {
-  const prompt = agent.prompt(url, siteDir);
+// Replay the flow into <siteDir>/evidence/flow/ (per-step screenshots +
+// flow-result.json) before the agent audits, so the model has the journey's
+// concrete states to judge.
+async function replayFlowIntoRun(url, siteDir) {
+  const flowDir = join(siteDir, 'evidence', 'flow');
+  await mkdir(flowDir, { recursive: true });
+  const log = verbose ? (m) => console.error(m) : () => {};
+  const chrome = await launchChrome({ log });
+  try {
+    const session = await newSession(chrome.port, { log });
+    try {
+      const res = await replayFlow(session.client, flow, { startUrl: url, outDir: flowDir, log });
+      writeFileSync(join(flowDir, 'flow-result.json'), JSON.stringify(res, null, 2) + '\n');
+      return res;
+    } finally {
+      await session.close();
+    }
+  } finally {
+    await chrome.close();
+  }
+}
+
+// Prompt addendum telling the model the journey was already replayed and where
+// its evidence is, so it audits the flow steps as additional paths.
+function flowExtra(siteDir) {
+  const rel = relative(resolvePath(siteDir), resolvePath(join(siteDir, 'evidence', 'flow')));
+  return `# A user journey ("${flow.title}", ${flow.steps.length} steps) was ALREADY replayed for you: ` +
+    `per-step screenshots and flow-result.json are in ${rel}/ under the run dir. Treat each step's state as an ` +
+    `additional audited path - judge the per-page principles across the journey and record the flow in report paths.`;
+}
+
+function runAgent(url, siteDir, extra = '') {
+  const prompt = agent.prompt(url, siteDir, extra);
   const cliArgs = agent.args(prompt, { maxTurns });
   const slug = slugify(url);
   if (verbose) console.log(`[${slug}] $ ${agent.bin} ${cliArgs.join(' ')}`);
@@ -215,7 +269,7 @@ async function exists(path) {
 
 function parseArgs(argv) {
   const out = { _: [] };
-  const valueFlags = new Set(['urls', 'agent', 'concurrency', 'out', 'max-turns']);
+  const valueFlags = new Set(['urls', 'agent', 'concurrency', 'out', 'max-turns', 'flow']);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
       const key = argv[i].slice(2);

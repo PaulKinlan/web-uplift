@@ -207,6 +207,10 @@ for personal use.
 web-uplift audit https://example.com
 web-uplift audit --urls ./urls.txt --concurrency 2 --agent claude
 
+# Audit a URL AND a user journey: the flow is replayed into each run first, then
+# the agent judges the journey's per-step states as extra paths.
+web-uplift audit https://example.com --flow ./checkout.json
+
 # Model-driven fix hill climb against local source.
 web-uplift fix --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4
 web-uplift fix --target ./src --audit-url http://localhost:8080 --dry-run

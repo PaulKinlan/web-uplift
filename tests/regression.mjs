@@ -23,6 +23,7 @@ try {
   await testPreNavigationEmulation();
   await testHarRedirects();
   testBatchDryRunUsesRetainedDirs();
+  testBatchFlowDryRun();
   await testScorecardScoringAndRender();
   await testDiscoverabilityHelpers();
   await testFlowNormalize();
@@ -335,6 +336,21 @@ function testBatchDryRunUsesRetainedDirs() {
     `batch dry-run did not use retained run dir:\n${result.stdout}`,
   );
   assert(!result.stdout.includes(`${reports}/codex/`), `batch dry-run still used old agent prefix:\n${result.stdout}`);
+}
+
+function testBatchFlowDryRun() {
+  const reports = join(tmp, 'reports-flow');
+  const flowPath = join(tmp, 'flow.json');
+  writeFileSync(flowPath, JSON.stringify({
+    title: 'Signup',
+    steps: [{ type: 'navigate', url: 'https://example.com/' }, { type: 'click', selectors: [['#go']] }],
+  }));
+  const result = run(process.execPath, [
+    'runner/run-batch.mjs', '--dry-run', '--agent', 'claude', '--out', reports, '--flow', flowPath, 'https://example.com',
+  ]);
+  assert(result.status === 0, `batch --flow dry-run failed: ${result.stderr || result.stdout}`);
+  assert(result.stdout.includes('would replay') && result.stdout.includes('Signup'), `batch --flow dry-run did not announce the replay:\n${result.stdout}`);
+  assert(result.stdout.includes('already replayed for you'.toLowerCase()) || result.stdout.includes('ALREADY replayed'), `batch --flow dry-run did not pass flow guidance to the agent:\n${result.stdout}`);
 }
 
 function packTarball() {
