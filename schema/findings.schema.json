@@ -4,44 +4,103 @@
   "title": "Web-uplift audit report",
   "description": "A modern-UX audit report for a single site: the explored paths, the findings (each tied to a violated principle and/or a Modern Web Guidance use case), and a prioritised task list.",
   "type": "object",
-  "required": ["url", "auditedAt", "status", "paths", "findings"],
+  "required": [
+    "url",
+    "auditedAt",
+    "status",
+    "paths",
+    "findings"
+  ],
   "properties": {
-    "url": { "type": "string", "format": "uri" },
-    "auditedAt": { "type": "string", "format": "date-time" },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "auditedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
     "mode": {
       "type": "string",
-      "enum": ["report", "fix"],
+      "enum": [
+        "report",
+        "fix"
+      ],
       "description": "report = critique only; fix = source fixes were applied and the audit re-run"
     },
     "status": {
       "type": "string",
-      "enum": ["completed", "partial", "blocked", "error"],
+      "enum": [
+        "completed",
+        "partial",
+        "blocked",
+        "error"
+      ],
       "description": "blocked = bot wall / login required; partial = some paths failed"
     },
-    "statusDetail": { "type": "string" },
+    "statusDetail": {
+      "type": "string"
+    },
     "page": {
       "type": "object",
       "properties": {
-        "appType": { "type": "string", "enum": ["spa", "mpa", "hybrid", "unknown"] },
-        "framework": { "type": "string" },
-        "notes": { "type": "string" }
+        "appType": {
+          "type": "string",
+          "enum": [
+            "spa",
+            "mpa",
+            "hybrid",
+            "unknown"
+          ]
+        },
+        "framework": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     },
     "evidenceUsed": {
       "type": "array",
       "description": "The evidence modalities and tools the model actually ran for this audit (e.g. 'screenshot', 'layout-metrics', 'transition-video', 'heap-summary', 'dom+source', 'evaluate-probe', 'lighthouse', 'axe-core'). Makes the audit honest about its method, since method selection is the model's at inspection time, not pre-baked.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
+    },
+    "guidanceConsulted": {
+      "type": "array",
+      "description": "Modern Web Guidance guide ids the model actually retrieved from the live feed this run (via `modern-web-guidance search`/`retrieve`), e.g. ['dark-mode','optimize-image-priority']. Modern Web Guidance is mandatory: an audit or fix run should always populate this, and every issue-finding should carry a `guidanceId` drawn from it. An empty array on a run that produced issue-findings means guidance was skipped, which is a skill violation.",
+      "items": {
+        "type": "string"
+      }
     },
     "artifacts": {
       "type": "array",
       "description": "The concrete evidence files the audit produced (the artifacts manifest). Each entry ties an artifact type to its on-disk path (relative to the report directory) and a caption. report.md embeds screenshots inline and links the rest (video/trace/har/heap/lighthouse). Findings reference these paths via finding.artifacts so each 'fix this' task is backed by concrete before-evidence.",
       "items": {
         "type": "object",
-        "required": ["type", "path"],
+        "required": [
+          "type",
+          "path"
+        ],
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["screenshot", "video", "trace", "trace-summary", "har", "har-summary", "heap", "lighthouse", "dom", "layout", "discoverability", "other"],
+            "enum": [
+              "screenshot",
+              "video",
+              "trace",
+              "trace-summary",
+              "har",
+              "har-summary",
+              "heap",
+              "lighthouse",
+              "dom",
+              "layout",
+              "discoverability",
+              "other"
+            ],
             "description": "What kind of artifact this is, matching the evidence primitive that produced it."
           },
           "path": {
@@ -59,7 +118,9 @@
           "findingIds": {
             "type": "array",
             "description": "Findings this artifact evidences (the inverse of finding.artifacts; either or both may be populated).",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           }
         }
       }
@@ -68,8 +129,13 @@
       "type": "object",
       "description": "The web-uplift.json project config the audit honoured, if present (see schema/config.schema.json). Records declared scope/opt-outs/intent so the report is honest about what the developer asked for.",
       "properties": {
-        "loaded": { "type": "boolean", "description": "Whether a web-uplift.json was found and applied." },
-        "path": { "type": "string" }
+        "loaded": {
+          "type": "boolean",
+          "description": "Whether a web-uplift.json was found and applied."
+        },
+        "path": {
+          "type": "string"
+        }
       }
     },
     "principleOutcomes": {
@@ -77,29 +143,60 @@
       "description": "Per-principle applicability + verdict, so the audit reports 'opted-out' and 'n/a (judged)' DISTINCTLY from pass/issue. This is the 'quality without shaming' record: a contextual principle that legitimately does not apply is not penalised, but the rationale is captured.",
       "items": {
         "type": "object",
-        "required": ["principleId", "status"],
+        "required": [
+          "principleId",
+          "status"
+        ],
         "properties": {
-          "principleId": { "type": "string" },
+          "principleId": {
+            "type": "string"
+          },
           "expectation": {
             "type": "string",
-            "enum": ["default", "contextual"],
+            "enum": [
+              "default",
+              "contextual"
+            ],
             "description": "From principles.json applicability.expectation."
           },
           "status": {
             "type": "string",
-            "enum": ["pass", "issues", "not-applicable", "opted-out"],
+            "enum": [
+              "pass",
+              "issues",
+              "not-applicable",
+              "opted-out"
+            ],
             "description": "pass = met; issues = one or more findings; not-applicable = the model judged the principle does not apply (contextual, no declared intent); opted-out = the developer declared an opt-out in web-uplift.json."
           },
           "reason": {
             "type": "string",
             "description": "REQUIRED when status is not-applicable (the model's judgement-call rationale) or opted-out (the developer's declared reason, echoed from web-uplift.json)."
           },
-          "findingIds": { "type": "array", "items": { "type": "string" } }
+          "findingIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         },
         "allOf": [
           {
-            "if": { "properties": { "status": { "enum": ["not-applicable", "opted-out"] } } },
-            "then": { "required": ["reason"] }
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "not-applicable",
+                    "opted-out"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "reason"
+              ]
+            }
           }
         ]
       }
@@ -109,17 +206,37 @@
       "description": "The user paths / test cases exercised (mirrors the test plan).",
       "items": {
         "type": "object",
-        "required": ["id", "description", "result"],
+        "required": [
+          "id",
+          "description",
+          "result"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "description": { "type": "string" },
-          "url": { "type": "string" },
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
           "conditions": {
             "type": "array",
             "description": "Emulated conditions evaluated for this path (e.g. 'prefers-color-scheme: dark', 'viewport: 360x800', 'keyboard-only').",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
-          "result": { "type": "string", "enum": ["pass", "issues", "failed", "skipped"] }
+          "result": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "issues",
+              "failed",
+              "skipped"
+            ]
+          }
         }
       }
     },
@@ -127,14 +244,25 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "severity", "summary", "evidence", "suggestedFix"],
+        "required": [
+          "id",
+          "severity",
+          "summary",
+          "evidence",
+          "suggestedFix"
+        ],
         "properties": {
-          "id": { "type": "string" },
+          "id": {
+            "type": "string"
+          },
           "pathId": {
             "type": "string",
             "description": "Which exercised path this finding came from."
           },
-          "url": { "type": "string", "description": "Specific URL the finding applies to." },
+          "url": {
+            "type": "string",
+            "description": "Specific URL the finding applies to."
+          },
           "principleId": {
             "type": "string",
             "description": "Principle violated, from knowledge/principles.json (e.g. adapt-to-the-user). Optional: a finding may be guidance-only."
@@ -151,8 +279,23 @@
             "type": "string",
             "description": "Guidance category (e.g. user-experience, performance, accessibility, css, forms)."
           },
-          "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
-          "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
           "summary": {
             "type": "string",
             "description": "What diverges from the modern approach, in one or two sentences."
@@ -164,7 +307,9 @@
           "artifacts": {
             "type": "array",
             "description": "Artifact paths (matching entries in the report-level `artifacts` manifest) that concretely evidence this finding, so the report ties each 'action to fix' to its before-evidence (e.g. the dark-mode screenshot, the reduced-motion video, the trace summary). Paths are relative to the report directory.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "suggestedFix": {
             "type": "string",
@@ -172,7 +317,12 @@
           },
           "effort": {
             "type": "string",
-            "enum": ["trivial", "small", "medium", "large"],
+            "enum": [
+              "trivial",
+              "small",
+              "medium",
+              "large"
+            ],
             "description": "Rough implementation effort, used for prioritisation."
           }
         }
@@ -183,16 +333,40 @@
       "description": "Prioritised, deduplicated list of fixes derived from the findings (highest leverage first). The unit of work handed to fix mode.",
       "items": {
         "type": "object",
-        "required": ["id", "title", "priority"],
+        "required": [
+          "id",
+          "title",
+          "priority"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "title": { "type": "string" },
-          "priority": { "type": "integer", "minimum": 1, "description": "1 = do first." },
-          "findingIds": { "type": "array", "items": { "type": "string" } },
-          "guidanceId": { "type": "string" },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1 = do first."
+          },
+          "findingIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "guidanceId": {
+            "type": "string"
+          },
           "status": {
             "type": "string",
-            "enum": ["open", "applied", "verified", "wontfix"],
+            "enum": [
+              "open",
+              "applied",
+              "verified",
+              "wontfix"
+            ],
             "description": "Updated by fix mode as the hill-climb progresses."
           }
         }
@@ -201,8 +375,12 @@
     "budget": {
       "type": "object",
       "properties": {
-        "wallClockSeconds": { "type": "number" },
-        "pathCount": { "type": "integer" },
+        "wallClockSeconds": {
+          "type": "number"
+        },
+        "pathCount": {
+          "type": "integer"
+        },
         "auditPasses": {
           "type": "integer",
           "description": "How many audit passes ran (fix mode re-audits, so >1)."

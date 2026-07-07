@@ -203,9 +203,10 @@ the local evidence CLI only when it needs browser evidence.
 
 Fix mode is a model-driven hill climb:
 
-1. Audit the site.
+1. Audit the site (searching Modern Web Guidance for every principle first).
 2. Read the prioritised task list.
-3. Retrieve the relevant Modern Web Guidance.
+3. Retrieve the relevant Modern Web Guidance — **required**: every fix must be
+   backed by a live guidance lookup, never the model's memory.
 4. Edit the source under `--source`.
 5. Re-gather the same evidence.
 6. Repeat until no outstanding `issues` remain, or the iteration cap is hit.

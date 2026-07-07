@@ -20,6 +20,13 @@
     "lighthouse (performance, accessibility, best-practices, seo)",
     "axe-core (injected from CDN via the evaluate primitive and run in-page)"
   ],
+  "guidanceConsulted": [
+    "accessibility",
+    "css",
+    "dark-mode",
+    "html",
+    "size-aware-styling"
+  ],
   "config": {
     "loaded": false,
     "path": "(none for the frozen fixture; the repo web-uplift.json targets the live playground, not this fixture)"

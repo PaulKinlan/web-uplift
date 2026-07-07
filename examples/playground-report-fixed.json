@@ -16,39 +16,172 @@
     "lighthouse (accessibility, best-practices, seo, performance)",
     "axe-core (injected via the evaluate primitive, color-contrast)"
   ],
+  "guidanceConsulted": [
+    "accessibility",
+    "css",
+    "dark-mode",
+    "html",
+    "size-aware-styling"
+  ],
   "config": {
     "loaded": true,
     "path": "web-uplift.json (repo root; targets the live playground, declares siteType, intent for be-sustainable/be-discoverable, and opt-outs for be-agent-ready and be-resilient)"
   },
   "principleOutcomes": [
-    { "principleId": "respect-user-preferences", "expectation": "default", "status": "pass" },
-    { "principleId": "implement-natural-interactions", "expectation": "default", "status": "pass" },
-    { "principleId": "provide-guided-navigation", "expectation": "default", "status": "pass" },
-    { "principleId": "maximize-content-reduce-noise", "expectation": "default", "status": "pass" },
-    { "principleId": "adapt-to-the-form-factor", "expectation": "default", "status": "pass" },
-    { "principleId": "be-fast-and-stable", "expectation": "default", "status": "pass" },
-    { "principleId": "be-inclusive", "expectation": "default", "status": "pass" },
-    { "principleId": "follow-best-practices", "expectation": "default", "status": "pass" },
-    { "principleId": "be-discoverable", "expectation": "default", "status": "pass", "reason": "web-uplift.json intent notes this is a localhost demo, but the page still ships a descriptive title and meta description, so it passes on its own merits." },
-    { "principleId": "be-private-and-secure", "expectation": "default", "status": "not-applicable", "reason": "Bare localhost static host; no transport/headers/cookies/auth surface to assess (same serving setup as the fixture)." },
-    { "principleId": "be-resilient", "expectation": "contextual", "status": "opted-out", "reason": "web-uplift.json: client-rendered modern-UX demo; offline/installable out of scope (progressive enhancement of core content still expected)." },
-    { "principleId": "be-internationalised", "expectation": "contextual", "status": "not-applicable", "reason": "Single-locale English demo with lang=en and no locale-sensitive data." },
-    { "principleId": "be-trustworthy", "expectation": "default", "status": "pass" },
-    { "principleId": "be-sustainable", "expectation": "contextual", "status": "not-applicable", "reason": "web-uplift.json intent: a tiny hand-authored demo, weight already minimal; judged proportionally." },
-    { "principleId": "be-agent-ready", "expectation": "contextual", "status": "opted-out", "reason": "web-uplift.json: static UX demo with no agent-facing surface." }
+    {
+      "principleId": "respect-user-preferences",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-inclusive",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "follow-best-practices",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-discoverable",
+      "expectation": "default",
+      "status": "pass",
+      "reason": "web-uplift.json intent notes this is a localhost demo, but the page still ships a descriptive title and meta description, so it passes on its own merits."
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "expectation": "default",
+      "status": "not-applicable",
+      "reason": "Bare localhost static host; no transport/headers/cookies/auth surface to assess (same serving setup as the fixture)."
+    },
+    {
+      "principleId": "be-resilient",
+      "expectation": "contextual",
+      "status": "opted-out",
+      "reason": "web-uplift.json: client-rendered modern-UX demo; offline/installable out of scope (progressive enhancement of core content still expected)."
+    },
+    {
+      "principleId": "be-internationalised",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "Single-locale English demo with lang=en and no locale-sensitive data."
+    },
+    {
+      "principleId": "be-trustworthy",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-sustainable",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "web-uplift.json intent: a tiny hand-authored demo, weight already minimal; judged proportionally."
+    },
+    {
+      "principleId": "be-agent-ready",
+      "expectation": "contextual",
+      "status": "opted-out",
+      "reason": "web-uplift.json: static UX demo with no agent-facing surface."
+    }
   ],
   "paths": [
-    { "id": "no-dark-mode", "description": "card under dark", "url": "http://localhost:8080/#no-dark-mode", "conditions": ["prefers-color-scheme: dark"], "result": "pass" },
-    { "id": "motion", "description": "marquee under reduce", "url": "http://localhost:8080/#motion", "conditions": ["prefers-reduced-motion: reduce"], "result": "pass" },
-    { "id": "fixed-layout", "description": "layout at 360px", "url": "http://localhost:8080/#fixed-layout", "conditions": ["viewport: 360x800"], "result": "pass" },
-    { "id": "poor-focus", "description": "focus visibility + contrast", "url": "http://localhost:8080/#poor-focus", "conditions": ["keyboard focus", "axe color-contrast"], "result": "pass" },
-    { "id": "layout-shift", "description": "CLS observation", "url": "http://localhost:8080/#layout-shift", "conditions": ["post-load layout-shift observation"], "result": "pass" },
-    { "id": "no-container-queries", "description": "card in narrow container", "url": "http://localhost:8080/#no-container-queries", "conditions": ["component reused at two container widths"], "result": "pass" },
-    { "id": "site-wide", "description": "Lighthouse + axe document-level signal", "url": "http://localhost:8080/", "conditions": ["default"], "result": "pass" }
+    {
+      "id": "no-dark-mode",
+      "description": "card under dark",
+      "url": "http://localhost:8080/#no-dark-mode",
+      "conditions": [
+        "prefers-color-scheme: dark"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "motion",
+      "description": "marquee under reduce",
+      "url": "http://localhost:8080/#motion",
+      "conditions": [
+        "prefers-reduced-motion: reduce"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "fixed-layout",
+      "description": "layout at 360px",
+      "url": "http://localhost:8080/#fixed-layout",
+      "conditions": [
+        "viewport: 360x800"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "poor-focus",
+      "description": "focus visibility + contrast",
+      "url": "http://localhost:8080/#poor-focus",
+      "conditions": [
+        "keyboard focus",
+        "axe color-contrast"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "layout-shift",
+      "description": "CLS observation",
+      "url": "http://localhost:8080/#layout-shift",
+      "conditions": [
+        "post-load layout-shift observation"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "no-container-queries",
+      "description": "card in narrow container",
+      "url": "http://localhost:8080/#no-container-queries",
+      "conditions": [
+        "component reused at two container widths"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "site-wide",
+      "description": "Lighthouse + axe document-level signal",
+      "url": "http://localhost:8080/",
+      "conditions": [
+        "default"
+      ],
+      "result": "pass"
+    }
   ],
   "findings": [],
   "taskList": [],
-  "budget": { "pathCount": 7, "auditPasses": 1 },
+  "budget": {
+    "pathCount": 7,
+    "auditPasses": 1
+  },
   "eval": {
     "mode": "live-product",
     "subject": "playground/ (the genuinely-fixed live playground)",

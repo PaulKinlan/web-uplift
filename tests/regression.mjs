@@ -17,6 +17,7 @@ try {
   testSyntaxChecks();
   testPackageRootImportIsSideEffectFree();
   testSchemaValidation();
+  testGuidanceUsage();
   testInstalledEvidenceCli();
   testUpdateDryRunReadsInstallManifest();
   testCachedUpdateWarning();
@@ -30,6 +31,30 @@ try {
   console.log('tests OK');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
+}
+
+// Modern Web Guidance is mandatory: a report with issue-findings must record the
+// guides it consulted, and every issue-finding must cite a guidanceId drawn from
+// that list. This is what stops the "audit judged from memory, never called MWG"
+// failure users reported — a report that skipped guidance fails validation here.
+function testGuidanceUsage() {
+  const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
+  const findings = report.findings || [];
+  assert(findings.length > 0, 'guidance: fixture should have issue-findings to check');
+  const consulted = report.guidanceConsulted || [];
+  assert(Array.isArray(consulted) && consulted.length > 0,
+    'guidance: a report with issue-findings must populate guidanceConsulted (MWG was not called)');
+  const consultedSet = new Set(consulted);
+  for (const f of findings) {
+    assert(typeof f.guidanceId === 'string' && f.guidanceId.length > 0,
+      `guidance: finding ${f.id} is missing a guidanceId (its fix is not backed by Modern Web Guidance)`);
+    assert(consultedSet.has(f.guidanceId),
+      `guidance: finding ${f.id} cites guidanceId "${f.guidanceId}" that is not in guidanceConsulted`);
+  }
+  // The clean/fixed report may have no findings, but if it lists guidance it must be an array.
+  const fixed = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
+  assert(fixed.guidanceConsulted === undefined || Array.isArray(fixed.guidanceConsulted),
+    'guidance: fixed report guidanceConsulted must be an array when present');
 }
 
 async function testScorecardScoringAndRender() {

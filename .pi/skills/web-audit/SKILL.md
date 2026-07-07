@@ -94,6 +94,20 @@ Use whichever invocation resolves in your context (they run the SAME CLI):
 Pick the first that exists; the rest of this file writes `node evidence/cli.mjs`
 for brevity, but the `web-uplift evidence ...` form is equivalent everywhere.
 
+**This applies to EVERY web-uplift command this skill uses**, not just evidence.
+The scorecard, run-compare, and user-flow scripts are vendored alongside the
+evidence CLI, so translate the same three ways:
+
+| In this repo | Per-project install | Global package |
+|---|---|---|
+| `node aggregate/scorecard.mjs <host>` | `node .web-uplift/aggregate/scorecard.mjs <host>` | `web-uplift scorecard <host>` |
+| `node aggregate/compare.mjs <host>` | `node .web-uplift/aggregate/compare.mjs <host>` | `web-uplift compare <host>` |
+| `node runner/flow.mjs replay <flow>` | `node .web-uplift/runner/flow.mjs replay <flow>` | `web-uplift flow replay <flow>` |
+
+If none resolves (an older install that predates these scripts), say so in the
+report rather than skipping silently, and point the user at `web-uplift
+scorecard <host>` via `npx -y web-uplift`.
+
 Primitives, all content- and tool-agnostic:
 
 | Primitive | What it gives you | Key CDP |
@@ -137,6 +151,18 @@ these is wired into the runtime; you invoke them yourself when they help:
 
 ## Method
 
+**Modern Web Guidance is MANDATORY, not optional.** This skill judges and fixes
+against the LIVE Modern Web Guidance feed, never the model's memory. For every
+principle you audit AND every fix you write, you MUST run
+`npx -y modern-web-guidance@latest search "<query>"` and
+`retrieve "<id>"` (using the checks' `guides` in `principles.json`) and base your
+judgement and your edit on what the feed actually returns. Judging a principle or
+writing a fix from memory, without a real lookup THIS run, is a skill violation
+and the #1 issue users have reported. Concretely: every issue-finding MUST carry
+the `guidanceId` of a guide you retrieved, and the report MUST list every guide
+id you consulted in `guidanceConsulted`. A run with zero guidance lookups is not
+a valid web-uplift run. The audit (step 2) and the fix (step 7) each enforce this.
+
 ### 0. Read the project config (if present) and set the bar
 
 Before anything else:
@@ -150,16 +176,19 @@ Before anything else:
    as an issue. `intent` sets context you judge against; it does not silence
    findings. If no config is present, proceed with judgement (step 4). Record in
    the report's `config` field whether one was loaded.
-2. **Consult the mapped guidance UP FRONT.** For each principle you will judge,
-   look at its checks' `guides` lists and `search`/`retrieve` the relevant
-   Modern Web Guidance guides from the live feed (at the pinned
-   `guidanceCatalogVersion`) BEFORE you judge, so you set the bar from the
-   current recommended approach rather than from memory. Also read any
-   check-level `references`; these cover non-MWG standards, methods, and optional
-   tools such as the Chrome DevTools MCP memory-leak-debugging skill for memory
-   analysis. The `guides` and `references` entries are declarative pointers, not
-   tests; you still decide what evidence proves the outcome. Cache
-   `list`/`retrieve` for the run.
+2. **Search Modern Web Guidance UP FRONT — REQUIRED, not a suggestion.** For each
+   principle you will judge, take its checks' `guides` (ids and/or query strings
+   in `principles.json`) and actually run `modern-web-guidance search`/`retrieve`
+   against the live feed (at the pinned `guidanceCatalogVersion`) BEFORE you
+   judge that principle. You MUST do this per principle; setting the bar from
+   memory is not allowed, and it is the top failure users report about this tool.
+   Record every guide id you retrieve in the report's `guidanceConsulted` array,
+   and set each resulting issue-finding's `guidanceId` to the guide it maps to
+   (a finding with no `guidanceId` is incomplete). Also read any check-level
+   `references` (non-MWG standards, methods, optional tools such as the Chrome
+   DevTools MCP memory-leak-debugging skill). The `guides` and `references`
+   entries are declarative pointers, not tests; you still decide what evidence
+   proves the outcome. Cache `retrieve` results for the run.
 
 ### 1. Recon and coverage (decide which pages to audit)
 
@@ -356,7 +385,10 @@ Write two files in the run dir:
 
 - `report.json` - MUST validate against
   [schema/findings.schema.json](../../../schema/findings.schema.json). Set
-  `evidenceUsed` (the modalities and tools you actually ran), `config` (whether a
+  `evidenceUsed` (the modalities and tools you actually ran),
+  `guidanceConsulted` (every Modern Web Guidance id you retrieved this run - this
+  MUST be non-empty whenever there are issue-findings, and each issue-finding's
+  `guidanceId` should come from it), `config` (whether a
   `web-uplift.json` was loaded), `principleOutcomes` (per-principle
   applicability + status, so `opted-out` and `not-applicable` show distinctly
   from pass/issue, each with its reason), and the structured `artifacts` manifest
@@ -424,9 +456,15 @@ audit and go straight to the climb).
 
 The loop, highest-leverage task first:
 
-1. `retrieve` the task's guidance guide and read its technique + browser-support
-   notes (assume Baseline Widely available is safe; follow the guide's fallback
-   advice otherwise, unless `web-uplift.json` states a custom policy).
+1. **`retrieve` the task's Modern Web Guidance guide — REQUIRED before you edit.**
+   Run `modern-web-guidance retrieve "<guidanceId>"` (and a fresh `search` if the
+   task has no id yet) against the LIVE feed, and base the fix on the guide's
+   technique + browser-support notes (assume Baseline Widely available is safe;
+   follow the guide's fallback advice otherwise, unless `web-uplift.json` states a
+   custom policy). Writing a fix from memory, without retrieving its guide this
+   run, is not allowed — the entire point is that each edit follows the current
+   guidance, not the model's stale recollection. Record the guide id you used on
+   the task and carry it through to the fixed finding.
 2. Write the fix into the local source under `<dir>`. You are the coding agent.
    Honour `web-uplift.json`: never "fix" a principle reported `opted-out` or
    `not-applicable` - those are out of scope, not issues.
