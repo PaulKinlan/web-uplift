@@ -176,19 +176,28 @@
           "id": "respects-color-scheme",
           "summary": "Honours prefers-color-scheme: a usable dark mode exists and is driven by the user's preference (color-scheme / prefers-color-scheme / light-dark()), not hard-coded light only.",
           "detectableVia": "HINT (not mandatory): a screenshot or computed background under an emulated prefers-color-scheme: dark condition will reveal whether surfaces re-tint; the page CSS / a color-scheme declaration is corroborating evidence. The model chooses the method.",
-          "guides": ["dark-mode", "component-specific-light-dark-theme"]
+          "guides": [
+            "dark-mode",
+            "component-specific-light-dark-theme"
+          ]
         },
         {
           "id": "respects-reduced-motion",
           "summary": "Honours prefers-reduced-motion: non-essential animations and auto-advance are reduced or removed when the user asks for less motion.",
           "detectableVia": "HINT: a transition video, or an in-page probe of getAnimations()/computed animation under an emulated prefers-reduced-motion: reduce condition, can show whether motion stops. The model chooses.",
-          "guides": ["accessibility", "respect reduced motion preference accessible animation"]
+          "guides": [
+            "accessibility",
+            "respect reduced motion preference accessible animation"
+          ]
         },
         {
           "id": "respects-contrast",
           "summary": "Honours prefers-contrast / forced-colors: controls, text and scrollbars remain visible under high-contrast preferences.",
           "detectableVia": "HINT: a screenshot under emulated prefers-contrast: more / forced-colors, or an axe/contrast probe, can show whether controls and text survive. The model chooses.",
-          "guides": ["adapt-scrollbar-to-contrast-preferences", "high contrast prefers-contrast forced colors"]
+          "guides": [
+            "adapt-scrollbar-to-contrast-preferences",
+            "high contrast prefers-contrast forced colors"
+          ]
         }
       ]
     },
@@ -207,19 +216,34 @@
           "id": "view-transitions",
           "summary": "State and route changes use View Transitions (including same-document, cross-document and scroll-driven/staggered) rather than instant, jarring swaps.",
           "detectableVia": "HINT: a transition video of a route/state change shows whether it animates; the page source / ::view-transition usage corroborates. The model chooses.",
-          "guides": ["same-document-transitions", "cross-document-transitions", "group-element-transitions", "faster-spa-view-transitions", "view transitions smooth state route change"]
+          "guides": [
+            "cross-document-transitions"
+          ]
         },
         {
           "id": "scroll-driven-animations",
           "summary": "Scroll-linked motion (parallax, scrollytelling, entry/exit reveals) uses declarative CSS scroll-driven animations (off main thread) instead of scroll event listeners.",
           "detectableVia": "HINT: source/CSS inspection for animation-timeline: scroll()/view(); a long-task / scroll-handler probe can flag the main-thread anti-pattern. The model chooses.",
-          "guides": ["scrollytelling", "parallax-scroll-effects", "scroll-entry-exit-effects", "carousel-slide-effects", "scroll-driven animations animation-timeline"]
+          "guides": [
+            "scroll-entry-exit-effects"
+          ]
         },
         {
           "id": "physical-gestures",
           "summary": "Gesture-driven interactions and entry/exit motion feel native (declarative overscroll/scroll-snap, physics-based easing, animating to intrinsic sizes, pull/swipe gestures) rather than fighting the platform with custom pointer handlers.",
           "detectableVia": "HINT: CSS inspection for scroll-snap / overscroll-behavior / physics-based easing vs custom pointermove listeners. The model chooses.",
-          "guides": ["physics-based-easing", "individual-transform-properties", "animate-element-entry-exit", "animate-to-from-top-layer", "animate-to-intrinsic-sizes", "dynamic-sibling-animations", "interactive-content-reveal", "pull-to-reveal", "swipe-to-remove", "natural gesture interaction scroll snap overscroll"]
+          "guides": [
+            "physics-based-easing",
+            "individual-transform-properties",
+            "animate-element-entry-exit",
+            "animate-to-from-top-layer",
+            "animate-to-intrinsic-sizes",
+            "dynamic-sibling-animations",
+            "interactive-content-reveal",
+            "pull-to-reveal",
+            "swipe-to-remove",
+            "natural gesture interaction scroll snap overscroll"
+          ]
         }
       ]
     },
@@ -238,19 +262,43 @@
           "id": "scroll-state-aware-chrome",
           "summary": "Sticky/affixed UI reacts to scroll state and position (e.g. the new scroll-state(scrolled) query, shrinking headers, progress indicators) so chrome responds to position instead of static or JS-driven toggling.",
           "detectableVia": "HINT: a transition video of scrolling, or CSS inspection for scroll-state container queries. The model chooses.",
-          "guides": ["shrinking-header-on-scroll", "scroll-progress-indicator", "scroll-position-aware-elements", "scroll-snap-realtime-feedback", "scroll-snap-state-sync", "scroll-target-on-load", "soft-edge-content-fade", "scrollability-affordance-hints", "scroll-state query scrolled sticky header"]
+          "guides": [
+            "shrinking-header-on-scroll",
+            "scroll-progress-indicator",
+            "scroll-position-aware-elements",
+            "scroll-snap-realtime-feedback",
+            "scroll-snap-state-sync",
+            "scroll-target-on-load",
+            "soft-edge-content-fade",
+            "scrollability-affordance-hints",
+            "scroll-state query scrolled sticky header"
+          ]
         },
         {
           "id": "anchored-positioning",
           "summary": "Tooltips, popovers and menus use CSS anchor positioning (with fallback positions) so they stay attached and reposition correctly rather than being manually positioned.",
           "detectableVia": "HINT: CSS inspection for anchor-name / position-anchor / position-try on overlays; a screenshot of an open overlay near a viewport edge can show drift. The model chooses.",
-          "guides": ["anchor-positioning-tab-underline", "position-aware-tooltips", "interest-triggered-tooltips", "interest-triggered-action-previews", "anchor positioning tooltip popover position-try"]
+          "guides": [
+            "anchor-positioning-tab-underline",
+            "position-aware-tooltips",
+            "interest-triggered-tooltips",
+            "interest-triggered-action-previews",
+            "anchor positioning tooltip popover position-try"
+          ]
         },
         {
           "id": "directs-attention",
           "summary": "Navigation and in-page jumps guide attention (highlight effects, scroll/carousel markers, directional transitions, drill-down and drawer navigation) so the user can follow where focus moved.",
           "detectableVia": "HINT: CSS inspection for ::highlight / scroll-marker; a transition video can show whether attention is cued after navigation. The model chooses.",
-          "guides": ["directional-navigation-transitions", "carousel-snap-highlights", "navigation-drawer", "stack-drill-down", "persistent-app-tours", "persistent-toast-notifications", "scroll marker highlight guide attention navigation"]
+          "guides": [
+            "directional-navigation-transitions",
+            "carousel-snap-highlights",
+            "navigation-drawer",
+            "stack-drill-down",
+            "persistent-app-tours",
+            "persistent-toast-notifications",
+            "scroll marker highlight guide attention navigation"
+          ]
         }
       ]
     },
@@ -269,19 +317,43 @@
           "id": "no-intrusive-interruptions",
           "summary": "No intrusive pop-ups, interstitials or banners that obscure content on load; overlays are dismissible and content-first.",
           "detectableVia": "HINT: a screenshot on load, or a DOM probe for full-viewport overlays present before interaction. The model chooses.",
-          "guides": ["light-dismiss-a-dialog", "platform-controls-dismiss-dialog", "avoid intrusive interstitial popup content first"]
+          "guides": [
+            "light-dismiss-a-dialog",
+            "platform-controls-dismiss-dialog",
+            "avoid intrusive interstitial popup content first"
+          ]
         },
         {
           "id": "semantic-dismissible-primitives",
           "summary": "Overlays and rich controls use the right primitive: popover (with declarative light-dismiss) for transient UI, dialog for modal flows, details for disclosure, native-but-branded selects and pickers, rather than ad-hoc divs.",
           "detectableVia": "HINT: DOM/source inspection for popover / <dialog> / <details> vs custom overlay divs with manual dismiss handling. The model chooses.",
-          "guides": ["declarative-dialog-popover-control", "animated-select-picker", "branded-select-styling", "brand-consistent-forms", "custom-select-picker-layouts", "rich-media-picker", "popover dialog light dismiss semantic overlay"]
+          "guides": [
+            "declarative-dialog-popover-control",
+            "animated-select-picker",
+            "branded-select-styling",
+            "brand-consistent-forms",
+            "custom-select-picker-layouts",
+            "rich-media-picker",
+            "popover dialog light dismiss semantic overlay"
+          ]
         },
         {
           "id": "reduced-chrome",
           "summary": "Minimise non-content chrome and borders so the content is the focus, not the application frame; expressive/decorative visuals serve the content rather than crowd it.",
           "detectableVia": "HINT: a screenshot plus layout metrics can show the proportion of the viewport given to chrome vs content. The model chooses.",
-          "guides": ["complex-shapes", "shaped-cutouts", "overflow-clipping-control", "visually-texture-content", "apply-webgl-shaders", "interactive-content-in-3d-scenes", "highlight-text-ranges", "prevent-text-wrapping", "customize-scrollbar-color-and-thickness", "export-html-media-from-canvas", "reduce visual clutter maximize content"]
+          "guides": [
+            "complex-shapes",
+            "shaped-cutouts",
+            "overflow-clipping-control",
+            "visually-texture-content",
+            "apply-webgl-shaders",
+            "interactive-content-in-3d-scenes",
+            "highlight-text-ranges",
+            "prevent-text-wrapping",
+            "customize-scrollbar-color-and-thickness",
+            "export-html-media-from-canvas",
+            "reduce visual clutter maximize content"
+          ]
         }
       ]
     },
@@ -300,19 +372,31 @@
           "id": "responsive-no-horizontal-scroll",
           "summary": "Layout adapts to narrow viewports with no horizontal overflow and no fixed pixel widths forcing a desktop layout on mobile; viewport meta present; fluid scaling and intrinsic sizing rather than brittle breakpoints.",
           "detectableVia": "HINT: layout metrics (scrollWidth vs innerWidth) and a screenshot at an emulated narrow mobile viewport reveal overflow. The model chooses.",
-          "guides": ["fluid-scaling", "calculate-with-intrinsic-sizes", "css-layout", "responsive layout adapt viewport mobile"]
+          "guides": [
+            "fluid-scaling"
+          ]
         },
         {
           "id": "component-level-responsiveness",
           "summary": "Components adapt to their container with container queries (incl. anchored container queries) and content/state-based styling where reused at different sizes, not only global viewport breakpoints.",
           "detectableVia": "HINT: CSS inspection for @container / container-type; a computed-style probe of the same component in a wide vs narrow container shows whether it adapts. The model chooses.",
-          "guides": ["size-aware-styling", "content-based-styling", "child-state-based-styling", "design-token-reactivity", "dynamic-sibling-styling", "form-fields-automatically-fit-contents", "container queries component responsive"]
+          "guides": [
+            "size-aware-styling",
+            "content-based-styling",
+            "child-state-based-styling",
+            "design-token-reactivity",
+            "dynamic-sibling-styling",
+            "form-fields-automatically-fit-contents",
+            "container queries component responsive"
+          ]
         },
         {
           "id": "input-modality-aware",
           "summary": "Touch targets are adequately sized and hover-only affordances have a non-hover fallback, and keyboard focus is visible, so the UI works for touch, pointer and keyboard alike.",
           "detectableVia": "HINT: a focus probe (focus an element, read the computed outline) or an axe target-size check; a screenshot of a focused control corroborates. The model chooses.",
-          "guides": ["touch target size hover fallback pointer input focus-visible"]
+          "guides": [
+            "touch target size hover fallback pointer input focus-visible"
+          ]
         }
       ]
     },
@@ -331,19 +415,34 @@
           "id": "clear-purpose-and-primary-action",
           "summary": "The page communicates what it is for and exposes the primary next action without requiring users to hunt through decorative content, generic copy, or competing calls to action.",
           "detectableVia": "HINT: screenshot the first viewport and key scrolled states; inspect heading structure, nav labels, button text, and visual hierarchy; a task walkthrough can show whether the next action is obvious. The model chooses.",
-          "guides": ["direct user attention primary action visual hierarchy task success", "improve-text-layout-and-legibility", "scrollability-affordance-hints"]
+          "guides": [
+            "direct user attention primary action visual hierarchy task success",
+            "improve-text-layout-and-legibility",
+            "scrollability-affordance-hints"
+          ]
         },
         {
           "id": "primary-flow-completion",
           "summary": "The representative primary flow can be completed end-to-end with predictable steps, no avoidable dead ends, no hidden required information, and no needless detours through modals, account walls, or upsells.",
           "detectableVia": "HINT: run the flow manually with screenshots/DOM snapshots at each step; compare expected vs actual path length; inspect form requirements, navigation continuity, and blockers. The model chooses.",
-          "guides": ["forms", "declarative-button-actions", "persistent-toast-notifications", "primary user journey task completion"]
+          "guides": [
+            "forms",
+            "custom-button-actions",
+            "persistent-toast-notifications",
+            "primary user journey task completion"
+          ]
         },
         {
           "id": "clear-system-state-and-recovery",
           "summary": "Loading, empty, success, error, offline, and partial-completion states are visible and actionable; users can retry, undo, cancel, go back, or continue without losing context.",
           "detectableVia": "HINT: exercise network delay/failure, invalid input, empty data and success states; screenshot the state messaging and recovery controls; inspect whether browser history and focus remain sensible. The model chooses.",
-          "guides": ["accessible-error-announcement", "required-field-feedback", "validate-input-after-interaction", "persistent-toast-notifications", "loading empty error success retry undo cancel state"]
+          "guides": [
+            "accessible-error-announcement",
+            "required-field-feedback",
+            "validate-input-after-interaction",
+            "persistent-toast-notifications",
+            "loading empty error success retry undo cancel state"
+          ]
         }
       ]
     },
@@ -362,31 +461,55 @@
           "id": "good-core-web-vitals",
           "summary": "Core Web Vitals are in the good range: LCP is fast, interaction latency (INP) is low, and CLS is minimal; work is prioritised and deferred sensibly.",
           "detectableVia": "HINT: Lighthouse reports LCP/CLS/TBT directly and the model may run it; layout metrics + a layout-shift observer + a long-task observer (the evidence primitives) give the same signal first-party. The model chooses.",
-          "guides": ["identify-inp-causes", "schedule-tasks-by-priority", "optimize-preload-priority", "improve-next-page-load-performance", "interactions-in-complex-layouts", "performance", "improve core web vitals LCP INP CLS"]
+          "guides": [
+            "identify-inp-causes",
+            "schedule-tasks-by-priority",
+            "optimize-preload-priority",
+            "improve-next-page-load-performance",
+            "interactions-in-complex-layouts",
+            "performance",
+            "improve core web vitals LCP INP CLS"
+          ]
         },
         {
           "id": "visual-stability",
           "summary": "No cumulative layout shift from late content (images, banners, fonts) that arrives without reserved space.",
           "detectableVia": "HINT: the layout primitive's CLS observer captures shifts; a transition video of the first seconds shows content jumping. The model chooses.",
-          "guides": ["visually-stable-font-fallbacks", "prevent layout shift reserve space CLS aspect-ratio"]
+          "guides": [
+            "css-layout",
+            "visually-stable-font-fallbacks"
+          ]
         },
         {
           "id": "efficient-main-thread",
           "summary": "The main thread is not blocked by long tasks or heavy scripting; work is deferred, chunked, prioritised, or moved off-thread.",
           "detectableVia": "HINT: the layout primitive records long tasks; a heap summary shows the object population; Lighthouse reports TBT. The model chooses.",
-          "guides": ["break-up-long-tasks", "identify-heavy-scripts", "optimize-script-priority", "defer-rendering-heavy-content", "defer-work-until-scroll-ends", "reduce main thread work long tasks total blocking time"]
+          "guides": [
+            "break-up-long-tasks"
+          ]
         },
         {
           "id": "efficient-resource-delivery",
           "summary": "Critical resources are delivered efficiently: cache headers are useful, render-blocking chains are short, fonts do not block or shift text, HTTP delivery is modern, and network dependency trees do not delay the main content.",
           "detectableVia": "HINT: a HAR summary can reveal cache headers, redirects, render-blocking candidates, weight offenders and dependency shape; a trace/Lighthouse insight report can corroborate LCP discovery, render-blocking, font-display and document latency. The model chooses.",
-          "guides": ["optimize-image-priority", "optimize-preload-priority", "optimize-script-priority", "visually-stable-font-fallbacks", "cache headers render blocking font display modern http network dependency tree"]
+          "guides": [
+            "optimize-image-priority",
+            "optimize-preload-priority",
+            "optimize-script-priority",
+            "visually-stable-font-fallbacks",
+            "cache headers render blocking font display modern http network dependency tree"
+          ]
         },
         {
           "id": "trim-unused-and-duplicate-code",
           "summary": "The page does not ship large unused or duplicated JavaScript/CSS, avoidable legacy bundles, or third-party code that dominates the load without user value.",
           "detectableVia": "HINT: Lighthouse/trace/code-coverage style evidence can flag unused JS/CSS, duplicated JavaScript and legacy code; a HAR summary shows third-party byte cost and request count. The model chooses.",
-          "guides": ["identify-heavy-scripts", "conditional-async-dependencies", "defer-rendering-heavy-content", "unused javascript css duplicated javascript third party cost"]
+          "guides": [
+            "identify-heavy-scripts",
+            "conditional-async-dependencies",
+            "defer-rendering-heavy-content",
+            "unused javascript css duplicated javascript third party cost"
+          ]
         }
       ]
     },
@@ -394,7 +517,9 @@
       "id": "be-inclusive",
       "title": "Be inclusive",
       "origin": "lighthouse-accessibility",
-      "originAliases": ["be-accessible"],
+      "originAliases": [
+        "be-accessible"
+      ],
       "status": "confirmed",
       "applicability": {
         "expectation": "default",
@@ -406,31 +531,50 @@
           "id": "names-roles-labels",
           "summary": "Interactive elements have accessible names, correct roles, and form fields have labels; images have alt text where meaningful; canvas/expressive content is exposed to assistive technology.",
           "detectableVia": "HINT: axe-core (injectable via the evaluate primitive) or Lighthouse's a11y audits enumerate these; a DOM probe of the accessibility-relevant attributes is a first-party alternative. The model chooses.",
-          "guides": ["accessibility", "expose-canvas-content-to-browser-features", "accessible name label role form field aria"]
+          "guides": [
+            "accessibility",
+            "expose-canvas-content-to-browser-features",
+            "accessible name label role form field aria"
+          ]
         },
         {
           "id": "sufficient-contrast",
           "summary": "Text and essential UI meet WCAG colour-contrast minimums against their background.",
           "detectableVia": "HINT: axe contrast rules, a Lighthouse contrast audit, or an in-page probe computing contrast ratios from computed colours. The model chooses.",
-          "guides": ["color contrast WCAG text legibility"]
+          "guides": [
+            "accessibility"
+          ]
         },
         {
           "id": "structure-and-focus",
           "summary": "Heading and landmark structure is logical, focus order follows reading order, keyboard focus is always visible, and interactive state survives DOM moves.",
           "detectableVia": "HINT: axe/Lighthouse structural audits; a focus-walk probe (tab through, read activeElement + computed outline) is a first-party alternative. The model chooses.",
-          "guides": ["move-dom-element-without-losing-state", "heading structure landmarks focus order keyboard"]
+          "guides": [
+            "move-dom-element-without-losing-state",
+            "heading structure landmarks focus order keyboard"
+          ]
         },
         {
           "id": "legible-text",
           "summary": "Text is legible and inclusively rendered: comfortable line layout, precise alignment, stable rendering across mixed fonts, no clipping or cramped wrapping that harms comprehension.",
           "detectableVia": "HINT: a screenshot of body and heading text, plus CSS inspection for text-wrap / text alignment / font fallback handling. The model chooses.",
-          "guides": ["improve-text-layout-and-legibility", "precise-text-alignment", "visually-stable-mixed-fonts", "legible text layout reading comfort"]
+          "guides": [
+            "improve-text-layout-and-legibility",
+            "precise-text-alignment",
+            "visually-stable-mixed-fonts",
+            "legible text layout reading comfort"
+          ]
         },
         {
           "id": "zoom-reflow-targets-and-media",
           "summary": "The experience remains usable when zoomed or reflowed, touch targets are large enough, media has captions or equivalents where needed, and the viewport does not prevent user scaling.",
           "detectableVia": "HINT: Lighthouse/axe target-size, meta-viewport and media-caption audits are useful signals; screenshots at narrow and zoomed conditions plus DOM/media inspection can corroborate. The model chooses.",
-          "guides": ["accessibility", "fluid-scaling", "calculate-with-intrinsic-sizes", "target size zoom reflow captions viewport user scalable"]
+          "guides": [
+            "accessibility",
+            "fluid-scaling",
+            "calculate-with-intrinsic-sizes",
+            "target size zoom reflow captions viewport user scalable"
+          ]
         }
       ]
     },
@@ -449,19 +593,25 @@
           "id": "no-console-errors",
           "summary": "The page loads without console errors or uncaught exceptions.",
           "detectableVia": "HINT: capture Runtime/Log CDP events, or a probe that reads collected errors; Lighthouse reports this too. The model chooses.",
-          "guides": ["avoid console errors uncaught exceptions"]
+          "guides": [
+            "html"
+          ]
         },
         {
           "id": "sound-document-and-assets",
           "summary": "Valid doctype and charset, images sized with correct aspect ratio, no deprecated APIs misused, and CSS/HTML are well structured and not needlessly repetitive. (HTTPS, CSP and permission hygiene are judged under be-private-and-secure, not here.)",
           "detectableVia": "HINT: a DOM/source probe for doctype/charset/img dimensions; CSS inspection for repetition; Lighthouse best-practices audits cover the rest. The model chooses.",
-          "guides": ["css", "html", "reduce-style-repetition", "valid doctype charset image aspect ratio deprecated api best practices"]
+          "guides": [
+            "html"
+          ]
         },
         {
           "id": "browser-platform-hygiene",
           "summary": "The page uses the platform cleanly: no deprecated APIs, no avoidable BFCache blockers, no broken source maps or inspector issues, no stale vulnerable libraries, no paste-prevention on inputs, and no notification/geolocation prompts on load.",
           "detectableVia": "HINT: Lighthouse best-practices audits and DevTools inspector/deprecation signals can surface these; DOM/source probes can verify paste handlers and prompt timing. The model chooses.",
-          "guides": ["html", "security", "baseline deprecated api bfcache source maps inspector issues paste prevention geolocation notification on load"]
+          "guides": [
+            "html"
+          ]
         }
       ]
     },
@@ -480,25 +630,33 @@
           "id": "title-and-description",
           "summary": "The page has a unique, descriptive <title> and a meta description.",
           "detectableVia": "HINT: a DOM probe reads <title> and meta[name=description]; Lighthouse SEO audits cover the same ground. The model chooses.",
-          "guides": ["page title meta description seo"]
+          "guides": [
+            "html"
+          ]
         },
         {
           "id": "crawlable-and-mobile-friendly",
           "summary": "Links are crawlable (real href), there is a viewport meta tag, robots does not block indexing, and link text is descriptive.",
           "detectableVia": "HINT: a DOM probe for anchor hrefs, viewport meta, and robots; Lighthouse SEO audits corroborate. The model chooses.",
-          "guides": ["crawlable links viewport meta robots descriptive link text"]
+          "guides": [
+            "crawlable links viewport meta robots descriptive link text"
+          ]
         },
         {
           "id": "canonical-and-indexing-signals",
           "summary": "Public pages expose the indexing signals search engines need: successful HTTP status, canonical URL when appropriate, hreflang for localized variants, robots/sitemap consistency, and no accidental noindex/noarchive policy.",
           "detectableVia": "HINT: inspect response status and headers, <link rel=canonical>, hreflang links, robots meta, robots.txt and sitemap.xml; Lighthouse SEO audits cover several of these. The model chooses.",
-          "guides": ["canonical hreflang http status robots sitemap noindex seo indexing"]
+          "guides": [
+            "html"
+          ]
         },
         {
           "id": "structured-and-shareable-metadata",
           "summary": "Where the page represents an article, product, organization, event, place or other rich entity, structured data and share-preview metadata accurately describe the visible content.",
           "detectableVia": "HINT: inspect JSON-LD/microdata and social preview tags against visible content; Lighthouse has a manual structured-data audit, and ad-hoc probes can parse schema.org blocks. The model chooses.",
-          "guides": ["structured data schema.org json-ld open graph social preview metadata"]
+          "guides": [
+            "html"
+          ]
         }
       ]
     },
@@ -517,25 +675,46 @@
           "id": "secure-transport-and-headers",
           "summary": "Served over HTTPS with a sensible Content-Security-Policy and secure, SameSite cookies; no mixed content or obvious transport/header smells.",
           "detectableVia": "HINT: inspect response headers / page protocol via an evaluate probe or the network layer; Lighthouse best-practices flags HTTPS and CSP issues. The model chooses.",
-          "guides": ["security", "https csp secure cookies content security policy"]
+          "guides": [
+            "security",
+            "https csp secure cookies content security policy"
+          ]
         },
         {
           "id": "data-minimisation-and-third-parties",
           "summary": "No over-collection of user data, no leaky third parties, and analytics/background data collection is minimised and batched rather than chatty or session-wide by default.",
           "detectableVia": "HINT: inspect network requests and third-party origins; a probe of analytics/beacon calls. The model chooses.",
-          "guides": ["privacy", "batch-analytics-events", "full-session-analytics", "calculate-total-foreground-time", "data minimisation third party privacy analytics"]
+          "guides": [
+            "privacy",
+            "batch-analytics-events",
+            "full-session-analytics",
+            "calculate-total-foreground-time",
+            "data minimisation third party privacy analytics"
+          ]
         },
         {
           "id": "in-context-permissions-and-modern-auth",
           "summary": "Permission prompts are requested in context (not on load), and authentication uses modern, phishing-resistant methods (passkeys / WebAuthn) where relevant rather than passwords alone.",
           "detectableVia": "HINT: a probe for permission requests fired on load; source inspection for passkey / WebAuthn / navigator.credentials usage in auth flows. The model chooses.",
-          "guides": ["passkeys", "passkey-registration", "passkey-authentication", "passkey-reauthentication", "passkey-conditional-create", "passkey-management", "in-context permission prompt passkeys webauthn"]
+          "guides": [
+            "passkeys",
+            "passkey-registration",
+            "passkey-authentication",
+            "passkey-reauthentication",
+            "passkey-conditional-create",
+            "passkey-management",
+            "in-context permission prompt passkeys webauthn"
+          ]
         },
         {
           "id": "defensive-browser-policies",
           "summary": "Browser-enforced defenses are configured where appropriate: HSTS, clickjacking protection (frame-ancestors / X-Frame-Options), Trusted Types for XSS-sensitive apps, origin isolation, privacy-preserving third-party cookie posture, and sensible Referrer-Policy / Permissions-Policy.",
           "detectableVia": "HINT: inspect response headers and browser security state; Lighthouse/DevTools security audits can corroborate HSTS, clickjacking, Trusted Types, origin isolation and third-party cookie findings. The model chooses.",
-          "guides": ["security", "privacy", "hsts clickjacking frame-ancestors trusted types origin isolation referrer policy permissions policy third-party cookies"]
+          "guides": [
+            "security",
+            "privacy",
+            "hsts clickjacking frame-ancestors trusted types origin isolation referrer policy permissions policy third-party cookies"
+          ]
         }
       ]
     },
@@ -555,25 +734,45 @@
           "id": "progressive-enhancement",
           "summary": "Core content and primary flows are reachable and usable without JavaScript and on older or non-Baseline browsers; modern features layer on as enhancements with fallbacks, and reactive/transition state stabilises rather than flickering before it settles.",
           "detectableVia": "HINT: load with scripting disabled or compare a no-JS fetch of the HTML against the rendered page; check for Baseline-aware fallbacks in source. The model chooses.",
-          "guides": ["flicker-free-client-side-ab-testing", "consistent-cross-document-transitions", "stabilize-reactive-state", "progressive enhancement graceful degradation no javascript baseline fallback"]
+          "guides": [
+            "flicker-free-client-side-ab-testing",
+            "consistent-cross-document-transitions",
+            "stabilize-reactive-state",
+            "progressive enhancement graceful degradation no javascript baseline fallback"
+          ]
         },
         {
           "id": "resilient-runtime-behaviour",
           "summary": "The page behaves robustly at runtime: overlays and menus never get cut off, DOM state survives moves, background work and async dependencies are sequenced and conditional rather than fragile, and initial visibility state is detected correctly.",
           "detectableVia": "HINT: exercise menus near viewport edges with a screenshot; a probe of async/visibility behaviour. The model chooses.",
-          "guides": ["resilient-context-menus-and-nested-dropdowns", "move-dom-element-without-losing-state", "persistent-top-layer-ui", "detect-initial-visibility-state", "conditional-async-dependencies", "sequence-distributed-events", "robust overlay state async resilience"]
+          "guides": [
+            "resilient-context-menus-and-nested-dropdowns",
+            "move-dom-element-without-losing-state",
+            "persistent-top-layer-ui",
+            "detect-initial-visibility-state",
+            "conditional-async-dependencies",
+            "sequence-distributed-events",
+            "robust overlay state async resilience"
+          ]
         },
         {
           "id": "offline-and-installable",
           "summary": "Where the site is an app, it is installable (web app manifest) and offers an offline fallback and works on flaky networks. (Contextual: a brochure or intrinsically-online site may reasonably not need this.)",
           "detectableVia": "HINT: a probe for a service worker registration and a web app manifest; test behaviour offline. The model chooses.",
-          "guides": ["offline fallback service worker web app manifest installable pwa"]
+          "guides": [
+            "offline fallback service worker web app manifest installable pwa"
+          ]
         },
         {
           "id": "network-and-http-failure-states",
           "summary": "HTTP errors, network failures, timeouts and stale data states are handled intentionally: users see useful recovery options rather than blank screens, infinite spinners, broken shells, or misleading success states.",
           "detectableVia": "HINT: simulate failed fetches/offline mode or inspect representative 404/500 routes; screenshots and DOM snapshots of error/loading/empty states show whether recovery is possible. The model chooses.",
-          "guides": ["persistent-toast-notifications", "detect-initial-visibility-state", "conditional-async-dependencies", "http error network failure timeout retry stale data resilient state"]
+          "guides": [
+            "persistent-toast-notifications",
+            "detect-initial-visibility-state",
+            "conditional-async-dependencies",
+            "http error network failure timeout retry stale data resilient state"
+          ]
         }
       ]
     },
@@ -593,19 +792,34 @@
           "id": "lang-dir-and-logical-properties",
           "summary": "Correct lang and dir attributes, logical CSS properties (inline/block) rather than physical left/right, and translation-ready markup so the layout and reading order survive other languages and writing modes.",
           "detectableVia": "HINT: a DOM probe for <html lang>/dir and CSS inspection for logical vs physical properties. The model chooses.",
-          "guides": ["translator", "language-detection", "lang dir logical properties translation ready bidi"]
+          "guides": [
+            "translator",
+            "language-detection",
+            "lang dir logical properties translation ready bidi"
+          ]
         },
         {
           "id": "locale-aware-data",
           "summary": "Dates, numbers, currencies, durations and calendar systems are formatted locale-aware (Intl), location-agnostic where stored, and recurring intervals and event differentials are modelled correctly.",
           "detectableVia": "HINT: source inspection for Intl.* usage vs hand-rolled formatting; a probe of rendered dates/numbers under a different locale. The model chooses.",
-          "guides": ["support-global-calendar-systems", "capture-location-agnostic-data", "format-human-readable-durations", "manage-recurring-intervals", "calculate-event-differentials", "locale aware dates numbers currency intl calendar"]
+          "guides": [
+            "support-global-calendar-systems",
+            "capture-location-agnostic-data",
+            "format-human-readable-durations",
+            "manage-recurring-intervals",
+            "calculate-event-differentials",
+            "locale aware dates numbers currency intl calendar"
+          ]
         },
         {
           "id": "time-zone-correctness",
           "summary": "Time handling survives time zones and DST: events coordinate across zones, partial time concepts are modelled, and stored times are unambiguous.",
           "detectableVia": "HINT: source inspection for time-zone-aware date handling vs naive local Date math. The model chooses.",
-          "guides": ["coordinate-global-events", "model-partial-time-concepts", "time zone dst event coordination partial time"]
+          "guides": [
+            "coordinate-global-events",
+            "model-partial-time-concepts",
+            "time zone dst event coordination partial time"
+          ]
         }
       ]
     },
@@ -624,25 +838,48 @@
           "id": "no-dark-patterns",
           "summary": "No deceptive design: no confirmshaming, forced continuity, disguised ads, or nagging consent walls; honest defaults; clear pricing and consent; easy reversal/cancel; predictable, declaratively-wired actions; and no hidden-text tricks (hidden content stays deep-linkable and indexable rather than used to deceive).",
           "detectableVia": "HINT: a screenshot of consent/upsell/cancel flows; source inspection for declarative button actions vs misleading controls. The model chooses.",
-          "guides": ["declarative-button-actions", "search-hidden-content", "swipe-to-remove", "honest defaults no dark patterns confirmshaming forced continuity consent"]
+          "guides": [
+            "privacy"
+          ]
         },
         {
           "id": "humane-error-handling",
           "summary": "Forms prevent and recover from mistakes humanely: validate after interaction (not prematurely), give clear required-field feedback, announce errors accessibly, and signal invalid fields visibly rather than blaming the user.",
           "detectableVia": "HINT: exercise a form, submit invalid input, and observe timing and clarity of errors via a screenshot or a :user-invalid / aria-invalid probe. The model chooses.",
-          "guides": ["forms", "validate-input-after-interaction", "required-field-feedback", "select-menu-interaction", "accessible-error-announcement", "style-parent-with-has", "humane form validation error prevention recovery user-invalid"]
+          "guides": [
+            "forms",
+            "validate-input-after-interaction",
+            "required-field-feedback",
+            "select-menu-interaction",
+            "accessible-error-announcement",
+            "style-parent-with-has",
+            "humane form validation error prevention recovery user-invalid"
+          ]
         },
         {
           "id": "trustworthy-input-assistance",
           "summary": "Input is assisted, not obstructed: correct autocomplete tokens so address, payment, sign-in and sign-up fields autofill, and inputs are highlighted/sized to help the user rather than trip them up.",
           "detectableVia": "HINT: source/DOM inspection for autocomplete attributes on form fields; a probe of autofill affordances. The model chooses.",
-          "guides": ["autofill-address-form", "autofill-payment-form", "autofill-sign-in-form", "autofill-sign-up-form", "autofill-highlight-inputs", "autocomplete autofill address payment sign-in input assistance"]
+          "guides": [
+            "autofill-address-form",
+            "autofill-payment-form",
+            "autofill-sign-in-form",
+            "autofill-sign-up-form",
+            "autofill-highlight-inputs",
+            "autocomplete autofill address payment sign-in input assistance"
+          ]
         },
         {
           "id": "safe-commercial-and-account-flows",
           "summary": "Checkout, subscription, consent, authentication and account-management flows are clear, reversible, and proportionate: pricing and commitments are visible, cancellation is findable, sensitive actions re-authenticate when appropriate, and users are not tricked into continuity.",
           "detectableVia": "HINT: walkthrough checkout/subscription/auth/account flows when present; screenshot pricing, confirmation, cancellation and reauthentication states; inspect passkey/autocomplete support for sign-in and payment. The model chooses.",
-          "guides": ["autofill-payment-form", "autofill-sign-in-form", "passkey-reauthentication", "passkey-management", "clear pricing consent cancellation subscription checkout account flow"]
+          "guides": [
+            "autofill-payment-form",
+            "autofill-sign-in-form",
+            "passkey-reauthentication",
+            "passkey-management",
+            "clear pricing consent cancellation subscription checkout account flow"
+          ]
         }
       ]
     },
@@ -662,19 +899,33 @@
           "id": "optimised-assets",
           "summary": "Images and decorative assets are optimised and served at appropriate resolutions; decorative pseudo-element imagery and heavy decorative images are resolution-optimised rather than oversized.",
           "detectableVia": "HINT: inspect transferred image bytes vs displayed size; source inspection for modern formats and resolution handling. The model chooses.",
-          "guides": ["deliver-optimized-decorative-images", "optimize-image-priority", "resolution-optimized-pseudo-elements", "optimized images appropriate resolution page weight budget"]
+          "guides": [
+            "deliver-optimized-decorative-images",
+            "optimize-image-priority",
+            "resolution-optimized-pseudo-elements",
+            "optimized images appropriate resolution page weight budget"
+          ]
         },
         {
           "id": "no-wasteful-work",
           "summary": "Background work and fetching are not wasteful: background processing is efficient and de-prioritised, and the lightest technique that achieves the result is preferred over heavy or redundant work.",
           "detectableVia": "HINT: a long-task / network probe for background fetches and processing while idle or backgrounded. The model chooses.",
-          "guides": ["deprioritize-background-fetches", "efficient-background-processing", "avoid wasteful background work over-fetching carbon efficiency"]
+          "guides": [
+            "deprioritize-background-fetches",
+            "efficient-background-processing",
+            "avoid wasteful background work over-fetching carbon efficiency"
+          ]
         },
         {
           "id": "third-party-and-media-budget",
           "summary": "Third-party scripts, fonts, video, audio, animation and heavy media are proportionate to the user value they provide; autoplay or background media is avoided unless essential and resource use is cached or deferred where possible.",
           "detectableVia": "HINT: a HAR summary shows third-party bytes, font/media weight and caching; screenshots/video reveal autoplay and decorative media; trace/layout evidence shows whether media/animation keeps work running. The model chooses.",
-          "guides": ["deliver-optimized-decorative-images", "deprioritize-background-fetches", "efficient-background-processing", "third-party scripts fonts video autoplay media budget cache resource efficiency"]
+          "guides": [
+            "deliver-optimized-decorative-images",
+            "deprioritize-background-fetches",
+            "efficient-background-processing",
+            "third-party scripts fonts video autoplay media budget cache resource efficiency"
+          ]
         }
       ]
     },
@@ -694,13 +945,22 @@
           "id": "structured-agent-capabilities",
           "summary": "Where it makes sense, the site exposes structured, safe capabilities to agents via WebMCP tools, agentic forms, and agentic JavaScript tools rather than leaving agents to scrape and guess.",
           "detectableVia": "HINT: source inspection for WebMCP / agentic-tool registration and agent-readable affordances. The model chooses.",
-          "guides": ["webmcp", "agentic-forms", "agentic-javascript-tools", "webmcp agentic tools agent ready machine readable"]
+          "guides": [
+            "webmcp",
+            "agentic-forms",
+            "agentic-javascript-tools",
+            "webmcp agentic tools agent ready machine readable"
+          ]
         },
         {
           "id": "on-device-inference",
           "summary": "On-device inference (built-in language model, summariser) is used appropriately where it improves the experience, rather than shipping every task to a server.",
           "detectableVia": "HINT: source inspection for built-in AI (language model / summariser) usage. The model chooses.",
-          "guides": ["language-model", "summarizer", "on-device built-in ai language model summarizer"]
+          "guides": [
+            "language-model",
+            "summarizer",
+            "on-device built-in ai language model summarizer"
+          ]
         }
       ]
     },

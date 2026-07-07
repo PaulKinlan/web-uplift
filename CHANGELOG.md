@@ -1,5 +1,21 @@
 # Changelog — web-uplift
 
+## [0.2.1] - 2026-07-07
+
+### Fixed
+- **Firmed up the Modern Web Guidance mappings in principles.json.** A validation
+  audit found several checks whose `guides` query strings semantic-searched to the
+  wrong guide (contrast -> highlight-text-ranges, meta-description -> accessibility,
+  console-errors -> security, no-dark-patterns -> dark-mode, visual-stability ->
+  css, view-transitions -> directional-navigation-transitions, and more). Pinned
+  13 of them to explicit, verified guide ids so the audit retrieves the right
+  guidance deterministically instead of drifting. Also fixed 2 stale guide ids
+  (`declarative-button-actions`, not in the catalog -> `custom-button-actions`).
+- Note: MWG is a capabilities feed, so a few checks (SEO title/description,
+  canonical/indexing, structured metadata) have no dedicated guide and are pinned
+  to the closest broad guide (`html`); those checks lean more on their non-MWG
+  `references`.
+
 ## [0.2.0] - 2026-07-07
 
 ### Changed
