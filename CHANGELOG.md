@@ -1,5 +1,25 @@
 # Changelog — web-uplift
 
+## [0.2.2] - 2026-07-07
+
+### Fixed
+- **Reverted the over-aggressive guide "pinning" from 0.2.1.** That change had
+  replaced whole `guides` lists with a single id, dropping legitimate related
+  guide ids (e.g. view-transitions lost same-document-transitions,
+  group-element-transitions, faster-spa-view-transitions), and force-pinned
+  SEO/console checks to `html` when a search term + the model's own knowledge is
+  the right call for concepts Modern Web Guidance does not cover. Restored the
+  original lists.
+- Kept the one genuine fix: the stale guide id `declarative-button-actions`
+  (not in the catalog) -> `custom-button-actions`.
+
+### Note on the `guides` field
+Each check's `guides` is intentionally a MIX: several explicit Modern Web
+Guidance ids (retrieved directly) PLUS, usually, one descriptive search term
+(the model runs `search` with it, or leans on its own knowledge for topics MWG
+does not cover, like SEO). Both forms are valid by design; a search term is not
+a bug.
+
 ## [0.2.1] - 2026-07-07
 
 ### Fixed

@@ -217,7 +217,11 @@
           "summary": "State and route changes use View Transitions (including same-document, cross-document and scroll-driven/staggered) rather than instant, jarring swaps.",
           "detectableVia": "HINT: a transition video of a route/state change shows whether it animates; the page source / ::view-transition usage corroborates. The model chooses.",
           "guides": [
-            "cross-document-transitions"
+            "same-document-transitions",
+            "cross-document-transitions",
+            "group-element-transitions",
+            "faster-spa-view-transitions",
+            "view transitions smooth state route change"
           ]
         },
         {
@@ -225,7 +229,11 @@
           "summary": "Scroll-linked motion (parallax, scrollytelling, entry/exit reveals) uses declarative CSS scroll-driven animations (off main thread) instead of scroll event listeners.",
           "detectableVia": "HINT: source/CSS inspection for animation-timeline: scroll()/view(); a long-task / scroll-handler probe can flag the main-thread anti-pattern. The model chooses.",
           "guides": [
-            "scroll-entry-exit-effects"
+            "scrollytelling",
+            "parallax-scroll-effects",
+            "scroll-entry-exit-effects",
+            "carousel-slide-effects",
+            "scroll-driven animations animation-timeline"
           ]
         },
         {
@@ -373,7 +381,10 @@
           "summary": "Layout adapts to narrow viewports with no horizontal overflow and no fixed pixel widths forcing a desktop layout on mobile; viewport meta present; fluid scaling and intrinsic sizing rather than brittle breakpoints.",
           "detectableVia": "HINT: layout metrics (scrollWidth vs innerWidth) and a screenshot at an emulated narrow mobile viewport reveal overflow. The model chooses.",
           "guides": [
-            "fluid-scaling"
+            "fluid-scaling",
+            "calculate-with-intrinsic-sizes",
+            "css-layout",
+            "responsive layout adapt viewport mobile"
           ]
         },
         {
@@ -476,8 +487,8 @@
           "summary": "No cumulative layout shift from late content (images, banners, fonts) that arrives without reserved space.",
           "detectableVia": "HINT: the layout primitive's CLS observer captures shifts; a transition video of the first seconds shows content jumping. The model chooses.",
           "guides": [
-            "css-layout",
-            "visually-stable-font-fallbacks"
+            "visually-stable-font-fallbacks",
+            "prevent layout shift reserve space CLS aspect-ratio"
           ]
         },
         {
@@ -485,7 +496,12 @@
           "summary": "The main thread is not blocked by long tasks or heavy scripting; work is deferred, chunked, prioritised, or moved off-thread.",
           "detectableVia": "HINT: the layout primitive records long tasks; a heap summary shows the object population; Lighthouse reports TBT. The model chooses.",
           "guides": [
-            "break-up-long-tasks"
+            "break-up-long-tasks",
+            "identify-heavy-scripts",
+            "optimize-script-priority",
+            "defer-rendering-heavy-content",
+            "defer-work-until-scroll-ends",
+            "reduce main thread work long tasks total blocking time"
           ]
         },
         {
@@ -542,7 +558,7 @@
           "summary": "Text and essential UI meet WCAG colour-contrast minimums against their background.",
           "detectableVia": "HINT: axe contrast rules, a Lighthouse contrast audit, or an in-page probe computing contrast ratios from computed colours. The model chooses.",
           "guides": [
-            "accessibility"
+            "color contrast WCAG text legibility"
           ]
         },
         {
@@ -594,7 +610,7 @@
           "summary": "The page loads without console errors or uncaught exceptions.",
           "detectableVia": "HINT: capture Runtime/Log CDP events, or a probe that reads collected errors; Lighthouse reports this too. The model chooses.",
           "guides": [
-            "html"
+            "avoid console errors uncaught exceptions"
           ]
         },
         {
@@ -602,7 +618,10 @@
           "summary": "Valid doctype and charset, images sized with correct aspect ratio, no deprecated APIs misused, and CSS/HTML are well structured and not needlessly repetitive. (HTTPS, CSP and permission hygiene are judged under be-private-and-secure, not here.)",
           "detectableVia": "HINT: a DOM/source probe for doctype/charset/img dimensions; CSS inspection for repetition; Lighthouse best-practices audits cover the rest. The model chooses.",
           "guides": [
-            "html"
+            "css",
+            "html",
+            "reduce-style-repetition",
+            "valid doctype charset image aspect ratio deprecated api best practices"
           ]
         },
         {
@@ -610,7 +629,9 @@
           "summary": "The page uses the platform cleanly: no deprecated APIs, no avoidable BFCache blockers, no broken source maps or inspector issues, no stale vulnerable libraries, no paste-prevention on inputs, and no notification/geolocation prompts on load.",
           "detectableVia": "HINT: Lighthouse best-practices audits and DevTools inspector/deprecation signals can surface these; DOM/source probes can verify paste handlers and prompt timing. The model chooses.",
           "guides": [
-            "html"
+            "html",
+            "security",
+            "baseline deprecated api bfcache source maps inspector issues paste prevention geolocation notification on load"
           ]
         }
       ]
@@ -631,7 +652,7 @@
           "summary": "The page has a unique, descriptive <title> and a meta description.",
           "detectableVia": "HINT: a DOM probe reads <title> and meta[name=description]; Lighthouse SEO audits cover the same ground. The model chooses.",
           "guides": [
-            "html"
+            "page title meta description seo"
           ]
         },
         {
@@ -647,7 +668,7 @@
           "summary": "Public pages expose the indexing signals search engines need: successful HTTP status, canonical URL when appropriate, hreflang for localized variants, robots/sitemap consistency, and no accidental noindex/noarchive policy.",
           "detectableVia": "HINT: inspect response status and headers, <link rel=canonical>, hreflang links, robots meta, robots.txt and sitemap.xml; Lighthouse SEO audits cover several of these. The model chooses.",
           "guides": [
-            "html"
+            "canonical hreflang http status robots sitemap noindex seo indexing"
           ]
         },
         {
@@ -655,7 +676,7 @@
           "summary": "Where the page represents an article, product, organization, event, place or other rich entity, structured data and share-preview metadata accurately describe the visible content.",
           "detectableVia": "HINT: inspect JSON-LD/microdata and social preview tags against visible content; Lighthouse has a manual structured-data audit, and ad-hoc probes can parse schema.org blocks. The model chooses.",
           "guides": [
-            "html"
+            "structured data schema.org json-ld open graph social preview metadata"
           ]
         }
       ]
@@ -839,7 +860,10 @@
           "summary": "No deceptive design: no confirmshaming, forced continuity, disguised ads, or nagging consent walls; honest defaults; clear pricing and consent; easy reversal/cancel; predictable, declaratively-wired actions; and no hidden-text tricks (hidden content stays deep-linkable and indexable rather than used to deceive).",
           "detectableVia": "HINT: a screenshot of consent/upsell/cancel flows; source inspection for declarative button actions vs misleading controls. The model chooses.",
           "guides": [
-            "privacy"
+            "custom-button-actions",
+            "search-hidden-content",
+            "swipe-to-remove",
+            "honest defaults no dark patterns confirmshaming forced continuity consent"
           ]
         },
         {
