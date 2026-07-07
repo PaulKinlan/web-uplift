@@ -1,5 +1,15 @@
 # Changelog — web-uplift
 
+## [0.2.3] - 2026-07-07
+
+### Added
+- Descriptive `guides` search terms for the checks that had none: the three
+  `be-memory-efficient` checks (they carry rich `references` to the memory-tracer
+  methodology but had no searchable term) and a color-scheme term. Also added the
+  genuinely-relevant `manage-recurring-intervals` guide to the detached-DOM/
+  listeners check. Add-only; no existing ids changed. Every check now has at
+  least one guide entry (id or search term).
+
 ## [0.2.2] - 2026-07-07
 
 ### Fixed

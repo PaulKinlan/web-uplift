@@ -178,7 +178,8 @@
           "detectableVia": "HINT (not mandatory): a screenshot or computed background under an emulated prefers-color-scheme: dark condition will reveal whether surfaces re-tint; the page CSS / a color-scheme declaration is corroborating evidence. The model chooses the method.",
           "guides": [
             "dark-mode",
-            "component-specific-light-dark-theme"
+            "component-specific-light-dark-theme",
+            "dark mode color-scheme prefers-color-scheme light-dark theming"
           ]
         },
         {
@@ -1004,7 +1005,9 @@
           "id": "no-leak-under-repeated-interaction",
           "summary": "Repeating a representative interaction (open/close a modal, navigate a route and back, infinite-scroll a list) about 10 times does not grow retained heap without bound; what is allocated during the interaction is released when it ends.",
           "detectableVia": "HINT (not mandatory): compare heap snapshots for retained growth - a baseline, then one taken after repeating the interaction with `--interact` about 10x (the memory-tracer methodology: baseline -> repeat -> post -> compare). Performance.getMetrics (JSHeapUsedSize, Nodes) across the same before/after window is corroboration. If Chrome DevTools MCP is available, follow its memory-leak-debugging skill: capture baseline, target, and final snapshots, then use memlab or the provided comparison workflow rather than reading raw .heapsnapshot files directly. The package-native `heap` primitive remains the default path. This check is only meaningful where the page has a real interaction to repeat; for a static page with none, mark it not-applicable with a rationale rather than fabricating one. The model chooses.",
-          "guides": [],
+          "guides": [
+            "memory leak retained heap growth under repeated interaction long single-page-app session"
+          ],
           "references": [
             {
               "source": "memory-tracer",
@@ -1021,7 +1024,9 @@
           "id": "bounded-footprint",
           "summary": "Heap size and DOM node count are reasonable for what the page is; the footprint is proportionate rather than bloated.",
           "detectableVia": "HINT: a single `heap` summary's totals (nodeCount, totalSelfSizeBytes, constructor population) plus Performance.getMetrics (Nodes, JSHeapUsedSize) give the current footprint to judge against the page's purpose. Chrome DevTools MCP heap snapshots and memlab snapshot analysis can provide the same memory distribution when available. Read summaries or derived analysis, never raw snapshots unless a dedicated heap-analysis tool is doing the analysis. The model chooses.",
-          "guides": [],
+          "guides": [
+            "bounded memory footprint javascript heap size page weight proportionate allocations"
+          ],
           "references": [
             {
               "source": "memory-tracer",
@@ -1038,7 +1043,10 @@
           "id": "no-detached-dom-or-unbounded-listeners",
           "summary": "No growing population of detached DOM nodes, and no ever-accumulating event listeners or timers that are added but never removed across a session.",
           "detectableVia": "HINT: the `heap` summary by constructor (Detached* nodes) compared across a before/after pair shows a growing detached-DOM population; an `evaluate` probe can sample listener/timer counts (e.g. getEventListeners-style counting, or instrumenting addEventListener/setInterval) before and after the repeated interaction to spot growth. Chrome DevTools MCP heap snapshots plus the memory-leak-debugging skill's common-leak guidance can corroborate detached DOM, listeners, closures, globals, and unbounded caches. Caveat from the memory-tracer and Chrome DevTools MCP guidance: detached nodes can be intentional caches, so judge confidence rather than asserting a bug. The model chooses.",
-          "guides": [],
+          "guides": [
+            "manage-recurring-intervals",
+            "detached DOM nodes event listener leak uncleared timers observers caches"
+          ],
           "references": [
             {
               "source": "memory-tracer",
