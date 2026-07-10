@@ -121,6 +121,7 @@ Primitives, all content- and tool-agnostic:
 | `trace` | a DevTools performance trace over the load (+ `--interact`): a devtools-loadable `trace.json` AND a compact `*-summary.json` (FCP/LCP, long tasks, total blocking time). Read the summary, never the raw trace | Tracing.start/end |
 | `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` to include response bodies) AND a compact `*-summary.json` of network SIGNALS: totals + by-resource-type, first/third-party origins by bytes, render-blocking candidates (grounded in the CDP initiator + priority + renderBlockingStatus when exposed, each with a stated `basis`; confirm against the DOM), weight offenders (largest/slowest), and hygiene (uncompressed text, missing cache headers, redirects, HTTP errors). Read the HAR summary, never the raw HAR. Feeds be-fast-and-stable (request weight, render-blocking), be-sustainable (bytes over the wire), and be-private-and-secure (third parties) | Network domain |
 | `discoverability` | how much of the page a crawler that does NOT run JavaScript can see: fetches the RAW server HTML (a plain request, no JS) and diffs it against the rendered DOM, reporting `coveragePct` (share of rendered content words also present in the raw HTML), `isJsShell`, empty SPA mounts (`#root`/`#app`/`#__next` shipped empty), and whether the title/h1/meta-description survive without JS. Also captures a **browser-view vs crawler-view screenshot pair** (`-rendered.png` with JS on, `-crawler.png` with JS disabled) - for a shell site the crawler view is blank, the single most legible evidence. Reference both in the finding's `artifacts` so they render in the report and scorecard. This is the url-influence failure mode (JS-rendered SPAs reach AI crawlers and search as empty shells) made measurable per-site. Feeds `be-discoverable` and `be-agent-ready` | fetch + DOM |
+| `secrets` | scans page HTML, inline scripts, external JS resources, and meta tags for exposed API keys, tokens, and credentials (AWS keys, Google API keys, Stripe keys, GitHub/Slack tokens, JWTs, private keys, DB connection strings, generic API keys). Returns structured findings with redacted matches. This is a DESCRIPTIVE signal, not a verdict: you MUST reason about each finding. Legitimate **public** API keys (Google Maps keys, Stripe *publishable* keys, Firebase config keys) are EXPECTED to be client-side and are NOT security issues. Actual **sensitive** secrets (AWS keys, Stripe *secret* keys, JWTs, private keys, DB connection strings with credentials, GitHub/Slack tokens) exposed client-side ARE critical `be-private-and-secure` failures. Look at the page context to determine which: is the key near a `<script src="https://maps.googleapis.com">` (legitimate Maps key) or in a config object with `secret_access_key` (critical leak)? Feeds `be-private-and-secure` | Runtime.evaluate + fetch |
 
 Common options the harness simply applies (you choose them, it does not):
 `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
@@ -305,6 +306,15 @@ script; you adapt to the actual page):
   crawlers and search see little to nothing (the url-influence failure mode) -
   a real `be-discoverable`/`be-agent-ready` finding. Confirm a surprising result
   against the raw HTML and the `dom` primitive before asserting it.
+- be-private-and-secure -> run the `secrets` primitive to scan for exposed API
+  keys, tokens, and credentials in the page HTML, inline scripts, external JS,
+  and meta tags. REASON about each finding: is it a legitimate **public** key
+  (Google Maps, Stripe publishable, Firebase config — expected client-side, NOT
+  an issue) or an actual **sensitive** secret (AWS keys, Stripe *secret* keys,
+  JWTs, private keys, DB connection strings, GitHub/Slack tokens — a CRITICAL
+  leak)? Use the `dom`/`evaluate` primitive to read the surrounding context
+  (what script/config the key appears in) to distinguish. Also run `har` to
+  inspect third-party origins and request hygiene.
 
 You own this mapping. If the HINT names a tool you do not want to use, use a
 different one. If you want evidence the HINT does not mention, gather it.

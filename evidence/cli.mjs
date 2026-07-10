@@ -1435,6 +1435,80 @@ async function discoverability(client, url, opts, log) {
   return summary;
 }
 
+// --- secrets primitive ----------------------------------------------------
+// Scans page HTML, inline scripts, external JS resources, and meta tags for
+// exposed API keys, tokens, and credentials. Returns structured findings.
+// The MODEL must reason about each finding: legitimate public keys (e.g. Google
+// Maps) vs actual sensitive secrets (AWS keys, Stripe secret keys, JWTs, private keys).
+const SECRET_PATTERNS = [
+  { id: 'aws-access-key', re: /AKIA[0-9A-Z]{16}/g, severity: 'critical', desc: 'AWS Access Key ID' },
+  { id: 'aws-secret', re: /aws_secret_access_key["\s:=]+([A-Za-z0-9/+=]{40})/g, severity: 'critical', desc: 'AWS Secret Access Key' },
+  { id: 'google-api-key', re: /AIza[0-9A-Za-z_-]{35}/g, severity: 'high', desc: 'Google API Key' },
+  { id: 'stripe-secret', re: /sk_live_[0-9a-zA-Z]{24,}/g, severity: 'critical', desc: 'Stripe Secret Key' },
+  { id: 'stripe-publishable', re: /pk_live_[0-9a-zA-Z]{24,}/g, severity: 'medium', desc: 'Stripe Publishable Key (live)' },
+  { id: 'github-token', re: /gh[pousr]_[0-9a-zA-Z]{36,}/g, severity: 'critical', desc: 'GitHub Token' },
+  { id: 'slack-token', re: /xox[baprs]-[0-9A-Za-z-]{10,}/g, severity: 'critical', desc: 'Slack Token' },
+  { id: 'jwt', re: /eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, severity: 'high', desc: 'JWT Token' },
+  { id: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, severity: 'critical', desc: 'Private Key' },
+  { id: 'connection-string', re: /(?:mongodb|postgres|postgresql|mysql|redis):\/\/[^"]+:[^"]+@[^"]+/g, severity: 'critical', desc: 'Database Connection String with credentials' },
+  { id: 'generic-api-key', re: /(?:api[_-]?key|apikey|api[_-]?secret)["\s:=]+['"]([A-Za-z0-9_-]{32,})['"]/gi, severity: 'high', desc: 'Generic API Key/Secret (32+ chars)' },
+  { id: 'bearer-token', re: /(?:bearer|authorization)["\s:=]+([A-Za-z0-9_-]{20,})/gi, severity: 'high', desc: 'Bearer/Authorization token' },
+];
+
+function scanTextForSecrets(text, source) {
+  const findings = [];
+  for (const p of SECRET_PATTERNS) {
+    p.re.lastIndex = 0;
+    let m, count = 0;
+    while ((m = p.re.exec(text)) !== null) {
+      count++;
+      if (count <= 3) {
+        const matched = m[0];
+        const redacted = matched.length > 12 ? matched.slice(0, 6) + '…' + matched.slice(-4) : matched;
+        findings.push({ pattern: p.id, severity: p.severity, description: p.desc, source, match: redacted });
+      }
+    }
+    if (count > 3) findings.push({ pattern: p.id, severity: p.severity, description: p.desc, source, note: `+${count - 3} more matches` });
+  }
+  return findings;
+}
+
+async function secrets(client, url, opts, log) {
+  log('[secrets] scanning ' + url);
+  await navigate(client, url, { settleMs: opts.wait || 3000, log });
+  const findings = [];
+  // 1. Page HTML
+  const html = await evaluate(client, 'document.documentElement.outerHTML');
+  findings.push(...scanTextForSecrets(html || '', 'page HTML'));
+  // 2. Inline scripts
+  const inline = await evaluate(client, "[...document.querySelectorAll('script:not([src])')].map(s=>s.textContent).join('\\n')");
+  findings.push(...scanTextForSecrets(inline || '', 'inline scripts'));
+  // 3. External JS (sample first 20)
+  const scriptUrls = await evaluate(client, "[...document.querySelectorAll('script[src]')].map(s=>s.src).slice(0,20)");
+  for (const su of (scriptUrls || [])) {
+    try {
+      const js = await evaluate(client, `fetch('${su}').then(r=>r.text()).catch(()=>'')`, { awaitPromise: true });
+      if (js) findings.push(...scanTextForSecrets(js, 'external JS: ' + su.split('/').pop()));
+    } catch {}
+  }
+  // 4. Meta tags
+  const meta = await evaluate(client, "[...document.querySelectorAll('meta')].map(m=>m.content||'').join(' ')");
+  findings.push(...scanTextForSecrets(meta || '', 'meta tags'));
+  // Deduplicate
+  const seen = new Set();
+  const deduped = findings.filter(f => { const k = f.pattern + ':' + (f.match || ''); if (seen.has(k)) return false; seen.add(k); return true; });
+  const summary = {
+    primitive: 'secrets',
+    url,
+    scannedAt: new Date().toISOString(),
+    totalFindings: deduped.length,
+    findings: deduped.slice(0, 30),
+    note: 'Descriptive signal, not a verdict. The MODEL must REASON about each finding: legitimate public API keys (e.g. Google Maps keys, Stripe publishable keys) are EXPECTED to be client-side and are NOT security issues. Actual sensitive secrets (AWS keys, Stripe SECRET keys, JWTs, private keys, DB connection strings, GitHub/Slack tokens) exposed client-side ARE critical be-private-and-secure failures. Judge each finding accordingly.',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
 const PRIMITIVES = {
   screenshot,
   video,
@@ -1445,6 +1519,7 @@ const PRIMITIVES = {
   trace,
   har,
   discoverability,
+  secrets,
 };
 
 // --- argument plumbing -----------------------------------------------------
@@ -1526,7 +1601,7 @@ async function main() {
   const url = args._[1];
   if (!primitive || !url) {
     console.error(
-      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability> <url> [options]\n' +
+      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability|secrets> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
         '         --duration ms --fps n --full-page --bodies --quiet',
