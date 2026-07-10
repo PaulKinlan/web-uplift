@@ -1509,6 +1509,164 @@ async function secrets(client, url, opts, log) {
   return summary;
 }
 
+// --- headers primitive: security response headers -------------------------
+async function headers(client, url, opts, log) {
+  log('[headers] inspecting ' + url);
+  const respHeaders = {};
+  const docPromise = new Promise((resolve) => {
+    client.Network.responseReceived(({response}) => {
+      try { if (response.mimeType && response.mimeType.includes('html')) { resolve(response); } } catch {}
+    });
+    setTimeout(() => resolve(null), (opts.wait || 5000) + 3000);
+  });
+  await navigate(client, url, { settleMs: opts.wait || 3000, log });
+  const resp = await docPromise;
+  if (resp && resp.headers) Object.assign(respHeaders, resp.headers);
+  const get = (k) => respHeaders[k] || respHeaders[k.toLowerCase()] || null;
+  const csp = get('content-security-policy');
+  const hsts = get('strict-transport-security');
+  const xcto = get('x-content-type-options');
+  const xfo = get('x-frame-options');
+  const rp = get('referrer-policy');
+  const pp = get('permissions-policy');
+  const summary = {
+    primitive: 'headers', url,
+    scannedAt: new Date().toISOString(),
+    securityHeaders: {
+      'content-security-policy': { present: !!csp, value: csp, issues: csp ? (csp.includes('unsafe-inline') || csp.includes('unsafe-eval') ? ['unsafe-inline/unsafe-eval'] : []) : ['missing'] },
+      'strict-transport-security': { present: !!hsts, value: hsts, issues: hsts ? [] : ['missing'] },
+      'x-content-type-options': { present: !!xcto && xcto.toLowerCase()==='nosniff', value: xcto, issues: xcto ? [] : ['missing or not nosniff'] },
+      'x-frame-options': { present: !!xfo, value: xfo, issues: xfo ? [] : ['missing (check CSP frame-ancestors)'] },
+      'referrer-policy': { present: !!rp, value: rp, issues: rp ? [] : ['missing'] },
+      'permissions-policy': { present: !!pp, value: pp, issues: pp ? [] : ['missing'] },
+    },
+    https: url.startsWith('https://'),
+    note: 'Descriptive signal. Judge against be-private-and-secure. Missing CSP/HSTS/X-Content-Type-Options are security gaps. unsafe-inline/unsafe-eval weakens XSS protection.',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
+// --- cookies primitive: cookie security audit -----------------------------
+async function cookies(client, url, opts, log) {
+  log('[cookies] auditing ' + url);
+  await navigate(client, url, { settleMs: opts.wait || 3000, log });
+  let pageHost = url;
+  try { pageHost = new URL(url).hostname; } catch {}
+  const { cookies: ck } = await client.Network.getCookies({ urls: [url] });
+  const analyzed = (ck || []).map(c => {
+    const isThirdParty = c.domain && !pageHost.endsWith(c.domain.replace(/^\./, '')) && !c.domain.replace(/^\./, '').endsWith(pageHost);
+    const maxAgeDays = c.expires ? Math.round((c.expires - Date.now() / 1000) / 86400) : null;
+    return {
+      name: c.name, domain: c.domain, path: c.path,
+      secure: !!c.secure, httpOnly: !!c.httpOnly, sameSite: c.sameSite || 'None',
+      isThirdParty: !!isThirdParty, expiryDays: maxAgeDays,
+      issues: [
+        ...(!c.secure ? ['not Secure'] : []),
+        ...(!c.httpOnly && /^(session|auth|token|id)/i.test(c.name) ? ['auth-like cookie not HttpOnly'] : []),
+        ...((c.sameSite || 'None') === 'None' ? ['SameSite=None'] : []),
+        ...(maxAgeDays && maxAgeDays > 365 ? [`long-lived (${maxAgeDays}d)`] : []),
+      ],
+    };
+  });
+  const summary = {
+    primitive: 'cookies', url,
+    scannedAt: new Date().toISOString(),
+    totalCookies: analyzed.length,
+    thirdPartyCount: analyzed.filter(c => c.isThirdParty).length,
+    insecureCount: analyzed.filter(c => c.issues.length > 0).length,
+    cookies: analyzed.slice(0, 50),
+    note: 'Descriptive signal. Judge against be-private-and-secure. Cookies without Secure, with SameSite=None, or auth cookies without HttpOnly are security gaps. Long-lived third-party cookies indicate tracking.',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
+// --- trackers primitive: third-party tracker enumeration ------------------
+const KNOWN_TRACKERS = new Set([
+  'google-analytics.com','googletagmanager.com','doubleclick.net','googleadservices.com','googlesyndication.com',
+  'facebook.net','connect.facebook.net','hotjar.com','segment.io','segment.com','mixpanel.com','amplitude.com',
+  'fullstory.com','clarity.ms','quantserve.com','scorecardresearch.com','criteo.com','taboola.com','outbrain.com',
+  'pubmatic.com','rubiconproject.com','openx.net','adnxs.com','casalemedia.com','nr-data.net','newrelic.com',
+  'sentry.io','bugsnag.com','branch.io','appsflyersdk.com','adjust.com','tiktokv.com','bat.bing.com',
+  'ads.linkedin.com','ads.twitter.com','pinterest.com',
+]);
+async function trackers(client, url, opts, log) {
+  log('[trackers] enumerating ' + url);
+  const origins = new Map();
+  client.Network.requestWillBeSent(({request}) => {
+    try {
+      const o = new URL(request.url).hostname;
+      const entry = origins.get(o) || { origin: o, requests: 0 };
+      entry.requests++;
+      origins.set(o, entry);
+    } catch {}
+  });
+  await navigate(client, url, { settleMs: opts.wait || 4000, log });
+  await sleep(1000);
+  let firstParty = '';
+  try { firstParty = new URL(url).hostname; } catch {}
+  const all = [...origins.values()];
+  const thirdParty = all.filter(o => o.origin !== firstParty && !o.origin.endsWith(firstParty));
+  const trackersFound = thirdParty.filter(o => [...KNOWN_TRACKERS].some(t => o.origin === t || o.origin.endsWith('.' + t)));
+  const summary = {
+    primitive: 'trackers', url,
+    scannedAt: new Date().toISOString(),
+    firstParty,
+    totalOrigins: all.length,
+    thirdPartyOrigins: thirdParty.length,
+    knownTrackers: trackersFound.map(t => t.origin),
+    topThirdPartyByRequests: thirdParty.sort((a,b) => b.requests - a.requests).slice(0, 15).map(o => ({ origin: o.origin, requests: o.requests })),
+    note: 'Descriptive signal. Judge against be-private-and-secure (tracking footprint) and be-sustainable (third-party bytes). Known tracker domains indicate active tracking.',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
+// --- images primitive: image optimization audit ---------------------------
+async function images(client, url, opts, log) {
+  log('[images] auditing ' + url);
+  await navigate(client, url, { settleMs: opts.wait || 3000, log });
+  const data = await evaluate(client, `(() => {
+    const imgs = [...document.querySelectorAll('img')];
+    const vh = window.innerHeight;
+    return imgs.slice(0, 100).map(img => {
+      const r = img.getBoundingClientRect();
+      const nw = img.naturalWidth || 0;
+      const dw = Math.round(r.width) || 0;
+      return {
+        src: (img.src || '').slice(0, 120), alt: img.alt || null,
+        hasWidth: img.hasAttribute('width'), hasHeight: img.hasAttribute('height'),
+        loading: img.getAttribute('loading'),
+        srcset: img.hasAttribute('srcset') || !!img.querySelector('source'),
+        naturalWidth: nw, displayWidth: dw,
+        oversized: nw > 0 && dw > 0 && nw > dw * 2,
+        belowFold: r.top > vh,
+        format: (() => { try { const p = new URL(img.src).pathname; const parts = p.split('.'); return parts.length > 1 ? parts.pop().toLowerCase().slice(0,5) : null; } catch { return null; } })(),
+      };
+    });
+  })()`);
+  const imgs = data || [];
+  const summary = {
+    primitive: 'images', url,
+    scannedAt: new Date().toISOString(),
+    totalImages: imgs.length,
+    issues: {
+      missingDimensions: imgs.filter(i => !i.hasWidth || !i.hasHeight).length,
+      notLazyBelowFold: imgs.filter(i => i.belowFold && i.loading !== 'lazy').length,
+      oversized: imgs.filter(i => i.oversized).length,
+      missingSrcset: imgs.filter(i => !i.srcset && i.displayWidth > 100).length,
+      legacyFormat: imgs.filter(i => i.format && ['jpg','jpeg','png','gif'].includes(i.format)).length,
+      modernFormat: imgs.filter(i => i.format && ['avif','webp','svg'].includes(i.format)).length,
+      missingAlt: imgs.filter(i => !i.alt).length,
+    },
+    images: imgs.slice(0, 30),
+    note: 'Descriptive signal. Judge against be-fast-and-stable (missing width/height causes CLS, oversized images), be-sustainable (legacy formats, missing srcset), be-inclusive (missing alt).',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
 const PRIMITIVES = {
   screenshot,
   video,
@@ -1520,6 +1678,10 @@ const PRIMITIVES = {
   har,
   discoverability,
   secrets,
+  headers,
+  cookies,
+  trackers,
+  images,
 };
 
 // --- argument plumbing -----------------------------------------------------
@@ -1601,7 +1763,7 @@ async function main() {
   const url = args._[1];
   if (!primitive || !url) {
     console.error(
-      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability|secrets> <url> [options]\n' +
+      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability|secrets|headers|cookies|trackers|images> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
         '         --duration ms --fps n --full-page --bodies --quiet',
