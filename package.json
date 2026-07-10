@@ -1,6 +1,6 @@
 {
   "name": "web-uplift",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "type": "module",
   "license": "Apache-2.0",
   "description": "Fully agentic modern-web-quality auditing and fixing for websites: the model gathers multi-modal evidence via raw-CDP primitives and judges declarative principles, then hill-climbs fixes. Install the skill and run it in your own agent session (your subscription), or use the headless CI runner. No hard-coded checks, no fast path.",
