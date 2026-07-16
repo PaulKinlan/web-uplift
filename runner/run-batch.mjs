@@ -3,7 +3,7 @@
  * Batch web-uplift audits: one headless agent run per URL.
  *
  *   npm run batch -- [urls...] [--urls <file>] [--agent claude]
- *                    [--concurrency 2] [--out reports] [--flow <flow.json>]
+ *                    [--concurrency 2] [--out reports] [--flow <flow.json>] [--resume]
  *                    [--max-turns 80] [--dry-run] [--verbose]
  *
  * URLs come from positional arguments, a --urls file, or both. Invalid URLs are
@@ -44,7 +44,7 @@ import { writeFileSync } from 'node:fs';
 import { join, relative, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS } from './agents.mjs';
-import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
+import { hostSlug, makeRunId, runDir, updateLatest, resolveLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
 import { launchChrome, newSession } from '../evidence/cdp.mjs';
 
@@ -110,6 +110,10 @@ if (failures.length) {
 async function worker() {
   while (queue.length) {
     const url = queue.shift();
+    if (args.resume && hasCompletedLatest(url)) {
+      console.log(`resume skip    ${url} (latest report passed atomic coverage)`);
+      continue;
+    }
     const planned = args['dry-run']
       ? dryRunDir(url)
       : runDir(outDir, url, makeRunId());
@@ -163,6 +167,13 @@ function dryRunDir(url) {
   const hostRoot = join(outDir, host);
   const runId = '<timestamp>';
   return { dir: join(hostRoot, runId), hostRoot, host, runId };
+}
+
+function hasCompletedLatest(url) {
+  const hostRoot = join(outDir, hostSlug(url));
+  const latestDir = resolveLatest(hostRoot);
+  if (!latestDir) return false;
+  return validateAtomicReport(join(latestDir, 'report.json')).ok;
 }
 
 function validateAtomicReport(reportPath) {
