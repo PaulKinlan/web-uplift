@@ -38,14 +38,17 @@
  * launched per run with an ephemeral profile, so concurrent runs don't share
  * state. This runner ORCHESTRATES the fan-out; it contains no checks.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { join, relative, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AGENTS } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
 import { launchChrome, newSession } from '../evidence/cdp.mjs';
+
+const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
 
 // The one canonical methodology is .claude/skills/web-audit/SKILL.md. Agents
 // that surface it as a slash command invoke /web-audit; the rest are pointed at
@@ -57,7 +60,7 @@ import { launchChrome, newSession } from '../evidence/cdp.mjs';
 // The runner ORCHESTRATES; it contains no checks. It fans out one fully-agentic
 // audit per URL. The agent (the model) follows SKILL.md: it gathers evidence
 // with evidence/cli.mjs, decides which tools to run, reasons, and judges the
-// principles. Nothing about the audit is deterministic here.
+// checks. Judgement remains agentic; exact catalog coverage is validated deterministically before a run can become `latest`.
 //
 // HEADLESS / CI / BATCH PATH (uses API tokens). The per-agent invocation map is
 // the single source of truth in runner/agents.mjs; ADDING AN AGENT = ADDING ONE
@@ -136,10 +139,18 @@ async function worker() {
       const ok = await exists(join(siteDir, 'report.json'));
       if (ok) {
         await annotateReport(siteDir, { agent: agentName, runId: planned.runId });
-        updateLatest(planned.hostRoot, planned.runId);
+        const validation = validateAtomicReport(join(siteDir, 'report.json'));
+        if (validation.ok) {
+          updateLatest(planned.hostRoot, planned.runId);
+          console.log(`done (coverage complete)     ${url}`);
+        } else {
+          failures.push({ url, reason: `atomic coverage validation failed: ${validation.detail}` });
+          console.error(`INVALID REPORT ${url}: ${validation.detail}`);
+        }
+      } else {
+        console.log(`NO REPORT     ${url}`);
+        failures.push({ url, reason: 'finished without report.json' });
       }
-      console.log(`${ok ? 'done' : 'NO REPORT'}     ${url}`);
-      if (!ok) failures.push({ url, reason: 'finished without report.json' });
     } catch (err) {
       failures.push({ url, reason: String(err) });
       console.error(`failed         ${url}: ${err}`);
@@ -152,6 +163,14 @@ function dryRunDir(url) {
   const hostRoot = join(outDir, host);
   const runId = '<timestamp>';
   return { dir: join(hostRoot, runId), hostRoot, host, runId };
+}
+
+function validateAtomicReport(reportPath) {
+  const validator = join(PKG_ROOT, 'schema', 'validate-report.mjs');
+  const catalog = join(PKG_ROOT, 'knowledge', 'principles.json');
+  const result = spawnSync(process.execPath, [validator, catalog, reportPath], { encoding: 'utf8' });
+  const detail = `${result.stderr || ''}\n${result.stdout || ''}`.trim().replace(/\s+/g, ' ').slice(0, 1000);
+  return { ok: result.status === 0, detail: detail || `validator exited ${result.status}` };
 }
 
 async function annotateReport(siteDir, meta) {
