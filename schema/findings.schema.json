@@ -8,6 +8,10 @@
     "url",
     "auditedAt",
     "status",
+    "evidenceUsed",
+    "coverage",
+    "checkOutcomes",
+    "principleOutcomes",
     "paths",
     "findings"
   ],
@@ -66,7 +70,8 @@
       "description": "The evidence modalities and tools the model actually ran for this audit (e.g. 'screenshot', 'layout-metrics', 'transition-video', 'heap-summary', 'dom+source', 'evaluate-probe', 'lighthouse', 'axe-core'). Makes the audit honest about its method, since method selection is the model's at inspection time, not pre-baked.",
       "items": {
         "type": "string"
-      }
+      },
+      "minItems": 1
     },
     "guidanceConsulted": {
       "type": "array",
@@ -145,6 +150,7 @@
         "type": "object",
         "required": [
           "principleId",
+          "expectation",
           "status"
         ],
         "properties": {
@@ -164,10 +170,11 @@
             "enum": [
               "pass",
               "issues",
+              "incomplete",
               "not-applicable",
               "opted-out"
             ],
-            "description": "pass = met; issues = one or more findings; not-applicable = the model judged the principle does not apply (contextual, no declared intent); opted-out = the developer declared an opt-out in web-uplift.json."
+            "description": "Derived from checkOutcomes: pass = all applicable checks passed; issues = one or more checks have issues; incomplete = at least one blocked/not-run check and no issues; not-applicable/opted-out require all checks to carry that status."
           },
           "reason": {
             "type": "string",
@@ -186,6 +193,7 @@
               "properties": {
                 "status": {
                   "enum": [
+                    "incomplete",
                     "not-applicable",
                     "opted-out"
                   ]
@@ -238,7 +246,8 @@
             ]
           }
         }
-      }
+      },
+      "minItems": 1
     },
     "findings": {
       "type": "array",
@@ -385,6 +394,203 @@
           "type": "integer",
           "description": "How many audit passes ran (fix mode re-audits, so >1)."
         }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "Deterministic coverage accounting against the exact principles.json used for this run. Complete can only be true when every expected check has exactly one conclusive outcome and there are no blocked/not-run rows.",
+      "required": [
+        "catalogVersion",
+        "catalogChecksum",
+        "expected",
+        "recorded",
+        "judged",
+        "blocked",
+        "notRun",
+        "missing",
+        "unknown",
+        "duplicates",
+        "complete"
+      ],
+      "properties": {
+        "catalogVersion": {
+          "type": "string"
+        },
+        "catalogChecksum": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recorded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "judged": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Rows with pass, issues, not-applicable, or opted-out status."
+        },
+        "blocked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "notRun": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicates": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "checkOutcomes": {
+      "type": "array",
+      "description": "Exactly one result for every (principleId, checkId) pair from the run's principles.json. Exact set equality and derived-status rules are enforced by the coverage validator.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "principleId",
+          "checkId",
+          "status",
+          "confidence",
+          "method",
+          "evidence"
+        ],
+        "properties": {
+          "principleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "checkId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "issues",
+              "not-applicable",
+              "opted-out",
+              "blocked",
+              "not-run"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "method": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The exact active, visual, or objective method used or attempted."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete observation. Required and non-empty for pass/issues; for blocked/not-run, state the blocker or reason."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "pathIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "findingIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "pass",
+                    "issues"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "evidence": {
+                  "minLength": 1
+                }
+              },
+              "anyOf": [
+                {
+                  "required": [
+                    "pathIds"
+                  ]
+                },
+                {
+                  "required": [
+                    "artifacts"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "not-applicable",
+                    "opted-out",
+                    "blocked",
+                    "not-run"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
       }
     }
   }

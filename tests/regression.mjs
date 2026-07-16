@@ -17,6 +17,7 @@ try {
   testSyntaxChecks();
   testPackageRootImportIsSideEffectFree();
   testSchemaValidation();
+  testAtomicCoverageValidator();
   testGuidanceUsage();
   testInstalledEvidenceCli();
   testUpdateDryRunReadsInstallManifest();
@@ -37,6 +38,23 @@ try {
 // guides it consulted, and every issue-finding must cite a guidanceId drawn from
 // that list. This is what stops the "audit judged from memory, never called MWG"
 // failure users reported — a report that skipped guidance fails validation here.
+function testAtomicCoverageValidator() {
+  const validator = join(repoRoot, 'schema', 'validate-report.mjs');
+  const catalog = join(repoRoot, 'knowledge', 'principles.json');
+  const valid = run(process.execPath, [validator, catalog, join(repoRoot, 'examples', 'playground-report.json')]);
+  assert(valid.status === 0, `atomic coverage: valid fixture failed:\n${valid.stderr}\n${valid.stdout}`);
+
+  const incomplete = JSON.parse(readFileSync(join(repoRoot, 'examples', 'playground-report.json'), 'utf8'));
+  incomplete.checkOutcomes = incomplete.checkOutcomes.slice(1);
+  incomplete.status = 'partial';
+  incomplete.coverage = { ...incomplete.coverage, recorded: incomplete.checkOutcomes.length, judged: incomplete.checkOutcomes.length, missing: 1, complete: false };
+  delete incomplete.overallScore;
+  const incompletePath = join(tmp, 'incomplete-report.json');
+  writeFileSync(incompletePath, JSON.stringify(incomplete));
+  const rejected = run(process.execPath, [validator, catalog, incompletePath]);
+  assert(rejected.status !== 0, `atomic coverage: missing check was not rejected:\n${rejected.stderr}\n${rejected.stdout}`);
+}
+
 function testGuidanceUsage() {
   const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
   const findings = report.findings || [];
@@ -62,6 +80,11 @@ async function testScorecardScoringAndRender() {
   const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
 
   const scored = scoreReport(report);
+  const incomplete = structuredClone(report);
+  incomplete.coverage.complete = false;
+  let refusedIncomplete = false;
+  try { scoreReport(incomplete); } catch (error) { refusedIncomplete = /Refusing to score/.test(error.message); }
+  assert(refusedIncomplete, 'scorecard: incomplete atomic coverage must be refused');
   // The 9-finding playground should not be perfect, and must not exceed 100.
   assert(typeof scored.overall === 'number', 'scorecard: overall should be numeric for the playground report');
   assert(scored.overall > 0 && scored.overall < 100, `scorecard: expected an imperfect overall, got ${scored.overall}`);

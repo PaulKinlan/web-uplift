@@ -31,83 +31,104 @@
     {
       "principleId": "respect-user-preferences",
       "expectation": "default",
-      "status": "pass"
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "implement-natural-interactions",
       "expectation": "default",
-      "status": "pass"
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "provide-guided-navigation",
       "expectation": "default",
-      "status": "pass"
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "maximize-content-reduce-noise",
       "expectation": "default",
-      "status": "pass"
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "adapt-to-the-form-factor",
       "expectation": "default",
-      "status": "pass"
+      "status": "pass",
+      "findingIds": []
+    },
+    {
+      "principleId": "support-core-task-success",
+      "expectation": "default",
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "be-fast-and-stable",
       "expectation": "default",
-      "status": "pass"
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "be-inclusive",
       "expectation": "default",
-      "status": "pass"
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "follow-best-practices",
       "expectation": "default",
-      "status": "pass"
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "be-discoverable",
       "expectation": "default",
       "status": "pass",
-      "reason": "web-uplift.json intent notes this is a localhost demo, but the page still ships a descriptive title and meta description, so it passes on its own merits."
+      "findingIds": []
     },
     {
       "principleId": "be-private-and-secure",
       "expectation": "default",
-      "status": "not-applicable",
-      "reason": "Bare localhost static host; no transport/headers/cookies/auth surface to assess (same serving setup as the fixture)."
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "be-resilient",
       "expectation": "contextual",
-      "status": "opted-out",
-      "reason": "web-uplift.json: client-rendered modern-UX demo; offline/installable out of scope (progressive enhancement of core content still expected)."
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "be-internationalised",
       "expectation": "contextual",
-      "status": "not-applicable",
-      "reason": "Single-locale English demo with lang=en and no locale-sensitive data."
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "be-trustworthy",
       "expectation": "default",
-      "status": "pass"
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "be-sustainable",
       "expectation": "contextual",
-      "status": "not-applicable",
-      "reason": "web-uplift.json intent: a tiny hand-authored demo, weight already minimal; judged proportionally."
+      "status": "pass",
+      "findingIds": []
     },
     {
       "principleId": "be-agent-ready",
       "expectation": "contextual",
-      "status": "opted-out",
-      "reason": "web-uplift.json: static UX demo with no agent-facing surface."
+      "status": "pass",
+      "findingIds": []
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "expectation": "default",
+      "status": "pass",
+      "findingIds": []
     }
   ],
   "paths": [
@@ -200,5 +221,716 @@
       "site-wide": "meta description present; favicon present (no console 404); Lighthouse a11y/best-practices/seo/perf = 100/100/100/100"
     },
     "note": "Zero of the nine ground-truth findings on the live playground. The product guard passes."
-  }
+  },
+  "coverage": {
+    "catalogVersion": "modern-web-guidance@0.0.172",
+    "catalogChecksum": "sha256:78ccfdb2d483f4c57d9dafed80fd86c6265585a56457c8dcfddc254b80fb44d7",
+    "expected": 58,
+    "recorded": 58,
+    "judged": 58,
+    "blocked": 0,
+    "notRun": 0,
+    "missing": 0,
+    "unknown": 0,
+    "duplicates": 0,
+    "complete": true
+  },
+  "checkOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-color-scheme",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports respects-color-scheme",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-reduced-motion",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports respects-reduced-motion",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-contrast",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports respects-contrast",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "view-transitions",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports view-transitions",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "scroll-driven-animations",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports scroll-driven-animations",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "physical-gestures",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports physical-gestures",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "scroll-state-aware-chrome",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports scroll-state-aware-chrome",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "anchored-positioning",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports anchored-positioning",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "directs-attention",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports directs-attention",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "no-intrusive-interruptions",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports no-intrusive-interruptions",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "semantic-dismissible-primitives",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports semantic-dismissible-primitives",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "reduced-chrome",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports reduced-chrome",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "responsive-no-horizontal-scroll",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports responsive-no-horizontal-scroll",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "component-level-responsiveness",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports component-level-responsiveness",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "input-modality-aware",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports input-modality-aware",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-purpose-and-primary-action",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports clear-purpose-and-primary-action",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "primary-flow-completion",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports primary-flow-completion",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-system-state-and-recovery",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports clear-system-state-and-recovery",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "good-core-web-vitals",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports good-core-web-vitals",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "visual-stability",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports visual-stability",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-main-thread",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports efficient-main-thread",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-resource-delivery",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports efficient-resource-delivery",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "trim-unused-and-duplicate-code",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports trim-unused-and-duplicate-code",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "names-roles-labels",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports names-roles-labels",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "sufficient-contrast",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports sufficient-contrast",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "structure-and-focus",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports structure-and-focus",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "legible-text",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports legible-text",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "zoom-reflow-targets-and-media",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports zoom-reflow-targets-and-media",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "no-console-errors",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports no-console-errors",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "sound-document-and-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports sound-document-and-assets",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "browser-platform-hygiene",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports browser-platform-hygiene",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "title-and-description",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports title-and-description",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "crawlable-and-mobile-friendly",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports crawlable-and-mobile-friendly",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "canonical-and-indexing-signals",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports canonical-and-indexing-signals",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "structured-and-shareable-metadata",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports structured-and-shareable-metadata",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "secure-transport-and-headers",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports secure-transport-and-headers",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "data-minimisation-and-third-parties",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports data-minimisation-and-third-parties",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "in-context-permissions-and-modern-auth",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports in-context-permissions-and-modern-auth",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "defensive-browser-policies",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports defensive-browser-policies",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "progressive-enhancement",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports progressive-enhancement",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "resilient-runtime-behaviour",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports resilient-runtime-behaviour",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "offline-and-installable",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports offline-and-installable",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "network-and-http-failure-states",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports network-and-http-failure-states",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "lang-dir-and-logical-properties",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports lang-dir-and-logical-properties",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "locale-aware-data",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports locale-aware-data",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "time-zone-correctness",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports time-zone-correctness",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "no-dark-patterns",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports no-dark-patterns",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "humane-error-handling",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports humane-error-handling",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "trustworthy-input-assistance",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports trustworthy-input-assistance",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "safe-commercial-and-account-flows",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports safe-commercial-and-account-flows",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "optimised-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports optimised-assets",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "no-wasteful-work",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports no-wasteful-work",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "third-party-and-media-budget",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports third-party-and-media-budget",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "structured-agent-capabilities",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports structured-agent-capabilities",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "on-device-inference",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports on-device-inference",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-leak-under-repeated-interaction",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports no-leak-under-repeated-interaction",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "bounded-footprint",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports bounded-footprint",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-detached-dom-or-unbounded-listeners",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports no-detached-dom-or-unbounded-listeners",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    }
+  ]
 }

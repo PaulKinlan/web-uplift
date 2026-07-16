@@ -75,6 +75,60 @@ inputs and one generic capability:
    system Chrome and drives it over raw CDP (chrome-remote-interface). It returns
    data and artifacts; it never decides anything.
 
+## Non-negotiable atomic coverage contract
+
+**The checks in `principles.json`, not the 17 principle headings, are the audit
+denominator.** A broad principle judgement is never a substitute for executing
+and recording each defined check. At the current catalog version that means 58
+check outcomes per audited site; derive the number from the file rather than
+hard-coding 58.
+
+Before gathering evidence:
+
+1. Materialise a coverage manifest containing every expected
+   `(principleId, checkId)` pair from the exact `principles.json` used by the run.
+   Record its catalog version and checksum.
+2. Create one planned result slot for every pair. Never invent aliases,
+   aggregate several checks into a generic review, or replace a check with an
+   easier proxy.
+3. Decide the evidence method and target path/condition for **each check**. One
+   artifact may support several checks, but every check must point to the
+   evidence and reasoning that establishes its own outcome.
+
+For every expected pair, emit exactly one `checkOutcomes` row with one of:
+
+- `pass` — direct evidence supports this check; absence of a finding is not
+  evidence and cannot produce a pass.
+- `issues` — direct evidence shows a failure, linked to finding IDs.
+- `not-applicable` — the check genuinely does not apply, with a check-specific
+  rationale. This does **not** mean untested, unavailable, or difficult.
+- `opted-out` — configuration explicitly excludes it, with the declared reason.
+- `blocked` — execution was attempted but an external condition prevented it,
+  with the attempted method and blocker.
+- `not-run` — execution did not happen, with a reason. This is incomplete work,
+  never N/A and never a pass.
+
+A principle verdict is **derived from its check outcomes**:
+
+- any `issues` => principle `issues`;
+- otherwise any `blocked` or `not-run` => principle `incomplete`;
+- otherwise all applicable checks `pass` => principle `pass`;
+- a principle is `not-applicable`/`opted-out` only when all of its checks have
+  that status with valid reasons.
+
+A run may be saved with blocked/not-run rows, but it is `partial`, not
+`completed`. It must report exact `executed/expected`, `blocked`, `not-run`,
+`missing`, `unknown`, and `duplicate` counts. **Do not publish a score, pass
+rate, “audited sites” count, or completed claim unless missing, unknown,
+duplicate, blocked, and not-run are all zero.** Run the report coverage validator
+before generating summaries or scorecards. Validator failure is audit failure,
+not a warning to suppress.
+
+This contract applies equally to interactive, batch, CI, and delegated audits.
+Prompts, runners, schemas, database importers, and UIs must preserve the exact
+check IDs and outcomes. A scale-oriented runner that only gathers a subset is an
+evidence/recon pass and must not call its output an audit.
+
 ## The evidence primitives (your senses)
 
 ```sh
@@ -93,20 +147,6 @@ Use whichever invocation resolves in your context (they run the SAME CLI):
 
 Pick the first that exists; the rest of this file writes `node evidence/cli.mjs`
 for brevity, but the `web-uplift evidence ...` form is equivalent everywhere.
-
-**This applies to EVERY web-uplift command this skill uses**, not just evidence.
-The scorecard, run-compare, and user-flow scripts are vendored alongside the
-evidence CLI, so translate the same three ways:
-
-| In this repo | Per-project install | Global package |
-|---|---|---|
-| `node aggregate/scorecard.mjs <host>` | `node .web-uplift/aggregate/scorecard.mjs <host>` | `web-uplift scorecard <host>` |
-| `node aggregate/compare.mjs <host>` | `node .web-uplift/aggregate/compare.mjs <host>` | `web-uplift compare <host>` |
-| `node runner/flow.mjs replay <flow>` | `node .web-uplift/runner/flow.mjs replay <flow>` | `web-uplift flow replay <flow>` |
-
-If none resolves (an older install that predates these scripts), say so in the
-report rather than skipping silently, and point the user at `web-uplift
-scorecard <host>` via `npx -y web-uplift`.
 
 Primitives, all content- and tool-agnostic:
 
@@ -156,18 +196,6 @@ these is wired into the runtime; you invoke them yourself when they help:
 
 ## Method
 
-**Modern Web Guidance is MANDATORY, not optional.** This skill judges and fixes
-against the LIVE Modern Web Guidance feed, never the model's memory. For every
-principle you audit AND every fix you write, you MUST run
-`npx -y modern-web-guidance@latest search "<query>"` and
-`retrieve "<id>"` (using the checks' `guides` in `principles.json`) and base your
-judgement and your edit on what the feed actually returns. Judging a principle or
-writing a fix from memory, without a real lookup THIS run, is a skill violation
-and the #1 issue users have reported. Concretely: every issue-finding MUST carry
-the `guidanceId` of a guide you retrieved, and the report MUST list every guide
-id you consulted in `guidanceConsulted`. A run with zero guidance lookups is not
-a valid web-uplift run. The audit (step 2) and the fix (step 7) each enforce this.
-
 ### 0. Read the project config (if present) and set the bar
 
 Before anything else:
@@ -181,19 +209,16 @@ Before anything else:
    as an issue. `intent` sets context you judge against; it does not silence
    findings. If no config is present, proceed with judgement (step 4). Record in
    the report's `config` field whether one was loaded.
-2. **Search Modern Web Guidance UP FRONT — REQUIRED, not a suggestion.** For each
-   principle you will judge, take its checks' `guides` (ids and/or query strings
-   in `principles.json`) and actually run `modern-web-guidance search`/`retrieve`
-   against the live feed (at the pinned `guidanceCatalogVersion`) BEFORE you
-   judge that principle. You MUST do this per principle; setting the bar from
-   memory is not allowed, and it is the top failure users report about this tool.
-   Record every guide id you retrieve in the report's `guidanceConsulted` array,
-   and set each resulting issue-finding's `guidanceId` to the guide it maps to
-   (a finding with no `guidanceId` is incomplete). Also read any check-level
-   `references` (non-MWG standards, methods, optional tools such as the Chrome
-   DevTools MCP memory-leak-debugging skill). The `guides` and `references`
-   entries are declarative pointers, not tests; you still decide what evidence
-   proves the outcome. Cache `retrieve` results for the run.
+2. **Consult the mapped guidance UP FRONT.** For each principle you will judge,
+   look at its checks' `guides` lists and `search`/`retrieve` the relevant
+   Modern Web Guidance guides from the live feed (at the pinned
+   `guidanceCatalogVersion`) BEFORE you judge, so you set the bar from the
+   current recommended approach rather than from memory. Also read any
+   check-level `references`; these cover non-MWG standards, methods, and optional
+   tools such as the Chrome DevTools MCP memory-leak-debugging skill for memory
+   analysis. The `guides` and `references` entries are declarative pointers, not
+   tests; you still decide what evidence proves the outcome. Cache
+   `list`/`retrieve` for the run.
 
 ### 1. Recon and coverage (decide which pages to audit)
 
@@ -240,11 +265,15 @@ DevTools Recorder export, or a hand-authored flow.json). It drives the steps ove
 CDP and captures a screenshot per step into `<dir>`; judge the per-step states as
 additional paths and record the flow in `paths`.
 
-### 2. Plan the evidence you need, per principle
+### 2. Build the check manifest and plan evidence, per check
 
-Read every principle check, its `detectableVia` HINT, its `guides`, and any
-`references` (which you already consulted up front in step 0). For each, decide
-what evidence WOULD let you judge it, and under which condition. Examples (not a
+First generate the full `(principleId, checkId)` manifest required by the atomic
+coverage contract. Verify its expected count against `principles.json`; do not
+start from a hand-written list of 17 principle names. Read every check's
+`detectableVia` HINT, `guides`, and any `references` (which you already consulted
+up front in step 0). For each manifest row, record what evidence WOULD let you
+judge it, under which condition and on which representative path. Do not begin
+judgement until every row has a plan or an explicit anticipated blocker. Examples (not a
 script; you adapt to the actual page):
 
 - respects-color-scheme -> `screenshot`/`dom --selector` under
@@ -329,10 +358,17 @@ Run the primitives and tools you planned. Keep artifacts (screenshots, videos,
 heap summaries, layout JSON, Lighthouse JSON) under the report directory or
 `scratch/` (gitignored). Capture enough that a reader could verify each finding.
 
-### 4. Reason and judge every principle (quality without shaming)
+### 4. Judge every check, then derive every principle (quality without shaming)
 
-For each principle, first decide **applicability**, then **verdict**, and record
-both in `principleOutcomes`:
+Work through the coverage manifest one check at a time. Record exactly one
+`checkOutcomes` row per expected pair, including status, confidence, method,
+evidence, path/artifact references, and any reason/finding IDs required by that
+status. Never initialise principles to pass and flip only those with findings;
+that is absence-of-evidence scoring and invalidates the audit.
+
+After every check is recorded, derive `principleOutcomes` mechanically from the
+check statuses using the atomic coverage contract. For each principle, decide
+**applicability** and **verdict** as follows:
 
 - **Opted out.** If `web-uplift.json` declared an `optOut` for this principle
   (or check), report it as `opted-out` with the developer's reason and move on.
@@ -357,10 +393,12 @@ both in `principleOutcomes`:
 - **Verdict.** For each applicable principle check, weigh the evidence and decide
   pass or issue. Be honest about `confidence` for subjective judgements.
 
-So the four reported statuses are distinct: `pass`, `issues`, `not-applicable`
-(you judged it does not apply, with a reason), and `opted-out` (the developer
-declared it, with their reason). Never silently drop a `default` principle, and
-never penalise a `contextual` one you reasonably judged out of scope.
+The reported statuses are distinct: `pass`, `issues`, `incomplete`,
+`not-applicable` (you judged it does not apply, with a reason), and `opted-out`
+(the developer declared it, with their reason). Check outcomes additionally use
+`blocked` and `not-run`, which derive an `incomplete` principle and a `partial`
+run. Never silently drop a default principle, convert untested work to N/A, or
+penalise a contextual one you reasonably judged out of scope.
 
 For each issue, use the check's `guides` (already consulted in step 0) to cite
 the most relevant Modern Web Guidance `id`; run a fresh `search` if you need to
@@ -398,14 +436,13 @@ timestamped directory and keep a `latest` pointer:
 Write two files in the run dir:
 
 - `report.json` - MUST validate against
-  [schema/findings.schema.json](../../../schema/findings.schema.json). Set
-  `evidenceUsed` (the modalities and tools you actually ran),
-  `guidanceConsulted` (every Modern Web Guidance id you retrieved this run - this
-  MUST be non-empty whenever there are issue-findings, and each issue-finding's
-  `guidanceId` should come from it), `config` (whether a
-  `web-uplift.json` was loaded), `principleOutcomes` (per-principle
-  applicability + status, so `opted-out` and `not-applicable` show distinctly
-  from pass/issue, each with its reason), and the structured `artifacts` manifest
+  [schema/findings.schema.json](../../../schema/findings.schema.json) **and pass
+  the atomic coverage validator**. Set `evidenceUsed` (the modalities and tools
+  you actually ran), `config` (whether a `web-uplift.json` was loaded),
+  `checkOutcomes` (exactly one row for every manifest pair),
+  `principleOutcomes` (derived from those rows, so `incomplete`, `opted-out`, and
+  `not-applicable` remain distinct from pass/issue), `coverage` (the exact
+  denominator and completion counts), and the structured `artifacts` manifest
   (one entry per evidence file you kept: `{type, path, caption, condition,
   findingIds}` with `path` relative to the run dir). Each finding SHOULD list the
   artifact paths that evidence it in `finding.artifacts`, so every "action to fix"
@@ -415,6 +452,19 @@ Write two files in the run dir:
   artifacts-manifest table, findings grouped by principle (embed screenshots
   inline with `![](path)` and link video/trace/har/heap), the prioritised task
   list, and anything skipped or low-confidence.
+
+Before writing `report.md`, scoring, aggregation, or a completion claim, run the
+validator and include its output in the run log:
+
+```sh
+web-uplift validate <run-dir>/report.json
+# In this repo: node schema/validate-report.mjs knowledge/principles.json <run-dir>/report.json
+# Per-project install: node .web-uplift/schema/validate-report.mjs .web-uplift/knowledge/principles.json <run-dir>/report.json
+```
+
+If it reports missing, unknown, duplicate, blocked, or not-run rows, keep the
+report as `partial`; do not emit a score or call the site audited. A human-readable report may explain partial
+work, but it may not hide the denominator.
 
 ### 6b. Compare runs (before/after)
 
@@ -431,10 +481,12 @@ scores where present), network/HAR deltas (request count, transferred bytes),
 and PAIRED before/after screenshots (matched by capture condition). Fix mode
 (below) runs this automatically at the end, so a fix run shows the before->after.
 
-### 6c. Scorecard (build it, then present it — this is how a run ends)
+### 6c. Scorecard (complete runs only)
 
-After the report is written (and after any compare in fix mode), generate the
-interactive scorecard and use it as the close of your reply:
+Only after the atomic coverage validator reports `complete: true` (and after any
+compare in fix mode), generate the interactive scorecard and use it as the close
+of your reply. For a partial run, do not score it: close with the exact coverage
+counts and blockers/not-run checks instead.
 
 ```sh
 node aggregate/scorecard.mjs <host|url>   # web-uplift scorecard <host>
@@ -454,8 +506,9 @@ End your run by:
 2. Linking the interactive report: `reports/<host>/scorecard.html` (and mention
    the History tab shows the deltas over time once there is more than one run).
 
-Fix mode emits the scorecard automatically; for a report-only run, run the
-command above yourself so the user always gets the same close.
+Fix mode emits the scorecard automatically only for a coverage-complete run; for
+a complete report-only run, run the command above yourself. Partial runs must
+not enter score aggregation.
 
 ### 7. Fix mode (`--fix --source <dir>`, the model-driven hill-climb)
 
@@ -470,15 +523,9 @@ audit and go straight to the climb).
 
 The loop, highest-leverage task first:
 
-1. **`retrieve` the task's Modern Web Guidance guide — REQUIRED before you edit.**
-   Run `modern-web-guidance retrieve "<guidanceId>"` (and a fresh `search` if the
-   task has no id yet) against the LIVE feed, and base the fix on the guide's
-   technique + browser-support notes (assume Baseline Widely available is safe;
-   follow the guide's fallback advice otherwise, unless `web-uplift.json` states a
-   custom policy). Writing a fix from memory, without retrieving its guide this
-   run, is not allowed — the entire point is that each edit follows the current
-   guidance, not the model's stale recollection. Record the guide id you used on
-   the task and carry it through to the fixed finding.
+1. `retrieve` the task's guidance guide and read its technique + browser-support
+   notes (assume Baseline Widely available is safe; follow the guide's fallback
+   advice otherwise, unless `web-uplift.json` states a custom policy).
 2. Write the fix into the local source under `<dir>`. You are the coding agent.
    Honour `web-uplift.json`: never "fix" a principle reported `opted-out` or
    `not-applicable` - those are out of scope, not issues.
@@ -516,13 +563,15 @@ methodology with no extra billing.
 
 ## Why fully agentic (and why no fast path)
 
-Tooling normally bakes in a check registry and falls back to it. This project
-deliberately does not: web quality is open-ended, the modern platform moves
-fast, and a fixed registry rots and misses context. By leaning on the model,
-the method stays current (you query the live guidance feed), it generalises
-(you can judge a principle you have never seen a check for), and tool choice is
-an inspection-time decision, not a runtime constant. The principles say what
-good is; you work out how to see it.
+Tooling normally bakes judgement into a check runner and falls back to it. This
+project deliberately does not automate **judgement**: web quality is open-ended,
+the modern platform moves fast, and fixed pass/fail heuristics rot. It does,
+however, enforce **coverage deterministically**. `principles.json` is the exact
+registry and denominator; schemas and validators must reject missing, unknown,
+or duplicate check outcomes. The model chooses how to gather evidence and judge
+each registered check, but it may not choose to omit one. By leaning on the
+model for evidence and judgement while using deterministic coverage validation,
+the method stays current without allowing silent gaps.
 
 ## Cross-agent note (this is NOT Claude-only)
 
@@ -545,6 +594,8 @@ requirements on the host are: Node, a `google-chrome-stable` (override with
 `CHROME_BIN`), `ffmpeg` (for the video primitive), and network access for the
 Modern Web Guidance feed and optional Lighthouse (`npx`).
 
-Finish your reply with a one-paragraph TLDR: finding count by severity, which
-evidence modalities and tools you actually used, the single highest-leverage
-fix, and (in fix mode) how many findings you verified fixed.
+Finish your reply with a one-paragraph TLDR. For a complete run: finding count
+by severity, evidence modalities/tools used, the single highest-leverage fix,
+and (in fix mode) how many findings you verified fixed. For a partial run: exact
+checks judged/expected, blocked, not-run, missing, unknown and duplicate counts,
+plus what prevents completion; never substitute a score.

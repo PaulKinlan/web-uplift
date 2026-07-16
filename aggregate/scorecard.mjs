@@ -114,6 +114,16 @@ function principleScore(report, outcomeRecord) {
 // overall score (equal-weighted mean of the applicable outcome gauges) for one
 // report.
 export function scoreReport(report) {
+  if (report?.coverage?.complete !== true) {
+    const coverage = report?.coverage ?? {};
+    throw new Error(
+      `Refusing to score an atomic-coverage-incomplete report ` +
+      `(expected=${coverage.expected ?? 'unknown'}, recorded=${coverage.recorded ?? 'unknown'}, ` +
+      `blocked=${coverage.blocked ?? 'unknown'}, notRun=${coverage.notRun ?? 'unknown'}, ` +
+      `missing=${coverage.missing ?? 'unknown'}, unknown=${coverage.unknown ?? 'unknown'}, ` +
+      `duplicates=${coverage.duplicates ?? 'unknown'}).`,
+    );
+  }
   const outcomeById = new Map();
   for (const rec of report.principleOutcomes ?? []) {
     const key = PRINCIPLE_OUTCOME.get(rec.principleId);
