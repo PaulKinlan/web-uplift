@@ -81,7 +81,7 @@ export const AGENTS = {
     // .pi/skills/web-audit + AGENTS.md load in non-interactive mode; pi's default
     // tools include the shell it needs to run `node evidence/cli.mjs ...`. Run
     // untrusted sites in a container.
-    args: (prompt) => ['-p', prompt, '-a', '--no-session'],
+    args: (prompt) => ['-p', prompt, '-a', '--no-session', '--no-extensions'],
   },
 };
 
