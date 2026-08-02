@@ -5,6 +5,21 @@ modern-web findings, and (when the source is available) climbs the site toward
 modern web quality by applying fixes and re-auditing. Scales from "demo one site
 live" to "survey the top 1,000 sites and tell us where the web is weakest."
 
+## Product contract: evidence people and agents can act on
+
+The product is the complete decision package, not the runner, a score, or an aggregate dashboard.
+For every principle check in the pinned catalog, the user must be able to inspect what was tested,
+how it was tested, the retained evidence, the verdict and confidence, the exact failure or blocker,
+why it matters, and a concrete prioritized action. Missing collection remains visibly different from
+a tested failure. A broad principle judgement or coverage count never substitutes for the atomic
+check rows.
+
+A person should be able to use that package to decide what to address. An agent should be able to
+take the same finding, apply the guidance-backed change when source is available, gather the same
+evidence again, and show whether the issue was fixed without hiding new failures. Public reports may
+sanitize private evidence, but sanitization must preserve enough check-specific reasoning to support
+that decision and fix/retest loop.
+
 ## Architecture: fully agentic, no fast path
 
 The defining decision: **the model is the auditor.** There is no deterministic
