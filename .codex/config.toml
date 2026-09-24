@@ -8,3 +8,6 @@
 [mcp_servers.web-uplift]
 command = "node"
 args = ["mcp/skills-server.mjs"]
+
+[features]
+hooks = true
