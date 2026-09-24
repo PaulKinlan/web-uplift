@@ -66,11 +66,40 @@ function parseGoal(a) {
 }
 
 // Score summary for one report (single-report analogue of scorecardSummary).
-function reportSummary(report) {
-  const s = scoreReport(report);
+//
+// scoreReport REFUSES to score a report whose atomic coverage is incomplete,
+// and that refusal is correct: the coverage contract says a partial run must
+// never produce a score. But an unscoreable report is a legitimate INPUT to the
+// hill-climb, not a crash. A run that is still partial (blocked or not-run
+// checks), and every report written before the coverage contract existed (no
+// `coverage` field at all), both land here. So we catch the refusal and report
+// the report as unscoreable rather than letting it kill the fix run.
+//
+// Returns { scoreable, reason, summary }. `summary` is always the shape
+// evaluateGates expects; when unscoreable its overall is null and its outcomes
+// are empty. Severity counts come straight off the findings and stay accurate
+// either way, because counting findings needs no coverage guarantee.
+function reportSummarySafe(report) {
   const sev = { critical: 0, high: 0, medium: 0, low: 0 };
-  for (const f of report.findings ?? []) if (sev[f.severity] != null) sev[f.severity]++;
-  return { overall: s.overall, outcomes: Object.fromEntries(s.outcomes.map((o) => [o.key, o.score])), findingsBySeverity: sev };
+  for (const f of report?.findings ?? []) if (sev[f.severity] != null) sev[f.severity]++;
+  try {
+    const s = scoreReport(report);
+    return {
+      scoreable: true,
+      reason: null,
+      summary: {
+        overall: s.overall,
+        outcomes: Object.fromEntries(s.outcomes.map((o) => [o.key, o.score])),
+        findingsBySeverity: sev,
+      },
+    };
+  } catch (err) {
+    return {
+      scoreable: false,
+      reason: err.message,
+      summary: { overall: null, outcomes: {}, findingsBySeverity: sev },
+    };
+  }
 }
 
 if (args.help || args.h) {
@@ -151,9 +180,24 @@ if (!findingsPath) {
 }
 const baseline = await readReport(findingsPath);
 const startIssues = countOutstanding(baseline);
-const goalOf = (report) => (goalActive ? evaluateGates(reportSummary(report), goal) : null);
-const scoreOf = (report) => reportSummary(report).overall;
+const goalOf = (report) => {
+  if (!goalActive) return null;
+  const { scoreable, reason, summary } = reportSummarySafe(report);
+  // An unscoreable report can never MEET a score goal. This has to be an
+  // explicit failed check rather than a call into evaluateGates, because
+  // evaluateGates reads a null outcome as not-applicable and PASSES it - so an
+  // all-null summary from a partial report would otherwise satisfy every
+  // --goal-min and let the climb stop on a target it never measured.
+  if (!scoreable) return { passed: false, checks: [{ name: 'atomic coverage complete', ok: false, detail: reason }] };
+  return evaluateGates(summary, goal);
+};
+const scoreOf = (report) => reportSummarySafe(report).summary.overall;
 console.log(`Baseline: ${startIssues} outstanding issue-findings to climb down.`);
+const baselineScore = reportSummarySafe(baseline);
+if (!baselineScore.scoreable) {
+  console.log(`Score unavailable: ${baselineScore.reason}`);
+  console.log('Climbing on outstanding findings; scores read N/A until atomic coverage is complete.');
+}
 if (goalActive) {
   const g = goalOf(baseline);
   console.log(`Goal: hill-climb until met -> ${g.checks.map((c) => c.name).join(', ')}. Baseline score ${scoreOf(baseline) ?? 'N/A'}, goal ${g.passed ? 'ALREADY met' : 'not met'}.`);

@@ -26,6 +26,7 @@ try {
   await testHarRedirects();
   testBatchDryRunUsesRetainedDirs();
   testBatchFlowDryRun();
+  testFixSurvivesUnscoreableReports();
   await testScorecardScoringAndRender();
   await testDiscoverabilityHelpers();
   await testFlowNormalize();
@@ -73,6 +74,71 @@ function testGuidanceUsage() {
   const fixed = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
   assert(fixed.guidanceConsulted === undefined || Array.isArray(fixed.guidanceConsulted),
     'guidance: fixed report guidanceConsulted must be an array when present');
+}
+
+// A report that cannot be SCORED is still a legitimate INPUT to the hill-climb.
+// fix.mjs used to seed its history with an unguarded scoreOf(baseline), so
+// scoreReport's (correct) refusal to score incomplete atomic coverage killed the
+// whole fix run with an unhandled throw - including on every report written
+// before the coverage contract existed, which has no `coverage` field at all.
+// Those are exactly the reports most in need of fixing.
+function testFixSurvivesUnscoreableReports() {
+  const complete = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
+
+  // Two shapes that scoreReport refuses: a partial run, and a pre-contract run.
+  const partial = structuredClone(complete);
+  partial.coverage.complete = false;
+  partial.status = 'partial';
+  const legacy = structuredClone(complete);
+  delete legacy.coverage;
+
+  const fixtures = { partial, legacy };
+  for (const [name, report] of Object.entries(fixtures)) {
+    writeFileSync(join(tmp, `fix-${name}.json`), JSON.stringify(report));
+  }
+
+  // --max-iterations 0 drives the whole path (baseline -> snapshot -> compare ->
+  // scorecard) without spawning an agent or a browser.
+  const runFix = (findings, extra = []) => run(process.execPath, [
+    'fixer/fix.mjs',
+    '--findings', findings,
+    '--target', join(tmp, 'fix-src'),
+    '--audit-url', 'http://127.0.0.1:9/',
+    '--out', join(tmp, `fix-out-${Math.random().toString(36).slice(2)}`),
+    '--reports-root', join(tmp, `fix-reports-${Math.random().toString(36).slice(2)}`),
+    '--max-iterations', '0',
+    ...extra,
+  ]);
+
+  for (const name of Object.keys(fixtures)) {
+    const result = runFix(join(tmp, `fix-${name}.json`));
+    assert(!/Refusing to score[\s\S]*at scoreReport/.test(result.stderr),
+      `fix: ${name} report crashed the hill-climb instead of degrading:\n${result.stderr}`);
+    assert(result.stdout.includes('Score unavailable:'),
+      `fix: ${name} report did not explain why the score is unavailable:\n${result.stdout}`);
+    assert(result.stdout.includes('score N/A'),
+      `fix: ${name} report should print score N/A in the climb summary:\n${result.stdout}`);
+    assert(result.stdout.includes('outstanding issue-findings to climb down'),
+      `fix: ${name} report should still climb on outstanding findings:\n${result.stdout}`);
+  }
+
+  // An unscoreable report must never MEET a score goal. evaluateGates treats a
+  // null outcome as not-applicable and PASSES it, so an all-null summary from a
+  // partial report would otherwise satisfy every --goal-min and stop the climb
+  // on a target that was never measured.
+  const goalRun = runFix(join(tmp, 'fix-partial.json'), ['--goal-overall', '1', '--goal-min', 'discoverable=1']);
+  assert(!goalRun.stdout.includes('PASS: score goal met.'),
+    `fix: an unscoreable report falsely met a score goal:\n${goalRun.stdout}`);
+  assert(goalRun.stdout.includes('atomic coverage complete'),
+    `fix: the goal failure should name incomplete coverage as the reason:\n${goalRun.stdout}`);
+
+  // The guard must not cost a complete report its score.
+  const completeRun = runFix(join(repoRoot, 'examples/playground-report.json'), ['--goal-overall', '1']);
+  assert(completeRun.status === 0, `fix: a complete report with a met goal should exit 0:\n${completeRun.stdout}${completeRun.stderr}`);
+  assert(completeRun.stdout.includes('PASS: score goal met.'),
+    `fix: a complete report should still meet a met goal:\n${completeRun.stdout}`);
+  assert(!completeRun.stdout.includes('Score unavailable:'),
+    `fix: a complete report must still be scoreable:\n${completeRun.stdout}`);
 }
 
 async function testScorecardScoringAndRender() {
