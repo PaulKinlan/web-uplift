@@ -162,3 +162,124 @@ live `playground/scenarios/no-dark-mode.js` should adopt the same fallback patte
   not be argued on the CLS magnitude alone.
 - The fixture patch changes test ground truth. It is on branch `uplift/ci5-fixture-shell-fix`
   for independent review and should land through the project merger, not directly.
+
+## Appendix: the exact fixes applied in the climb
+
+Diff of the climb working copy against the fixture as patched by the first commit on this
+branch. This is the change that produced the `MODE=fixed` column of the sweep above. The
+frozen fixture itself was never edited; the climb ran against a copy under `scratch/`. The
+copy was taken before the shell patch, which is why the shell rule appears on both sides here,
+with a shorter comment on the working-copy side.
+
+```diff
+@@ -4,6 +4,8 @@
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+   <title>Modern Web UX Playground</title>
++  <meta name="description" content="A hand-authored playground of modern web UX techniques, each shown with its Modern Web Guidance fix.">
++  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231a73e8'/%3E%3C/svg%3E">
+   <style>
+     :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+     body { margin: 0; }
+@@ -17,9 +19,7 @@
+     body[data-mode="fixed"] #mode-toggle { background: #2e7d32; color: white; }
+     .layout { display: grid; grid-template-columns: 230px 1fr; min-height: calc(100vh - 3.5rem); }
+     /* Collapse the shell to a single column on narrow viewports so the fixed
+-       230px sidebar never squeezes main into horizontal overflow. Mirrors
+-       playground/index.html: without this, ?mode=fixed still overflows
+-       horizontally and the false-positive guard cannot reach zero. */
++       230px sidebar never squeezes main into horizontal overflow. */
+     @media (max-width: 640px) {
+       .layout { grid-template-columns: 1fr; }
+       nav { border-right: none; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+@@ -22,8 +22,28 @@
+       section,
+       {
+         issue: `
+-          .ndm-card { background: #ffffff; color: #111111; border: 1px solid #ddd;
++          :root {
++            --ndm-bg-light: #ffffff; --ndm-bg-dark: #1e1e1e;
++            --ndm-fg-light: #111111; --ndm-fg-dark: #eeeeee;
++            --ndm-bd-light: #dddddd; --ndm-bd-dark: #444444;
++            --ndm-bg: var(--ndm-bg-light); --ndm-fg: var(--ndm-fg-light);
++            --ndm-bd: var(--ndm-bd-light);
++          }
++          /* Fallback path for browsers with color-scheme but no light-dark() */
++          @media (prefers-color-scheme: dark) {
++            :root { --ndm-bg: var(--ndm-bg-dark); --ndm-fg: var(--ndm-fg-dark);
++                    --ndm-bd: var(--ndm-bd-dark); }
++          }
++          .ndm-card { color-scheme: light dark; background: var(--ndm-bg);
++            color: var(--ndm-fg); border: 1px solid var(--ndm-bd);
+             padding: 1rem; border-radius: 8px; }
++          @supports (color: light-dark(white, black)) {
++            .ndm-card {
++              background: light-dark(var(--ndm-bg-light), var(--ndm-bg-dark));
++              color: light-dark(var(--ndm-fg-light), var(--ndm-fg-dark));
++              border-color: light-dark(var(--ndm-bd-light), var(--ndm-bd-dark));
++            }
++          }
+         `,
+         fixed: `
+           .ndm-card { color-scheme: light dark;
+@@ -22,8 +22,10 @@
+       {
+         issue: `
+           @keyframes mv-slide { from { transform: translateX(0); } to { transform: translateX(40px); } }
+-          .mv-card { background: #34a853; color: #fff; padding: 1.5rem; border-radius: 8px;
+-            animation: mv-slide 0.8s ease-in-out infinite alternate; }
++          .mv-card { background: #34a853; color: #fff; padding: 1.5rem; border-radius: 8px; }
++          @media (prefers-reduced-motion: no-preference) {
++            .mv-card { animation: mv-slide 0.8s ease-in-out infinite alternate; }
++          }
+         `,
+         fixed: `
+           @keyframes mv-slide { from { transform: translateX(0); } to { transform: translateX(40px); } }
+@@ -21,8 +21,8 @@
+       section,
+       {
+         issue: `
+-          .fl-hero { width: 1200px; padding: 2rem; background: #1a73e8; color: #fff; border-radius: 8px; }
+-          .fl-body { width: 1200px; margin-top: 1rem; }
++          .fl-hero { width: 100%; max-width: 1200px; box-sizing: border-box; padding: 2rem; background: #1a73e8; color: #fff; border-radius: 8px; }
++          .fl-body { width: 100%; max-width: 1200px; box-sizing: border-box; margin-top: 1rem; }
+         `,
+         fixed: `
+           .fl-hero { width: 100%; max-width: 1200px; box-sizing: border-box; padding: 2rem; background: #1a73e8; color: #fff; border-radius: 8px; }
+@@ -21,8 +21,9 @@
+       section,
+       {
+         issue: `
+-          .pf-btn { outline: none; border: 1px solid #888; background: #f2f2f2;
++          .pf-btn { border: 1px solid #595959; background: #f2f2f2; color: #1a1a1a;
+             padding: 0.5rem 1rem; border-radius: 6px; margin-right: 0.5rem; }
++          .pf-btn:focus-visible { outline: 3px solid #1a73e8; outline-offset: 2px; }
+         `,
+         fixed: `
+           .pf-btn { border: 1px solid #888; background: #f2f2f2;
+@@ -21,7 +21,7 @@
+       section,
+       {
+         issue: `
+-          .ls-slot { }
++          .ls-slot { min-height: 4.75rem; }
+           .ls-banner { background: #fbbc04; color: #111; padding: 1rem; border-radius: 8px; }
+         `,
+         fixed: `
+@@ -23,10 +23,14 @@
+       section,
+       {
+         issue: `
+-          .cq-wide, .cq-narrow { border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; }
++          .cq-wide, .cq-narrow { border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; container-type: inline-size; }
+           .cq-narrow { width: 240px; }
+           .cq-card { display: flex; gap: 0.75rem; align-items: center; }
+           .cq-thumb { width: 80px; height: 80px; background: #1a73e8; border-radius: 6px; flex: none; }
++          @container (max-width: 320px) {
++            .cq-card { flex-direction: column; align-items: stretch; }
++            .cq-thumb { width: 100%; }
++          }
+         `,
+         fixed: `
+           .cq-wide, .cq-narrow { border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; container-type: inline-size; }
+```
