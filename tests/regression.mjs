@@ -27,6 +27,7 @@ try {
   testBatchDryRunUsesRetainedDirs();
   testBatchFlowDryRun();
   testFixSurvivesUnscoreableReports();
+  testFixRefusesPassOnIncompleteCoverage();
   await testScorecardScoringAndRender();
   await testDiscoverabilityHelpers();
   await testFlowNormalize();
@@ -139,6 +140,92 @@ function testFixSurvivesUnscoreableReports() {
     `fix: a complete report should still meet a met goal:\n${completeRun.stdout}`);
   assert(!completeRun.stdout.includes('Score unavailable:'),
     `fix: a complete report must still be scoreable:\n${completeRun.stdout}`);
+}
+
+// The atomic coverage contract: a run carrying blocked or not-run checks is
+// PARTIAL, never completed. fix.mjs used to decide pass/fail from findings
+// alone, so a report with zero findings and five checks that never concluded
+// printed "PASS: no outstanding issues remain." and exited 0 - the exact
+// absence-of-evidence failure the contract exists to prevent, reintroduced
+// through the fix path after the scorecard had closed it.
+function testFixRefusesPassOnIncompleteCoverage() {
+  const clean = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
+  assert((clean.findings ?? []).length === 0, 'fix coverage: the fixed fixture should have no findings');
+
+  // Zero findings, but five checks never concluded: three blocked, two not-run.
+  const partial = structuredClone(clean);
+  partial.status = 'partial';
+  for (let i = 0; i < 3; i++) {
+    partial.checkOutcomes[i].status = 'blocked';
+    partial.checkOutcomes[i].reason = 'Auth wall blocked this path';
+  }
+  for (let i = 3; i < 5; i++) {
+    partial.checkOutcomes[i].status = 'not-run';
+    partial.checkOutcomes[i].reason = 'Never attempted';
+  }
+  partial.coverage = { ...partial.coverage, judged: 53, blocked: 3, notRun: 2, complete: false };
+  delete partial.overallScore;
+  writeFileSync(join(tmp, 'fix-zero-findings-partial.json'), JSON.stringify(partial));
+
+  // The same rows, but the report DECLARES itself complete. The checkOutcomes
+  // rows are the authority, not the self-declaration, so this must not pass
+  // either. Without that rule a report could buy a pass by lying in one field.
+  const lying = structuredClone(partial);
+  lying.status = 'completed';
+  lying.coverage.complete = true;
+  writeFileSync(join(tmp, 'fix-lying-complete.json'), JSON.stringify(lying));
+
+  const runFix = (findings, extra = []) => run(process.execPath, [
+    'fixer/fix.mjs',
+    '--findings', findings,
+    '--target', join(tmp, 'fix-src'),
+    '--audit-url', 'http://127.0.0.1:9/',
+    '--out', join(tmp, `fixcov-out-${Math.random().toString(36).slice(2)}`),
+    '--reports-root', join(tmp, `fixcov-reports-${Math.random().toString(36).slice(2)}`),
+    '--max-iterations', '0',
+    ...extra,
+  ]);
+
+  for (const name of ['fix-zero-findings-partial', 'fix-lying-complete']) {
+    const result = runFix(join(tmp, `${name}.json`));
+    assert(!/^PASS:/m.test(result.stdout),
+      `fix coverage: ${name} claimed a pass with unconcluded checks:\n${result.stdout}`);
+    assert(result.status === 1,
+      `fix coverage: ${name} should exit non-zero, got ${result.status}:\n${result.stdout}`);
+    assert(/INCOMPLETE coverage \(3 blocked, 2 not-run\)/.test(result.stdout),
+      `fix coverage: ${name} should name the unconcluded checks:\n${result.stdout}`);
+    assert(result.stdout.includes('5 unconcluded check(s)'),
+      `fix coverage: ${name} should count unconcluded checks in the summary:\n${result.stdout}`);
+  }
+
+  // A partial run must not buy a pass through a score goal either.
+  const goalRun = runFix(join(tmp, 'fix-lying-complete.json'), ['--goal-overall', '1']);
+  assert(!goalRun.stdout.includes('PASS: score goal met.'),
+    `fix coverage: a partial run met a score goal:\n${goalRun.stdout}`);
+  assert(goalRun.stdout.includes('atomic coverage complete'),
+    `fix coverage: the goal failure should name incomplete coverage:\n${goalRun.stdout}`);
+
+  // A pre-contract report has no coverage accounting at all, so its completeness
+  // is unverifiable rather than clean. Zero findings is not enough to pass: the
+  // run proceeds (that is the acl fix) but cannot claim a completed audit.
+  const legacy = structuredClone(clean);
+  delete legacy.coverage;
+  delete legacy.overallScore;
+  writeFileSync(join(tmp, 'fix-legacy-clean.json'), JSON.stringify(legacy));
+  const legacyRun = runFix(join(tmp, 'fix-legacy-clean.json'));
+  assert(!/^PASS:/m.test(legacyRun.stdout),
+    `fix coverage: a report with no coverage accounting claimed a pass:\n${legacyRun.stdout}`);
+  assert(legacyRun.stdout.includes('no coverage accounting in the report'),
+    `fix coverage: the legacy report should say its coverage is unverifiable:\n${legacyRun.stdout}`);
+
+  // A genuinely clean run (no findings, every check concluded) still passes.
+  const cleanRun = runFix(join(repoRoot, 'examples/playground-report-fixed.json'));
+  assert(cleanRun.status === 0,
+    `fix coverage: a clean complete report should exit 0:\n${cleanRun.stdout}${cleanRun.stderr}`);
+  assert(cleanRun.stdout.includes('PASS: no outstanding issues remain and every check concluded.'),
+    `fix coverage: a clean complete report should pass:\n${cleanRun.stdout}`);
+  assert(cleanRun.stdout.includes('0 unconcluded check(s)'),
+    `fix coverage: a clean report should report zero unconcluded checks:\n${cleanRun.stdout}`);
 }
 
 async function testScorecardScoringAndRender() {
