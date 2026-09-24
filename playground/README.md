@@ -7,7 +7,7 @@ Guidance use case:
 | Scenario | Principle | Technique demonstrated | Inspect under |
 |---|---|---|---|
 | `#fixed-layout` | adapt-to-the-form-factor | fluid `width: 100%; max-width` + `box-sizing` | narrow viewport, no overflow |
-| `#no-dark-mode` | respect-user-preferences | `color-scheme` + `light-dark()` | `prefers-color-scheme: dark` |
+| `#no-dark-mode` | respect-user-preferences | `color-scheme` + `light-dark()` with the mandated `prefers-color-scheme` fallback | `prefers-color-scheme: dark` |
 | `#poor-focus` | adapt-to-the-form-factor | `:focus-visible` outline, WCAG-contrast buttons | keyboard-only Tab |
 | `#layout-shift` | be-fast-and-stable | reserved `min-height` (no CLS) | watch content stay put on load |
 | `#motion` | respect-user-preferences | `@media (prefers-reduced-motion: no-preference)` gate | `prefers-reduced-motion: reduce` |
