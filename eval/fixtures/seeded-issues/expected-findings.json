@@ -56,7 +56,7 @@
       "expectedGuidanceId": "css",
       "expectedGuidanceQuery": "responsive layout adapt to viewport mobile",
       "severity": "high",
-      "detectableVia": "Resize to viewport 360x800; issue mode produces ~1158px of horizontal overflow and clips .fl-hero (width: 1200px).",
+      "detectableVia": "Resize to viewport 360x800; issue mode produces ~928px of horizontal overflow and clips .fl-hero (width: 1200px). The size dropped from ~1158px once the page shell gained its narrow-viewport collapse (index.html @media max-width 640px), which isolates the overflow to this seeded scenario instead of mixing it with a shell defect. See the shell note on falsePositiveCheck.",
       "fix": "Replace fixed width with width: 100%; max-width: 1200px and box-sizing: border-box so the layout adapts to narrow viewports."
     },
     {
@@ -129,5 +129,6 @@
       "fix": "Add the missing resource (e.g. a favicon) or remove the reference so the page loads without console errors."
     }
   ],
+  "shellNote": "The fixture page shell (index.html) must mirror playground/index.html's @media (max-width: 640px) collapse of the 230px 1fr layout grid. Without it, ?mode=fixed still overflows horizontally by 58px at 360x800 - so the responsive-no-horizontal-scroll check cannot pass in fixed mode no matter how the scenarios are written, and a correct auditor gets scored as a false positive. Verified 2026-09-24: after the shell fix, ?mode=fixed reaches 0px overflow at 360x800 while issue mode still reports ~928px.",
   "falsePositiveCheck": "The site/ fixture also ships ?mode=fixed (the corrected stylesheets). An audit of ?mode=fixed must report zero of the six CSS scenarios. The page-level findings F-007..F-009 are document-level and are corrected in the genuinely-fixed live playground/, not toggled here."
 }
