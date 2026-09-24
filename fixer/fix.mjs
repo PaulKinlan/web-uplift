@@ -12,8 +12,9 @@
  * SKILL.md in FIX mode. The model reads the aggregated findings + task list,
  * retrieves Modern Web Guidance, writes the edits into --target itself, then
  * re-audits. We loop, reading report.json after each pass, until the audit
- * passes (no outstanding `issues`; `not-applicable`/`opted-out` are fine) or
- * --max-iterations is hit. Per-iteration finding counts are printed so the
+ * passes (no outstanding `issues` AND every check concluded;
+ * `not-applicable`/`opted-out` are fine) or --max-iterations is hit.
+ * Per-iteration finding and unconcluded-check counts are printed so the
  * hill-climb is visible.
  *
  * HEADLESS / CI PATH (uses API tokens). For an INDIVIDUAL the subscription
@@ -26,8 +27,12 @@
  *      --audit-url first (report mode) and aggregate it.
  *   2. Hill-climb: per iteration, drive the model (FIX mode) over --target, then
  *      re-audit --audit-url and read the fresh report.json.
- *   3. Stop when issues == 0 or --max-iterations reached. Honour web-uplift.json
- *      opt-outs / not-applicable (those never count as outstanding issues).
+ *   3. Stop when issues == 0 AND atomic coverage is complete, or when
+ *      --max-iterations is reached. Honour web-uplift.json opt-outs /
+ *      not-applicable (those never count as outstanding issues). A run carrying
+ *      blocked or not-run checks is PARTIAL and cannot pass on findings alone -
+ *      the atomic coverage contract calls unconcluded checks incomplete work,
+ *      never a pass.
  *   4. Snapshot the baseline (`<runId>-before`) and final (`<runId>-after`) into
  *      RETAINED run dirs under reports/<host>/ and emit the before -> after
  *      comparison automatically (audit -> fix -> re-audit -> compare), so a fix
@@ -180,19 +185,28 @@ if (!findingsPath) {
 }
 const baseline = await readReport(findingsPath);
 const startIssues = countOutstanding(baseline);
+const baselineRemaining = remaining(baseline);
 const goalOf = (report) => {
   if (!goalActive) return null;
+  // Coverage first. A partial run must not meet a score goal, however good the
+  // score on the checks it did manage to conclude.
+  const completion = completionState(report);
+  if (!completion.complete) return { passed: false, checks: [{ name: 'atomic coverage complete', ok: false, detail: completion.reasons.join(', ') }] };
   const { scoreable, reason, summary } = reportSummarySafe(report);
-  // An unscoreable report can never MEET a score goal. This has to be an
+  // An unscoreable report can never MEET a score goal either. This has to be an
   // explicit failed check rather than a call into evaluateGates, because
   // evaluateGates reads a null outcome as not-applicable and PASSES it - so an
   // all-null summary from a partial report would otherwise satisfy every
   // --goal-min and let the climb stop on a target it never measured.
-  if (!scoreable) return { passed: false, checks: [{ name: 'atomic coverage complete', ok: false, detail: reason }] };
+  if (!scoreable) return { passed: false, checks: [{ name: 'scoreable report', ok: false, detail: reason }] };
   return evaluateGates(summary, goal);
 };
 const scoreOf = (report) => reportSummarySafe(report).summary.overall;
 console.log(`Baseline: ${startIssues} outstanding issue-findings to climb down.`);
+if (!baselineRemaining.completion.complete) {
+  console.log(`Coverage INCOMPLETE: ${baselineRemaining.completion.reasons.join(', ')}.`);
+  console.log('This run is PARTIAL. It cannot pass on findings alone; the unconcluded checks are outstanding work.');
+}
 const baselineScore = reportSummarySafe(baseline);
 if (!baselineScore.scoreable) {
   console.log(`Score unavailable: ${baselineScore.reason}`);
@@ -215,11 +229,13 @@ console.log(`Preserved baseline run at ${beforeRun.dir}`);
 // 2. Hill-climb. Stop condition is zero outstanding issues OR, when --goal is
 // set, the score goal being met (so you can climb to "overall>=80, no critical"
 // without chasing every last low-severity issue).
-let lastCount = startIssues;
+let lastRemaining = baselineRemaining;
 const goalReached = (report) => goalActive && goalOf(report).passed;
-let passed = startIssues === 0 || goalReached(baseline);
+// A clean climb needs BOTH: no outstanding findings, and every check concluded.
+// Findings alone cannot see a check that never ran.
+let passed = (startIssues === 0 && baselineRemaining.completion.complete) || goalReached(baseline);
 let stoppedOnGoal = goalReached(baseline);
-const history = [{ iteration: 0, outstanding: startIssues, score: scoreOf(baseline) }];
+const history = [{ iteration: 0, ...baselineRemaining, score: scoreOf(baseline) }];
 
 for (let i = 1; i <= maxIterations && !passed; i++) {
   console.log(`\n--- iteration ${i}/${maxIterations} ---`);
@@ -227,37 +243,47 @@ for (let i = 1; i <= maxIterations && !passed; i++) {
   await runAgent(prompt, i);
 
   const report = await readReport(join(outDir, 'report.json'));
-  const outstanding = countOutstanding(report);
+  const r = remaining(report);
   const score = scoreOf(report);
-  history.push({ iteration: i, outstanding, score });
-  console.log(`iteration ${i}: outstanding issue-findings = ${outstanding} (was ${lastCount}), score = ${score ?? 'N/A'}`);
+  history.push({ iteration: i, ...r, score });
+  console.log(`iteration ${i}: outstanding issue-findings = ${r.outstanding} (was ${lastRemaining.outstanding}), ` +
+    `unconcluded checks = ${r.completion.blocked + r.completion.notRun} (was ${lastRemaining.completion.blocked + lastRemaining.completion.notRun}), ` +
+    `score = ${score ?? 'N/A'}`);
+  if (!r.completion.complete) console.log(`  coverage incomplete: ${r.completion.reasons.join(', ')}`);
 
   if (goalActive) {
     const g = goalOf(report);
     console.log(`  goal: ${g.checks.map((c) => `${c.ok ? 'PASS' : 'FAIL'} ${c.name} (${c.detail})`).join(', ')}`);
     if (g.passed) { passed = true; stoppedOnGoal = true; }
   }
-  if (outstanding === 0) {
+  if (r.outstanding === 0 && r.completion.complete) {
     passed = true;
-  } else if (!passed && outstanding >= lastCount && i > 1) {
+  } else if (!passed && r.total >= lastRemaining.total && i > 1) {
+    // Progress is measured on findings AND unconcluded checks, so concluding a
+    // blocked check counts as progress even when no finding was resolved.
     console.log('No further progress this iteration; stopping the climb.');
+    lastRemaining = r;
     break;
   }
   // Re-aggregate so the next iteration works from the fresh findings.
   findingsPath = join(outDir, 'report.json');
-  lastCount = outstanding;
+  lastRemaining = r;
 }
 
 console.log('\nHill-climb summary:');
 for (const h of history) {
-  console.log(`  iteration ${h.iteration}: ${h.outstanding} outstanding, score ${h.score ?? 'N/A'}`);
+  const unconcluded = h.completion.blocked + h.completion.notRun;
+  console.log(`  iteration ${h.iteration}: ${h.outstanding} outstanding, ` +
+    `${unconcluded} unconcluded check(s), score ${h.score ?? 'N/A'}`);
 }
 console.log(
   stoppedOnGoal
     ? 'PASS: score goal met.'
     : passed
-      ? 'PASS: no outstanding issues remain.'
-      : `STOPPED with ${lastCount} outstanding issue(s)${goalActive ? ' (goal not met)' : ''}.`,
+      ? 'PASS: no outstanding issues remain and every check concluded.'
+      : `STOPPED with ${lastRemaining.outstanding} outstanding issue(s)` +
+        (lastRemaining.completion.complete ? '' : ` and INCOMPLETE coverage (${lastRemaining.completion.reasons.join(', ')})`) +
+        `${goalActive ? ' (goal not met)' : ''}.`,
 );
 
 // 3. Snapshot the final state into a RETAINED `after` run and emit the
@@ -361,11 +387,56 @@ async function snapshotRun(fromDir, toDir, report) {
   }
 }
 
+// The atomic coverage contract says a run carrying blocked or not-run checks is
+// PARTIAL, never completed. Counting findings cannot see that: a report with
+// zero findings and five checks that never concluded looks exactly like a clean
+// audit, which is the absence-of-evidence failure the contract exists to stop.
+//
+// The checkOutcomes ROWS are the authority here, not `coverage.complete`. A
+// report can declare complete: true while still carrying blocked rows, and that
+// shape is precisely the one that must not be allowed to claim a pass. Where the
+// rows and the declared accounting disagree we take the WORSE answer, so a
+// wrong self-declaration can only ever cost a run its pass, never grant one.
+function completionState(report) {
+  const rows = Array.isArray(report?.checkOutcomes) ? report.checkOutcomes : [];
+  const coverage = report?.coverage ?? null;
+  const count = (n) => Number(n ?? 0) || 0;
+
+  const blocked = Math.max(rows.filter((r) => r.status === 'blocked').length, count(coverage?.blocked));
+  const notRun = Math.max(rows.filter((r) => r.status === 'not-run').length, count(coverage?.notRun));
+  const missing = count(coverage?.missing);
+  const unknown = count(coverage?.unknown);
+  const duplicates = count(coverage?.duplicates);
+
+  const reasons = [];
+  if (blocked) reasons.push(`${blocked} blocked`);
+  if (notRun) reasons.push(`${notRun} not-run`);
+  if (missing) reasons.push(`${missing} missing`);
+  if (unknown) reasons.push(`${unknown} unknown`);
+  if (duplicates) reasons.push(`${duplicates} duplicate`);
+  // No coverage accounting at all (a pre-contract report) is unverifiable, not
+  // clean. It cannot claim a completed run either.
+  if (!coverage) reasons.push('no coverage accounting in the report');
+  else if (coverage.complete !== true && !reasons.length) reasons.push('coverage.complete is not true');
+
+  return { complete: reasons.length === 0, blocked, notRun, missing, unknown, duplicates, reasons };
+}
+
+// The work left in a run: findings still to fix PLUS checks still to conclude.
+// `total` is the hill-climb's progress metric, so concluding a blocked check
+// registers as progress even when it resolves no finding.
+function remaining(report) {
+  const outstanding = countOutstanding(report);
+  const completion = completionState(report);
+  return { outstanding, completion, total: outstanding + completion.blocked + completion.notRun };
+}
+
 // "Outstanding" = findings tied to a principle the report did NOT mark
 // not-applicable or opted-out. A clean audit (only pass / n-a / opted-out)
 // returns 0 even though contextual principles exist. We read principleOutcomes
 // to know which principles are out of scope, then count findings that are not
-// against those principles.
+// against those principles. This counts FINDINGS only; see completionState for
+// the checks that never concluded.
 function countOutstanding(report) {
   const outcomes = report.principleOutcomes ?? [];
   const excused = new Set(
