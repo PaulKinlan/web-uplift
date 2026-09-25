@@ -1348,6 +1348,28 @@ export function contentTokens(text) {
   return set;
 }
 
+// Is a rendered string visible to a crawler that does NOT run JavaScript?
+// Compare CONTENT TOKENS, not a raw substring: innerText collapses inline markup
+// and line breaks, so a server-rendered `<h1>Hello. I am <span>Paul Kinlan</span>.</h1>`
+// renders as "Hello. I am Paul Kinlan." and never appears verbatim in the
+// stripped raw text - which reported server-rendered headings as missing
+// (web-uplift-406). Asking whether every content word reaches the raw HTML does
+// not care about the punctuation or markup between the words. Values too short
+// to tokenise ("Hi") fall back to a whitespace-normalised comparison so a short
+// string is not reported as present by default.
+export function contentPresentInRaw(renderedValue, rawText) {
+  const value = String(renderedValue ?? '').replace(/\s+/g, ' ').trim();
+  if (!value) return false;
+  const tokens = contentTokens(value);
+  if (tokens.size === 0) {
+    const haystack = String(rawText ?? '').replace(/\s+/g, ' ').toLowerCase();
+    return haystack.includes(value.toLowerCase());
+  }
+  const rawTokens = contentTokens(rawText);
+  for (const token of tokens) if (!rawTokens.has(token)) return false;
+  return true;
+}
+
 // Known SPA mount roots that ship EMPTY in the server HTML and are filled by JS
 // - a strong "invisible to non-JS crawlers" tell.
 export function detectEmptyMounts(html) {
@@ -1444,9 +1466,8 @@ async function discoverability(client, url, opts, log) {
   const renderedEmpty = renderedTokens.size < 3;
   const coveragePct = renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100);
   const emptyMounts = detectEmptyMounts(rawHtml);
-  const rawLower = rawText.toLowerCase();
-  const titleInRaw = rendered.title ? rawLower.includes(rendered.title.toLowerCase().slice(0, 60)) : null;
-  const h1InRaw = rendered.h1.length ? rendered.h1.some((h) => rawLower.includes(h.toLowerCase().slice(0, 40))) : null;
+  const titleInRaw = rendered.title ? contentPresentInRaw(rendered.title, rawText) : null;
+  const h1InRaw = rendered.h1.length ? rendered.h1.some((h) => contentPresentInRaw(h, rawText)) : null;
   const metaInRaw = rendered.metaDescription ? /name=["']description["']/i.test(rawHtml) : null;
   // A JS shell: an empty SPA mount with almost no content in the raw HTML, or a
   // content-rich rendered page whose text is essentially absent from the raw.

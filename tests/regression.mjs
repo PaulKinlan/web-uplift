@@ -32,6 +32,7 @@ try {
   testFixRejectsMalformedReports();
   await testScorecardScoringAndRender();
   await testDiscoverabilityHelpers();
+  await testDiscoverabilityH1InRaw();
   await testFlowNormalize();
   console.log('tests OK');
 } finally {
@@ -372,7 +373,7 @@ async function testScorecardScoringAndRender() {
 }
 
 async function testDiscoverabilityHelpers() {
-  const { stripHtmlToText, contentTokens, detectEmptyMounts } = await import('../evidence/cli.mjs');
+  const { stripHtmlToText, contentTokens, detectEmptyMounts, contentPresentInRaw } = await import('../evidence/cli.mjs');
 
   // stripHtmlToText drops scripts/styles/markup, keeps visible text.
   const text = stripHtmlToText('<html><head><style>.x{color:red}</style></head><body><h1>Hello There</h1><script>var a=1</script><p>Body &amp; content</p></body></html>');
@@ -389,6 +390,62 @@ async function testDiscoverabilityHelpers() {
   assert(detectEmptyMounts('<div id="root"></div>').includes('#root'), 'should detect empty #root');
   assert(detectEmptyMounts('<div id="root"><h1>hi</h1></div>').length === 0, 'should not flag a filled #root');
   assert(detectEmptyMounts('<div id="__next">   </div>').includes('#__next'), 'should detect empty #__next');
+
+  // contentPresentInRaw: inline markup and line breaks must not hide a
+  // server-rendered h1/title (web-uplift-406). innerText collapses them, so the
+  // verbatim-substring compare reported the h1 of paul.kinlan.me as missing.
+  const rawFixture = stripHtmlToText('<html><head><title>Hello. I am Paul Kinlan.</title></head><body><h1 class="x">\n          Hello. I am <span class="fn">Paul Kinlan</span>.\n        </h1></body></html>');
+  assert(contentPresentInRaw('Hello. I am Paul Kinlan.', rawFixture), `inline-span h1 should be present in raw text: ${rawFixture}`);
+  assert(contentPresentInRaw('Hello. I am\n          Paul Kinlan.', rawFixture), 'a rendered value with line breaks should still match');
+  assert(!contentPresentInRaw('Client Injected Heading', rawFixture), 'a JS-only heading must not read as present');
+  assert(!contentPresentInRaw('', rawFixture) && !contentPresentInRaw(null, rawFixture), 'empty values are not present');
+  // A value with no >=4-char tokens still compares, so it is not present by default.
+  assert(contentPresentInRaw('Hi', '<p>Hi there</p>'), 'short text should be found when present');
+  assert(!contentPresentInRaw('Hi', '<p>Bye there</p>'), 'short text should not be found when absent');
+}
+
+// End to end, through the real primitive: a server-rendered h1 broken up by an
+// inline span and line breaks must report h1PresentInRaw true (the paul.kinlan.me
+// shape, web-uplift-406), and an h1 that only JavaScript inserts must stay false,
+// so the fix cannot be paid for by weakening the shell detection.
+async function testDiscoverabilityH1InRaw() {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    if ((req.url || '').startsWith('/markup')) {
+      res.end('<!doctype html><html><head><title>Inline markup</title></head><body>' +
+        '<h1 class="page-title">\n          Hello. I am <span class="fn">Paul Kinlan</span>.\n        </h1>' +
+        '<p>A server-rendered paragraph with enough words for the coverage measure to compare.</p>' +
+        '</body></html>');
+      return;
+    }
+    res.end('<!doctype html><html><head><title>Client rendered</title></head><body>' +
+      '<div id="app"></div>' +
+      '<p>A server-rendered paragraph with enough words for the coverage measure to compare.</p>' +
+      '<script>document.querySelector("#app").innerHTML = "<h1>Client Injected Heading</h1>";</script>' +
+      '</body></html>');
+  });
+
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+
+    const markup = await gather('discoverability', `${base}/markup`, { quiet: true, wait: 0, screenshots: false });
+    assert(markup.rendered.h1Count === 1, `discoverability: expected the rendered h1: ${JSON.stringify(markup.rendered)}`);
+    assert(
+      markup.h1PresentInRaw === true,
+      `discoverability: an inline-span h1 was reported missing from the raw HTML: ${JSON.stringify(markup.rendered)}`,
+    );
+
+    const injected = await gather('discoverability', `${base}/client`, { quiet: true, wait: 0, screenshots: false });
+    assert(injected.rendered.h1Count === 1, `discoverability: expected the JS-injected h1: ${JSON.stringify(injected.rendered)}`);
+    assert(
+      injected.h1PresentInRaw === false,
+      `discoverability: a JS-injected h1 read as present in the raw HTML: ${JSON.stringify(injected.rendered)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
 }
 
 async function testFlowNormalize() {
