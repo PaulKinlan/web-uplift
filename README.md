@@ -363,6 +363,7 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `cookies` | every cookie the page sets, with Secure / SameSite / HttpOnly / expiry / third-party flags and per-cookie issues | `Network` domain |
 | `trackers` | third-party request origins matched against a built-in list of known tracker and analytics domains | `Network` domain |
 | `images` | image inventory: width/height attributes, lazy-loading, srcset, legacy vs modern format, oversized images, missing alt | `Runtime.evaluate` |
+| `a11ytree` | what assistive technology actually receives: the computed accessibility tree (Accessibility.getFullAXTree) projected to role, computed name, ignored subtrees with reasons and the flag properties the checks use; plus the real tab order walked with CDP key events, recording each stop, its on-screen state, its focus indicator, and whether it sits inside aria-hidden | `Accessibility` + `Input` |
 | `targets` | WCAG 2.2 SC 2.5.8 target-size inventory: every pointer target box in CSS px, undersized flags, and the inline-in-text and spacing exceptions read from geometry, measured at both a 1280x720 desktop and a 360x800 narrow layout | `DOM` / `Runtime` |
 | `features` | modern-CSS and overlay census from the LIVE CSSOM (document, adopted and shadow-root sheets plus inline styles): at-rules, conditions, properties, functions and selectors with counts, the tracked feature rows the checks turn on, and native dialog / [popover] / details vs div-based modals | `CSS` / `DOM` / `Runtime` |
 
