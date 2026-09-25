@@ -119,32 +119,21 @@ for breaking skill/schema changes):
    `.claude/skills/web-audit/SKILL.md` per the `files` allowlist).
 6. `git tag v<VERSION> && git push && git push --tags`.
 
-### Current release: v0.4.0
+### Current release: v0.4.1
 
-Minor over v0.3.0. Adds the evidence primitives built since: `axe` (vendored
-axe-core with a CSP bypass scoped to that primitive), `console` (Runtime + Log
-collection, the first-party path for `no-console-errors`, with the same block
-riding along on every other primitive), `targets` (WCAG 2.2 SC 2.5.8 target
-size, measured at a desktop and a narrow layout), `features` (modern-CSS and
-overlay census from the live CSSOM, with `censusComplete` when a cross-origin
-sheet could not be read), `resilience` (service worker + manifest + a real
-offline reload with an offline screenshot) and `a11ytree` (the computed
-accessibility tree plus the real tab order).
+Patch over v0.4.0. `a11ytree` gains `--max-nodes <n>` and `--max-stops <n>`. Its
+tree projection and focus walk were fixed at 400 nodes and 60 stops, which a
+content-heavy page blows through (a live run against a personal blog measured
+831 AX nodes), and there was no way to ask for the rest even though the caps
+were reported. The defaults are unchanged, the effective values are echoed in
+the output (`tree.maxNodes`, `focusOrder.maxStops`), and the skill row says how
+to widen them.
 
-It also lands the evidence-honesty work: every capped sample now reports its
-cap (`<name>Total`/`<name>Chars` plus `<name>Truncated`, and a stderr warning),
-fix mode validates the report shape instead of throwing a TypeError, fix mode
-refuses to pass a report that claims complete coverage with zero checks,
-discoverability compares content tokens instead of a verbatim substring, and
-the fix hill-climb can survive an unscoreable report.
-
-The skill gains the rule that goes with it: **truncated evidence is not
-absence** - a miss in a capped sample cannot produce a `pass`, so gather the
-rest before judging - plus the primitive rows for everything above. The
-per-check `detectableVia` hints in `knowledge/principles.json` now name the
-first-party primitive for each of the affected checks, which moves that file's
-checksum: the pinned `coverage.catalogChecksum` in both example reports was
-re-pinned to match (the checks themselves are unchanged).
+v0.4.0, the previous release, introduced the six evidence primitives built since
+v0.3.0 (`axe`, `console`, `targets`, `features`, `resilience`, `a11ytree`), the
+evidence-honesty work (every cap reported, report-shape validation, the
+`censusComplete` and truncation signals) and the skill rule that a miss in a
+truncated sample is not absence.
 
 <!-- web-uplift:install -->
 ## web-uplift (modern-web audit + fix)
