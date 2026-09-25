@@ -28,6 +28,7 @@ try {
   testBatchFlowDryRun();
   testFixSurvivesUnscoreableReports();
   testFixRefusesPassOnIncompleteCoverage();
+  await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
   await testDiscoverabilityHelpers();
   await testFlowNormalize();
@@ -226,6 +227,53 @@ function testFixRefusesPassOnIncompleteCoverage() {
     `fix coverage: a clean complete report should pass:\n${cleanRun.stdout}`);
   assert(cleanRun.stdout.includes('0 unconcluded check(s)'),
     `fix coverage: a clean report should report zero unconcluded checks:\n${cleanRun.stdout}`);
+}
+
+// A compare between two PARTIAL runs used to print "Outstanding
+// issue-findings: 0 -> 0" while checks never concluded in either run, which
+// reads as "nothing left to do". compare.mjs had its own findings-only copy of
+// countOutstanding (fix.mjs had already grown completionState); the shared
+// runner/remaining-work.mjs module is now the single definition both callers
+// use, and compare reports the unconcluded checks for BOTH sides with a delta.
+async function testCompareReportsUnconcludedChecks() {
+  const { compareReports, renderCompareMd } = await import('../aggregate/compare.mjs');
+  const clean = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
+  assert((clean.findings ?? []).length === 0, 'compare: the fixed fixture should have no findings');
+
+  const makePartial = (blocked, notRun) => {
+    const r = structuredClone(clean);
+    r.status = 'partial';
+    const rows = r.checkOutcomes;
+    for (let i = 0; i < blocked; i++) { rows[i].status = 'blocked'; rows[i].reason = 'Auth wall blocked this path'; }
+    for (let i = blocked; i < blocked + notRun; i++) { rows[i].status = 'not-run'; rows[i].reason = 'Never attempted'; }
+    r.coverage = { ...r.coverage, judged: rows.length - blocked - notRun, blocked, notRun, complete: false };
+    delete r.overallScore;
+    return r;
+  };
+
+  const before = makePartial(3, 2); // 5 unconcluded
+  const after = makePartial(1, 0);  // 1 unconcluded: four concluded, no finding resolved
+  const cmp = compareReports(before, after);
+  assert(cmp.summary.unconcludedBefore === 5,
+    `compare: unconcludedBefore should be 5, got ${cmp.summary.unconcludedBefore}`);
+  assert(cmp.summary.unconcludedAfter === 1,
+    `compare: unconcludedAfter should be 1, got ${cmp.summary.unconcludedAfter}`);
+  assert(cmp.before.unconcluded === 5 && cmp.after.unconcluded === 1,
+    'compare: before/after blocks should carry the unconcluded counts');
+
+  const md = renderCompareMd(cmp, { hostName: 'example.test' });
+  assert(md.includes('Outstanding issue-findings:** 0 -> 0'),
+    `compare: findings line should still render:\n${md}`);
+  assert(md.includes('Unconcluded checks (blocked/not-run):** 5 -> 1 (-4)'),
+    `compare: the unconcluded line must state BOTH sides and the delta:\n${md}`);
+
+  // Same module, same counts as the hill-climb gate: fix.mjs and compare.mjs
+  // must never disagree about what remains.
+  const { countOutstanding, completionState, remaining } = await import('../runner/remaining-work.mjs');
+  assert(countOutstanding(before) === 0 && completionState(before).blocked === 3 && completionState(before).notRun === 2,
+    'remaining-work: shared module should see the partial before-run');
+  assert(remaining(before).total === 5 && remaining(after).total === 1,
+    'remaining-work: total should be findings + blocked + not-run');
 }
 
 async function testScorecardScoringAndRender() {
