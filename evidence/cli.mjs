@@ -56,6 +56,10 @@
 //   --network <profile>     Network shaping: slow-3g | fast-3g | slow-4g | fast-4g |
 //                           mobile-lighthouse (150ms RTT, 1638.4/750 kbit/s, 4x CPU -
 //                           the profile CWV thresholds are calibrated against)
+//   --locale <bcp47>        Locale override (Emulation.setLocaleOverride), e.g. de-DE
+//   --timezone <iana>       Time zone override (Emulation.setTimezoneOverride), e.g.
+//                           Asia/Tokyo - i18n checks are only observable by rendering
+//                           under a second locale/zone and diffing the output
 //   --selector <css>        Element(s) of interest (dom/screenshot/layout)
 //   --quiet                 Less logging
 
@@ -147,6 +151,26 @@ async function applyConditions(client, opts, log) {
     await client.Emulation.setCPUThrottlingRate({ rate: cpuRate });
     log(`[evidence] cpu throttle: ${cpuRate}x slowdown`);
   }
+  if (opts.locale) {
+    // Validate loudly up front: a typo'd locale must fail here, not silently
+    // judge the page under the default locale.
+    try {
+      Intl.getCanonicalLocales(opts.locale);
+    } catch {
+      throw new Error(`Invalid --locale "${opts.locale}" (expected a BCP 47 tag, e.g. de-DE, ar-EG, ja-JP)`);
+    }
+    await client.Emulation.setLocaleOverride({ locale: opts.locale });
+    log(`[evidence] locale: ${opts.locale}`);
+  }
+  if (opts.timezone) {
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: opts.timezone });
+    } catch {
+      throw new Error(`Invalid --timezone "${opts.timezone}" (expected an IANA zone, e.g. America/New_York, Asia/Tokyo)`);
+    }
+    await client.Emulation.setTimezoneOverride({ timezoneId: opts.timezone });
+    log(`[evidence] timezone: ${opts.timezone}`);
+  }
 }
 
 // The conditions a run was measured under, recorded in every primitive's
@@ -161,6 +185,8 @@ function describeConditions(opts) {
   const cpuRate = opts.cpuThrottle ?? profile?.cpuSlowdownMultiplier;
   if (cpuRate) conditions.cpuThrottleRate = cpuRate;
   if (opts.viewport) conditions.viewport = { width: opts.viewport.w, height: opts.viewport.h };
+  if (opts.locale) conditions.locale = opts.locale;
+  if (opts.timezone) conditions.timezone = opts.timezone;
   if (opts.emulateMedia && opts.emulateMedia.length) conditions.emulateMedia = opts.emulateMedia;
   return Object.keys(conditions).length ? conditions : null;
 }
@@ -221,7 +247,13 @@ async function screenshot(client, url, opts, log) {
   });
   const out = opts.out || derivedOut(url, 'screenshot', 'png');
   writeFileSync(out, uint8FromBase64(data));
-  return { artifact: out, bytes: data.length, clip: clip || 'full viewport' };
+  const shot = { artifact: out, bytes: data.length, clip: clip || 'full viewport' };
+  // Screenshots bypass emit() (the artifact is binary), so attach the
+  // conditions here: a rendered screenshot is only interpretable against the
+  // locale/timezone/viewport it was taken under.
+  const conditions = describeConditions(opts);
+  if (conditions) shot.conditions = conditions;
+  return shot;
 }
 
 // video: record a screencast over an interaction window, assemble with ffmpeg.
@@ -618,6 +650,15 @@ async function evaluateCmd(client, url, opts, log) {
   const expr = opts.expr;
   if (!expr) throw new Error('evaluate requires --expr "<js>" or --expr-file <path>');
   const value = await evaluate(client, expr);
+  // evaluate returns the model's own expression result, so emit() is not used.
+  // When that result is a plain object, record the conditions it was measured
+  // under (a diff of rendered dates/numbers across two locales is only meaningful
+  // if each side states its conditions); primitives (string/number) pass through
+  // unchanged, with the conditions still logged on stderr by applyConditions.
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const conditions = describeConditions(opts);
+    if (conditions && value.conditions === undefined) value.conditions = conditions;
+  }
   if (opts.out) writeFileSync(opts.out, JSON.stringify(value, null, 2) + '\n');
   return value;
 }
@@ -2655,6 +2696,8 @@ function parseArgs(argv) {
     else if (a === '--wait') args.wait = Number(argv[++i]);
     else if (a === '--cpu-throttle') args.cpuThrottle = Number(argv[++i]);
     else if (a === '--network') args.network = argv[++i];
+    else if (a === '--locale') args.locale = argv[++i];
+    else if (a === '--timezone') args.timezone = argv[++i];
     else if (a === '--duration') args.duration = Number(argv[++i]);
     else if (a === '--fps') args.fps = Number(argv[++i]);
     else if (a === '--selector') args.selector = argv[++i];
@@ -2738,6 +2781,7 @@ async function main() {
       'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|axe|trace|har|discoverability|console|targets|features|resilience|secrets|headers|cookies|trackers|images> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
         '         --cpu-throttle n --network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse\n' +
+        '         --locale de-DE --timezone Asia/Tokyo\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies --quiet',
     );

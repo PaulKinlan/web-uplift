@@ -171,7 +171,7 @@ Common options the harness simply applies (you choose them, it does not):
 `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
 `--viewport 360x800`, `--wait <ms>`, `--selector <css>`, `--interact "<js>"`,
 `--cpu-throttle <n>`, `--network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse`,
-`--out <path>`, `--source <dir>`.
+`--locale de-DE`, `--timezone Asia/Tokyo`, `--out <path>`, `--source <dir>`.
 
 You may also run **any other tool you judge useful** at inspection time. None of
 these is wired into the runtime; you invoke them yourself when they help:
@@ -339,6 +339,14 @@ script; you adapt to the actual page):
   confidence rather than asserting a bug.
 - be-inclusive -> the `axe` primitive, and/or Lighthouse a11y, and/or your own
   contrast/label probes; plus a screenshot to judge legibility/alignment.
+- be-internationalised -> observe the RENDERED page under a second locale and a
+  second time zone, not just the source: `evaluate`/`screenshot` with `--locale
+  ar-EG` and `--timezone Asia/Tokyo` (etc.) and diff the rendered dates, numbers
+  and direction against the default run. A page can call Intl.DateTimeFormat
+  correctly and still hard-code a calendar assumption, or pass a naive Date
+  through a formatter and land on the wrong day across a DST boundary; only the
+  rendered diff shows it. Each side records its `conditions`, so the finding can
+  state both locales/zones observed.
 - follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for
   doctype, charset, title, meta description, viewport, anchor hrefs; and/or
   Lighthouse.

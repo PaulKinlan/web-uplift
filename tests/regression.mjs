@@ -25,6 +25,7 @@ try {
   await testPreNavigationEmulation();
   await testAxePrimitiveBypassesStrictCsp();
   await testThrottlingConditions();
+  await testLocaleTimezoneConditions();
   await testHarRedirects();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
@@ -1330,6 +1331,54 @@ async function testThrottlingConditions() {
     assert(rejected, 'throttle: an unknown profile must be rejected by name');
   } finally {
     server.close();
+  }
+}
+
+// The three be-internationalised checks are only observable by rendering under
+// a second locale / time zone and diffing what the page actually shows -
+// source reading cannot see a hard-coded calendar assumption or a naive Date
+// through a formatter. The overrides must be REAL (rendered output differs)
+// and RECORDED (each side of the diff states its conditions).
+async function testLocaleTimezoneConditions() {
+  const probe =
+    '({ tz: Intl.DateTimeFormat().resolvedOptions().timeZone,' +
+    ' rendered: new Date(Date.UTC(2026, 0, 15, 2, 0)).toLocaleString(),' +
+    ' num: (12345.678).toLocaleString() })';
+  const url = 'data:text/html,<h1>i18n</h1>';
+
+  const tokyo = await gather('evaluate', url, { quiet: true, wait: 0, expr: probe, timezone: 'Asia/Tokyo' });
+  const newYork = await gather('evaluate', url, { quiet: true, wait: 0, expr: probe, timezone: 'America/New_York' });
+  assert(tokyo.tz === 'Asia/Tokyo' && newYork.tz === 'America/New_York',
+    `i18n: the timezone override must apply: ${tokyo.tz} / ${newYork.tz}`);
+  assert(tokyo.rendered !== newYork.rendered,
+    `i18n: 02:00 UTC must render as different local times in Tokyo and New York: ${tokyo.rendered} / ${newYork.rendered}`);
+  assert(tokyo.conditions?.timezone === 'Asia/Tokyo' && newYork.conditions?.timezone === 'America/New_York',
+    `i18n: each side of the diff must record its timezone: ${JSON.stringify(tokyo.conditions)} / ${JSON.stringify(newYork.conditions)}`);
+
+  const german = await gather('evaluate', url, { quiet: true, wait: 0, expr: probe, locale: 'de-DE' });
+  assert(german.num === '12.345,678',
+    `i18n: de-DE must render the comma decimal separator: ${german.num}`);
+  assert(german.conditions?.locale === 'de-DE',
+    `i18n: the locale must be recorded: ${JSON.stringify(german.conditions)}`);
+
+  // The screenshot primitive records its conditions too (it bypasses emit()
+  // because its artifact is binary).
+  const shot = await gather('screenshot', url, { quiet: true, wait: 0, locale: 'fr-FR', out: join(tmp, 'i18n-shot.png') });
+  assert(shot.conditions?.locale === 'fr-FR',
+    `i18n: the screenshot must record its locale: ${JSON.stringify(shot)}`);
+
+  // Invalid values fail loudly instead of silently judging the default locale.
+  for (const [opts, pattern] of [
+    [{ locale: '!!bogus!!' }, /Invalid --locale/],
+    [{ timezone: 'Mars/Olympus_Mons' }, /Invalid --timezone/],
+  ]) {
+    let rejected = false;
+    try {
+      await gather('evaluate', url, { quiet: true, wait: 0, expr: '1', ...opts });
+    } catch (err) {
+      rejected = pattern.test(err.message);
+    }
+    assert(rejected, `i18n: ${JSON.stringify(opts)} must be rejected by name`);
   }
 }
 
