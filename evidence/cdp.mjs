@@ -186,6 +186,163 @@ export async function evaluate(client, expression, { awaitPromise = true } = {})
   return result.value;
 }
 
+// --- console evidence ------------------------------------------------------
+//
+// What a page LOGS while it is being measured is evidence in its own right: an
+// uncaught exception during load explains a broken interaction, and the audit's
+// no-console-errors check needs it first-party (an evaluate probe that runs
+// after load cannot see what already fired). Runtime.enable is already on from
+// newSession; Log.enable adds browser-level entries (failed resource loads, CSP
+// violations, deprecations) that never reach console.*.
+//
+// This is a generic harness: it collects and counts, the model judges. Console
+// errors, warnings and assert calls, every uncaught exception, and browser log
+// errors/warnings are recorded (deduplicated with a repeat count, then capped);
+// info/log/debug chatter only bumps a counter so a noisy page cannot bury the
+// signal.
+//
+// Attached to the client so every primitive can report what the page logged
+// while it was being measured, not just the dedicated `console` primitive.
+const collectors = new WeakMap();
+const CONSOLE_ENTRY_CAP = 100;
+const CONSOLE_BUFFER_CAP = 500;
+
+export async function attachConsoleCollector(client, { log = () => {} } = {}) {
+  const entries = [];
+  const byKey = new Map(); // dedupe key -> recorded entry (with a repeat count)
+  let ignoredCount = 0; // info/log/debug/verbose, counted but not itemised
+  let droppedCount = 0; // past the buffer cap
+
+  const record = (entry) => {
+    // The url is part of the identity when there is one: two different failed
+    // resources are different findings, while a retry loop hitting the same
+    // resource collapses into a repeat count.
+    const key = [entry.kind, entry.level, entry.source, entry.url || '', entry.text].join('|');
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.repeat++;
+      return;
+    }
+    if (byKey.size >= CONSOLE_BUFFER_CAP) {
+      droppedCount++;
+      return;
+    }
+    const stored = { ...entry, repeat: 1 };
+    byKey.set(key, stored);
+    entries.push(stored);
+  };
+
+  const textOfArg = (arg) => {
+    if (!arg) return '';
+    if (arg.value !== undefined) return typeof arg.value === 'string' ? arg.value : String(arg.value);
+    return arg.description || arg.unserializableValue || arg.type || '';
+  };
+  const framesOf = (stackTrace) =>
+    (stackTrace?.callFrames || [])
+      .slice(0, 3)
+      .map((f) => `${f.functionName || '<anonymous>'} (${f.url || '?'}:${f.lineNumber + 1}:${f.columnNumber + 1})`);
+
+  client.Runtime.consoleAPICalled(({ type, args, stackTrace }) => {
+    const text = (args || []).map(textOfArg).join(' ').trim();
+    if (type === 'error' || type === 'assert') {
+      const stack = framesOf(stackTrace);
+      record({ kind: 'console', level: 'error', source: 'console', text, ...(stack.length ? { stack } : {}) });
+    } else if (type === 'warning' || type === 'warn') {
+      record({ kind: 'console', level: 'warning', source: 'console', text });
+    } else {
+      ignoredCount++;
+    }
+  });
+
+  client.Runtime.exceptionThrown(({ exceptionDetails }) => {
+    const ex = exceptionDetails || {};
+    record({
+      kind: 'exception',
+      level: 'error',
+      source: 'runtime',
+      text: ex.exception?.description || ex.text || 'Uncaught exception',
+      ...(ex.url ? { url: ex.url } : {}),
+      ...(ex.lineNumber != null ? { line: ex.lineNumber + 1 } : {}),
+      stack: framesOf(ex.stackTrace),
+    });
+  });
+
+  client.Log.entryAdded(({ entry }) => {
+    const e = entry || {};
+    if (e.level === 'error' || e.level === 'warning') {
+      record({
+        kind: 'log',
+        level: e.level,
+        source: e.source || 'browser',
+        text: e.text || '',
+        ...(e.url ? { url: e.url } : {}),
+        ...(e.lineNumber != null ? { line: e.lineNumber } : {}),
+      });
+    } else {
+      ignoredCount++;
+    }
+  });
+
+  await Promise.all([
+    client.Runtime.enable().catch(() => {}),
+    client.Log.enable().catch((err) => log(`[evidence] console collector: Log.enable failed: ${err.message}`)),
+  ]);
+
+  function summary() {
+    const consoleErrorCount = entries.filter((e) => e.kind === 'console' && e.level === 'error').length;
+    const exceptionCount = entries.filter((e) => e.kind === 'exception').length;
+    const warningCount = entries.filter((e) => e.level === 'warning').length;
+    // Failed resource loads arrive through the browser log (Log.entryAdded,
+    // source 'network'), not through console.*. Splitting them out keeps the
+    // page-authored signal (console errors + exceptions) separate from broken
+    // subresource requests; Chrome's automatic /favicon.ico request shows up
+    // here on any site that does not serve one, and is not a page-authored
+    // console error.
+    const networkErrorCount = entries.filter((e) => e.source === 'network').length;
+    const browserLogErrorCount = entries.filter(
+      (e) => e.kind === 'log' && e.level === 'error' && e.source !== 'network',
+    ).length;
+    const errorCount = consoleErrorCount + networkErrorCount + browserLogErrorCount;
+    const shown = entries.slice(0, CONSOLE_ENTRY_CAP).map((e) => ({ ...e }));
+    return {
+      entryCount: entries.length,
+      consoleErrorCount,
+      exceptionCount,
+      warningCount,
+      networkErrorCount,
+      browserLogErrorCount,
+      errorCount,
+      hasErrors: errorCount > 0 || exceptionCount > 0,
+      entries: shown,
+      entriesTotal: entries.length,
+      entriesTruncated: entries.length > CONSOLE_ENTRY_CAP,
+      ...(ignoredCount ? { ignoredMessageCount: ignoredCount } : {}),
+      ...(droppedCount ? { droppedMessageCount: droppedCount } : {}),
+      note: 'What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome\'s automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError.',
+  };
+  }
+
+  const collector = { entries, summary };
+  collectors.set(client, collector);
+  log('[evidence] console collector attached (Runtime + Log)');
+  return collector;
+}
+
+// Join a primitive's evidence with what the page logged during it, so the
+// returned evidence (stdout) and the JSON artifact a primitive writes agree.
+// Only attached when the page actually logged something: a clean page must not
+// bloat every primitive's output with an empty console block. Returns the block
+// that was attached, or null.
+export function attachConsoleEvidence(client, result) {
+  const collector = collectors.get(client);
+  if (!collector || !result || typeof result !== 'object' || Array.isArray(result)) return null;
+  if (result.console) return result.console;
+  const block = collector.summary();
+  if (!block.entryCount) return null;
+  result.console = block;
+  return block;
+}
+
 // Launch Chrome, open a session, run the body, and always clean up. A thin
 // convenience so each primitive does not repeat the launch/teardown dance.
 export async function withSession(fn, { log = () => {} } = {}) {

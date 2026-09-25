@@ -357,6 +357,12 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `trace` | DevTools trace plus compact summary | `Tracing.start/end` |
 | `har` | HAR 1.2 plus compact network summary | `Network` domain |
 | `discoverability` | raw server HTML (no JS) vs the rendered DOM: how much content a non-JS crawler sees (`coveragePct`, `isJsShell`, empty SPA mounts), plus a browser-view/crawler-view screenshot pair | `fetch` + `DOM` |
+| `console` | what the page logged while it was being measured: console errors and warnings, uncaught exceptions, and browser log errors/warnings (failed subresource requests, CSP violations), deduplicated with repeat counts and split by source | `Runtime` + `Log` domains |
+| `secrets` | exposed API keys, tokens and credentials in page HTML, inline scripts, external JS and meta tags (redacted matches, descriptive signal) | `Runtime.evaluate` + `fetch` |
+| `headers` | the main document's security response headers: CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy | `Network` domain |
+| `cookies` | every cookie the page sets, with Secure / SameSite / HttpOnly / expiry / third-party flags and per-cookie issues | `Network` domain |
+| `trackers` | third-party request origins matched against a built-in list of known tracker and analytics domains | `Network` domain |
+| `images` | image inventory: width/height attributes, lazy-loading, srcset, legacy vs modern format, oversized images, missing alt | `Runtime.evaluate` |
 
 Common options:
 
