@@ -26,6 +26,7 @@ try {
   await testHarRedirects();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
+  await testFeaturesPrimitive();
   testBatchDryRunUsesRetainedDirs();
   testBatchFlowDryRun();
   testFixSurvivesUnscoreableReports();
@@ -601,6 +602,152 @@ async function testDiscoverabilityH1InRaw() {
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// The checks that turn on which modern CSS a page actually ships need the LIVE
+// CSSOM, not a grep of the dom primitive's capped css string. This fixture
+// covers every census source (document sheet with @import/@layer/@container/
+// @starting-style/@scope/@supports/@property, a cross-origin sheet that must be
+// skipped rather than crash the walk, a shadow-root adopted sheet, inline
+// styles), the tracked feature rows, the overlay census, and the condition cap
+// (web-uplift-xci).
+async function testFeaturesPrimitive() {
+  // The cross-origin sheet has to be a different origin, and a different port
+  // is a different origin, so a second server is the cheapest honest fixture.
+  const cross = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/css' });
+    res.end('.cross { color: orange; }');
+  });
+  await new Promise((resolveListen) => cross.listen(0, '127.0.0.1', resolveListen));
+  const crossPort = cross.address().port;
+
+  const css = [
+    '@layer base, theme;',
+    '@layer base { .a { color: light-dark(#111, #eee); } }',
+    '@media (prefers-color-scheme: dark) { .a { color-scheme: dark; } }',
+    '@container card (min-width: 300px) { .b { color: red; } }',
+    '@starting-style { .c { opacity: 0; } }',
+    '@scope (.scope-root) { .d { color: blue; } }',
+    '@supports (color: light-dark(black, white)) { .e { color: light-dark(black, white); } }',
+    '.f { container-type: inline-size; container-name: card; anchor-name: --a; position-try: --t; text-wrap: balance; }',
+    '.g:has(> .h) { color: green; }',
+    'dialog::backdrop { background: rgb(0 0 0 / 0.5); }',
+    '.pop:popover-open { color: purple; }',
+    '@keyframes fade { from { opacity: 0; } to { opacity: 1; } }',
+    "@property --my-prop { syntax: '<length>'; inherits: false; initial-value: 0px; }",
+    ':root { --brand: #123; --space: 4px; }',
+  ].join('\n');
+  const manyConditions = Array.from({ length: 70 }, (_, i) => `@media (min-width: ${100 + i}px) { .m${i} { color: red; } }`).join('\n');
+
+  const page = (many) => [
+    '<!doctype html><html><head><title>features</title>',
+    ...(many ? [] : [`<link rel="stylesheet" href="http://127.0.0.1:${crossPort}/cross.css">`]),
+    '<style>',
+    "@import url('/imported.css');",
+    many ? manyConditions : css,
+    '</style></head><body>',
+    '<div class="scope-root"><p class="d">scoped</p></div>',
+    '<dialog open>native dialog</dialog>',
+    '<div popover id="pop">popover</div>',
+    '<details><summary>more</summary>body</details>',
+    '<div role="dialog" aria-modal="true">div dialog</div>',
+    '<div id="stack" style="position:fixed;z-index:60">stacked</div>',
+    '<div id="inline" style="container-type:inline-size">inline container</div>',
+    '<div id="host"></div>',
+    '<script>',
+    "  const root = document.getElementById('host').attachShadow({ mode: 'open' });",
+    '  const sheet = new CSSStyleSheet();',
+    "  sheet.replaceSync('.shadowed { interpolate-size: allow-keywords; }');",
+    '  root.adoptedStyleSheets = [sheet];',
+    "  root.innerHTML = '<span class=\"shadowed\">shadow</span>';",
+    '</script>',
+    '</body></html>',
+  ].join('\n');
+
+  const main = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/imported.css') {
+      res.writeHead(200, { 'Content-Type': 'text/css' });
+      res.end('.imported { animation-timeline: --t; }');
+      return;
+    }
+    if (path === '/favicon.ico') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(page(path === '/many'));
+  });
+
+  await new Promise((resolveListen) => main.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = main.address();
+    const base = `http://127.0.0.1:${port}`;
+
+    const result = await gather('features', `${base}/`, { quiet: true, wait: 600 });
+
+    // Every style source is visited, and the unreadable one is counted, named,
+    // and makes the census explicitly partial rather than silently thin.
+    assert(result.censusComplete === false, `features: a cross-origin sheet must make the census incomplete: ${result.censusComplete}`);
+    assert(result.sheets.crossOriginSkipped === 1, `features: the cross-origin sheet should be skipped and counted: ${JSON.stringify(result.sheets)}`);
+    assert(
+      result.sheets.crossOriginSheetUrls.some((u) => u.includes('/cross.css')),
+      `features: the skipped sheet should be named so it can be checked another way: ${JSON.stringify(result.sheets.crossOriginSheetUrls)}`,
+    );
+    assert(result.sheets.importedSheetsFollowed === 1, `features: the @import sheet should be followed: ${JSON.stringify(result.sheets)}`);
+    assert(result.sheets.shadowRootsScanned === 1, `features: the shadow root should be scanned: ${JSON.stringify(result.sheets)}`);
+    assert(result.sheets.inlineStyleElements === 2, `features: both inline styles should be scanned: ${JSON.stringify(result.sheets)}`);
+
+    const atRules = result.tracked.atRules;
+    assert(
+      atRules['@container'] === 1 && atRules['@starting-style'] === 1 && atRules['@scope'] === 1 &&
+        atRules['@supports'] === 1 && atRules['@property'] === 1 && atRules['@layer'] === 2 && atRules['@view-transition'] === 0,
+      `features: at-rule census is wrong: ${JSON.stringify(atRules)}`,
+    );
+    const props = result.tracked.properties;
+    assert(
+      props['container-type'] >= 2 && props['anchor-name'] === 1 && props['position-try-fallbacks'] === 1 &&
+        props['animation-timeline'] === 1 && props['interpolate-size'] === 1 && props['color-scheme'] === 1 &&
+        props['content-visibility'] === 0,
+      `features: property census is wrong: ${JSON.stringify(props)}`,
+    );
+    assert(result.tracked.functions['light-dark'] >= 2, `features: light-dark() usage was not counted: ${JSON.stringify(result.tracked.functions)}`);
+    const sels = result.tracked.selectors;
+    assert(
+      sels[':has('] === 1 && sels['::backdrop'] === 1 && sels[':popover-open'] === 1 && sels[':is('] === 0,
+      `features: selector census is wrong: ${JSON.stringify(sels)}`,
+    );
+    assert(result.customProperties.distinct === 2, `features: custom properties were not counted: ${JSON.stringify(result.customProperties)}`);
+    const conditionNames = Object.keys(result.conditions);
+    assert(
+      conditionNames.includes('@media (prefers-color-scheme: dark)') && conditionNames.some((c) => c.startsWith('@container card')),
+      `features: conditional at-rule preludes should be in the census: ${JSON.stringify(conditionNames)}`,
+    );
+
+    const overlays = result.overlays;
+    assert(
+      overlays.dialogElements === 1 && overlays.openDialogs === 1 && overlays.popoverElements === 1 &&
+        overlays.detailsElements === 1 && overlays.roleDialogElements === 1 && overlays.ariaModalElements === 1,
+      `features: overlay census is wrong: ${JSON.stringify(overlays)}`,
+    );
+    assert(
+      overlays.highZIndexCount === 1 && overlays.highZIndexMax === 60 && overlays.highZIndexExamples[0]?.id === 'stack',
+      `features: the high z-index div was not surfaced: ${JSON.stringify(overlays)}`,
+    );
+
+    // The condition map is capped, and the cap is reported rather than silent.
+    // This page has no cross-origin sheet, so it also proves the complete case.
+    const capped = await gather('features', `${base}/many`, { quiet: true, wait: 500 });
+    assert(capped.censusComplete === true, `features: a same-origin-only page should report a complete census: ${JSON.stringify(capped.sheets)}`);
+    assert(
+      capped.conditionsTotal === 70 && capped.conditionsTruncated === true && Object.keys(capped.conditions).length === 60,
+      `features: the condition cap was not reported: ${JSON.stringify({ total: capped.conditionsTotal, shown: Object.keys(capped.conditions).length, truncated: capped.conditionsTruncated })}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => main.close(resolveClose));
+    await new Promise((resolveClose) => cross.close(resolveClose));
   }
 }
 

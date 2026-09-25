@@ -363,6 +363,7 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `cookies` | every cookie the page sets, with Secure / SameSite / HttpOnly / expiry / third-party flags and per-cookie issues | `Network` domain |
 | `trackers` | third-party request origins matched against a built-in list of known tracker and analytics domains | `Network` domain |
 | `images` | image inventory: width/height attributes, lazy-loading, srcset, legacy vs modern format, oversized images, missing alt | `Runtime.evaluate` |
+| `features` | modern-CSS and overlay census from the LIVE CSSOM (document, adopted and shadow-root sheets plus inline styles): at-rules, conditions, properties, functions and selectors with counts, the tracked feature rows the checks turn on, and native dialog / [popover] / details vs div-based modals | `CSS` / `DOM` / `Runtime` |
 
 Common options:
 
