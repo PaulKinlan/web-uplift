@@ -363,6 +363,7 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `cookies` | every cookie the page sets, with Secure / SameSite / HttpOnly / expiry / third-party flags and per-cookie issues | `Network` domain |
 | `trackers` | third-party request origins matched against a built-in list of known tracker and analytics domains | `Network` domain |
 | `images` | image inventory: width/height attributes, lazy-loading, srcset, legacy vs modern format, oversized images, missing alt | `Runtime.evaluate` |
+| `targets` | WCAG 2.2 SC 2.5.8 target-size inventory: every pointer target box in CSS px, undersized flags, and the inline-in-text and spacing exceptions read from geometry, measured at both a 1280x720 desktop and a 360x800 narrow layout | `DOM` / `Runtime` |
 
 Common options:
 
