@@ -180,9 +180,12 @@ these is wired into the runtime; you invoke them yourself when they help:
   best-practices / SEO audits. Use it to corroborate the Lighthouse-dimension
   principles, or skip it and gather the same signal first-party with `layout`
   and `evaluate`.
-- **axe-core**: inject it and run it via the `evaluate` primitive, e.g. fetch
-  the script text and `--expr` a call to `axe.run()`, to enumerate accessibility
-  violations. Or write your own contrast/label/role probes with `evaluate`.
+- **axe-core**: use the `axe` evidence primitive
+  (`node evidence/cli.mjs axe <url>`). It injects the VENDORED axe-core with a
+  CSP bypass scoped to that primitive, so it works on strict-`script-src` sites
+  where fetching axe from a CDN through `evaluate` silently fails. Returns
+  violations grouped by impact with node targets and failure summaries. Or
+  write your own contrast/label/role probes with `evaluate`.
 - **Chrome DevTools MCP skills** (optional): if your agent environment exposes
   Chrome DevTools MCP, its `memory-leak-debugging` skill provides a stronger
   workflow for `be-memory-efficient`: baseline, target and final heap snapshots,
@@ -327,7 +330,7 @@ script; you adapt to the actual page):
   rationale (bounded-footprint and the detached-DOM/listener check still apply
   from a single state). detached nodes can be intentional caches, so judge
   confidence rather than asserting a bug.
-- be-inclusive -> axe via `evaluate`, and/or Lighthouse a11y, and/or your own
+- be-inclusive -> the `axe` primitive, and/or Lighthouse a11y, and/or your own
   contrast/label probes; plus a screenshot to judge legibility/alignment.
 - follow-best-practices / be-discoverable -> a `dom`/`evaluate` probe for
   doctype, charset, title, meta description, viewport, anchor hrefs; and/or

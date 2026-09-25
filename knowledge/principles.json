@@ -547,7 +547,7 @@
         {
           "id": "names-roles-labels",
           "summary": "Interactive elements have accessible names, correct roles, and form fields have labels; images have alt text where meaningful; canvas/expressive content is exposed to assistive technology.",
-          "detectableVia": "HINT: axe-core (injectable via the evaluate primitive) or Lighthouse's a11y audits enumerate these; a DOM probe of the accessibility-relevant attributes is a first-party alternative. The model chooses.",
+          "detectableVia": "HINT: the axe evidence primitive (vendored axe-core, works under strict CSP) or Lighthouse's a11y audits enumerate these; a DOM probe of the accessibility-relevant attributes is a first-party alternative. The model chooses.",
           "guides": [
             "accessibility",
             "expose-canvas-content-to-browser-features",

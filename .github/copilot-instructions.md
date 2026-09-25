@@ -24,8 +24,8 @@ node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate> <url> [options
 Options you choose at inspection time: `--emulate-media k=v,..`, `--viewport WxH`,
 `--selector <css>`, `--interact "<js>"`, `--expr "<js>"`, `--source <dir>`,
 `--wait <ms>`, `--out <path>`. You may also run any tool you judge useful, e.g.
-`npx -y lighthouse <url> --output=json --quiet` and axe-core injected via the
-`evaluate` primitive. Query Modern Web Guidance with
+`npx -y lighthouse <url> --output=json --quiet` and the `axe` evidence
+primitive (vendored axe-core). Query Modern Web Guidance with
 `npx -y modern-web-guidance@latest search "<query>"` / `retrieve "<id>"`.
 
 ## Knowledge layers

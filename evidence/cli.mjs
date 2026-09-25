@@ -68,6 +68,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { launchChrome, newSession, navigate, evaluate, sleep } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
@@ -542,6 +543,95 @@ async function evaluateCmd(client, url, opts, log) {
   const value = await evaluate(client, expr);
   if (opts.out) writeFileSync(opts.out, JSON.stringify(value, null, 2) + '\n');
   return value;
+}
+
+// axe: accessibility evidence via the VENDORED axe-core. The skill prescribes
+// axe for be-inclusive (names/roles/labels, contrast, structure/focus), but
+// fetching it from a CDN through the evaluate primitive silently fails on any
+// site with a strict script-src - which is to say on exactly the
+// well-configured sites. Here the script is read from node_modules at audit
+// time (no CDN dependency, no network requirement) and Page.setBypassCSP is
+// enabled so the injection cannot be refused.
+//
+// The CSP bypass is SCOPED to this primitive: enabled just before navigation,
+// disabled in a finally, and gather() gives every primitive a fresh Chrome
+// session, so the headers/secrets primitives can never inherit it - the
+// security evidence stays valid.
+//
+// The result is DESCRIPTIVE, not a verdict: violations grouped by impact with
+// node targets + failure summaries, plus counts. The model judges them against
+// the principles.
+async function axe(client, url, opts, log) {
+  const axePath = createRequire(import.meta.url).resolve('axe-core/axe.min.js');
+  const axeSource = readFileSync(axePath, 'utf8');
+  const { Page } = client;
+  let bypassOn = false;
+  try {
+    await Page.setBypassCSP({ enabled: true });
+    bypassOn = true;
+    await navigate(client, url, {
+      settleMs: opts.wait,
+      log,
+      beforeTargetNavigate: () => applyConditions(client, opts, log),
+    });
+    await sleep(150);
+    if (opts.interact) await evaluate(client, opts.interact);
+
+    await evaluate(client, axeSource);
+    const version = await evaluate(client, 'window.axe && window.axe.version');
+    if (!version) throw new Error('axe-core injected but window.axe is undefined');
+    log(`[evidence] axe-core ${version} injected (vendored, CSP bypassed for this primitive only)`);
+
+    // Run axe in the page and return a compact, model-readable shape: full
+    // results carry every passing node and are far too large to read. Nodes
+    // are capped per violation; the cap is announced, never silent.
+    const MAX_NODES = 25;
+    const context = opts.selector ? JSON.stringify(opts.selector) : 'document';
+    const runOpts = {};
+    if (opts.rules) runOpts.runOnly = { type: 'rule', values: String(opts.rules).split(',') };
+    else if (opts.tags) runOpts.runOnly = { type: 'tag', values: String(opts.tags).split(',') };
+    const raw = await evaluate(
+      client,
+      `(async () => {
+        const results = await axe.run(${context}, ${JSON.stringify(runOpts)});
+        const pack = (v) => ({
+          id: v.id,
+          impact: v.impact ?? null,
+          description: v.description,
+          help: v.help,
+          helpUrl: v.helpUrl,
+          nodeCount: v.nodes.length,
+          nodes: v.nodes.slice(0, ${MAX_NODES}).map((n) => ({
+            target: n.target,
+            html: typeof n.html === 'string' ? n.html.slice(0, 300) : '',
+            failureSummary: n.failureSummary ?? '',
+          })),
+        });
+        const byImpact = { critical: [], serious: [], moderate: [], minor: [], other: [] };
+        for (const v of results.violations) (byImpact[v.impact] ?? byImpact.other).push(pack(v));
+        return {
+          toolVersion: axe.version,
+          violations: byImpact,
+          violationCount: results.violations.length,
+          incomplete: results.incomplete.map(pack),
+          counts: {
+            violations: results.violations.length,
+            incomplete: results.incomplete.length,
+            passes: results.passes.length,
+            inapplicable: results.inapplicable.length,
+          },
+        };
+      })()`,
+    );
+    for (const list of [Object.values(raw.violations).flat(), raw.incomplete]) {
+      for (const v of list) announceCap(`${v.id} nodes`, v.nodes.length, v.nodeCount, log);
+    }
+    const result = { url, ...raw };
+    if (opts.out) writeFileSync(opts.out, JSON.stringify(result, null, 2) + '\n');
+    return result;
+  } finally {
+    if (bypassOn) await Page.setBypassCSP({ enabled: false });
+  }
 }
 
 // trace: record a DevTools performance trace via the Tracing domain over the
@@ -1794,6 +1884,7 @@ const PRIMITIVES = {
   layout,
   dom,
   evaluate: evaluateCmd,
+  axe,
   trace,
   har,
   discoverability,
@@ -1883,10 +1974,10 @@ async function main() {
   const url = args._[1];
   if (!primitive || !url) {
     console.error(
-      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability|secrets|headers|cookies|trackers|images> <url> [options]\n' +
+      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|axe|trace|har|discoverability|secrets|headers|cookies|trackers|images> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
-        '         --duration ms --fps n --full-page --bodies --quiet',
+        '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies --quiet',
     );
     process.exit(1);
   }
