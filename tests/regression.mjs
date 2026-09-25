@@ -41,6 +41,7 @@ try {
   await testDiscoverabilityH1InRaw();
   await testTargetsPrimitive();
   await testResiliencePrimitive();
+  await testA11yTreePrimitive();
   await testFlowNormalize();
   console.log('tests OK');
 } finally {
@@ -1021,6 +1022,109 @@ async function testResiliencePrimitive() {
     assert(
       bare.offline.navigationFailed === true && typeof bare.offline.errorText === 'string' && bare.offline.rendered === null,
       `resilience: offline navigation should fail with a net error: ${JSON.stringify(bare.offline)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// be-inclusive/names-roles-labels and structure-and-focus cannot be judged from
+// DOM attributes alone: aria-labelledby overrides aria-label, a name can come
+// from title, and a subtree hidden by aria-hidden is still in the tab order.
+// This drives the computed AX tree and the real tab order (web-uplift-5lp).
+async function testA11yTreePrimitive() {
+  const page = [
+    '<!doctype html><html lang="en"><head><title>a11y fixture</title><style>',
+    '  body { margin: 0; font-family: sans-serif; }',
+    '  button, input, a { display: inline-block; margin: 4px; }',
+    '  .no-outline:focus { outline: none; }',
+    '  .visible:focus { outline: 3px solid #f00; }',
+    '</style></head><body>',
+    '<header><h1>Accessibility fixture</h1></header>',
+    '<nav aria-label="Main navigation"><a href="#1" id="first" class="visible">One</a><a href="#2" id="second">Two</a></nav>',
+    '<main>',
+    '<button id="labelled" aria-label="Ignored label" aria-labelledby="lbl">x</button><span id="lbl">Labelled by text</span>',
+    '<button id="titled" title="Name from title"></button>',
+    '<button id="no-outline" class="no-outline">No outline</button>',
+    '<div aria-hidden="true"><button id="hidden-button">Hidden button</button></div>',
+    '<a href="#skipped" id="tabindex-minus" tabindex="-1">Not in tab order</a>',
+    '<input id="email" type="email" aria-label="Email address">',
+    '<h2 id="heading-2">Section</h2>',
+    '</main>',
+    '<footer><a href="#3" id="third">Three</a></footer>',
+    '</body></html>',
+  ].join('\n');
+
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(page);
+  });
+
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const result = await gather('a11ytree', `http://127.0.0.1:${port}/`, { quiet: true, wait: 600 });
+
+    const flat = [];
+    const walk = (n) => {
+      if (!n) return;
+      flat.push(n);
+      for (const child of n.children || []) walk(child);
+    };
+    walk(result.tree.root);
+    const accessible = flat.filter((n) => !n.ignored);
+    const named = (role, name) => accessible.find((n) => n.role === role && n.name === name);
+
+    assert(
+      named('navigation', 'Main navigation') && named('main') && named('contentinfo'),
+      `a11ytree: landmark roles/names missing from the computed tree: ${JSON.stringify(result.tree.roleCounts)}`,
+    );
+    assert(
+      !!named('button', 'Labelled by text'),
+      `a11ytree: aria-labelledby should win over aria-label in the computed name: ${JSON.stringify(accessible.filter((n) => n.role === 'button'))}`,
+    );
+    assert(
+      !!named('button', 'Name from title'),
+      `a11ytree: a name coming from title should appear in the computed tree: ${JSON.stringify(accessible.filter((n) => n.role === 'button'))}`,
+    );
+    assert(
+      !accessible.some((n) => n.role === 'button' && n.name === 'Hidden button'),
+      'a11ytree: a button inside aria-hidden must not be exposed as an accessible button',
+    );
+    assert(result.tree.ignoredCount >= 1, `a11ytree: the aria-hidden subtree should be ignored: ${result.tree.ignoredCount}`);
+    assert(
+      result.tree.truncated === false && result.tree.maxDepth >= 3 && result.tree.totalNodes > 10,
+      `a11ytree: the tree census looks wrong: ${JSON.stringify({ total: result.tree.totalNodes, projected: result.tree.nodesProjected, depth: result.tree.maxDepth })}`,
+    );
+
+    // The real tab order: DOM order, tabindex=-1 skipped, and aria-hidden content
+    // still reachable (which the tree says is hidden).
+    const ids = result.focusOrder.stops.filter((s) => !s.isBody).map((s) => s.id);
+    assert(
+      JSON.stringify(ids) === JSON.stringify(['first', 'second', 'labelled', 'titled', 'no-outline', 'hidden-button', 'email', 'third']),
+      `a11ytree: focus order is wrong: ${JSON.stringify(ids)}`,
+    );
+    assert(
+      !ids.includes('tabindex-minus'),
+      `a11ytree: tabindex=-1 must stay out of the tab order: ${JSON.stringify(ids)}`,
+    );
+    assert(
+      result.focusOrder.stopsInsideAriaHidden === 1 && result.focusOrder.stops.some((s) => s.id === 'hidden-button' && s.insideAriaHidden === true),
+      `a11ytree: the focusable element inside aria-hidden should be recorded as such: ${JSON.stringify(result.focusOrder.stops.map((s) => [s.id, s.insideAriaHidden]))}`,
+    );
+    assert(result.focusOrder.cycleDetected === true, 'a11ytree: the walk should detect the tab cycle wrapping');
+
+    // Focus indicators: the author-suppressed one reads as none, the styled one
+    // as visible.
+    const noOutline = result.focusOrder.stops.find((s) => s.id === 'no-outline');
+    const firstStop = result.focusOrder.stops.find((s) => s.id === 'first');
+    assert(
+      noOutline?.hasVisibleIndicator === false && noOutline.outline.style === 'none',
+      `a11ytree: outline:none should read as no visible indicator: ${JSON.stringify(noOutline)}`,
+    );
+    assert(
+      firstStop?.hasVisibleIndicator === true,
+      `a11ytree: a 3px outline should read as a visible indicator: ${JSON.stringify(firstStop)}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
