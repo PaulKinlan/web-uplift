@@ -170,6 +170,7 @@ Primitives, all content- and tool-agnostic:
 Common options the harness simply applies (you choose them, it does not):
 `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
 `--viewport 360x800`, `--wait <ms>`, `--selector <css>`, `--interact "<js>"`,
+`--cpu-throttle <n>`, `--network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse`,
 `--out <path>`, `--source <dir>`.
 
 You may also run **any other tool you judge useful** at inspection time. None of
@@ -292,7 +293,13 @@ script; you adapt to the actual page):
 - be-fast-and-stable -> `layout` (CLS + long tasks) AND a `trace` (capture a
   performance trace; read its `*-summary.json` for navigationStart->FCP/LCP, long
   tasks, total blocking time), and/or Lighthouse. Record the trace artifact path
-  in the finding so the perf claim is backed by concrete evidence.
+  in the finding so the perf claim is backed by concrete evidence. CWV thresholds
+  are calibrated against mid-tier mobile on variable networks, so take the
+  mobile-archetype measurement under a throttled profile (e.g. `--viewport
+  360x800 --network mobile-lighthouse`, which also applies the 4x CPU slowdown),
+  not unthrottled: an unthrottled headless desktop is the one configuration
+  guaranteed to pass and surfaces nothing about real users. The output records
+  the `conditions` it ran under - state that device class in the finding.
 - network-relevant principles (be-fast-and-stable's request weight,
   be-private-and-secure's transport/third-party surface, be-sustainable's bytes
   over the wire) -> a `har` capture; read its `*-summary.json` (totals,
