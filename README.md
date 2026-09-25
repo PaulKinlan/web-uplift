@@ -364,6 +364,7 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `trackers` | third-party request origins matched against a built-in list of known tracker and analytics domains | `Network` domain |
 | `images` | image inventory: width/height attributes, lazy-loading, srcset, legacy vs modern format, oversized images, missing alt | `Runtime.evaluate` |
 | `targets` | WCAG 2.2 SC 2.5.8 target-size inventory: every pointer target box in CSS px, undersized flags, and the inline-in-text and spacing exceptions read from geometry, measured at both a 1280x720 desktop and a 360x800 narrow layout | `DOM` / `Runtime` |
+| `features` | modern-CSS and overlay census from the LIVE CSSOM (document, adopted and shadow-root sheets plus inline styles): at-rules, conditions, properties, functions and selectors with counts, the tracked feature rows the checks turn on, and native dialog / [popover] / details vs div-based modals | `CSS` / `DOM` / `Runtime` |
 
 Common options:
 
