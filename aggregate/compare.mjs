@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostSlug, pickRuns } from '../runner/run-history.mjs';
+import { countOutstanding, completionState } from '../runner/remaining-work.mjs';
 
 export function compareReports(reportA, reportB, { dirA, dirB } = {}) {
   const principleChanges = diffPrinciples(reportA, reportB);
@@ -33,13 +34,26 @@ export function compareReports(reportA, reportB, { dirA, dirB } = {}) {
 
   const outstandingBefore = countOutstanding(reportA);
   const outstandingAfter = countOutstanding(reportB);
+  // Unconcluded checks (blocked / not-run) are remaining work too: a compare
+  // between two partial runs that prints only findings reads "0 -> 0" while
+  // five checks never concluded in either run, which looks like "nothing left
+  // to do". Report them alongside the findings so concluding a blocked check
+  // reads as the progress it is.
+  const unconcluded = (r) => {
+    const c = completionState(r);
+    return c.blocked + c.notRun;
+  };
+  const unconcludedBefore = unconcluded(reportA);
+  const unconcludedAfter = unconcluded(reportB);
 
   return {
-    before: { url: reportA.url, auditedAt: reportA.auditedAt, mode: reportA.mode, outstanding: outstandingBefore },
-    after: { url: reportB.url, auditedAt: reportB.auditedAt, mode: reportB.mode, outstanding: outstandingAfter },
+    before: { url: reportA.url, auditedAt: reportA.auditedAt, mode: reportA.mode, outstanding: outstandingBefore, unconcluded: unconcludedBefore },
+    after: { url: reportB.url, auditedAt: reportB.auditedAt, mode: reportB.mode, outstanding: outstandingAfter, unconcluded: unconcludedAfter },
     summary: {
       outstandingBefore,
       outstandingAfter,
+      unconcludedBefore,
+      unconcludedAfter,
       resolved: findingDelta.resolved.length,
       newlyIntroduced: findingDelta.added.length,
       persisting: findingDelta.persisting.length,
@@ -240,15 +254,6 @@ function pairScreenshots(a, b) {
 
 // --- shared -----------------------------------------------------------------
 
-function countOutstanding(report) {
-  const excused = new Set(
-    (report.principleOutcomes ?? [])
-      .filter((o) => o.status === 'not-applicable' || o.status === 'opted-out')
-      .map((o) => o.principleId),
-  );
-  return (report.findings ?? []).filter((f) => !excused.has(f.principleId)).length;
-}
-
 function resolveArtifact(dir, p) {
   if (!p) return null;
   return isAbsolute(p) ? p : join(dir, p);
@@ -269,6 +274,7 @@ export function renderCompareMd(cmp, { hostName, runAId, runBId, dirA, dirB } = 
   lines.push(`- **Before:** ${runAId ?? cmp.before.auditedAt ?? '?'} (${cmp.before.mode ?? 'report'} mode, ${s.outstandingBefore} outstanding)`);
   lines.push(`- **After:** ${runBId ?? cmp.after.auditedAt ?? '?'} (${cmp.after.mode ?? 'report'} mode, ${s.outstandingAfter} outstanding)`);
   lines.push(`- **Outstanding issue-findings:** ${s.outstandingBefore} -> ${s.outstandingAfter}${arrow(s.outstandingAfter - s.outstandingBefore)}`);
+  lines.push(`- **Unconcluded checks (blocked/not-run):** ${s.unconcludedBefore} -> ${s.unconcludedAfter}${arrow(s.unconcludedAfter - s.unconcludedBefore)}`);
   lines.push(`- **Resolved:** ${s.resolved} | **New:** ${s.newlyIntroduced} | **Persisting:** ${s.persisting}`);
   lines.push('');
 
