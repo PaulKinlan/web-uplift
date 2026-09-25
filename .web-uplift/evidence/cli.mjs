@@ -95,6 +95,18 @@ async function applyConditions(client, opts, log) {
   }
 }
 
+// A cap that drops evidence must say so. Every truncated sample reports what it
+// dropped in the JSON (a sibling `<name>Total` + `<name>Truncated`, so a short
+// list or string can never be read as the whole page) and warns on stderr here.
+function announceCap(name, shown, total, log) {
+  if (total > shown) {
+    log(
+      `[evidence] WARNING: ${name} truncated: showing ${shown} of ${total}. ` +
+        'This sample is INCOMPLETE; a miss in it is not evidence of absence. Gather the rest another way before judging.',
+    );
+  }
+}
+
 // --- primitives ------------------------------------------------------------
 
 // screenshot: Page.captureScreenshot. Optionally clip to a selector's box.
@@ -373,10 +385,16 @@ async function layout(client, url, opts, log) {
     // against the size the page is actually being rendered at.
     `(() => {
       const ref = (window.visualViewport && window.visualViewport.width) || window.innerWidth;
+      const shifts = window.__shifts || [];
+      const longTasks = window.__longTasks || [];
       return {
         cls: window.__cls || 0,
-        shifts: (window.__shifts || []).slice(0, 50),
-        longTasks: (window.__longTasks || []).slice(0, 50),
+        shifts: shifts.slice(0, 50),
+        shiftsTotal: shifts.length,
+        shiftsTruncated: shifts.length > 50,
+        longTasks: longTasks.slice(0, 50),
+        longTasksTotal: longTasks.length,
+        longTasksTruncated: longTasks.length > 50,
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
         innerWidth: window.innerWidth,
@@ -387,6 +405,9 @@ async function layout(client, url, opts, log) {
       };
     })()`,
   );
+
+  announceCap('layout.shifts', observed.shifts.length, observed.shiftsTotal, log);
+  announceCap('layout.longTasks', observed.longTasks.length, observed.longTasksTotal, log);
 
   const result = {
     layoutViewport: metrics.layoutViewport,
@@ -442,17 +463,35 @@ async function dom(client, url, opts, log) {
       const sels = ${JSON.stringify(selectors)};
       const computed = {};
       for (const s of sels) computed[s] = computedFor(s);
+      // The 200000-character cap is REPORTED, never silent: a model that greps
+      // the returned css and misses "@container" must be able to tell "the page
+      // does not use it" from "the rule was past the cap".
+      const html = document.documentElement.outerHTML;
+      const css = collectCss();
+      const CAP = 200000;
       return {
         title: document.title,
         url: location.href,
         lang: document.documentElement.lang || null,
         hasViewportMeta: !!document.querySelector('meta[name=viewport]'),
-        outerHTML: document.documentElement.outerHTML.slice(0, 200000),
-        css: collectCss().slice(0, 200000),
+        outerHTML: html.slice(0, CAP),
+        outerHTMLChars: html.length,
+        outerHTMLTruncated: html.length > CAP,
+        css: css.slice(0, CAP),
+        cssChars: css.length,
+        cssTruncated: css.length > CAP,
         computed
       };
     })()`,
   );
+
+  announceCap('dom.outerHTML (characters)', page.outerHTML.length, page.outerHTMLChars, log);
+  announceCap('dom.css (characters)', page.css.length, page.cssChars, log);
+  if (page.cssTruncated || page.outerHTMLTruncated) {
+    log(
+      '[evidence] the returned outerHTML/css are INCOMPLETE: probe the live DOM/CSSOM with evaluate --expr (or read --source) before judging anything that depends on the truncated text.',
+    );
+  }
 
   const result = { page };
 
@@ -573,6 +612,12 @@ async function trace(client, url, opts, log) {
   writeFileSync(traceOut, JSON.stringify({ traceEvents: events }, null, 0) + '\n');
 
   const summary = summariseTrace(events);
+  announceCap(
+    'trace.mainThread.longTasks',
+    summary.mainThread.longTasks.length,
+    summary.mainThread.longTasksTotal,
+    log,
+  );
   const summaryOut = traceOut.replace(/\.json$/, '') + '-summary.json';
   writeFileSync(summaryOut, JSON.stringify(summary, null, 2) + '\n');
 
@@ -644,6 +689,8 @@ function summariseTrace(events) {
         .sort((a, b) => b.durationMs - a.durationMs)
         .slice(0, 25)
         .map((t) => ({ durationMs: t.durationMs, startMs: rel(t.startMs) })),
+      longTasksTotal: longTasks.length,
+      longTasksTruncated: longTasks.length > 25,
     },
     eventCount: events.length,
     note: 'Compact summary of a DevTools performance trace. Timings are ms from navigationStart (or the first trace event if navigationStart was not recorded). totalBlockingTimeMs sums per-long-task time over 50ms. The raw trace.json artifact loads in the DevTools Performance panel / chrome://tracing.',
@@ -767,7 +814,7 @@ async function har(client, url, opts, log) {
   // Mirror trace: write a compact, model-readable summary next to the raw .har
   // (network-summary.json). The model reads the summary; the raw .har stays on
   // disk for the report, the compare command, and DevTools/HAR viewers.
-  const summary = summariseHar(har12, url);
+  const summary = summariseHar(har12, url, log);
   const summaryOut = out.replace(/\.har$/, '') + '-summary.json';
   writeFileSync(summaryOut, JSON.stringify(summary, null, 2) + '\n');
 
@@ -794,7 +841,7 @@ function tallyStatuses(entries) {
 // analogue of memlab: it surfaces descriptive signals, NOT pass/fail verdicts; the
 // model judges them against the principles). Every list is capped (~10) so the
 // summary stays small and the model never has to load the raw multi-MB HAR.
-function summariseHar(har, mainUrl) {
+function summariseHar(har, mainUrl, log) {
   const entries = (har?.log?.entries ?? []).filter((e) => e && e.request);
 
   // The main document is the first 'document' entry (or the first entry, or the
@@ -984,7 +1031,6 @@ function summariseHar(har, mainUrl) {
     .sort((a, b) => b.transferredBytes - a.transferredBytes)
     .slice(0, 10);
   const topBySlow = bySlow.sort((a, b) => b.timeMs - a.timeMs).slice(0, 10);
-
   const origins = [...byOrigin.values()].sort(
     (a, b) => b.transferredBytes - a.transferredBytes,
   );
@@ -994,6 +1040,29 @@ function summariseHar(har, mainUrl) {
     0,
   );
   const thirdPartyCount = thirdPartyOrigins.reduce((acc, o) => acc + o.count, 0);
+
+  const topOrigins = origins.slice(0, 10);
+  const topBlocking = renderBlockingCandidates.slice(0, 10);
+  const topUncompressed = uncompressed
+    .sort((a, b) => b.transferredBytes - a.transferredBytes)
+    .slice(0, 10);
+  const topMissingCache = missingCache
+    .sort((a, b) => b.transferredBytes - a.transferredBytes)
+    .slice(0, 10);
+  const topRedirects = redirects.slice(0, 10);
+  const topHttpErrors = httpErrors.slice(0, 10);
+  for (const [name, shown, total] of [
+    ['topOriginsByBytes', topOrigins.length, origins.length],
+    ['renderBlockingCandidates', topBlocking.length, renderBlockingCandidates.length],
+    ['largestByBytes', topBySize.length, bySize.length],
+    ['slowestByTime', topBySlow.length, bySlow.length],
+    ['uncompressedTextOver2KB', topUncompressed.length, uncompressed.length],
+    ['missingCacheHeaders', topMissingCache.length, missingCache.length],
+    ['redirects', topRedirects.length, redirects.length],
+    ['httpErrors', topHttpErrors.length, httpErrors.length],
+  ]) {
+    announceCap(`har.${name}`, shown, total, log);
+  }
 
   return {
     totals: {
@@ -1006,27 +1075,39 @@ function summariseHar(har, mainUrl) {
       mainOrigin,
       thirdPartyRequestCount: thirdPartyCount,
       thirdPartyTransferredBytes: thirdPartyBytes,
-      topOriginsByBytes: origins.slice(0, 10).map((o) => ({
+      topOriginsByBytes: topOrigins.map((o) => ({
         origin: o.origin,
         party: o.thirdParty ? 'third-party' : 'first-party',
         count: o.count,
         transferredBytes: o.transferredBytes,
       })),
+      topOriginsByBytesTotal: origins.length,
+      topOriginsByBytesTruncated: origins.length > 10,
     },
-    renderBlockingCandidates: renderBlockingCandidates.slice(0, 10),
+    renderBlockingCandidates: topBlocking,
+    renderBlockingCandidatesTotal: renderBlockingCandidates.length,
+    renderBlockingCandidatesTruncated: renderBlockingCandidates.length > 10,
     weightOffenders: {
       largestByBytes: topBySize,
+      largestByBytesTotal: bySize.length,
+      largestByBytesTruncated: bySize.length > 10,
       slowestByTime: topBySlow,
+      slowestByTimeTotal: bySlow.length,
+      slowestByTimeTruncated: bySlow.length > 10,
     },
     hygiene: {
-      uncompressedTextOver2KB: uncompressed
-        .sort((a, b) => b.transferredBytes - a.transferredBytes)
-        .slice(0, 10),
-      missingCacheHeaders: missingCache
-        .sort((a, b) => b.transferredBytes - a.transferredBytes)
-        .slice(0, 10),
-      redirects: redirects.slice(0, 10),
-      httpErrors: httpErrors.slice(0, 10),
+      uncompressedTextOver2KB: topUncompressed,
+      uncompressedTextOver2KBTotal: uncompressed.length,
+      uncompressedTextOver2KBTruncated: uncompressed.length > 10,
+      missingCacheHeaders: topMissingCache,
+      missingCacheHeadersTotal: missingCache.length,
+      missingCacheHeadersTruncated: missingCache.length > 10,
+      redirects: topRedirects,
+      redirectsTotal: redirects.length,
+      redirectsTruncated: redirects.length > 10,
+      httpErrors: topHttpErrors,
+      httpErrorsTotal: httpErrors.length,
+      httpErrorsTruncated: httpErrors.length > 10,
     },
     note:
       'Compact, model-readable summary of network SIGNALS distilled from a HAR 1.2 log (the network analogue of the trace/heap summaries; the in-repo, lightweight memlab analogue). These are DESCRIPTIVE signals, not pass/fail verdicts: the model judges them against the principles (be-fast-and-stable, be-sustainable, be-private-and-secure). renderBlockingCandidates is GROUNDED in the real CDP signals we capture per request: the rich initiator (_initiator.type parser|script|preload + the inserting document url/line, or the script call frame), the request _priority (initial + final, after Network.resourceChangedPriority), and _renderBlockingStatus WHEN this Chrome build exposes it (omitted when not). Each candidate states its basis. This is the STARTING signal, not the final word: the HAR alone is partial, so CONFIRM and refine each candidate against the live DOM - use the dom and evaluate primitives to read the actual <head> placement and the async / defer / type=module attributes on the real elements (e.g. a parser-inserted module script is deferred by spec and is NOT render-blocking). Read this summary, never the raw .har; the raw .har is retained for the report, cross-run compare, and DevTools/HAR viewers.',
@@ -1435,6 +1516,256 @@ async function discoverability(client, url, opts, log) {
   return summary;
 }
 
+// --- secrets primitive ----------------------------------------------------
+// Scans page HTML, inline scripts, external JS resources, and meta tags for
+// exposed API keys, tokens, and credentials. Returns structured findings.
+// The MODEL must reason about each finding: legitimate public keys (e.g. Google
+// Maps) vs actual sensitive secrets (AWS keys, Stripe secret keys, JWTs, private keys).
+const SECRET_PATTERNS = [
+  { id: 'aws-access-key', re: /AKIA[0-9A-Z]{16}/g, severity: 'critical', desc: 'AWS Access Key ID' },
+  { id: 'aws-secret', re: /aws_secret_access_key["\s:=]+([A-Za-z0-9/+=]{40})/g, severity: 'critical', desc: 'AWS Secret Access Key' },
+  { id: 'google-api-key', re: /AIza[0-9A-Za-z_-]{35}/g, severity: 'high', desc: 'Google API Key' },
+  { id: 'stripe-secret', re: /sk_live_[0-9a-zA-Z]{24,}/g, severity: 'critical', desc: 'Stripe Secret Key' },
+  { id: 'stripe-publishable', re: /pk_live_[0-9a-zA-Z]{24,}/g, severity: 'medium', desc: 'Stripe Publishable Key (live)' },
+  { id: 'github-token', re: /gh[pousr]_[0-9a-zA-Z]{36,}/g, severity: 'critical', desc: 'GitHub Token' },
+  { id: 'slack-token', re: /xox[baprs]-[0-9A-Za-z-]{10,}/g, severity: 'critical', desc: 'Slack Token' },
+  { id: 'jwt', re: /eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, severity: 'high', desc: 'JWT Token' },
+  { id: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, severity: 'critical', desc: 'Private Key' },
+  { id: 'connection-string', re: /(?:mongodb|postgres|postgresql|mysql|redis):\/\/[^"]+:[^"]+@[^"]+/g, severity: 'critical', desc: 'Database Connection String with credentials' },
+  { id: 'generic-api-key', re: /(?:api[_-]?key|apikey|api[_-]?secret)["\s:=]+['"]([A-Za-z0-9_-]{32,})['"]/gi, severity: 'high', desc: 'Generic API Key/Secret (32+ chars)' },
+  { id: 'bearer-token', re: /(?:bearer|authorization)["\s:=]+([A-Za-z0-9_-]{20,})/gi, severity: 'high', desc: 'Bearer/Authorization token' },
+];
+
+function scanTextForSecrets(text, source) {
+  const findings = [];
+  for (const p of SECRET_PATTERNS) {
+    p.re.lastIndex = 0;
+    let m, count = 0;
+    while ((m = p.re.exec(text)) !== null) {
+      count++;
+      if (count <= 3) {
+        const matched = m[0];
+        const redacted = matched.length > 12 ? matched.slice(0, 6) + '…' + matched.slice(-4) : matched;
+        findings.push({ pattern: p.id, severity: p.severity, description: p.desc, source, match: redacted });
+      }
+    }
+    if (count > 3) findings.push({ pattern: p.id, severity: p.severity, description: p.desc, source, note: `+${count - 3} more matches` });
+  }
+  return findings;
+}
+
+async function secrets(client, url, opts, log) {
+  log('[secrets] scanning ' + url);
+  await navigate(client, url, { settleMs: opts.wait || 3000, log });
+  const findings = [];
+  // 1. Page HTML
+  const html = await evaluate(client, 'document.documentElement.outerHTML');
+  findings.push(...scanTextForSecrets(html || '', 'page HTML'));
+  // 2. Inline scripts
+  const inline = await evaluate(client, "[...document.querySelectorAll('script:not([src])')].map(s=>s.textContent).join('\\n')");
+  findings.push(...scanTextForSecrets(inline || '', 'inline scripts'));
+  // 3. External JS (sample first 20)
+  const scripts = await evaluate(client, "(() => { const all = [...document.querySelectorAll('script[src]')].map(s => s.src); return { urls: all.slice(0, 20), total: all.length }; })()");
+  const scriptUrls = scripts?.urls || [];
+  for (const su of scriptUrls) {
+    try {
+      const js = await evaluate(client, `fetch('${su}').then(r=>r.text()).catch(()=>'')`, { awaitPromise: true });
+      if (js) findings.push(...scanTextForSecrets(js, 'external JS: ' + su.split('/').pop()));
+    } catch {}
+  }
+  // 4. Meta tags
+  const meta = await evaluate(client, "[...document.querySelectorAll('meta')].map(m=>m.content||'').join(' ')");
+  findings.push(...scanTextForSecrets(meta || '', 'meta tags'));
+  // Deduplicate
+  const seen = new Set();
+  const deduped = findings.filter(f => { const k = f.pattern + ':' + (f.match || ''); if (seen.has(k)) return false; seen.add(k); return true; });
+  announceCap('secrets.findings', 30, deduped.length, log);
+  announceCap('secrets.externalScriptsScanned', scriptUrls.length, scripts?.total ?? scriptUrls.length, log);
+  const summary = {
+    primitive: 'secrets',
+    url,
+    scannedAt: new Date().toISOString(),
+    totalFindings: deduped.length,
+    findings: deduped.slice(0, 30),
+    findingsTruncated: deduped.length > 30,
+    externalScriptsScanned: scriptUrls.length,
+    externalScriptsTotal: scripts?.total ?? scriptUrls.length,
+    externalScriptsTruncated: (scripts?.total ?? scriptUrls.length) > scriptUrls.length,
+    note: 'Descriptive signal, not a verdict. The MODEL must REASON about each finding: legitimate public API keys (e.g. Google Maps keys, Stripe publishable keys) are EXPECTED to be client-side and are NOT security issues. Actual sensitive secrets (AWS keys, Stripe SECRET keys, JWTs, private keys, DB connection strings, GitHub/Slack tokens) exposed client-side ARE critical be-private-and-secure failures. Judge each finding accordingly.',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
+// --- headers primitive: security response headers -------------------------
+async function headers(client, url, opts, log) {
+  log('[headers] inspecting ' + url);
+  const respHeaders = {};
+  const docPromise = new Promise((resolve) => {
+    client.Network.responseReceived(({response}) => {
+      try { if (response.mimeType && response.mimeType.includes('html')) { resolve(response); } } catch {}
+    });
+    setTimeout(() => resolve(null), (opts.wait || 5000) + 3000);
+  });
+  await navigate(client, url, { settleMs: opts.wait || 3000, log });
+  const resp = await docPromise;
+  if (resp && resp.headers) Object.assign(respHeaders, resp.headers);
+  const get = (k) => respHeaders[k] || respHeaders[k.toLowerCase()] || null;
+  const csp = get('content-security-policy');
+  const hsts = get('strict-transport-security');
+  const xcto = get('x-content-type-options');
+  const xfo = get('x-frame-options');
+  const rp = get('referrer-policy');
+  const pp = get('permissions-policy');
+  const summary = {
+    primitive: 'headers', url,
+    scannedAt: new Date().toISOString(),
+    securityHeaders: {
+      'content-security-policy': { present: !!csp, value: csp, issues: csp ? (csp.includes('unsafe-inline') || csp.includes('unsafe-eval') ? ['unsafe-inline/unsafe-eval'] : []) : ['missing'] },
+      'strict-transport-security': { present: !!hsts, value: hsts, issues: hsts ? [] : ['missing'] },
+      'x-content-type-options': { present: !!xcto && xcto.toLowerCase()==='nosniff', value: xcto, issues: xcto ? [] : ['missing or not nosniff'] },
+      'x-frame-options': { present: !!xfo, value: xfo, issues: xfo ? [] : ['missing (check CSP frame-ancestors)'] },
+      'referrer-policy': { present: !!rp, value: rp, issues: rp ? [] : ['missing'] },
+      'permissions-policy': { present: !!pp, value: pp, issues: pp ? [] : ['missing'] },
+    },
+    https: url.startsWith('https://'),
+    note: 'Descriptive signal. Judge against be-private-and-secure. Missing CSP/HSTS/X-Content-Type-Options are security gaps. unsafe-inline/unsafe-eval weakens XSS protection.',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
+// --- cookies primitive: cookie security audit -----------------------------
+async function cookies(client, url, opts, log) {
+  log('[cookies] auditing ' + url);
+  await navigate(client, url, { settleMs: opts.wait || 3000, log });
+  let pageHost = url;
+  try { pageHost = new URL(url).hostname; } catch {}
+  const { cookies: ck } = await client.Network.getCookies({ urls: [url] });
+  const analyzed = (ck || []).map(c => {
+    const isThirdParty = c.domain && !pageHost.endsWith(c.domain.replace(/^\./, '')) && !c.domain.replace(/^\./, '').endsWith(pageHost);
+    const maxAgeDays = c.expires ? Math.round((c.expires - Date.now() / 1000) / 86400) : null;
+    return {
+      name: c.name, domain: c.domain, path: c.path,
+      secure: !!c.secure, httpOnly: !!c.httpOnly, sameSite: c.sameSite || 'None',
+      isThirdParty: !!isThirdParty, expiryDays: maxAgeDays,
+      issues: [
+        ...(!c.secure ? ['not Secure'] : []),
+        ...(!c.httpOnly && /^(session|auth|token|id)/i.test(c.name) ? ['auth-like cookie not HttpOnly'] : []),
+        ...((c.sameSite || 'None') === 'None' ? ['SameSite=None'] : []),
+        ...(maxAgeDays && maxAgeDays > 365 ? [`long-lived (${maxAgeDays}d)`] : []),
+      ],
+    };
+  });
+  announceCap('cookies.cookies', 50, analyzed.length, log);
+  const summary = {
+    primitive: 'cookies', url,
+    scannedAt: new Date().toISOString(),
+    totalCookies: analyzed.length,
+    thirdPartyCount: analyzed.filter(c => c.isThirdParty).length,
+    insecureCount: analyzed.filter(c => c.issues.length > 0).length,
+    cookies: analyzed.slice(0, 50),
+    cookiesTruncated: analyzed.length > 50,
+    note: 'Descriptive signal. Judge against be-private-and-secure. Cookies without Secure, with SameSite=None, or auth cookies without HttpOnly are security gaps. Long-lived third-party cookies indicate tracking.',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
+// --- trackers primitive: third-party tracker enumeration ------------------
+const KNOWN_TRACKERS = new Set([
+  'google-analytics.com','googletagmanager.com','doubleclick.net','googleadservices.com','googlesyndication.com',
+  'facebook.net','connect.facebook.net','hotjar.com','segment.io','segment.com','mixpanel.com','amplitude.com',
+  'fullstory.com','clarity.ms','quantserve.com','scorecardresearch.com','criteo.com','taboola.com','outbrain.com',
+  'pubmatic.com','rubiconproject.com','openx.net','adnxs.com','casalemedia.com','nr-data.net','newrelic.com',
+  'sentry.io','bugsnag.com','branch.io','appsflyersdk.com','adjust.com','tiktokv.com','bat.bing.com',
+  'ads.linkedin.com','ads.twitter.com','pinterest.com',
+]);
+async function trackers(client, url, opts, log) {
+  log('[trackers] enumerating ' + url);
+  const origins = new Map();
+  client.Network.requestWillBeSent(({request}) => {
+    try {
+      const o = new URL(request.url).hostname;
+      const entry = origins.get(o) || { origin: o, requests: 0 };
+      entry.requests++;
+      origins.set(o, entry);
+    } catch {}
+  });
+  await navigate(client, url, { settleMs: opts.wait || 4000, log });
+  await sleep(1000);
+  let firstParty = '';
+  try { firstParty = new URL(url).hostname; } catch {}
+  const all = [...origins.values()];
+  const thirdParty = all.filter(o => o.origin !== firstParty && !o.origin.endsWith(firstParty));
+  const trackersFound = thirdParty.filter(o => [...KNOWN_TRACKERS].some(t => o.origin === t || o.origin.endsWith('.' + t)));
+  announceCap('trackers.topThirdPartyByRequests', Math.min(thirdParty.length, 15), thirdParty.length, log);
+  const summary = {
+    primitive: 'trackers', url,
+    scannedAt: new Date().toISOString(),
+    firstParty,
+    totalOrigins: all.length,
+    thirdPartyOrigins: thirdParty.length,
+    knownTrackers: trackersFound.map(t => t.origin),
+    topThirdPartyByRequests: thirdParty.sort((a,b) => b.requests - a.requests).slice(0, 15).map(o => ({ origin: o.origin, requests: o.requests })),
+    topThirdPartyByRequestsTotal: thirdParty.length,
+    topThirdPartyByRequestsTruncated: thirdParty.length > 15,
+    note: 'Descriptive signal. Judge against be-private-and-secure (tracking footprint) and be-sustainable (third-party bytes). Known tracker domains indicate active tracking.',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
+// --- images primitive: image optimization audit ---------------------------
+async function images(client, url, opts, log) {
+  log('[images] auditing ' + url);
+  await navigate(client, url, { settleMs: opts.wait || 3000, log });
+  const data = await evaluate(client, `(() => {
+    const imgs = [...document.querySelectorAll('img')];
+    const vh = window.innerHeight;
+    return { total: imgs.length, items: imgs.slice(0, 100).map(img => {
+      const r = img.getBoundingClientRect();
+      const nw = img.naturalWidth || 0;
+      const dw = Math.round(r.width) || 0;
+      return {
+        src: (img.src || '').slice(0, 120), alt: img.alt || null,
+        hasWidth: img.hasAttribute('width'), hasHeight: img.hasAttribute('height'),
+        loading: img.getAttribute('loading'),
+        srcset: img.hasAttribute('srcset') || !!img.querySelector('source'),
+        naturalWidth: nw, displayWidth: dw,
+        oversized: nw > 0 && dw > 0 && nw > dw * 2,
+        belowFold: r.top > vh,
+        format: (() => { try { const p = new URL(img.src).pathname; const parts = p.split('.'); return parts.length > 1 ? parts.pop().toLowerCase().slice(0,5) : null; } catch { return null; } })(),
+      };
+    }) };
+  })()`);
+  const imgs = data?.items || [];
+  const totalImages = data?.total ?? imgs.length;
+  announceCap('images.inspected', imgs.length, totalImages, log);
+  announceCap('images.images', Math.min(imgs.length, 30), imgs.length, log);
+  const summary = {
+    primitive: 'images', url,
+    scannedAt: new Date().toISOString(),
+    totalImages,
+    imagesInspected: imgs.length,
+    imagesInspectedTruncated: totalImages > imgs.length,
+    issues: {
+      missingDimensions: imgs.filter(i => !i.hasWidth || !i.hasHeight).length,
+      notLazyBelowFold: imgs.filter(i => i.belowFold && i.loading !== 'lazy').length,
+      oversized: imgs.filter(i => i.oversized).length,
+      missingSrcset: imgs.filter(i => !i.srcset && i.displayWidth > 100).length,
+      legacyFormat: imgs.filter(i => i.format && ['jpg','jpeg','png','gif'].includes(i.format)).length,
+      modernFormat: imgs.filter(i => i.format && ['avif','webp','svg'].includes(i.format)).length,
+      missingAlt: imgs.filter(i => !i.alt).length,
+    },
+    images: imgs.slice(0, 30),
+    imagesTruncated: totalImages > 30,
+    note: 'Descriptive signal. Judge against be-fast-and-stable (missing width/height causes CLS, oversized images), be-sustainable (legacy formats, missing srcset), be-inclusive (missing alt).',
+  };
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
+  return summary;
+}
+
 const PRIMITIVES = {
   screenshot,
   video,
@@ -1445,6 +1776,11 @@ const PRIMITIVES = {
   trace,
   har,
   discoverability,
+  secrets,
+  headers,
+  cookies,
+  trackers,
+  images,
 };
 
 // --- argument plumbing -----------------------------------------------------
@@ -1526,7 +1862,7 @@ async function main() {
   const url = args._[1];
   if (!primitive || !url) {
     console.error(
-      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability> <url> [options]\n' +
+      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability|secrets|headers|cookies|trackers|images> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
         '         --duration ms --fps n --full-page --bodies --quiet',

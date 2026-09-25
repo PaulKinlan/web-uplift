@@ -3,7 +3,7 @@ import http from 'node:http';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
@@ -24,6 +24,7 @@ try {
   testCachedUpdateWarning();
   await testPreNavigationEmulation();
   await testHarRedirects();
+  await testEvidenceTruncationReporting();
   testBatchDryRunUsesRetainedDirs();
   testBatchFlowDryRun();
   testFixSurvivesUnscoreableReports();
@@ -342,6 +343,20 @@ function run(command, args, opts = {}) {
   });
 }
 
+// Async variant: spawnSync would block this process's event loop, so an
+// in-process test server could not answer the child's browser. Bounded so a
+// hung browser fails the suite instead of hanging it.
+function runAsync(command, args, opts = {}) {
+  return new Promise((resolvePromise) => {
+    const child = spawn(command, args, { cwd: repoRoot, timeout: 120000, ...opts });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (status) => resolvePromise({ status, stdout, stderr }));
+  });
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -523,6 +538,98 @@ async function testHarRedirects() {
     assert(
       summary.hygiene.redirects.some((r) => r.status === 302 && r.location === '/final'),
       `HAR summary missed redirect hygiene entry: ${JSON.stringify(summary.hygiene.redirects)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// web-uplift-1s8: a cap that drops evidence must say so, in the JSON and on
+// stderr. The dom primitive's 200000-character CSS/HTML cap is the dangerous
+// one: a model grepping the returned css for "@container" cannot otherwise tell
+// "the site does not use container queries" from "the evidence was cut off".
+async function testEvidenceTruncationReporting() {
+  const filler = 'z'.repeat(1000);
+  const bigCss = Array.from({ length: 300 }, (_, i) => `.pad${i}{--filler-${i}:"${filler}"}`).join('\n');
+  const pixel = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='), (c) => c.charCodeAt(0));
+
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '/').split('?')[0];
+    if (path === '/pixel.gif') {
+      res.writeHead(200, { 'Content-Type': 'image/gif' });
+      res.end(pixel);
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    if (path === '/over-cap') {
+      res.end(`<!doctype html><title>over</title><style>${bigCss}</style><h1>over</h1>`);
+      return;
+    }
+    if (path === '/under-cap') {
+      res.end('<!doctype html><title>under</title><style>.a{color:#123}</style><h1>under</h1>');
+      return;
+    }
+    if (path === '/many-images') {
+      const imgs = Array.from({ length: 40 }, (_, i) => `<img src="/pixel.gif?i=${i}" alt="pixel ${i}" width="1" height="1">`).join('');
+      res.end(`<!doctype html><title>images</title>${imgs}`);
+      return;
+    }
+    if (path === '/many-cookies') {
+      res.end("<!doctype html><title>cookies</title><script>for (let i = 0; i < 51; i++) document.cookie = 'cap' + i + '=1;path=/';</script>");
+      return;
+    }
+    res.end('<!doctype html><title>empty</title>');
+  });
+
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+
+    // Over the cap, through the real CLI: the JSON reports what was cut, stderr
+    // says it out loud, and the shown text is exactly the cap.
+    const cli = await runAsync(process.execPath, ['evidence/cli.mjs', 'dom', `${base}/over-cap`, '--wait', '250']);
+    assert(cli.status === 0, `truncation: dom CLI failed:\n${cli.stderr}\n${cli.stdout}`);
+    const over = JSON.parse(cli.stdout);
+    assert(
+      over.page.cssTruncated === true && over.page.cssChars > 200000 && over.page.css.length === 200000,
+      `truncation: the 200KB CSS cap was not reported: ${JSON.stringify({ cssChars: over.page.cssChars, shown: over.page.css.length, truncated: over.page.cssTruncated })}`,
+    );
+    assert(
+      over.page.outerHTML.length === Math.min(over.page.outerHTMLChars, 200000),
+      'truncation: outerHTML length does not match its reported total',
+    );
+    assert(
+      /WARNING: dom\.css/.test(cli.stderr),
+      `truncation: the CLI did not warn about the cut CSS:\n${cli.stderr}`,
+    );
+
+    // Under the cap the same fields have to prove completeness: not truncated,
+    // and the shown text is the whole text.
+    const under = await gather('dom', `${base}/under-cap`, { quiet: true, wait: 250 });
+    assert(
+      under.page.cssTruncated === false && under.page.cssChars === under.page.css.length && under.page.css.length > 0,
+      `truncation: a complete CSS sample was not reported as complete: ${JSON.stringify({ cssChars: under.page.cssChars, shown: under.page.css.length, truncated: under.page.cssTruncated })}`,
+    );
+
+    // The list caps report the same way: 40 images on the page, 30 listed.
+    const images = await gather('images', `${base}/many-images`, { quiet: true, wait: 250 });
+    assert(images.totalImages === 40, `truncation: images total is wrong: ${images.totalImages}`);
+    assert(
+      images.imagesInspected === 40 && images.imagesInspectedTruncated === false,
+      `truncation: images inspection cap misreported: ${JSON.stringify({ inspected: images.imagesInspected, truncated: images.imagesInspectedTruncated })}`,
+    );
+    assert(
+      images.imagesTruncated === true && images.images.length === 30,
+      `truncation: images listing cap misreported: ${JSON.stringify({ listed: images.images.length, truncated: images.imagesTruncated })}`,
+    );
+
+    // 51 cookies set, 50 listed.
+    const cookies = await gather('cookies', `${base}/many-cookies`, { quiet: true, wait: 250 });
+    assert(cookies.totalCookies === 51, `truncation: cookies total is wrong: ${cookies.totalCookies}`);
+    assert(
+      cookies.cookiesTruncated === true && cookies.cookies.length === 50,
+      `truncation: cookies listing cap misreported: ${JSON.stringify({ listed: cookies.cookies.length, truncated: cookies.cookiesTruncated })}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
