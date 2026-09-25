@@ -357,6 +357,7 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `trace` | DevTools trace plus compact summary | `Tracing.start/end` |
 | `har` | HAR 1.2 plus compact network summary | `Network` domain |
 | `discoverability` | raw server HTML (no JS) vs the rendered DOM: how much content a non-JS crawler sees (`coveragePct`, `isJsShell`, empty SPA mounts), plus a browser-view/crawler-view screenshot pair | `fetch` + `DOM` |
+| `targets` | WCAG 2.2 SC 2.5.8 target-size inventory: every pointer target box in CSS px, undersized flags, and the inline-in-text and spacing exceptions read from geometry, measured at both a 1280x720 desktop and a 360x800 narrow layout | `DOM` / `Runtime` |
 
 Common options:
 

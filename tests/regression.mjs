@@ -34,6 +34,7 @@ try {
   await testScorecardScoringAndRender();
   await testDiscoverabilityHelpers();
   await testDiscoverabilityH1InRaw();
+  await testTargetsPrimitive();
   await testFlowNormalize();
   console.log('tests OK');
 } finally {
@@ -490,6 +491,128 @@ async function testDiscoverabilityH1InRaw() {
     assert(
       injected.h1PresentInRaw === false,
       `discoverability: a JS-injected h1 read as present in the raw HTML: ${JSON.stringify(injected.rendered)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// WCAG 2.2 SC 2.5.8 Target Size (Minimum) needs real geometry: the targets
+// primitive enumerates pointer targets, flags anything under 24x24 CSS px, marks
+// the inline-in-text and spacing exceptions it can read from geometry, and
+// measures a desktop and a narrow layout by default (web-uplift-uz7).
+async function testTargetsPrimitive() {
+  const page = [
+    '<!doctype html><html><head><title>targets</title><style>',
+    '  body { margin: 0; }',
+    '  .tiny { width: 16px; height: 16px; padding: 0; border: 0; }',
+    '  .big { width: 48px; height: 48px; }',
+    '  .gap { margin-left: 200px; }',
+    '  section, p { margin-bottom: 40px; }',
+    '  p { font-size: 16px; line-height: 20px; }',
+    '</style></head><body>',
+    '<p>Read the <a class="tiny" href="#a" id="inline-link">text</a> in this sentence.</p>',
+    '<section><button class="tiny" id="tight-a">a</button><button class="tiny" id="tight-b">b</button></section>',
+    '<section><button class="tiny" id="spaced-a">a</button><button class="tiny gap" id="spaced-b">b</button></section>',
+    '<section><button class="big" id="big-button">ok</button></section>',
+    '<section><span style="display:none">hidden</span><a href="#z" style="width:0;height:0"></a></section>',
+    '</body></html>',
+  ].join('\n');
+  const many = '<!doctype html><html><head><title>many</title><style>a{display:inline-block;width:8px;height:8px}</style></head><body>' +
+    Array.from({ length: 420 }, (_, i) => `<a href="#${i}">${i}</a>`).join('') +
+    '</body></html>';
+  const empty = '<!doctype html><html><head><title>empty</title></head><body><p>No pointer targets at all here.</p></body></html>';
+
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/favicon.ico') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    if (path === '/many') res.end(many);
+    else if (path === '/empty') res.end(empty);
+    else res.end(page);
+  });
+
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+
+    const result = await gather('targets', `${base}/page`, { quiet: true, wait: 250 });
+    assert(result.minimumPx === 24, `targets: minimum should be 24 CSS px: ${result.minimumPx}`);
+    assert(result.viewports.length === 2, `targets: expected a desktop and a narrow pass by default: ${result.viewports.length}`);
+    const [desktop, narrow] = result.viewports;
+    assert(
+      desktop.name === 'desktop-1280x720' && desktop.viewport.width === 1280 && desktop.viewport.height === 720,
+      `targets: the desktop pass did not measure a 1280x720 layout: ${JSON.stringify(desktop.viewport)}`,
+    );
+    assert(
+      narrow.name === 'narrow-360x800' && narrow.viewport.width === 360 && narrow.viewport.height === 800,
+      `targets: the narrow pass did not measure a 360x800 layout: ${JSON.stringify(narrow.viewport)}`,
+    );
+
+    const byId = new Map(desktop.targets.map((t) => [t.id, t]));
+    const inline = byId.get('inline-link');
+    assert(
+      inline?.underMin === true && inline.inlineInText === true,
+      `targets: an undersized link in a sentence should be flagged and marked inline-exempt: ${JSON.stringify(inline)}`,
+    );
+    for (const id of ['tight-a', 'tight-b']) {
+      const t = byId.get(id);
+      assert(
+        t?.underMin === true && t.inlineInText === false && t.spacingPasses === false,
+        `targets: ${id} is undersized with no spacing clearance and should say so: ${JSON.stringify(t)}`,
+      );
+    }
+    for (const id of ['spaced-a', 'spaced-b']) {
+      const t = byId.get(id);
+      assert(
+        t?.underMin === true && t.spacingPasses === true,
+        `targets: ${id} is undersized but clears its neighbours and should say so: ${JSON.stringify(t)}`,
+      );
+    }
+    const big = byId.get('big-button');
+    assert(
+      big?.underMin === false && big.spacingPasses === null,
+      `targets: a 48x48 button is not undersized: ${JSON.stringify(big)}`,
+    );
+    assert(desktop.skippedZeroSizeCount === 1, `targets: the zero-size target should be skipped: ${desktop.skippedZeroSizeCount}`);
+    assert(
+      desktop.underMinCount === 5 &&
+        desktop.underMinInlineExemptCount === 1 &&
+        desktop.underMinSpacingExemptCount === 3 &&
+        desktop.underMinNoKnownExemptionCount === 2,
+      `targets: summary counts do not match the inventory: ${JSON.stringify({ underMin: desktop.underMinCount, inline: desktop.underMinInlineExemptCount, spacing: desktop.underMinSpacingExemptCount, none: desktop.underMinNoKnownExemptionCount })}`,
+    );
+    assert(
+      narrow.underMinNoKnownExemptionCount === 2,
+      `targets: the narrow pass should reach the same verdict on this fixture: ${narrow.underMinNoKnownExemptionCount}`,
+    );
+
+    // An explicit --viewport means one pass, and the inventory is capped with the
+    // cap reported rather than silently trimmed.
+    const manyResult = await gather('targets', `${base}/many`, { quiet: true, wait: 200, viewport: { w: 360, h: 800 } });
+    assert(manyResult.viewports.length === 1, `targets: an explicit viewport should give one pass: ${manyResult.viewports.length}`);
+    const capped = manyResult.viewports[0];
+    assert(
+      capped.matchedCount === 420 && capped.measuredCount === 400 && capped.omittedByCapCount === 20,
+      `targets: the target cap was not reported: ${JSON.stringify({ matched: capped.matchedCount, measured: capped.measuredCount, omitted: capped.omittedByCapCount })}`,
+    );
+    assert(
+      capped.underMinCount === 400 && capped.underMinNoKnownExemptionCount === 400,
+      `targets: a wall of adjacent 8x8 links has no read exemption: ${JSON.stringify({ underMin: capped.underMinCount, noExemption: capped.underMinNoKnownExemptionCount })}`,
+    );
+
+    // No targets is a clean zero result, not an absent field: that is the
+    // evidence a no-target page needs for the check to pass.
+    const emptyResult = await gather('targets', `${base}/empty`, { quiet: true, wait: 200, viewport: { w: 360, h: 800 } });
+    const none = emptyResult.viewports[0];
+    assert(
+      none.measuredCount === 0 && none.underMinNoKnownExemptionCount === 0 && none.targets.length === 0,
+      `targets: a page with no targets should report zeroes: ${JSON.stringify({ measured: none.measuredCount, noExemption: none.underMinNoKnownExemptionCount })}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
