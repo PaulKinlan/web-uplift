@@ -175,7 +175,7 @@
         {
           "id": "respects-color-scheme",
           "summary": "Honours prefers-color-scheme: a usable dark mode exists and is driven by the user's preference (color-scheme / prefers-color-scheme / light-dark()), not hard-coded light only.",
-          "detectableVia": "HINT (not mandatory): a screenshot or computed background under an emulated prefers-color-scheme: dark condition will reveal whether surfaces re-tint; the page CSS / a color-scheme declaration is corroborating evidence. The model chooses the method.",
+          "detectableVia": "HINT (not mandatory): `features` reports the color-scheme declaration, light-dark() usage and the (prefers-color-scheme: dark) conditions in the live CSS; a screenshot or computed background under an emulated prefers-color-scheme: dark condition reveals whether surfaces re-tint. The model chooses the method.",
           "guides": [
             "dark-mode",
             "component-specific-light-dark-theme",
@@ -286,7 +286,7 @@
         {
           "id": "anchored-positioning",
           "summary": "Tooltips, popovers and menus use CSS anchor positioning (with fallback positions) so they stay attached and reposition correctly rather than being manually positioned.",
-          "detectableVia": "HINT: CSS inspection for anchor-name / position-anchor / position-try on overlays; a screenshot of an open overlay near a viewport edge can show drift. The model chooses.",
+          "detectableVia": "HINT: `features` finds anchor-name / position-anchor / position-try / position-try-fallbacks on the live CSSOM; a screenshot of an open overlay near a viewport edge can show drift. The model chooses.",
           "guides": [
             "anchor-positioning-tab-underline",
             "position-aware-tooltips",
@@ -335,7 +335,7 @@
         {
           "id": "semantic-dismissible-primitives",
           "summary": "Overlays and rich controls use the right primitive: popover (with declarative light-dismiss) for transient UI, dialog for modal flows, details for disclosure, native-but-branded selects and pickers, rather than ad-hoc divs.",
-          "detectableVia": "HINT: DOM/source inspection for popover / <dialog> / <details> vs custom overlay divs with manual dismiss handling. The model chooses.",
+          "detectableVia": "HINT: `features` censuses native dialog / [popover] / details against role=dialog, aria-modal and high z-index divs, and `a11ytree` plus `axe` show whether the overlay is actually exposed to assistive technology. The model chooses.",
           "guides": [
             "declarative-dialog-popover-control",
             "animated-select-picker",
@@ -391,7 +391,7 @@
         {
           "id": "component-level-responsiveness",
           "summary": "Components adapt to their container with container queries (incl. anchored container queries) and content/state-based styling where reused at different sizes, not only global viewport breakpoints.",
-          "detectableVia": "HINT: CSS inspection for @container / container-type; a computed-style probe of the same component in a wide vs narrow container shows whether it adapts. The model chooses.",
+          "detectableVia": "HINT: the first-party `features` primitive reads the LIVE CSSOM for @container and container-type/container-name (and the conditions they run under), so do not grep `dom`'s capped css string for them; a computed-style probe of the same component in a wide vs narrow container shows whether it adapts. The model chooses.",
           "guides": [
             "size-aware-styling",
             "content-based-styling",
@@ -405,7 +405,7 @@
         {
           "id": "input-modality-aware",
           "summary": "Touch targets are adequately sized and hover-only affordances have a non-hover fallback, and keyboard focus is visible, so the UI works for touch, pointer and keyboard alike.",
-          "detectableVia": "HINT: a focus probe (focus an element, read the computed outline) or an axe target-size check; a screenshot of a focused control corroborates. The model chooses.",
+          "detectableVia": "HINT: `targets` gives the real target geometry and the 2.5.8 exceptions at both form factors; `a11ytree` walks the real tab order and reads each stop's computed focus indicator; an axe target-size check corroborates. The model chooses.",
           "guides": [
             "touch target size hover fallback pointer input focus-visible"
           ]
@@ -547,7 +547,7 @@
         {
           "id": "names-roles-labels",
           "summary": "Interactive elements have accessible names, correct roles, and form fields have labels; images have alt text where meaningful; canvas/expressive content is exposed to assistive technology.",
-          "detectableVia": "HINT: the axe evidence primitive (vendored axe-core, works under strict CSP) or Lighthouse's a11y audits enumerate these; a DOM probe of the accessibility-relevant attributes is a first-party alternative. The model chooses.",
+          "detectableVia": "HINT: the `a11ytree` primitive is the first-party source - the COMPUTED role and accessible name, so an aria-label overridden by aria-labelledby or a name from title is visible - with the `axe` primitive enumerating violations (vendored axe-core, works under strict CSP). Lighthouse's a11y audits corroborate; a DOM-attribute probe is the weakest form of this evidence. The model chooses.",
           "guides": [
             "accessibility",
             "expose-canvas-content-to-browser-features",
@@ -565,7 +565,7 @@
         {
           "id": "structure-and-focus",
           "summary": "Heading and landmark structure is logical, focus order follows reading order, keyboard focus is always visible, and interactive state survives DOM moves.",
-          "detectableVia": "HINT: axe/Lighthouse structural audits; a focus-walk probe (tab through, read activeElement + computed outline) is a first-party alternative. The model chooses.",
+          "detectableVia": "HINT: `a11ytree` walks the REAL tab order (Tab dispatched as CDP key events) recording each stop, its on-screen state, its computed focus indicator and whether it sits inside aria-hidden, alongside the computed tree with ignored subtrees and reasons; axe/Lighthouse structural audits corroborate. The model chooses.",
           "guides": [
             "move-dom-element-without-losing-state",
             "heading structure landmarks focus order keyboard"
@@ -585,7 +585,7 @@
         {
           "id": "zoom-reflow-targets-and-media",
           "summary": "The experience remains usable when zoomed or reflowed, touch targets are large enough, media has captions or equivalents where needed, and the viewport does not prevent user scaling.",
-          "detectableVia": "HINT: Lighthouse/axe target-size, meta-viewport and media-caption audits are useful signals; screenshots at narrow and zoomed conditions plus DOM/media inspection can corroborate. The model chooses.",
+          "detectableVia": "HINT: the first-party `targets` primitive measures every pointer target at a 360x800 narrow layout as well as 1280x720 (underMin plus the inline and spacing exceptions); meta-viewport and media-caption audits are separate signals, and screenshots at narrow and zoomed conditions corroborate. The model chooses.",
           "guides": [
             "accessibility",
             "fluid-scaling",
@@ -609,7 +609,7 @@
         {
           "id": "no-console-errors",
           "summary": "The page loads without console errors or uncaught exceptions.",
-          "detectableVia": "HINT: capture Runtime/Log CDP events, or a probe that reads collected errors; Lighthouse reports this too. The model chooses.",
+          "detectableVia": "HINT: run the first-party `console` primitive (node evidence/cli.mjs console <url>), which collects Runtime.consoleAPICalled + Runtime.exceptionThrown + Log.entryAdded across the load and any --interact: console errors, warnings and uncaught exceptions, with failed subresource requests counted separately. A post-load probe cannot see what fired during load. Lighthouse reports this too. The model chooses.",
           "guides": [
             "avoid console errors uncaught exceptions"
           ]
@@ -780,7 +780,7 @@
         {
           "id": "offline-and-installable",
           "summary": "Where the site is an app, it is installable (web app manifest) and offers an offline fallback and works on flaky networks. (Contextual: a brochure or intrinsically-online site may reasonably not need this.)",
-          "detectableVia": "HINT: a probe for a service worker registration and a web app manifest; test behaviour offline. The model chooses.",
+          "detectableVia": "HINT: run the first-party `resilience` primitive: it reads the service worker registrations/controller and the resolved manifest, then reloads under Network.emulateNetworkConditions(offline: true) and reports whether the navigation failed with a net error or a cached/fallback page rendered, with an offline screenshot. The model chooses.",
           "guides": [
             "offline fallback service worker web app manifest installable pwa"
           ]
@@ -788,7 +788,7 @@
         {
           "id": "network-and-http-failure-states",
           "summary": "HTTP errors, network failures, timeouts and stale data states are handled intentionally: users see useful recovery options rather than blank screens, infinite spinners, broken shells, or misleading success states.",
-          "detectableVia": "HINT: simulate failed fetches/offline mode or inspect representative 404/500 routes; screenshots and DOM snapshots of error/loading/empty states show whether recovery is possible. The model chooses.",
+          "detectableVia": "HINT: `resilience` injects a real offline reload and reports the net error against what rendered; failed fetches can also be simulated with evaluate probes, and representative 404/500 routes show whether the page recovers. Screenshots and DOM snapshots of error/loading/empty states show whether recovery is possible. The model chooses.",
           "guides": [
             "persistent-toast-notifications",
             "detect-initial-visibility-state",

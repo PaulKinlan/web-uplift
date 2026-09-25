@@ -209,7 +209,7 @@
     "groundTruth": "eval/fixtures/seeded-issues/expected-findings.json",
     "expectedSeededFindings": 0,
     "foundSeededFindings": 0,
-    "precision": 1.0,
+    "precision": 1,
     "spurious": [],
     "verifiedConditions": {
       "no-dark-mode": "background under dark = rgb(30, 30, 30) (adapts)",
@@ -224,7 +224,7 @@
   },
   "coverage": {
     "catalogVersion": "modern-web-guidance@0.0.172",
-    "catalogChecksum": "sha256:8dc19b533e4c660542441645e8137c05e13b548a53c48bda150a6bd9054edfe4",
+    "catalogChecksum": "sha256:605d5709578cea51cd2647a918aca2f5bb0a0ca257fd867a032b39e7da402e36",
     "expected": 58,
     "recorded": 58,
     "judged": 58,
