@@ -23,6 +23,7 @@ try {
   testUpdateDryRunReadsInstallManifest();
   testCachedUpdateWarning();
   await testPreNavigationEmulation();
+  await testAxePrimitiveBypassesStrictCsp();
   await testHarRedirects();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
@@ -926,6 +927,47 @@ async function testPreNavigationEmulation() {
   );
   assert(value.initial === true, `emulated media was not visible during load: ${JSON.stringify(value)}`);
   assert(value.current === true, `emulated media was not visible after load: ${JSON.stringify(value)}`);
+}
+
+// The axe primitive must work where the audit was previously blind: a site
+// with a strict script-src refuses CDN fetches and injected <script src>, so
+// axe through the evaluate primitive silently returned nothing. The primitive
+// reads the VENDORED axe-core from disk and enables Page.setBypassCSP scoped to
+// itself. If either regresses this test finds no violations on a page that
+// provably has them.
+async function testAxePrimitiveBypassesStrictCsp() {
+  const html =
+    '<!doctype html><html><head><title>strict csp</title></head><body>' +
+    '<h1>Title</h1><h3>Skipped level</h3>' +
+    '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">' +
+    '<button></button>' +
+    '</body></html>';
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/html',
+      'Content-Security-Policy': "script-src 'self'; default-src 'self'",
+    });
+    res.end(html);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const result = await gather('axe', `http://127.0.0.1:${server.address().port}/`, { quiet: true, wait: 200 });
+    const all = Object.values(result.violations).flat();
+    const ids = all.map((v) => v.id);
+    assert(result.toolVersion, `axe: toolVersion missing (injection failed?): ${JSON.stringify(result)}`);
+    assert(ids.includes('image-alt'), `axe: image-alt not found under strict CSP: ${ids.join(', ')}`);
+    assert(ids.includes('heading-order'), `axe: heading-order not found under strict CSP: ${ids.join(', ')}`);
+    assert(ids.includes('button-name'), `axe: button-name not found under strict CSP: ${ids.join(', ')}`);
+    assert(result.violations.critical.some((v) => v.id === 'image-alt'),
+      'axe: violations must be grouped by impact (image-alt is critical)');
+    for (const v of all) {
+      assert(v.nodeCount >= v.nodes.length, `axe: ${v.id} node cap must be announced, not silent`);
+      assert(v.nodes.length > 0 && v.nodes[0].target, `axe: ${v.id} should carry node targets`);
+    }
+    assert(result.counts.passes > 0, 'axe: counts should include concluded passes');
+  } finally {
+    server.close();
+  }
 }
 
 async function testHarRedirects() {

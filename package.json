@@ -70,6 +70,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "axe-core": "^4.13.0",
     "chrome-remote-interface": "^0.33.3",
     "serve": "^14.2.4",
     "zod": "^4.4.3"
