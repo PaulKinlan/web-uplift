@@ -2744,6 +2744,14 @@ function activeElementProbe() {
 }
 
 async function a11ytree(client, url, opts, log) {
+  // The caps are the model's to widen: a content-heavy page can exceed both (a
+  // live blog measured 831 AX nodes and more than 60 focusables), and the
+  // effective values are echoed in the output so a truncated sample always says
+  // it is truncated. Bad or missing values fall back to the documented defaults.
+  const maxNodes = Number.isFinite(opts.maxNodes) && opts.maxNodes > 0 ? Math.floor(opts.maxNodes) : A11Y_MAX_NODES;
+  const maxStops = Number.isFinite(opts.maxStops) && opts.maxStops > 0 ? Math.floor(opts.maxStops) : A11Y_MAX_STOPS;
+  log(`[evidence] a11ytree: caps ${maxNodes} node(s), ${maxStops} focus stop(s)`);
+
   await navigate(client, url, {
     settleMs: opts.wait ?? 1200,
     log,
@@ -2764,7 +2772,7 @@ async function a11ytree(client, url, opts, log) {
   let truncated = false;
   const roleCounts = {};
   const build = (node, depth) => {
-    if (!node || included >= A11Y_MAX_NODES) {
+    if (!node || included >= maxNodes) {
       truncated = true;
       return null;
     }
@@ -2792,7 +2800,7 @@ async function a11ytree(client, url, opts, log) {
   let cycleDetected = false;
   let focusTruncated = false;
   try {
-    for (let i = 0; i < A11Y_MAX_STOPS; i++) {
+    for (let i = 0; i < maxStops; i++) {
       await client.Input.dispatchKeyEvent({ type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
       await client.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
       const stop = await evaluate(client, activeElementProbe());
@@ -2803,7 +2811,7 @@ async function a11ytree(client, url, opts, log) {
       }
       stops.push(stop);
     }
-    if (!cycleDetected && stops.length >= A11Y_MAX_STOPS) focusTruncated = true;
+    if (!cycleDetected && stops.length >= maxStops) focusTruncated = true;
   } catch (err) {
     log(`[evidence] a11ytree: focus walk failed: ${err.message.split('\n')[0]}`);
   }
@@ -2824,13 +2832,14 @@ async function a11ytree(client, url, opts, log) {
       maxDepth,
       ignoredCount,
       roleCounts,
+      maxNodes,
     },
     focusOrder: {
       stops,
       stopCount: stops.length,
       cycleDetected,
       truncated: focusTruncated,
-      maxStops: A11Y_MAX_STOPS,
+      maxStops,
       stopsWithoutVisibleIndicator: stops.filter((s) => !s.hasVisibleIndicator).length,
       stopsInsideAriaHidden: stops.filter((s) => s.insideAriaHidden).length,
     },
@@ -2872,6 +2881,8 @@ function parseArgs(argv) {
     if (a === '--out') args.out = argv[++i];
     else if (a === '--emulate-media') args.emulateMediaRaw = argv[++i];
     else if (a === '--viewport') args.viewportRaw = argv[++i];
+    else if (a === '--max-nodes') args.maxNodes = Number(argv[++i]);
+    else if (a === '--max-stops') args.maxStops = Number(argv[++i]);
     else if (a === '--wait') args.wait = Number(argv[++i]);
     else if (a === '--cpu-throttle') args.cpuThrottle = Number(argv[++i]);
     else if (a === '--network') args.network = argv[++i];
@@ -2958,7 +2969,7 @@ async function main() {
   if (!primitive || !url) {
     console.error(
       'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|axe|trace|har|discoverability|console|targets|features|resilience|a11ytree|secrets|headers|cookies|trackers|images> <url> [options]\n' +
-        'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
+        'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css --max-nodes n --max-stops n\n' +
         '         --cpu-throttle n --network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse\n' +
         '         --locale de-DE --timezone Asia/Tokyo\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +

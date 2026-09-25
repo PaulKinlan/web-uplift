@@ -1096,6 +1096,10 @@ async function testA11yTreePrimitive() {
       result.tree.truncated === false && result.tree.maxDepth >= 3 && result.tree.totalNodes > 10,
       `a11ytree: the tree census looks wrong: ${JSON.stringify({ total: result.tree.totalNodes, projected: result.tree.nodesProjected, depth: result.tree.maxDepth })}`,
     );
+    assert(
+      result.tree.maxNodes === 400 && result.focusOrder.maxStops === 60,
+      `a11ytree: the effective caps should be reported: ${JSON.stringify({ maxNodes: result.tree.maxNodes, maxStops: result.focusOrder.maxStops })}`,
+    );
 
     // The real tab order: DOM order, tabindex=-1 skipped, and aria-hidden content
     // still reachable (which the tree says is hidden).
@@ -1125,6 +1129,26 @@ async function testA11yTreePrimitive() {
     assert(
       firstStop?.hasVisibleIndicator === true,
       `a11ytree: a 3px outline should read as a visible indicator: ${JSON.stringify(firstStop)}`,
+    );
+
+    // The caps are the model's to widen, and a widened or lowered cap is echoed
+    // in the output rather than applied silently.
+    const narrowCaps = await gather('a11ytree', `http://127.0.0.1:${port}/`, { quiet: true, wait: 400, maxNodes: 5, maxStops: 2 });
+    assert(
+      narrowCaps.tree.maxNodes === 5 && narrowCaps.tree.nodesProjected <= 5 && narrowCaps.tree.truncated === true,
+      `a11ytree: --max-nodes should cap the projection and say so: ${JSON.stringify({ maxNodes: narrowCaps.tree.maxNodes, projected: narrowCaps.tree.nodesProjected, truncated: narrowCaps.tree.truncated })}`,
+    );
+    assert(
+      narrowCaps.focusOrder.maxStops === 2 && narrowCaps.focusOrder.stopCount === 2 && narrowCaps.focusOrder.truncated === true,
+      `a11ytree: --max-stops should cap the walk and say so: ${JSON.stringify({ maxStops: narrowCaps.focusOrder.maxStops, stops: narrowCaps.focusOrder.stopCount, truncated: narrowCaps.focusOrder.truncated })}`,
+    );
+
+    // A bad value must fall back to the documented default rather than
+    // producing an empty tree.
+    const badCaps = await gather('a11ytree', `http://127.0.0.1:${port}/`, { quiet: true, wait: 400, maxNodes: 0, maxStops: Number.NaN });
+    assert(
+      badCaps.tree.maxNodes === 400 && badCaps.focusOrder.maxStops === 60 && badCaps.tree.nodesProjected > 5,
+      `a11ytree: invalid caps should fall back to the defaults: ${JSON.stringify({ maxNodes: badCaps.tree.maxNodes, maxStops: badCaps.focusOrder.maxStops, projected: badCaps.tree.nodesProjected })}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
