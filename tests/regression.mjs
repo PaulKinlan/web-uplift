@@ -25,6 +25,7 @@ try {
   await testPreNavigationEmulation();
   await testHarRedirects();
   await testEvidenceTruncationReporting();
+  await testConsoleEvidence();
   testBatchDryRunUsesRetainedDirs();
   testBatchFlowDryRun();
   testFixSurvivesUnscoreableReports();
@@ -78,6 +79,113 @@ function testGuidanceUsage() {
   const fixed = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
   assert(fixed.guidanceConsulted === undefined || Array.isArray(fixed.guidanceConsulted),
     'guidance: fixed report guidanceConsulted must be an array when present');
+}
+
+// follow-best-practices/no-console-errors needs first-party evidence: what the
+// page logged DURING load is invisible to a post-load evaluate probe, so the
+// console primitive collects Runtime + Log events from before the navigation.
+// The counts are split by source so a failed subresource request is not
+// confused with a page-authored console error (web-uplift-2dg).
+async function testConsoleEvidence() {
+  const noisy = [
+    '<!doctype html><html><head><title>noisy</title><script>',
+    "  console.warn('fixture warning');",
+    "  console.error('fixture console error');",
+    "  console.error('fixture console error');",
+    "  setTimeout(function () { throw new Error('fixture uncaught exception'); }, 0);",
+    "  fetch('/missing.json').catch(function () {});",
+    '</script></head><body><p>Deterministic console story.</p></body></html>',
+  ].join('\n');
+  const clean = '<!doctype html><html><head><title>clean</title></head><body><p>Nothing is logged here.</p>' +
+    '<button id="boom">boom</button>' +
+    "<script>document.querySelector('#boom').addEventListener('click', function () { throw new Error('fixture interact exception'); });</script>" +
+    '</body></html>';
+
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/favicon.ico') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (path === '/clean') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(clean);
+      return;
+    }
+    if (path === '/noisy') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(noisy);
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('not found');
+  });
+
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+
+    const result = await gather('console', `${base}/noisy`, { quiet: true, wait: 500 });
+    const block = result.console;
+    assert(
+      block.exceptionCount === 1 && block.entries.some((e) => e.kind === 'exception' && e.text.includes('fixture uncaught exception')),
+      `console: the load-time exception was not captured: ${JSON.stringify(block)}`,
+    );
+    assert(
+      block.consoleErrorCount === 1 && block.entries.some((e) => e.text.includes('fixture console error')),
+      `console: the load-time console error was not captured: ${JSON.stringify(block)}`,
+    );
+    assert(
+      block.warningCount === 1 && block.entries.some((e) => e.text.includes('fixture warning')),
+      `console: the console warning was not captured: ${JSON.stringify(block)}`,
+    );
+    assert(
+      block.networkErrorCount === 1 && block.entries.some((e) => e.source === 'network' && (e.url || '').endsWith('/missing.json')),
+      `console: the failed subresource request was not captured separately: ${JSON.stringify(block)}`,
+    );
+    assert(block.hasErrors === true, `console: a page that threw should report errors: ${JSON.stringify(block)}`);
+    const repeated = block.entries.find((e) => e.text.includes('fixture console error'));
+    assert(repeated.repeat === 2, `console: identical messages should collapse into a repeat count: ${JSON.stringify(repeated)}`);
+    const exception = block.entries.find((e) => e.kind === 'exception');
+    assert(Array.isArray(exception.stack) && exception.stack.length > 0, `console: an exception should carry a stack frame: ${JSON.stringify(exception)}`);
+
+    // Every primitive carries the block, and the artifact a primitive writes has
+    // to agree with its stdout: that is what emit() is for.
+    const out = join(tmp, 'console-dom-artifact.json');
+    const cli = await runAsync(process.execPath, ['evidence/cli.mjs', 'dom', `${base}/noisy`, '--wait', '300', '--out', out]);
+    assert(cli.status === 0, `console: dom CLI failed:\n${cli.stderr}`);
+    const artifact = JSON.parse(readFileSync(out, 'utf8'));
+    const stdout = JSON.parse(cli.stdout);
+    assert(
+      artifact.console?.exceptionCount === 1 && stdout.console?.exceptionCount === 1,
+      `console: the console block should ride along on other primitives, in the artifact and stdout:\n${JSON.stringify({ artifact: artifact.console, stdout: stdout.console })}`,
+    );
+
+    // A page that logs nothing reports zeroes: the empty block is the evidence
+    // that the check can pass, not the absence of evidence.
+    const cleanResult = await gather('console', `${base}/clean`, { quiet: true, wait: 400 });
+    assert(
+      cleanResult.console.entryCount === 0 && cleanResult.console.hasErrors === false && cleanResult.console.entries.length === 0,
+      `console: a page that logs nothing must report zeroes: ${JSON.stringify(cleanResult.console)}`,
+    );
+
+    // Interaction errors count too: the same page throws only when its button is
+    // clicked, which is exactly the error class a post-load probe cannot see.
+    const interactResult = await gather('console', `${base}/clean`, {
+      quiet: true,
+      wait: 400,
+      interact: "setTimeout(() => document.querySelector('#boom').click(), 0)",
+    });
+    assert(
+      interactResult.console.exceptionCount === 1 &&
+        interactResult.console.entries.some((e) => e.text.includes('fixture interact exception')),
+      `console: an error raised by --interact was not captured: ${JSON.stringify(interactResult.console)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
 }
 
 // A report that cannot be SCORED is still a legitimate INPUT to the hill-climb.

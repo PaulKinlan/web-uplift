@@ -68,7 +68,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { launchChrome, newSession, navigate, evaluate, sleep } from './cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
 
@@ -105,6 +105,14 @@ function announceCap(name, shown, total, log) {
         'This sample is INCOMPLETE; a miss in it is not evidence of absence. Gather the rest another way before judging.',
     );
   }
+}
+
+// Write a primitive's JSON evidence artifact. The console evidence the page
+// produced during this run is joined on first, so the file and stdout agree.
+function emit(opts, result, client) {
+  attachConsoleEvidence(client, result);
+  if (opts.out) writeFileSync(opts.out, JSON.stringify(result, null, 2) + '\n');
+  return result;
 }
 
 // --- primitives ------------------------------------------------------------
@@ -415,8 +423,7 @@ async function layout(client, url, opts, log) {
     cssContentSize: metrics.cssContentSize,
     observed,
   };
-  if (opts.out) writeFileSync(opts.out, JSON.stringify(result, null, 2) + '\n');
-  return result;
+  return emit(opts, result, client);
 }
 
 // dom: serialise the DOM, computed styles for a set of selectors, the page's
@@ -501,8 +508,7 @@ async function dom(client, url, opts, log) {
     log(`[evidence] read ${result.source.files.length} source file(s) from ${srcDir}`);
   }
 
-  if (opts.out) writeFileSync(opts.out, JSON.stringify(result, null, 2) + '\n');
-  return result;
+  return emit(opts, result, client);
 }
 
 // Read a local source tree (text files) so the model can reason over the actual
@@ -1533,8 +1539,7 @@ async function discoverability(client, url, opts, log) {
       'coveragePct = the share of the rendered page\'s content words that also appear in the RAW server HTML - what a crawler that does not run JavaScript (many AI crawlers, per the url-influence research) can see. Low coverage with an empty SPA mount means the content is effectively invisible to non-JS crawlers and unlikely to enter model training or search. High coverage means it is server-rendered and reachable. Descriptive signal, not a verdict: judge against be-discoverable / be-agent-ready, and confirm surprising results against the raw HTML and the dom primitive.',
   };
 
-  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
-  return summary;
+  return emit(opts, summary, client);
 }
 
 // --- secrets primitive ----------------------------------------------------
@@ -1614,8 +1619,7 @@ async function secrets(client, url, opts, log) {
     externalScriptsTruncated: (scripts?.total ?? scriptUrls.length) > scriptUrls.length,
     note: 'Descriptive signal, not a verdict. The MODEL must REASON about each finding: legitimate public API keys (e.g. Google Maps keys, Stripe publishable keys) are EXPECTED to be client-side and are NOT security issues. Actual sensitive secrets (AWS keys, Stripe SECRET keys, JWTs, private keys, DB connection strings, GitHub/Slack tokens) exposed client-side ARE critical be-private-and-secure failures. Judge each finding accordingly.',
   };
-  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
-  return summary;
+  return emit(opts, summary, client);
 }
 
 // --- headers primitive: security response headers -------------------------
@@ -1652,8 +1656,7 @@ async function headers(client, url, opts, log) {
     https: url.startsWith('https://'),
     note: 'Descriptive signal. Judge against be-private-and-secure. Missing CSP/HSTS/X-Content-Type-Options are security gaps. unsafe-inline/unsafe-eval weakens XSS protection.',
   };
-  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
-  return summary;
+  return emit(opts, summary, client);
 }
 
 // --- cookies primitive: cookie security audit -----------------------------
@@ -1689,8 +1692,7 @@ async function cookies(client, url, opts, log) {
     cookiesTruncated: analyzed.length > 50,
     note: 'Descriptive signal. Judge against be-private-and-secure. Cookies without Secure, with SameSite=None, or auth cookies without HttpOnly are security gaps. Long-lived third-party cookies indicate tracking.',
   };
-  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
-  return summary;
+  return emit(opts, summary, client);
 }
 
 // --- trackers primitive: third-party tracker enumeration ------------------
@@ -1733,8 +1735,7 @@ async function trackers(client, url, opts, log) {
     topThirdPartyByRequestsTruncated: thirdParty.length > 15,
     note: 'Descriptive signal. Judge against be-private-and-secure (tracking footprint) and be-sustainable (third-party bytes). Known tracker domains indicate active tracking.',
   };
-  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
-  return summary;
+  return emit(opts, summary, client);
 }
 
 // --- images primitive: image optimization audit ---------------------------
@@ -1783,8 +1784,42 @@ async function images(client, url, opts, log) {
     imagesTruncated: totalImages > 30,
     note: 'Descriptive signal. Judge against be-fast-and-stable (missing width/height causes CLS, oversized images), be-sustainable (legacy formats, missing srcset), be-inclusive (missing alt).',
   };
-  if (opts.out) writeFileSync(opts.out, JSON.stringify(summary, null, 2) + '\n');
-  return summary;
+  return emit(opts, summary, client);
+}
+
+// console: what the page logged while it loaded and (with --interact) while it
+// was driven - console errors and warnings, uncaught exceptions, and browser
+// log errors (failed resource loads, CSP violations, deprecations). This is the
+// first-party evidence path for follow-best-practices/no-console-errors: a probe
+// that runs after load cannot see what fired during it. The collector is
+// attached for every primitive, so the same block also rides along on whatever
+// else happened to be running when the page logged something.
+async function consolePrimitive(client, url, opts, log, collector) {
+  await navigate(client, url, {
+    settleMs: opts.wait ?? 1500,
+    log,
+    beforeTargetNavigate: () => applyConditions(client, opts, log),
+  });
+  if (opts.interact) {
+    try {
+      await evaluate(client, opts.interact);
+    } catch (err) {
+      log(`[evidence] interact script error: ${err.message.split('\n')[0]}`);
+    }
+  }
+  await sleep(250);
+
+  const block = collector.summary();
+  log(
+    `[evidence] console: ${block.consoleErrorCount} console error(s), ${block.warningCount} warning(s), ${block.exceptionCount} uncaught exception(s), ${block.networkErrorCount} failed request(s)`,
+  );
+  const result = {
+    primitive: 'console',
+    url,
+    scannedAt: new Date().toISOString(),
+    console: block,
+  };
+  return emit(opts, result, client);
 }
 
 const PRIMITIVES = {
@@ -1797,6 +1832,7 @@ const PRIMITIVES = {
   trace,
   har,
   discoverability,
+  console: consolePrimitive,
   secrets,
   headers,
   cookies,
@@ -1867,7 +1903,18 @@ export async function gather(primitive, url, opts = {}) {
   try {
     const session = await newSession(chrome.port, { log });
     try {
-      return await fn(session.client, url, opts, log);
+      // Attach BEFORE the primitive runs so console output from the load itself
+      // is captured, not just whatever fires after it settles.
+      const collector = await attachConsoleCollector(session.client, { log });
+      const result = await fn(session.client, url, opts, log, collector);
+      const block = attachConsoleEvidence(session.client, result);
+      if (block && (block.consoleErrorCount > 0 || block.exceptionCount > 0)) {
+        log(
+          `[evidence] WARNING: the page logged ${block.consoleErrorCount} console error(s)` +
+            `${block.exceptionCount ? ` and ${block.exceptionCount} uncaught exception(s)` : ''} during ${primitive}; they are in the returned console block`,
+        );
+      }
+      return result;
     } finally {
       await session.close();
     }
@@ -1883,7 +1930,7 @@ async function main() {
   const url = args._[1];
   if (!primitive || !url) {
     console.error(
-      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability|secrets|headers|cookies|trackers|images> <url> [options]\n' +
+      'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|trace|har|discoverability|console|secrets|headers|cookies|trackers|images> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
         '         --duration ms --fps n --full-page --bodies --quiet',
