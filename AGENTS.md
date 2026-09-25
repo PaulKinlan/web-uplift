@@ -119,15 +119,32 @@ for breaking skill/schema changes):
    `.claude/skills/web-audit/SKILL.md` per the `files` allowlist).
 6. `git tag v<VERSION> && git push && git push --tags`.
 
-### Current release: v0.1.3
+### Current release: v0.4.0
 
-Patch over v0.1.2. Fixes the SKILL.md YAML frontmatter bug: the `description`
-field was an unquoted plain scalar containing `audit: YOU` and
-`no fast path: the principles`, which YAML parses as nested mappings, throwing
-`Nested mappings are not allowed in compact mappings`. The thrown error caused
-pi (and other frontmatter-strict loaders) to reject the whole skill, so
-`/web-audit` never registered. The description is now double-quoted and the two
-offending clauses rewritten as plain sentences (no em dashes).
+Minor over v0.3.0. Adds the evidence primitives built since: `axe` (vendored
+axe-core with a CSP bypass scoped to that primitive), `console` (Runtime + Log
+collection, the first-party path for `no-console-errors`, with the same block
+riding along on every other primitive), `targets` (WCAG 2.2 SC 2.5.8 target
+size, measured at a desktop and a narrow layout), `features` (modern-CSS and
+overlay census from the live CSSOM, with `censusComplete` when a cross-origin
+sheet could not be read), `resilience` (service worker + manifest + a real
+offline reload with an offline screenshot) and `a11ytree` (the computed
+accessibility tree plus the real tab order).
+
+It also lands the evidence-honesty work: every capped sample now reports its
+cap (`<name>Total`/`<name>Chars` plus `<name>Truncated`, and a stderr warning),
+fix mode validates the report shape instead of throwing a TypeError, fix mode
+refuses to pass a report that claims complete coverage with zero checks,
+discoverability compares content tokens instead of a verbatim substring, and
+the fix hill-climb can survive an unscoreable report.
+
+The skill gains the rule that goes with it: **truncated evidence is not
+absence** - a miss in a capped sample cannot produce a `pass`, so gather the
+rest before judging - plus the primitive rows for everything above. The
+per-check `detectableVia` hints in `knowledge/principles.json` now name the
+first-party primitive for each of the affected checks, which moves that file's
+checksum: the pinned `coverage.catalogChecksum` in both example reports was
+re-pinned to match (the checks themselves are unchanged).
 
 <!-- web-uplift:install -->
 ## web-uplift (modern-web audit + fix)

@@ -166,12 +166,35 @@ Primitives, all content- and tool-agnostic:
 | `cookies` | audits all cookies set by the page via CDP Network.getCookies: checks Secure flag, SameSite (Strict/Lax/None), HttpOnly, expiry duration, and whether each is third-party. Flags auth-like cookies (session/auth/token/id) that lack HttpOnly, cookies with SameSite=None, and long-lived (>365 day) third-party cookies. Descriptive signal — judge against `be-private-and-secure`. Long-lived third-party cookies also indicate tracking | Network domain |
 | `trackers` | enumerates all third-party request origins during page load and matches against a built-in list of known tracker/analytics domains (Google Analytics, DoubleClick, Facebook, Hotjar, Segment, Mixpanel, etc.). Reports total origins, third-party count, known trackers found, and top third-party by request count. Descriptive signal — judge against `be-private-and-secure` (tracking footprint) and `be-sustainable` (third-party bytes). A large third-party count indicates a heavy privacy footprint | Network domain |
 | `images` | inspects all `<img>` elements: checks for width/height attributes (CLS risk), loading="lazy" on below-fold images, oversized images (naturalWidth > 2x displayWidth), missing srcset/responsive sources, legacy vs modern formats (avif/webp/svg vs jpg/png/gif), and missing alt text. Descriptive signal — judge against `be-fast-and-stable` (missing dimensions cause CLS, oversized images waste bandwidth), `be-sustainable` (legacy formats, missing srcset), and `be-inclusive` (missing alt) | Runtime.evaluate |
+| `console` | what the page logged while it was being measured: console errors and warnings, uncaught exceptions, and browser log errors/warnings (failed subresource requests, CSP violations, deprecations). Identical messages are deduplicated with a repeat count and counted in slices (`consoleErrorCount`, `warningCount`, `exceptionCount`, `networkErrorCount`) because a failed request is not the same finding as a page-authored error. `--interact` catches what only fires when the page is driven. This is the first-party path for `no-console-errors`: a probe that runs after load cannot see what fired during it. The same block rides along on every other primitive's output when the page logged something | Runtime.consoleAPICalled + Runtime.exceptionThrown + Log.entryAdded |
+| `axe` | accessibility violations from the VENDORED axe-core, injected with a CSP bypass scoped to this primitive so strict `script-src` sites still work, grouped by impact with node targets and failure summaries. The `a11ytree` primitive is the follow-up for what axe reports as "incomplete" | Runtime.evaluate + Page.setBypassCSP |
+| `targets` | WCAG 2.2 SC 2.5.8 target-size inventory: every pointer target's box in CSS px with `underMin` (< 24x24), plus the two exceptions geometry can read - `inlineInText` (text nodes beside the target in its parent, and not a block-level box) and `spacingPasses` (a 24px-diameter circle centred on the box clears every other target and every other undersized target's circle). Measured at BOTH a 1280x720 desktop and a 360x800 narrow layout by default (`--viewport` gives one pass) because the answer differs by form factor. `underMinNoKnownExemptionCount` is the number that needs your judgement, not a verdict | DOM + Runtime |
+| `features` | modern-CSS and overlay census from the LIVE CSSOM (document sheets and same-origin `@import`s, constructed/adopted sheets, shadow-root sheets, inline styles): at-rules, conditional preludes, declared properties, functions and pseudo-selectors with counts, a `tracked` 0-or-count row per feature the checks turn on, and the overlay census (native `dialog` / `[popover]` / `details` against `role=dialog`, `aria-modal` and high z-index). Read this instead of grepping `dom`'s capped css string. `censusComplete: false` means a cross-origin sheet could not be read, so a zero in `tracked` is not conclusive - the skipped URLs are listed. It deliberately carries NO Baseline table: check Baseline through Modern Web Guidance / webstatus.dev | CSS + DOM + Runtime |
+| `resilience` | offline and installable evidence: service worker registrations and versions from the ServiceWorker CDP domain (each flagged with whether it belongs to the audited origin, because the domain also reports the browser's own workers) plus the page's controller, the resolved manifest fields/icons and the mechanical installability signals, then a REAL offline reload (`Network.emulateNetworkConditions` offline) reporting the net error or what actually rendered from cache, with an `-offline.png` artifact. A failed navigation with no worker is the "unusable offline" evidence; the same probe is the failure injection for `network-and-http-failure-states` | ServiceWorker + Network + Page |
+| `a11ytree` | what assistive technology actually receives: the computed accessibility tree (roles, computed names, ignored subtrees with reasons, and the focusable/level/checked/... flags) - so an `aria-label` overridden by `aria-labelledby`, a name that comes from `title`, or a subtree hidden by an ancestor `aria-hidden` shows up here and NOT in a DOM-attribute probe - plus the REAL tab order walked with CDP key events, where each stop records the element, its on-screen state, its computed focus indicator, and whether it sits inside `aria-hidden` (which removes it from the a11y tree but NOT from the tab order). Judgement against `be-inclusive` names-and-roles and structure-and-focus | Accessibility.getFullAXTree + Input.dispatchKeyEvent |
 
 Common options the harness simply applies (you choose them, it does not):
 `--emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce`,
 `--viewport 360x800`, `--wait <ms>`, `--selector <css>`, `--interact "<js>"`,
 `--cpu-throttle <n>`, `--network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse`,
-`--locale de-DE`, `--timezone Asia/Tokyo`, `--out <path>`, `--source <dir>`.
+`--locale de-DE`, `--timezone Asia/Tokyo`, `--out <path>`, `--source <dir>`,
+`--no-screenshots`.
+
+**Truncated evidence is not absence.** Every cap a primitive applies is
+reported - a sibling `<name>Total`/`<name>Chars` plus `<name>Truncated` when
+the sample was cut (`dom` css/outerHTML, `secrets` findings and scanned
+scripts, `cookies`, `images`, the `har` lists, `layout` samples, `trace` long
+tasks, `targets` targets, `features` conditions/properties, `a11ytree`
+nodes/stops) - and the same facts are warned on stderr. A miss in a truncated
+sample is not evidence that the page lacks something, and it cannot produce a
+`pass`: gather the rest before you judge, by probing the live DOM/CSSOM with
+`evaluate --expr`, reading the `--source` tree, or re-running the primitive
+under the condition that moves the cap. If you cannot gather the rest, the
+check is `partial`, never `pass`. The same rule applies to the other honesty
+signals: `features` sets `censusComplete: false` when a cross-origin sheet
+could not be read, and `discoverability` refuses to score coverage when the
+render produced no content (`coveragePct: null`) - read those fields before
+trusting a zero.
 
 You may also run **any other tool you judge useful** at inspection time. None of
 these is wired into the runtime; you invoke them yourself when they help:
