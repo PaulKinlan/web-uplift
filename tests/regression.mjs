@@ -29,6 +29,7 @@ try {
   testBatchFlowDryRun();
   testFixSurvivesUnscoreableReports();
   testFixRefusesPassOnIncompleteCoverage();
+  testFixRejectsMalformedReports();
   await testScorecardScoringAndRender();
   await testDiscoverabilityHelpers();
   await testFlowNormalize();
@@ -227,6 +228,85 @@ function testFixRefusesPassOnIncompleteCoverage() {
     `fix coverage: a clean complete report should pass:\n${cleanRun.stdout}`);
   assert(cleanRun.stdout.includes('0 unconcluded check(s)'),
     `fix coverage: a clean report should report zero unconcluded checks:\n${cleanRun.stdout}`);
+}
+
+// A structurally malformed report is invalid INPUT, not a crash (web-uplift-rj2).
+// countOutstanding runs before the score safety net, so a non-array
+// principleOutcomes or findings used to die with "x.filter is not a function" and
+// a raw stack, and a non-array checkOutcomes was silently ignored, which let a
+// zero-findings report print PASS. The shape is now validated once, at read time,
+// and reported by name.
+function testFixRejectsMalformedReports() {
+  const complete = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
+
+  const runFix = (findings) => run(process.execPath, [
+    'fixer/fix.mjs',
+    '--findings', findings,
+    '--target', join(tmp, 'fix-src'),
+    '--audit-url', 'http://127.0.0.1:9/',
+    '--out', join(tmp, `fixshape-out-${Math.random().toString(36).slice(2)}`),
+    '--reports-root', join(tmp, `fixshape-reports-${Math.random().toString(36).slice(2)}`),
+    '--max-iterations', '0',
+  ]);
+
+  // Present but not an array: a named error, exit 1, no raw TypeError, no PASS.
+  const malformed = {
+    'shape-principle-outcomes': { principleOutcomes: {} },
+    'shape-findings': { findings: {} },
+    'shape-findings-string': { findings: 'not an array' },
+    'shape-check-outcomes': { checkOutcomes: {} },
+    'shape-artifacts': { artifacts: {} },
+  };
+  for (const [name, patch] of Object.entries(malformed)) {
+    const path = join(tmp, `${name}.json`);
+    const field = Object.keys(patch)[0];
+    writeFileSync(path, JSON.stringify({ ...complete, ...patch }));
+    const result = runFix(path);
+    assert(result.status === 1,
+      `fix shape: ${name} should exit 1, got ${result.status}:\n${result.stdout}${result.stderr}`);
+    assert(
+      result.stderr.includes(`Invalid report at ${path}: "${field}" must be an array`),
+      `fix shape: ${name} should fail with a named shape error:\n${result.stderr}`,
+    );
+    assert(!/is not a function|is not iterable|Cannot read propert/.test(result.stderr),
+      `fix shape: ${name} leaked a raw TypeError:\n${result.stderr}`);
+    assert(!/^PASS:/m.test(result.stdout),
+      `fix shape: ${name} must not pass:\n${result.stdout}`);
+  }
+
+  // A whole file that is not an object at all is the same class of input error.
+  for (const [name, body] of [['shape-root-string', '"just a string"'], ['shape-root-array', '[1,2,3]']]) {
+    const path = join(tmp, `${name}.json`);
+    writeFileSync(path, body);
+    const result = runFix(path);
+    assert(
+      result.status === 1 && result.stderr.includes(`Invalid report at ${path}: expected a JSON object`),
+      `fix shape: ${name} should fail with a named shape error:\n${result.stderr}`,
+    );
+  }
+
+  // The guard must not reject legal reports: absent and null fields stay legal
+  // (pre-contract reports have no coverage or checkOutcomes at all), and a clean
+  // report still runs through to its pass.
+  const nullish = { ...structuredClone(complete), principleOutcomes: null, findings: [] };
+  const nullishPath = join(tmp, 'shape-nullish.json');
+  writeFileSync(nullishPath, JSON.stringify(nullish));
+  const nullishRun = runFix(nullishPath);
+  assert(
+    nullishRun.status === 0 && !/Invalid report at/.test(nullishRun.stderr),
+    `fix shape: null/empty fields must stay legal:\n${nullishRun.stdout}${nullishRun.stderr}`,
+  );
+
+  const legacy = structuredClone(complete);
+  delete legacy.coverage;
+  delete legacy.checkOutcomes;
+  const legacyPath = join(tmp, 'shape-legacy.json');
+  writeFileSync(legacyPath, JSON.stringify(legacy));
+  const legacyRun = runFix(legacyPath);
+  assert(
+    !/Invalid report at/.test(legacyRun.stderr) && legacyRun.stdout.includes('Baseline:'),
+    `fix shape: a pre-contract report must stay legal input:\n${legacyRun.stdout}${legacyRun.stderr}`,
+  );
 }
 
 async function testScorecardScoringAndRender() {

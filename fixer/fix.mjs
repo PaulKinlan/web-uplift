@@ -357,12 +357,47 @@ function runAgent(prompt, iteration) {
   });
 }
 
+// A report file is untrusted input: fix mode reads reports written by other
+// runs, other tools, and older versions. Validate the shape once, here, so a
+// malformed report fails with a named error instead of a TypeError from
+// whichever helper touches the bad field first. Before web-uplift-rj2 a
+// non-array principleOutcomes or findings died inside countOutstanding
+// ("outcomes.filter is not a function"), which runs BEFORE the score safety
+// net, so the run crashed with a stack instead of saying what was wrong; a
+// non-array checkOutcomes was silently ignored, so completionState saw no
+// checks at all and a zero-findings run could claim every check concluded.
+function reportShapeError(report) {
+  if (report === null || typeof report !== 'object' || Array.isArray(report)) {
+    return `expected a JSON object, got ${jsonType(report)}`;
+  }
+  // Only fields whose consumers call array methods on them. Absent and null stay
+  // legal: a report written before a field existed must keep working, and every
+  // consumer already reads these fields through `?? []`.
+  for (const field of ['principleOutcomes', 'findings', 'checkOutcomes', 'artifacts']) {
+    const value = report[field];
+    if (value != null && !Array.isArray(value)) {
+      return `"${field}" must be an array when present, got ${jsonType(value)}`;
+    }
+  }
+  return null;
+}
+
+function jsonType(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
 async function readReport(path) {
+  let report;
   try {
-    return JSON.parse(await readFile(path, 'utf8'));
+    report = JSON.parse(await readFile(path, 'utf8'));
   } catch (err) {
     throw new Error(`Could not read findings/report JSON at ${path}: ${err.message}`);
   }
+  const shapeError = reportShapeError(report);
+  if (shapeError) throw new Error(`Invalid report at ${path}: ${shapeError}.`);
+  return report;
 }
 
 // The directory a report.json lives in (its artifacts are relative to it).
