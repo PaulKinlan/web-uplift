@@ -363,6 +363,7 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `cookies` | every cookie the page sets, with Secure / SameSite / HttpOnly / expiry / third-party flags and per-cookie issues | `Network` domain |
 | `trackers` | third-party request origins matched against a built-in list of known tracker and analytics domains | `Network` domain |
 | `images` | image inventory: width/height attributes, lazy-loading, srcset, legacy vs modern format, oversized images, missing alt | `Runtime.evaluate` |
+| `resilience` | offline and installable evidence: service worker registrations and versions from the ServiceWorker CDP domain (attributed per origin) plus the page controller, the resolved manifest fields and icons, and a real offline reload - net error or rendered fallback - with a screenshot of that state | `ServiceWorker` + `Network` + `Page` |
 | `targets` | WCAG 2.2 SC 2.5.8 target-size inventory: every pointer target box in CSS px, undersized flags, and the inline-in-text and spacing exceptions read from geometry, measured at both a 1280x720 desktop and a 360x800 narrow layout | `DOM` / `Runtime` |
 | `features` | modern-CSS and overlay census from the LIVE CSSOM (document, adopted and shadow-root sheets plus inline styles): at-rules, conditions, properties, functions and selectors with counts, the tracked feature rows the checks turn on, and native dialog / [popover] / details vs div-based modals | `CSS` / `DOM` / `Runtime` |
 
