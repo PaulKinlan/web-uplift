@@ -24,6 +24,7 @@ try {
   testCachedUpdateWarning();
   await testPreNavigationEmulation();
   await testAxePrimitiveBypassesStrictCsp();
+  await testThrottlingConditions();
   await testHarRedirects();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
@@ -1262,6 +1263,71 @@ async function testAxePrimitiveBypassesStrictCsp() {
       assert(v.nodes.length > 0 && v.nodes[0].target, `axe: ${v.id} should carry node targets`);
     }
     assert(result.counts.passes > 0, 'axe: counts should include concluded passes');
+  } finally {
+    server.close();
+  }
+}
+
+// CWV thresholds are calibrated against mid-tier mobile on variable networks;
+// an unthrottled headless desktop is the one configuration guaranteed to pass.
+// The throttling conditions must be (a) actually applied to the connection/CPU
+// and (b) recorded in the output, so a finding states the device class it was
+// measured on.
+async function testThrottlingConditions() {
+  const html = '<!doctype html><html><head><title>t</title></head><body><h1>x</h1></body></html>';
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(html);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}/`;
+
+    // The conditions a run was measured under are recorded in the output.
+    const shaped = await gather('layout', base, {
+      quiet: true,
+      wait: 100,
+      network: 'fast-3g',
+      cpuThrottle: 4,
+      viewport: { w: 360, h: 800 },
+    });
+    assert(shaped.conditions?.network?.profile === 'fast-3g',
+      `throttle: layout output must record the network profile: ${JSON.stringify(shaped.conditions)}`);
+    assert(shaped.conditions.network.downloadThroughputBps === 180000 &&
+      shaped.conditions.network.uploadThroughputBps === 84375 &&
+      shaped.conditions.network.latencyMs === 562.5,
+      `throttle: fast-3g must carry the exact DevTools preset numbers: ${JSON.stringify(shaped.conditions.network)}`);
+    assert(shaped.conditions.cpuThrottleRate === 4,
+      `throttle: layout output must record the CPU rate: ${JSON.stringify(shaped.conditions)}`);
+    assert(shaped.conditions.viewport?.width === 360,
+      `throttle: layout output must record the viewport: ${JSON.stringify(shaped.conditions)}`);
+
+    // mobile-lighthouse applies its 4x CPU slowdown without a separate flag.
+    const mobile = await gather('layout', base, { quiet: true, wait: 100, network: 'mobile-lighthouse' });
+    assert(mobile.conditions.cpuThrottleRate === 4 && mobile.conditions.network.latencyMs === 150,
+      `throttle: mobile-lighthouse must imply 4x CPU + 150ms RTT: ${JSON.stringify(mobile.conditions)}`);
+
+    // The shaping must be REAL, not just recorded: a slow-3g RTT of 2000ms
+    // shows up in a fetch the page makes.
+    const probe = { quiet: true, wait: 100, expr: '(async()=>{const t=performance.now(); await fetch("/p"); return performance.now()-t;})()' };
+    const plain = await gather('evaluate', base, probe);
+    const throttled = await gather('evaluate', base, { ...probe, network: 'slow-3g' });
+    assert(throttled > plain + 1000,
+      `throttle: slow-3g should add ~2000ms RTT, got plain=${Math.round(plain)}ms shaped=${Math.round(throttled)}ms`);
+
+    // An unthrottled run carries no conditions block at all (not an empty one).
+    const unthrottled = await gather('layout', base, { quiet: true, wait: 100 });
+    assert(!('conditions' in unthrottled),
+      `throttle: an unthrottled run must not claim conditions: ${JSON.stringify(unthrottled.conditions)}`);
+
+    // Unknown profiles fail loudly, never silently fall back to unshaped.
+    let rejected = false;
+    try {
+      await gather('layout', base, { quiet: true, wait: 100, network: 'dial-up' });
+    } catch (err) {
+      rejected = /Unknown network profile/.test(err.message);
+    }
+    assert(rejected, 'throttle: an unknown profile must be rejected by name');
   } finally {
     server.close();
   }

@@ -52,6 +52,10 @@
 //                           prefers-color-scheme=dark,prefers-reduced-motion=reduce
 //   --viewport WxH          Device-metrics override, e.g. 360x800 (mobile)
 //   --wait <ms>             Settle time after load before measuring (default 1000)
+//   --cpu-throttle <n>      CPU slowdown factor (Emulation.setCPUThrottlingRate)
+//   --network <profile>     Network shaping: slow-3g | fast-3g | slow-4g | fast-4g |
+//                           mobile-lighthouse (150ms RTT, 1638.4/750 kbit/s, 4x CPU -
+//                           the profile CWV thresholds are calibrated against)
 //   --selector <css>        Element(s) of interest (dom/screenshot/layout)
 //   --quiet                 Less logging
 
@@ -72,6 +76,27 @@ import { createRequire } from 'node:module';
 import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
+
+// Named network profiles for --network, matching the DevTools presets. Values
+// are CDP-ready (bytes/sec, ms) and copied verbatim from Puppeteer's
+// PredefinedNetworkConditions.ts, which mirrors ChromeDevTools/devtools-frontend
+// NetworkManager.ts. `mobile-lighthouse` is Lighthouse's APPLIED mobile
+// throttling (150ms RTT, 1638.4 kbit/s down / 750 kbit/s up, 4x CPU) - the
+// configuration Core Web Vitals thresholds are calibrated against, so it is the
+// default archetype a mobile CWV measurement should be taken under.
+const NETWORK_PROFILES = {
+  'slow-3g': { latencyMs: 2000, downloadThroughputBps: 50000, uploadThroughputBps: 50000 },
+  'fast-3g': { latencyMs: 562.5, downloadThroughputBps: 180000, uploadThroughputBps: 84375 },
+  // DevTools/Puppeteer alias of fast-3g (crbug.com/342406608).
+  'slow-4g': { latencyMs: 562.5, downloadThroughputBps: 180000, uploadThroughputBps: 84375 },
+  'fast-4g': { latencyMs: 165, downloadThroughputBps: 1012500, uploadThroughputBps: 168750 },
+  'mobile-lighthouse': {
+    latencyMs: 150,
+    downloadThroughputBps: (1638.4 * 1000) / 8,
+    uploadThroughputBps: (750 * 1000) / 8,
+    cpuSlowdownMultiplier: 4,
+  },
+};
 
 async function applyConditions(client, opts, log) {
   if (opts.emulateMedia && opts.emulateMedia.length) {
@@ -98,6 +123,46 @@ async function applyConditions(client, opts, log) {
     });
     log(`[evidence] viewport: ${w}x${h}${mobile ? ' (mobile)' : ''}`);
   }
+  if (opts.network) {
+    const profile = NETWORK_PROFILES[opts.network];
+    if (!profile) {
+      throw new Error(
+        `Unknown network profile "${opts.network}". One of: ${Object.keys(NETWORK_PROFILES).join(', ')}`,
+      );
+    }
+    await client.Network.emulateNetworkConditions({
+      offline: false,
+      latency: profile.latencyMs,
+      downloadThroughput: profile.downloadThroughputBps,
+      uploadThroughput: profile.uploadThroughputBps,
+    });
+    log(
+      `[evidence] network: ${opts.network} (${profile.latencyMs}ms RTT, ` +
+        `${profile.downloadThroughputBps} B/s down, ${profile.uploadThroughputBps} B/s up)`,
+    );
+  }
+  const cpuRate = opts.cpuThrottle ?? (opts.network && NETWORK_PROFILES[opts.network]?.cpuSlowdownMultiplier);
+  if (cpuRate) {
+    if (!(cpuRate >= 1)) throw new Error(`--cpu-throttle must be >= 1, got ${cpuRate}`);
+    await client.Emulation.setCPUThrottlingRate({ rate: cpuRate });
+    log(`[evidence] cpu throttle: ${cpuRate}x slowdown`);
+  }
+}
+
+// The conditions a run was measured under, recorded in every primitive's
+// output so a finding can state the device class it was observed on. CWV
+// thresholds are calibrated against mid-tier mobile on variable networks; an
+// unthrottled headless desktop is the one configuration guaranteed to pass,
+// so a performance finding without a conditions block is not interpretable.
+function describeConditions(opts) {
+  const conditions = {};
+  const profile = opts.network ? NETWORK_PROFILES[opts.network] : null;
+  if (profile) conditions.network = { profile: opts.network, ...profile };
+  const cpuRate = opts.cpuThrottle ?? profile?.cpuSlowdownMultiplier;
+  if (cpuRate) conditions.cpuThrottleRate = cpuRate;
+  if (opts.viewport) conditions.viewport = { width: opts.viewport.w, height: opts.viewport.h };
+  if (opts.emulateMedia && opts.emulateMedia.length) conditions.emulateMedia = opts.emulateMedia;
+  return Object.keys(conditions).length ? conditions : null;
 }
 
 // A cap that drops evidence must say so. Every truncated sample reports what it
@@ -115,6 +180,8 @@ function announceCap(name, shown, total, log) {
 // Write a primitive's JSON evidence artifact. The console evidence the page
 // produced during this run is joined on first, so the file and stdout agree.
 function emit(opts, result, client) {
+  const conditions = describeConditions(opts);
+  if (conditions) result.conditions = conditions;
   attachConsoleEvidence(client, result);
   if (opts.out) writeFileSync(opts.out, JSON.stringify(result, null, 2) + '\n');
   return result;
@@ -2586,6 +2653,8 @@ function parseArgs(argv) {
     else if (a === '--emulate-media') args.emulateMediaRaw = argv[++i];
     else if (a === '--viewport') args.viewportRaw = argv[++i];
     else if (a === '--wait') args.wait = Number(argv[++i]);
+    else if (a === '--cpu-throttle') args.cpuThrottle = Number(argv[++i]);
+    else if (a === '--network') args.network = argv[++i];
     else if (a === '--duration') args.duration = Number(argv[++i]);
     else if (a === '--fps') args.fps = Number(argv[++i]);
     else if (a === '--selector') args.selector = argv[++i];
@@ -2668,6 +2737,7 @@ async function main() {
     console.error(
       'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|axe|trace|har|discoverability|console|targets|features|resilience|secrets|headers|cookies|trackers|images> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css\n' +
+        '         --cpu-throttle n --network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies --quiet',
     );
