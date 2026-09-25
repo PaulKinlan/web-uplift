@@ -37,6 +37,7 @@ try {
   await testDiscoverabilityHelpers();
   await testDiscoverabilityH1InRaw();
   await testTargetsPrimitive();
+  await testResiliencePrimitive();
   await testFlowNormalize();
   console.log('tests OK');
 } finally {
@@ -722,6 +723,155 @@ async function testTargetsPrimitive() {
     assert(
       none.measuredCount === 0 && none.underMinNoKnownExemptionCount === 0 && none.targets.length === 0,
       `targets: a page with no targets should report zeroes: ${JSON.stringify({ measured: none.measuredCount, noExemption: none.underMinNoKnownExemptionCount })}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// be-resilient/offline-and-installable had no evidence path: the model could
+// read the manifest and nothing else. This drives the real behaviour - install a
+// service worker online, then go genuinely offline and reload: once for a
+// precached URL (the cached page renders), once for an uncached one in scope
+// (the offline fallback renders), and once on a page with nothing resilient at
+// all (the navigation fails with a net error). It also checks that CDP's worker
+// list is attributed per origin, because the domain also reports the browser's
+// own extension workers (web-uplift-7v3).
+async function testResiliencePrimitive() {
+  const swJs = [
+    "const CACHE = 'fixture-v1';",
+    "self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/offline.html']))); });",
+    "self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });",
+    'self.addEventListener(\'fetch\', (e) => {',
+    // Navigations use the app-shell fallback (no network), so the fallback path
+    // is deterministic offline; other requests go cache-first then network.
+    "  if (e.request.mode === 'navigate') {",
+    "    e.respondWith(caches.match(e.request).then((hit) => hit || caches.match('/offline.html')));",
+    '    return;',
+    '  }',
+    "  e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));",
+    '});',
+  ].join('\n');
+  const manifest = JSON.stringify({
+    name: 'Fixture App',
+    short_name: 'Fixture',
+    start_url: '/',
+    scope: '/',
+    display: 'standalone',
+    theme_color: '#123456',
+    icons: [
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+  });
+  const pixel = Uint8Array.from(
+    atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='),
+    (c) => c.charCodeAt(0),
+  );
+  const swPage = (title) => `<!doctype html><html><head><title>${title}</title>` +
+    '<link rel="manifest" href="/manifest.webmanifest">' +
+    '<script>navigator.serviceWorker.register("/sw.js")</script></head>' +
+    `<body><h1>${title}</h1><p>Fixture body content for the resilience primitive.</p></body></html>`;
+
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    const send = (type, body, code = 200, extra = {}) => {
+      res.writeHead(code, { 'Content-Type': type, ...extra });
+      res.end(body);
+    };
+    if (path === '/sw.js') return send('text/javascript', swJs);
+    if (path === '/manifest.webmanifest') return send('application/manifest+json', manifest);
+    if (path === '/offline.html') {
+      return send('text/html', '<!doctype html><html><head><title>Offline fallback</title></head>' +
+        '<body><h1>Offline fallback</h1><p>Cached by the service worker.</p></body></html>');
+    }
+    if (path.startsWith('/icon-')) return send('image/png', pixel);
+    if (path === '/favicon.ico') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (path === '/no-sw') {
+      return send('text/html', '<!doctype html><html><head><title>No service worker</title></head>' +
+        '<body><h1>No service worker</h1><p>Nothing resilient here.</p></body></html>');
+    }
+    // no-store, so the browser's HTTP cache cannot quietly stand in for the
+    // service worker's fallback: offline emulation still serves cache hits.
+    if (path === '/uncached-sw') return send('text/html', swPage('Uncached page with service worker'), 200, { 'Cache-Control': 'no-store' });
+    return send('text/html', swPage('Fixture with service worker'));
+  });
+
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    const out = join(tmp, 'resilience-sw.json');
+
+    const withSw = await gather('resilience', `${base}/`, { quiet: true, wait: 800, out });
+    assert(
+      withSw.manifest.found === true && withSw.manifest.fields?.name === 'Fixture App' && withSw.manifest.icons.length === 2,
+      `resilience: the manifest was not resolved with its fields: ${JSON.stringify(withSw.manifest)}`,
+    );
+    assert(
+      withSw.serviceWorker.scriptTextHasFetchListener === true,
+      `resilience: the fetch listener was not read from the worker script: ${JSON.stringify(withSw.serviceWorker)}`,
+    );
+    assert(
+      withSw.serviceWorker.page.controller?.endsWith('/sw.js') === true,
+      `resilience: the page should report its controller: ${JSON.stringify(withSw.serviceWorker.page)}`,
+    );
+    const cdpRegs = withSw.serviceWorker.cdp.registrations;
+    assert(
+      cdpRegs.some((r) => r.pageOrigin && r.scopeURL.startsWith(base)),
+      `resilience: the page-origin registration should be in the CDP list: ${JSON.stringify(cdpRegs)}`,
+    );
+    assert(
+      cdpRegs.some((r) => !r.pageOrigin),
+      `resilience: the browser's own workers must be marked as not this origin: ${JSON.stringify(cdpRegs)}`,
+    );
+    const signals = withSw.installabilitySignals;
+    assert(
+      signals.secureContext === true && signals.manifestResolved === true && signals.hasName === true &&
+        signals.has192Icon === true && signals.has512Icon === true && signals.displayStandaloneish === true &&
+        signals.serviceWorkerRegistered === true && signals.serviceWorkerHasFetchListener === true,
+      `resilience: installability signals are wrong: ${JSON.stringify(signals)}`,
+    );
+
+    // Offline: the precached URL renders from cache, controlled by the worker,
+    // and the legible artifact is on disk.
+    assert(
+      withSw.offline.navigationFailed === false && withSw.offline.rendered?.title === 'Fixture with service worker',
+      `resilience: the precached page should render offline: ${JSON.stringify(withSw.offline)}`,
+    );
+    assert(
+      withSw.offline.rendered.controlled === true,
+      `resilience: the offline render should be under the worker's control: ${JSON.stringify(withSw.offline.rendered)}`,
+    );
+    assert(
+      typeof withSw.offline.screenshot === 'string' && statSync(withSw.offline.screenshot).size > 0,
+      `resilience: the offline screenshot should exist: ${withSw.offline.screenshot}`,
+    );
+
+    // An uncached URL inside the worker's scope falls back to the offline page.
+    const fallback = await gather('resilience', `${base}/uncached-sw`, { quiet: true, wait: 800, screenshots: false });
+    assert(
+      fallback.offline.navigationFailed === false && fallback.offline.rendered?.title === 'Offline fallback',
+      `resilience: an uncached URL should render the fallback: ${JSON.stringify(fallback.offline)}`,
+    );
+
+    // Nothing resilient: the offline navigation fails and says why.
+    const bare = await gather('resilience', `${base}/no-sw`, { quiet: true, wait: 500, screenshots: false });
+    assert(
+      bare.serviceWorker.page.registrations.length === 0 && bare.installabilitySignals.serviceWorkerRegistered === false,
+      `resilience: a page without a worker should report none: ${JSON.stringify(bare.serviceWorker)}`,
+    );
+    assert(
+      bare.manifest.found === false && bare.installabilitySignals.manifestResolved === false,
+      `resilience: a page without a manifest should report none: ${JSON.stringify(bare.manifest)}`,
+    );
+    assert(
+      bare.offline.navigationFailed === true && typeof bare.offline.errorText === 'string' && bare.offline.rendered === null,
+      `resilience: offline navigation should fail with a net error: ${JSON.stringify(bare.offline)}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
