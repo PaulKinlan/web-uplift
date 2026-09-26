@@ -532,6 +532,25 @@ async function testCompareReportsUnconcludedChecks() {
     'remaining-work: shared module should see the partial before-run');
   assert(remaining(before).total === 5 && remaining(after).total === 1,
     'remaining-work: total should be findings + blocked + not-run');
+
+  // web-uplift-1as: a report that claims complete coverage while recording no
+  // checks has zero blocked/not-run rows, so the unconcluded line reads "0 -> 0"
+  // and the comparison looks clean. Say the coverage is unaccounted instead of
+  // counting nothing.
+  const unaccounted = structuredClone(clean);
+  unaccounted.checkOutcomes = [];
+  unaccounted.coverage = { recorded: 0, judged: 0, missing: 0, complete: true };
+  unaccounted.status = 'completed';
+  const unaccountedMd = renderCompareMd(compareReports(unaccounted, unaccounted), { hostName: 'example.test' });
+  assert(
+    unaccountedMd.includes('**Coverage:**') && unaccountedMd.includes('records no checks'),
+    `compare: an unaccounted report must be called out, not counted as clean:\n${unaccountedMd}`,
+  );
+  const completeMd = renderCompareMd(compareReports(clean, clean), { hostName: 'example.test' });
+  assert(
+    !completeMd.includes('**Coverage:**'),
+    `compare: a complete pair must not grow a coverage caveat:\n${completeMd}`,
+  );
 }
 
 async function testScorecardScoringAndRender() {

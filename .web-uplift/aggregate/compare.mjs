@@ -39,16 +39,24 @@ export function compareReports(reportA, reportB, { dirA, dirB } = {}) {
   // five checks never concluded in either run, which looks like "nothing left
   // to do". Report them alongside the findings so concluding a blocked check
   // reads as the progress it is.
-  const unconcluded = (r) => {
+  //
+  // web-uplift-1as: the same reasoning covers coverage that is incomplete
+  // WITHOUT any blocked/not-run row - an unaccounted report that claims
+  // complete while recording no checks, or one whose complete flag is simply
+  // not true. Those would print 0 unconcluded and look clean, so the verdict and
+  // its reasons travel with each side and the renderer says so.
+  const coverageOf = (r) => {
     const c = completionState(r);
-    return c.blocked + c.notRun;
+    return { complete: c.complete, reasons: c.reasons, unconcluded: c.blocked + c.notRun };
   };
-  const unconcludedBefore = unconcluded(reportA);
-  const unconcludedAfter = unconcluded(reportB);
+  const coverageBefore = coverageOf(reportA);
+  const coverageAfter = coverageOf(reportB);
+  const unconcludedBefore = coverageBefore.unconcluded;
+  const unconcludedAfter = coverageAfter.unconcluded;
 
   return {
-    before: { url: reportA.url, auditedAt: reportA.auditedAt, mode: reportA.mode, outstanding: outstandingBefore, unconcluded: unconcludedBefore },
-    after: { url: reportB.url, auditedAt: reportB.auditedAt, mode: reportB.mode, outstanding: outstandingAfter, unconcluded: unconcludedAfter },
+    before: { url: reportA.url, auditedAt: reportA.auditedAt, mode: reportA.mode, outstanding: outstandingBefore, unconcluded: unconcludedBefore, coverage: coverageBefore },
+    after: { url: reportB.url, auditedAt: reportB.auditedAt, mode: reportB.mode, outstanding: outstandingAfter, unconcluded: unconcludedAfter, coverage: coverageAfter },
     summary: {
       outstandingBefore,
       outstandingAfter,
@@ -275,6 +283,14 @@ export function renderCompareMd(cmp, { hostName, runAId, runBId, dirA, dirB } = 
   lines.push(`- **After:** ${runBId ?? cmp.after.auditedAt ?? '?'} (${cmp.after.mode ?? 'report'} mode, ${s.outstandingAfter} outstanding)`);
   lines.push(`- **Outstanding issue-findings:** ${s.outstandingBefore} -> ${s.outstandingAfter}${arrow(s.outstandingAfter - s.outstandingBefore)}`);
   lines.push(`- **Unconcluded checks (blocked/not-run):** ${s.unconcludedBefore} -> ${s.unconcludedAfter}${arrow(s.unconcludedAfter - s.unconcludedBefore)}`);
+  // Coverage that is incomplete without a blocked/not-run row to count would
+  // otherwise read as clean in this file (web-uplift-1as), so name it.
+  const coverageNote = (side, label) =>
+    side.coverage && side.coverage.complete === false && side.unconcluded === 0
+      ? `${label} incomplete: ${side.coverage.reasons.join(', ')}`
+      : null;
+  const coverageNotes = [coverageNote(cmp.before, 'before'), coverageNote(cmp.after, 'after')].filter(Boolean);
+  if (coverageNotes.length) lines.push(`- **Coverage:** ${coverageNotes.join('; ')}`);
   lines.push(`- **Resolved:** ${s.resolved} | **New:** ${s.newlyIntroduced} | **Persisting:** ${s.persisting}`);
   lines.push('');
 
