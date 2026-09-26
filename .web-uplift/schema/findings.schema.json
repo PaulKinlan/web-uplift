@@ -324,6 +324,51 @@
             "type": "string",
             "description": "Concrete remediation following Modern Web Guidance, not a restatement of the problem (e.g. 'Add color-scheme: light dark and use light-dark() for surface colors; see guidance id dark-mode')."
           },
+          "baseline": {
+            "type": "object",
+            "description": "Resolved Baseline status of any modern web platform feature proposed in suggestedFix, queried from web-features (the baseline oracle).",
+            "required": [
+              "featureId",
+              "status"
+            ],
+            "properties": {
+              "featureId": {
+                "type": "string",
+                "description": "web-features feature identifier (e.g. 'light-dark', 'anchor-positioning')."
+              },
+              "featureName": {
+                "type": "string",
+                "description": "Human-readable feature name (e.g. 'light-dark()')."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "widely",
+                  "newly",
+                  "limited"
+                ],
+                "description": "Baseline status: widely = Widely available; newly = Newly available; limited = Limited availability."
+              },
+              "lowDate": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Date (YYYY-MM-DD) the feature became newly available across core engines, if known."
+              },
+              "highDate": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Date (YYYY-MM-DD) the feature became widely available, if applicable."
+              },
+              "fallbackMandatory": {
+                "type": "boolean",
+                "description": "Whether a fallback pattern (@supports, media query, feature detection) is mandatory (true for newly and limited)."
+              }
+            }
+          },
           "effort": {
             "type": "string",
             "enum": [
@@ -418,6 +463,10 @@
         },
         "catalogChecksum": {
           "type": "string"
+        },
+        "baselineCatalogVersion": {
+          "type": "string",
+          "description": "The web-features package version pinned for Baseline status resolution."
         },
         "expected": {
           "type": "integer",

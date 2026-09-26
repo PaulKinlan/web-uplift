@@ -583,7 +583,7 @@
   },
   "coverage": {
     "catalogVersion": "modern-web-guidance@0.0.172",
-    "catalogChecksum": "sha256:605d5709578cea51cd2647a918aca2f5bb0a0ca257fd867a032b39e7da402e36",
+    "catalogChecksum": "sha256:e343ae755e259e9eed3ca53a3da8ea0e961cb5e194b3cb4346f0a6f4b8c8f659",
     "expected": 58,
     "recorded": 58,
     "judged": 58,

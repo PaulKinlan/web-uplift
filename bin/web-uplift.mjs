@@ -16,6 +16,7 @@
  *   validate <report.json>  Enforce exact atomic check coverage before scoring/publication.
  *   flow <record|replay> ...  Record a user journey (headed) or replay one with per-step shots (runner/flow.mjs).
  *   evidence <primitive> <url> [...]  Passthrough to the evidence primitives.
+ *   baseline <query> [...]  Query Baseline browser support status via web-features.
  *
  * The PRIMARY, subscription-friendly path is to `install` the skill and then run
  * `/web-audit <url>` and the fix loop INSIDE your own agent session (Claude Code,
@@ -82,6 +83,9 @@ switch (command) {
     break;
   case 'evidence':
     passthrough(join(PKG_ROOT, 'evidence', 'cli.mjs'), rest);
+    break;
+  case 'baseline':
+    passthrough(join(PKG_ROOT, 'knowledge', 'baseline.mjs'), rest);
     break;
   case '--help':
   case '-h':
@@ -233,9 +237,10 @@ agent session (uses your subscription).`);
   // ../runner) resolve because the layout is preserved under .web-uplift/.
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'aggregate'), to: join(vendorRoot, 'aggregate'), what: 'scorecard + compare + aggregate' });
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'runner'), to: join(vendorRoot, 'runner'), what: 'run history + user-flow record/replay' });
-  plan.push(...dependencyCopySteps(['chrome-remote-interface'], join(vendorRoot, 'node_modules')));
+  plan.push(...dependencyCopySteps(['chrome-remote-interface', 'web-features'], join(vendorRoot, 'node_modules')));
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, '.claude/skills/web-audit/SKILL.md'), to: join(vendorRoot, 'skill', 'SKILL.md'), what: 'canonical web-audit SKILL.md' });
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/principles.json'), to: join(vendorRoot, 'knowledge', 'principles.json'), what: 'principles spec' });
+  plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/baseline.mjs'), to: join(vendorRoot, 'knowledge', 'baseline.mjs'), what: 'baseline oracle' });
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'schema'), to: join(vendorRoot, 'schema'), what: 'findings + config schema' });
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/guidance.md'), to: join(vendorRoot, 'knowledge', 'guidance.md'), what: 'guidance lookup protocol' });
   plan.push({
@@ -359,10 +364,24 @@ function dependencyCopySteps(rootNames, destNodeModules) {
     try {
       pkgJsonPath = require.resolve(`${name}/package.json`);
     } catch {
-      throw new Error(
-        `Cannot vendor dependency "${name}" because it could not be resolved. ` +
-          'Run npm install in the web-uplift package first.',
-      );
+      try {
+        const entry = require.resolve(name);
+        let cur = dirname(entry);
+        while (cur && cur !== dirname(cur)) {
+          const candidate = join(cur, 'package.json');
+          if (existsSync(candidate)) {
+            pkgJsonPath = candidate;
+            break;
+          }
+          cur = dirname(cur);
+        }
+      } catch {}
+      if (!pkgJsonPath) {
+        throw new Error(
+          `Cannot vendor dependency "${name}" because it could not be resolved. ` +
+            'Run npm install in the web-uplift package first.',
+        );
+      }
     }
     const pkgDir = dirname(pkgJsonPath);
 
@@ -520,6 +539,7 @@ HEADLESS / CI path (uses API tokens):
   web-uplift flow record <url> [--out <flow.json>]           Record a user journey (headed browser + on-page overlay).
   web-uplift flow replay <flow.json> [--url <start>] [--out <dir>]  Replay a journey (or Chrome Recorder JSON), screenshot per step.
   web-uplift evidence <primitive> <url> [options]            Raw-CDP evidence primitives.
+  web-uplift baseline <query> [--json]                       Query Baseline support status from web-features.
 
   web-uplift --help | --version
 

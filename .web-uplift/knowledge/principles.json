@@ -156,6 +156,7 @@
     }
   ],
   "guidanceCatalogVersion": "modern-web-guidance@0.0.172",
+  "baselineCatalogVersion": "web-features@3.40.0",
   "appliesAnalysis": "docs/principles-analysis.md",
   "applicabilityModel": {
     "note": "Each principle declares an `applicability` block: `expectation` is either 'default' (expected of essentially every site; absence is a finding) or 'contextual' (legitimately may not apply to some sites; absence is judged, not penalised). `criteria` describes when the principle applies; `optOutWhy` (contextual only) records why a developer might reasonably opt out. The audit may be told a developer's declared scope/opt-outs via web-uplift.json (see schema/config.schema.json): a declared opt-out is reported as `opted-out` (not an issue); for a contextual principle with no declared intent the model makes a judgement call and marks it `not-applicable` WITH a rationale rather than penalising. This is the 'quality without shaming' behaviour."

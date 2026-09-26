@@ -36,6 +36,7 @@
   "exports": {
     ".": "./index.mjs",
     "./evidence": "./evidence/cli.mjs",
+    "./baseline": "./knowledge/baseline.mjs",
     "./agents": "./runner/agents.mjs",
     "./principles": "./knowledge/principles.json",
     "./knowledge/principles": "./knowledge/principles.json",
@@ -73,6 +74,7 @@
     "axe-core": "^4.13.0",
     "chrome-remote-interface": "^0.33.3",
     "serve": "^14.2.4",
+    "web-features": "3.40.0",
     "zod": "^4.4.3"
   },
   "engines": {

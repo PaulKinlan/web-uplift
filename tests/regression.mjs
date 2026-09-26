@@ -43,6 +43,7 @@ try {
   await testTargetsPrimitive();
   await testResiliencePrimitive();
   await testA11yTreePrimitive();
+  await testBaselineOracle();
   await testFlowNormalize();
   console.log('tests OK');
 } finally {
@@ -1233,6 +1234,63 @@ async function testA11yTreePrimitive() {
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
+}
+
+async function testBaselineOracle() {
+  const { lookupBaseline, formatBaseline } = await import('../knowledge/baseline.mjs');
+
+  // 1. Exact ID lookup
+  const newly = lookupBaseline('light-dark');
+  assert(newly.found === true, 'baseline: light-dark should be found');
+  assert(newly.id === 'light-dark' && newly.status === 'newly', 'baseline: light-dark should be newly available');
+  assert(newly.fallbackMandatory === true, 'baseline: newly available should mandate a fallback');
+  assert(newly.lowDate === '2024-05-13', `baseline: lowDate for light-dark should be 2024-05-13, got ${newly.lowDate}`);
+
+  const widely = lookupBaseline('color-scheme');
+  assert(widely.found === true, 'baseline: color-scheme should be found');
+  assert(widely.status === 'widely' && widely.fallbackMandatory === false, 'baseline: color-scheme should be widely available');
+  assert(widely.highDate === '2024-08-03', `baseline: highDate for color-scheme should be 2024-08-03, got ${widely.highDate}`);
+
+  // 2. BCD compat key lookup & property suffix
+  const anchor = lookupBaseline('position-anchor');
+  assert(anchor.found === true && anchor.id === 'anchor-positioning', 'baseline: position-anchor should resolve to anchor-positioning');
+  assert(anchor.status === 'limited' && anchor.fallbackMandatory === true, 'baseline: anchor-positioning should be limited');
+
+  const fullBcd = lookupBaseline('css.properties.position-anchor');
+  assert(fullBcd.found === true && fullBcd.id === 'anchor-positioning', 'baseline: full BCD key should resolve');
+
+  // 3. Name lookup & parenthesis tolerance
+  const byName = lookupBaseline('Anchor positioning');
+  assert(byName.found === true && byName.id === 'anchor-positioning', 'baseline: lookup by name should resolve');
+  const withParens = lookupBaseline('light-dark()');
+  assert(withParens.found === true && withParens.id === 'light-dark', 'baseline: query with () should resolve');
+
+  // 4. Redirect resolution
+  const redirect = lookupBaseline('masonry');
+  assert(redirect.found === true && redirect.id === 'grid-lanes', 'baseline: masonry should resolve to grid-lanes');
+  assert(redirect.redirectedFrom === 'masonry', 'baseline: redirectedFrom should record the alias');
+
+  // 5. Unknown query & suggestions
+  const unknown = lookupBaseline('non-existent-xyz-feature');
+  assert(unknown.found === false, 'baseline: unknown feature should return found=false');
+
+  const formattedUnknown = formatBaseline(unknown);
+  assert(formattedUnknown.includes('Unknown web platform feature "non-existent-xyz-feature"'), 'baseline: format unknown should name feature');
+
+  // 6. CLI execution: bin/web-uplift.mjs baseline <query> [--json]
+  const jsonRun = run(process.execPath, ['bin/web-uplift.mjs', 'baseline', 'light-dark', '--json']);
+  assert(jsonRun.status === 0, `baseline CLI: json run failed:\n${jsonRun.stderr}`);
+  const parsedJson = JSON.parse(jsonRun.stdout);
+  assert(parsedJson.id === 'light-dark' && parsedJson.status === 'newly', 'baseline CLI: json output mismatch');
+
+  const textRun = run(process.execPath, ['bin/web-uplift.mjs', 'baseline', 'color-scheme']);
+  assert(textRun.status === 0, `baseline CLI: text run failed:\n${textRun.stderr}`);
+  assert(textRun.stdout.includes('Baseline Widely available') && textRun.stdout.includes('Fallback: optional'),
+    `baseline CLI: text output unexpected:\n${textRun.stdout}`);
+
+  const badRun = run(process.execPath, ['bin/web-uplift.mjs', 'baseline', 'non-existent-xyz-feature']);
+  assert(badRun.status === 1, `baseline CLI: bad query should exit 1, got ${badRun.status}`);
+  assert(badRun.stderr.includes('Unknown web platform feature'), `baseline CLI: bad query should log error to stderr:\n${badRun.stderr}`);
 }
 
 async function testFlowNormalize() {
