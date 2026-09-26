@@ -1,7 +1,7 @@
 /**
  * Baseline Oracle for web-uplift.
  * Queries web-features for the canonical Baseline browser support status of any
- * web platform feature (CSS property, function, at-rule, HTML element, JS API).
+ * web platform feature (CSS property, function, at-rule, selector, HTML element, JS API).
  *
  * Usage:
  *   import { lookupBaseline, formatBaseline } from './baseline.mjs';
@@ -13,8 +13,11 @@
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { features } from 'web-features';
 
-// Pre-index BCD compat keys and names for fast lookup.
-const compatIndex = new Map();
+// 1. Build exact BCD index (lowercase BCD key -> feature ID)
+const exactBcdIndex = new Map();
+// 2. Build suffix index tracking all feature IDs with that suffix
+const suffixMap = new Map();
+// 3. Name index (lowercase feature name -> feature ID)
 const nameIndex = new Map();
 
 for (const [id, f] of Object.entries(features)) {
@@ -24,21 +27,21 @@ for (const [id, f] of Object.entries(features)) {
   if (Array.isArray(f.compat_features)) {
     for (const k of f.compat_features) {
       const lowerKey = k.toLowerCase();
-      compatIndex.set(lowerKey, id);
-      // Index by the last segment (e.g. "position-anchor" from "css.properties.position-anchor")
+      exactBcdIndex.set(lowerKey, id);
       const dotIndex = lowerKey.lastIndexOf('.');
       if (dotIndex !== -1) {
-        const prop = lowerKey.slice(dotIndex + 1);
-        if (!compatIndex.has(prop)) {
-          compatIndex.set(prop, id);
+        const suffix = lowerKey.slice(dotIndex + 1);
+        if (!suffixMap.has(suffix)) {
+          suffixMap.set(suffix, new Set());
         }
+        suffixMap.get(suffix).add(id);
       }
     }
   }
 }
 
 /**
- * Resolve redirects if a feature entry is an alias / moved record.
+ * Resolve redirects if a feature entry is an alias, moved, or split record.
  */
 function resolveFeature(id, visited = new Set()) {
   const f = features[id];
@@ -54,19 +57,27 @@ function resolveFeature(id, visited = new Set()) {
     }
   }
 
-  if (Array.isArray(f.redirect_targets) && f.redirect_targets[0] && features[f.redirect_targets[0]]) {
-    const target = resolveFeature(f.redirect_targets[0], visited);
-    if (target) {
-      target.redirectedFrom = target.redirectedFrom || id;
-      return target;
-    }
+  if (Array.isArray(f.redirect_targets) && f.redirect_targets.length > 0) {
+    const targets = f.redirect_targets
+      .map((tId) => resolveFeature(tId, new Set(visited)))
+      .filter(Boolean);
+    return { id, feature: f, targets, redirectedFrom: null };
   }
 
   return { id, feature: f, redirectedFrom: null };
 }
 
+function computeFeatureStatus(f) {
+  const baseline = f.status?.baseline ?? false;
+  const status = baseline === 'high' ? 'widely' : baseline === 'low' ? 'newly' : 'limited';
+  const fallbackMandatory = status !== 'widely';
+  const lowDate = f.status?.baseline_low_date || null;
+  const highDate = f.status?.baseline_high_date || null;
+  return { status, baseline, fallbackMandatory, lowDate, highDate };
+}
+
 /**
- * Look up Baseline status for a feature ID, CSS property, function, or keyword.
+ * Look up Baseline status for a feature ID, CSS property, function, selector, or keyword.
  *
  * @param {string} rawQuery
  * @returns {object}
@@ -76,70 +87,151 @@ export function lookupBaseline(rawQuery) {
     return { found: false, query: String(rawQuery ?? ''), error: 'Query must be a non-empty string' };
   }
 
-  const query = rawQuery.toLowerCase().trim().replace(/\(\)$/, '');
+  const raw = rawQuery.toLowerCase().trim();
+  const query = raw.replace(/\(\)$/, '');
+  const stripped = query.replace(/^(:{1,2}|@)/, '');
+
   if (!query) {
     return { found: false, query: rawQuery, error: 'Empty query' };
   }
 
   let resolved = null;
 
-  // 1. Exact feature ID match
-  if (features[query]) {
-    resolved = resolveFeature(query);
+  // A. Exact feature ID match (try query, stripped, raw)
+  for (const q of [query, stripped, raw]) {
+    if (features[q]) {
+      resolved = resolveFeature(q);
+      break;
+    }
   }
 
-  // 2. Exact feature name match
-  if (!resolved && nameIndex.has(query)) {
-    resolved = resolveFeature(nameIndex.get(query));
-  }
-
-  // 3. Exact BCD compat key or property suffix match
-  if (!resolved && compatIndex.has(query)) {
-    resolved = resolveFeature(compatIndex.get(query));
-  }
-
-  // 4. Try common CSS prefixes if not found
+  // B. Exact feature name match
   if (!resolved) {
-    for (const prefix of ['css.properties.', 'css.types.', 'css.at-rules.']) {
-      const prefixed = prefix + query;
-      if (compatIndex.has(prefixed)) {
-        resolved = resolveFeature(compatIndex.get(prefixed));
+    for (const q of [query, stripped, raw]) {
+      if (nameIndex.has(q)) {
+        resolved = resolveFeature(nameIndex.get(q));
         break;
       }
     }
   }
 
-  if (resolved && resolved.feature) {
-    const { id, feature: f, redirectedFrom } = resolved;
-    const baseline = f.status?.baseline ?? false;
-    const status = baseline === 'high' ? 'widely' : baseline === 'low' ? 'newly' : 'limited';
-    const fallbackMandatory = status !== 'widely';
-    const lowDate = f.status?.baseline_low_date || null;
-    const highDate = f.status?.baseline_high_date || null;
+  // C. Exact BCD key match
+  if (!resolved) {
+    for (const q of [query, stripped, raw]) {
+      if (exactBcdIndex.has(q)) {
+        resolved = resolveFeature(exactBcdIndex.get(q));
+        break;
+      }
+    }
+  }
 
-    return {
-      found: true,
-      id,
-      name: f.name || id,
-      description: f.description || '',
-      status,
-      baseline,
-      lowDate,
-      highDate,
-      fallbackMandatory,
-      support: f.status?.support || {},
-      compatFeatures: f.compat_features || [],
-      spec: f.spec || [],
-      redirectedFrom,
-    };
+  // D. Standard CSS prefixes against stripped and query
+  if (!resolved) {
+    const prefixes = [
+      'css.properties.',
+      'css.types.',
+      'css.at-rules.',
+      'css.selectors.',
+    ];
+    for (const q of [stripped, query]) {
+      for (const prefix of prefixes) {
+        const key = prefix + q;
+        if (exactBcdIndex.has(key)) {
+          resolved = resolveFeature(exactBcdIndex.get(key));
+          break;
+        }
+      }
+      if (resolved) break;
+    }
+  }
+
+  // E. Suffix match (only if unambiguous)
+  if (!resolved) {
+    for (const q of [stripped, query]) {
+      const owners = suffixMap.get(q);
+      if (owners) {
+        if (owners.size === 1) {
+          const singleId = [...owners][0];
+          resolved = resolveFeature(singleId);
+          break;
+        } else {
+          return {
+            found: false,
+            ambiguous: true,
+            query: rawQuery,
+            candidates: [...owners],
+            error: `Query "${rawQuery}" is ambiguous and matches ${owners.size} features: ${[...owners].join(', ')}`,
+          };
+        }
+      }
+    }
+  }
+
+  if (resolved) {
+    // Case 1: Plural redirect targets (e.g. text-wrap-style)
+    if (Array.isArray(resolved.targets) && resolved.targets.length > 0) {
+      const targetDetails = resolved.targets.map((t) => {
+        const f = t.feature;
+        const s = computeFeatureStatus(f);
+        return {
+          id: t.id,
+          featureId: t.id,
+          name: f.name || t.id,
+          featureName: f.name || t.id,
+          description: f.description || '',
+          ...s,
+          support: f.status?.support || {},
+        };
+      });
+
+      // Combined status: weakest link determines safety
+      const hasLimited = targetDetails.some((t) => t.status === 'limited');
+      const hasNewly = targetDetails.some((t) => t.status === 'newly');
+      const combinedStatus = hasLimited ? 'limited' : hasNewly ? 'newly' : 'widely';
+      const fallbackMandatory = combinedStatus !== 'widely';
+
+      return {
+        found: true,
+        id: resolved.id,
+        featureId: resolved.id,
+        name: resolved.feature.name || resolved.id,
+        featureName: resolved.feature.name || resolved.id,
+        description: resolved.feature.description || '',
+        status: combinedStatus,
+        baseline: combinedStatus === 'widely' ? 'high' : combinedStatus === 'newly' ? 'low' : false,
+        fallbackMandatory,
+        targets: targetDetails,
+        redirectedFrom: resolved.redirectedFrom || null,
+      };
+    }
+
+    // Case 2: Single feature
+    if (resolved.feature) {
+      const { id, feature: f, redirectedFrom } = resolved;
+      const s = computeFeatureStatus(f);
+
+      return {
+        found: true,
+        id,
+        featureId: id,
+        name: f.name || id,
+        featureName: f.name || id,
+        description: f.description || '',
+        ...s,
+        support: f.status?.support || {},
+        compatFeatures: f.compat_features || [],
+        spec: f.spec || [],
+        redirectedFrom: redirectedFrom || null,
+      };
+    }
   }
 
   // Not found: gather suggestions
   const suggestions = [];
   for (const [id, f] of Object.entries(features)) {
-    if (f.name && f.name.toLowerCase().includes(query)) {
+    if (f.name && f.name.toLowerCase().includes(stripped)) {
       suggestions.push(id);
-    } else if (id.includes(query)) {
+    } else if (id.includes(stripped)) {
       suggestions.push(id);
     }
     if (suggestions.length >= 5) break;
@@ -157,10 +249,32 @@ export function lookupBaseline(rawQuery) {
  */
 export function formatBaseline(result) {
   if (!result || !result.found) {
+    if (result?.ambiguous) {
+      return `Query "${result.query}" is ambiguous and matches ${result.candidates.length} features: ${result.candidates.join(', ')}. Please query with a more specific feature ID or BCD key.`;
+    }
     const sug = result?.suggestions?.length
       ? ` Did you mean: ${result.suggestions.join(', ')}?`
       : '';
     return `Unknown web platform feature "${result?.query || ''}".${sug}`;
+  }
+
+  if (Array.isArray(result.targets) && result.targets.length > 0) {
+    const lines = [
+      `${result.name} (${result.id}) [split into ${result.targets.length} features]:`,
+    ];
+    for (const t of result.targets) {
+      const statusLabel =
+        t.status === 'widely'
+          ? 'Widely available'
+          : t.status === 'newly'
+            ? 'Newly available'
+            : 'Limited availability';
+      const dateInfo = t.lowDate ? ` (since ${t.lowDate})` : '';
+      lines.push(`  - ${t.name} (${t.id}): Baseline ${statusLabel}${dateInfo}`);
+    }
+    lines.push(`  Combined status: Baseline ${result.status === 'widely' ? 'Widely available' : result.status === 'newly' ? 'Newly available' : 'Limited availability'}`);
+    lines.push(`  Fallback: ${result.fallbackMandatory ? 'MANDATORY (contains limited or newly available features)' : 'optional (all targets widely available)'}`);
+    return lines.join('\n');
   }
 
   const statusLabel =
@@ -211,6 +325,8 @@ if (isDirectCall) {
       'Check the Baseline status of a web platform feature, CSS property, function or API.\n\n' +
       'Examples:\n' +
       '  node knowledge/baseline.mjs light-dark\n' +
+      '  node knowledge/baseline.mjs @container\n' +
+      '  node knowledge/baseline.mjs :has\n' +
       '  node knowledge/baseline.mjs position-anchor\n' +
       '  node knowledge/baseline.mjs color-scheme --json'
     );

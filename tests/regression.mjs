@@ -1243,6 +1243,7 @@ async function testBaselineOracle() {
   const newly = lookupBaseline('light-dark');
   assert(newly.found === true, 'baseline: light-dark should be found');
   assert(newly.id === 'light-dark' && newly.status === 'newly', 'baseline: light-dark should be newly available');
+  assert(newly.featureId === 'light-dark' && newly.featureName === 'light-dark()', 'baseline: schema aliases featureId/featureName must be present');
   assert(newly.fallbackMandatory === true, 'baseline: newly available should mandate a fallback');
   assert(newly.lowDate === '2024-05-13', `baseline: lowDate for light-dark should be 2024-05-13, got ${newly.lowDate}`);
 
@@ -1265,28 +1266,60 @@ async function testBaselineOracle() {
   const withParens = lookupBaseline('light-dark()');
   assert(withParens.found === true && withParens.id === 'light-dark', 'baseline: query with () should resolve');
 
-  // 4. Redirect resolution
+  // 4. Symbol forms (@container, :has, :popover-open, ::part)
+  const container = lookupBaseline('@container');
+  assert(container.found === true && container.id === 'container-queries', 'baseline: @container should resolve to container-queries');
+  assert(container.status === 'widely' && container.fallbackMandatory === false, 'baseline: container-queries should be widely available');
+
+  const has = lookupBaseline(':has');
+  assert(has.found === true && has.id === 'has', 'baseline: :has should resolve to has');
+  assert(has.status === 'widely', 'baseline: :has should be widely available');
+
+  const popover = lookupBaseline(':popover-open');
+  assert(popover.found === true && popover.id === 'popover', 'baseline: :popover-open should resolve to popover');
+  assert(popover.status === 'newly' && popover.fallbackMandatory === true, 'baseline: popover should be newly available with mandatory fallback');
+
+  // 5. Ambiguous short keys resolve to CSS types first, not data-order collisions
+  const min = lookupBaseline('min');
+  assert(min.found === true && min.id === 'min-max-clamp', `baseline: min should resolve to min-max-clamp, got ${min.id}`);
+  assert(min.status === 'widely', 'baseline: min-max-clamp should be widely available');
+
+  const max = lookupBaseline('max');
+  assert(max.found === true && max.id === 'min-max-clamp', `baseline: max should resolve to min-max-clamp, got ${max.id}`);
+
+  // 6. Redirect resolution (single and plural targets)
   const redirect = lookupBaseline('masonry');
   assert(redirect.found === true && redirect.id === 'grid-lanes', 'baseline: masonry should resolve to grid-lanes');
   assert(redirect.redirectedFrom === 'masonry', 'baseline: redirectedFrom should record the alias');
 
-  // 5. Unknown query & suggestions
+  const pluralRedirect = lookupBaseline('text-wrap-style');
+  assert(pluralRedirect.found === true && pluralRedirect.id === 'text-wrap-style', 'baseline: text-wrap-style should be found');
+  assert(Array.isArray(pluralRedirect.targets) && pluralRedirect.targets.length === 3, 'baseline: text-wrap-style should have 3 targets');
+  assert(pluralRedirect.status === 'limited' && pluralRedirect.fallbackMandatory === true, 'baseline: split feature with limited targets must be limited with mandatory fallback');
+  const formattedPlural = formatBaseline(pluralRedirect);
+  assert(formattedPlural.includes('text-wrap: pretty') && formattedPlural.includes('Limited availability'), 'baseline: format plural should show individual target statuses');
+
+  // 7. Unknown query & suggestions
   const unknown = lookupBaseline('non-existent-xyz-feature');
   assert(unknown.found === false, 'baseline: unknown feature should return found=false');
 
   const formattedUnknown = formatBaseline(unknown);
   assert(formattedUnknown.includes('Unknown web platform feature "non-existent-xyz-feature"'), 'baseline: format unknown should name feature');
 
-  // 6. CLI execution: bin/web-uplift.mjs baseline <query> [--json]
+  // 8. CLI execution: bin/web-uplift.mjs baseline <query> [--json]
   const jsonRun = run(process.execPath, ['bin/web-uplift.mjs', 'baseline', 'light-dark', '--json']);
   assert(jsonRun.status === 0, `baseline CLI: json run failed:\n${jsonRun.stderr}`);
   const parsedJson = JSON.parse(jsonRun.stdout);
-  assert(parsedJson.id === 'light-dark' && parsedJson.status === 'newly', 'baseline CLI: json output mismatch');
+  assert(parsedJson.id === 'light-dark' && parsedJson.featureId === 'light-dark' && parsedJson.status === 'newly', 'baseline CLI: json output mismatch');
 
   const textRun = run(process.execPath, ['bin/web-uplift.mjs', 'baseline', 'color-scheme']);
   assert(textRun.status === 0, `baseline CLI: text run failed:\n${textRun.stderr}`);
   assert(textRun.stdout.includes('Baseline Widely available') && textRun.stdout.includes('Fallback: optional'),
     `baseline CLI: text output unexpected:\n${textRun.stdout}`);
+
+  const symbolRun = run(process.execPath, ['bin/web-uplift.mjs', 'baseline', '@container']);
+  assert(symbolRun.status === 0 && symbolRun.stdout.includes('container-queries'),
+    `baseline CLI: @container run failed:\n${symbolRun.stdout}`);
 
   const badRun = run(process.execPath, ['bin/web-uplift.mjs', 'baseline', 'non-existent-xyz-feature']);
   assert(badRun.status === 1, `baseline CLI: bad query should exit 1, got ${badRun.status}`);

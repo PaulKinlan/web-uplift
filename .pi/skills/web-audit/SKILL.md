@@ -565,13 +565,14 @@ audit and go straight to the climb).
 The loop, highest-leverage task first:
 
 1. `retrieve` the task's guidance guide and query the baseline oracle via
-   `node knowledge/baseline.mjs <feature>` (or `web-uplift baseline <feature>`).
+   `node knowledge/baseline.mjs <feature>` (or `node .web-uplift/knowledge/baseline.mjs <feature>`,
+   or `web-uplift baseline <feature>`).
    Check the exact Baseline status rather than asserting it from model memory:
    assume Baseline Widely available (`widely`) is safe; if Newly available
    (`newly`) or Limited (`limited`), follow the guide's fallback advice (e.g.
    `@supports`, `prefers-*` media queries, or feature detection) - the fallback
    is MANDATORY. Record the resolved status on the finding (`finding.baseline`
-   with `featureId`, `status`, `lowDate`, `fallbackMandatory`).
+   with `featureId`, `featureName`, `status`, `lowDate`, `fallbackMandatory`).
 2. Write the fix into the local source under `<dir>`. You are the coding agent.
    Honour `web-uplift.json`: never "fix" a principle reported `opted-out` or
    `not-applicable` - those are out of scope, not issues.
