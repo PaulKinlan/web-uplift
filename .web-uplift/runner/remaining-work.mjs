@@ -39,6 +39,21 @@ export function completionState(report) {
   // clean. It cannot claim a completed run either.
   if (!coverage) reasons.push('no coverage accounting in the report');
   else if (coverage.complete !== true && !reasons.length) reasons.push('coverage.complete is not true');
+  // A `complete: true` claim has to be backed by the accounting, not merely
+  // asserted (web-uplift-cpm): a report with an empty checkOutcomes array and
+  // coverage.complete true used to pass fix mode as "every check concluded" with
+  // zero checks, the absence-of-evidence failure the atomic contract exists to
+  // prevent. The publication validator refuses that report; fix mode and compare
+  // must too, or a self-contradictory report buys a pass by asserting one field.
+  if (coverage && coverage.complete === true) {
+    const accounted = Math.max(rows.length, count(coverage.recorded));
+    const expected = count(coverage.expected);
+    if (accounted === 0) {
+      reasons.push('coverage.complete is true but the report records no checks');
+    } else if (expected > 0 && accounted < expected) {
+      reasons.push(`coverage.complete is true but only ${accounted} of ${expected} checks are recorded`);
+    }
+  }
 
   return { complete: reasons.length === 0, blocked, notRun, missing, unknown, duplicates, reasons };
 }

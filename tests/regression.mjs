@@ -34,6 +34,7 @@ try {
   testBatchFlowDryRun();
   testFixSurvivesUnscoreableReports();
   testFixRefusesPassOnIncompleteCoverage();
+  testFixRefusesContradictoryCoverageClaim();
   testFixRejectsMalformedReports();
   await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
@@ -353,6 +354,66 @@ function testFixRefusesPassOnIncompleteCoverage() {
 // a raw stack, and a non-array checkOutcomes was silently ignored, which let a
 // zero-findings report print PASS. The shape is now validated once, at read time,
 // and reported by name.
+// web-uplift-cpm: a report whose coverage CLAIMS complete while recording no
+// checks used to pass fix mode - "every check concluded" with zero checks, the
+// absence-of-evidence failure the atomic coverage contract exists to prevent.
+// The publication validator refuses such a report; fix mode now refuses it too,
+// by naming the contradiction instead of trusting one asserted field.
+function testFixRefusesContradictoryCoverageClaim() {
+  const clean = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
+  assert((clean.findings ?? []).length === 0, 'fix cpm: the fixed fixture should have no findings');
+  const expected = Number(clean.coverage?.expected ?? 0);
+  const rows = (clean.checkOutcomes ?? []).length;
+  assert(expected > 0 && rows === expected, `fix cpm: the fixture should account for every check (rows ${rows}, expected ${expected})`);
+
+  const runFix = (findings) => run(process.execPath, [
+    'fixer/fix.mjs',
+    '--findings', findings,
+    '--target', join(tmp, 'fix-src'),
+    '--audit-url', 'http://127.0.0.1:9/',
+    '--out', join(tmp, `fixcpm-out-${Math.random().toString(36).slice(2)}`),
+    '--reports-root', join(tmp, `fixcpm-reports-${Math.random().toString(36).slice(2)}`),
+    '--max-iterations', '0',
+  ]);
+
+  // The bead's repro: zero rows, empty accounting, complete: true.
+  const zeroRows = structuredClone(clean);
+  zeroRows.checkOutcomes = [];
+  zeroRows.coverage = { recorded: 0, judged: 0, missing: 0, complete: true };
+  zeroRows.status = 'completed';
+  writeFileSync(join(tmp, 'cpm-zero-rows.json'), JSON.stringify(zeroRows));
+
+  // The subtler shape: rows exist, but the accounting claims complete while
+  // recording only a fraction of the checks the report expects.
+  const shortAccounting = structuredClone(clean);
+  shortAccounting.checkOutcomes = shortAccounting.checkOutcomes.slice(0, 5);
+  shortAccounting.coverage = { ...shortAccounting.coverage, recorded: 5, judged: 5, complete: true };
+  writeFileSync(join(tmp, 'cpm-short-accounting.json'), JSON.stringify(shortAccounting));
+
+  const zeroRun = runFix(join(tmp, 'cpm-zero-rows.json'));
+  assert(!/^PASS:/m.test(zeroRun.stdout), `fix cpm: a report claiming complete coverage with zero checks must not pass:\n${zeroRun.stdout}`);
+  assert(zeroRun.status === 1, `fix cpm: the zero-check claim should exit non-zero, got ${zeroRun.status}:\n${zeroRun.stdout}`);
+  assert(
+    /coverage\.complete is true but the report records no checks/.test(zeroRun.stdout),
+    `fix cpm: the refusal should name the contradiction:\n${zeroRun.stdout}`,
+  );
+
+  const shortRun = runFix(join(tmp, 'cpm-short-accounting.json'));
+  assert(!/^PASS:/m.test(shortRun.stdout), `fix cpm: 5 of ${expected} recorded must not pass:\n${shortRun.stdout}`);
+  assert(shortRun.status === 1, `fix cpm: the short accounting should exit non-zero, got ${shortRun.status}:\n${shortRun.stdout}`);
+  assert(
+    new RegExp(`coverage\\.complete is true but only 5 of ${expected} checks are recorded`).test(shortRun.stdout),
+    `fix cpm: the refusal should name the shortfall:\n${shortRun.stdout}`,
+  );
+
+  // The control: a genuinely complete, zero-finding report still passes.
+  const cleanRun = runFix(join(repoRoot, 'examples/playground-report-fixed.json'));
+  assert(
+    cleanRun.status === 0 && /PASS: no outstanding issues remain and every check concluded\./.test(cleanRun.stdout),
+    `fix cpm: a genuinely complete clean report must still pass:\n${cleanRun.stdout}${cleanRun.stderr}`,
+  );
+}
+
 function testFixRejectsMalformedReports() {
   const complete = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
 
