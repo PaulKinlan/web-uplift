@@ -266,7 +266,7 @@ Google CSS `display=swap` parameter; the fixes preserve swap semantics.
 ### Patch F-005b: `layouts/partials/moi.html`, inline the 3 icons
 
 Canonical Material Symbols Outlined 24px SVG paths (Apache-2.0, from
-`google/material-design-icons`, fetched 2026-10-04; 1,493 bytes total for all
+`google/material-design-icons`, fetched 2026-10-04; 1,502 bytes total for all
 four icons vs the 1,138,171-byte variable font). `currentColor` inherits the
 existing `text-tertiary`/`text-on-surface-variant` Tailwind colors; sized to
 match the spans they replace; `aria-hidden` because the enclosing links keep
@@ -397,4 +397,5 @@ work this fleet must not do itself under the hub's hands-off constraint.
   the F-005 capture: dual analytics still loads (Vercel Insights 2.3KB, gtag
   170,795B, analytics.js 21,409B) and CSP `unsafe-inline` is still served.
   Console stayed clean in every capture (0 errors; 2 warnings, both
-  third-party analytics).
+  Permissions-Policy header feature warnings for `browsing-topics` and
+  `interest-cohort`, i.e. first-party header feature warnings, not analytics).
