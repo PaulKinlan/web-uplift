@@ -45,6 +45,7 @@ try {
   await testA11yTreePrimitive();
   await testBaselineOracle();
   await testFlowNormalize();
+  await testLaunchSessionLoop();
   console.log('tests OK');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
@@ -1374,6 +1375,16 @@ function runAsync(command, args, opts = {}) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+// The Chrome bootstrap was flaky in CI: a bare CDP({ port }) relied on a
+// default page target that Chrome for Testing 154 sometimes does not provide.
+// Keep a cheap (3-iteration) launch+newSession loop in the suite so a
+// regression fails fast instead of surfacing as a random mid-suite death.
+async function testLaunchSessionLoop() {
+  const result = await runAsync(process.execPath, [join(repoRoot, 'tests', 'launch-loop.mjs'), '3']);
+  assert(result.status === 0, `launch-session loop failed:
+${result.stderr || result.stdout}`);
 }
 
 function testSyntaxChecks() {
