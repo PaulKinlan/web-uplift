@@ -1,0 +1,30 @@
+name: cdp-copy-sync
+
+# The repo vendors the installed copy of the evidence launcher at
+# .web-uplift/evidence/cdp.mjs (that is the tree `web-uplift install` copies into
+# a consumer project). Nothing regenerates it automatically, so this job fails
+# when the vendored copy stops being byte-identical to evidence/cdp.mjs.
+#
+# Deliberately unfiltered and dependency-free: tests/cdp-copy-sync.mjs is pure
+# Node builtins over two files, so it needs no npm install, no Chrome and no
+# served fixture, and it runs in about a second on every push and PR.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  cdp-copy-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # checkout leaves us at the repo root; the script also resolves its own
+      # paths from its location, so this is stable regardless of cwd.
+      - name: Vendored cdp.mjs matches its source
+        run: node tests/cdp-copy-sync.mjs
