@@ -1,0 +1,79 @@
+{
+  "bead": "web-uplift-aoo.1",
+  "date": "2026-10-04T23:05:00Z",
+  "tool": "web-uplift evidence primitives (raw CDP, chrome-remote-interface)",
+  "chrome": "/home/exedev/.cache/chrome/linux-154.0.8037.92/chrome-linux64/chrome (Chrome 154.0.8037.92)",
+  "target": "https://paul.kinlan.me/",
+  "purpose": "Live re-verification of the two HIGH findings from the 2026-09-25 report-mode audit. NOT a fresh audit.",
+  "F001_dark_mode": {
+    "claim": "no dark mode: light-only render under emulated prefers-color-scheme: dark, byte-identical screenshots",
+    "verdict": "REPRODUCES",
+    "method": "screenshot primitive, viewport 1280x720, wait 3000ms; two light captures establish capture determinism, one capture under --emulate-media prefers-color-scheme=dark",
+    "sha256": {
+      "home-light-1.png": "cf8c0b801444d4042004e4e62bb68a1d87692472819e40fef316440bfaacff76",
+      "home-light-2.png": "cf8c0b801444d4042004e4e62bb68a1d87692472819e40fef316440bfaacff76",
+      "home-dark-1.png": "cf8c0b801444d4042004e4e62bb68a1d87692472819e40fef316440bfaacff76"
+    },
+    "interpretation": "light-1 == light-2 proves the capture pipeline is deterministic for this page (identical bytes twice), so dark == light is a real render identity, not capture noise: the page paints exactly the same pixels under emulated dark preference.",
+    "cssomCorroboration": {
+      "metaColorScheme": "light",
+      "rootComputedColorScheme": "light",
+      "bodyBackgroundColor": "rgb(255, 255, 255)",
+      "bodyColor": "rgb(17, 24, 39)",
+      "onlyPrefersColorSchemeRule": "@media (prefers-color-scheme: dark) { :where(html) { --shadow-color: 220 40% 2%; --shadow-strength: 25%; } } (inline style block; shadows only, no surface/text/link overrides)",
+      "pinnedDeclarations": ":root { color-scheme: light; } and :where(html){ ... color-scheme: light; ... }",
+      "themeToggleInDom": "none (no [data-theme], no theme buttons, documentElement.data-theme null)",
+      "tokenSystemNote": "the inline design system exposes overridable custom properties (--text-1: var(--gray-12); --surface-1: var(--gray-0); --surface-2/3/4; --link; --scrollthumb-color ...), so a dark palette is a pure variable-override block - no selector rewrite needed"
+    },
+    "artifacts": ["png/home-light-1.png", "png/home-light-2.png", "png/home-dark-1.png", "f001-cssom-probe-dark.json", "f001-f005-fontprobe.json"]
+  },
+  "F005_fonts": {
+    "claim": "1.19MB fonts incl. 1.1MB Material Symbols; 2 render-blocking font CSS requests",
+    "verdict": "REPRODUCES",
+    "method": "har primitive over the load (wait 4000ms), summary read; DOM confirmation via evaluate probe of head links",
+    "measured": {
+      "totalPageTransferredBytes": 1432199,
+      "fontTransferredBytes": 1186459,
+      "fontShareOfTotalBytes": "82.8%",
+      "fontRequests": [
+        {
+          "url": "https://fonts.gstatic.com/s/materialsymbolsoutlined/v375/kJEPBvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzBwG-RpA6RzaxHMPdY40KH8nGzv3fzfVJO1Q.woff2",
+          "family": "Material Symbols Outlined (variable, wght 100..700 + FILL 0..1)",
+          "transferredBytes": 1138171,
+          "timeMs": 979.64
+        },
+        {
+          "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2",
+          "family": "Inter (latin subset)",
+          "transferredBytes": 48288,
+          "timeMs": 720.82
+        }
+      ],
+      "renderBlockingFontCssRequests": [
+        {
+          "url": "https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap",
+          "initiator": "parser, HTML line 116, priority VeryHigh, <link rel=stylesheet> in <head>, no media/print/async, no preload pattern"
+        },
+        {
+          "url": "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap",
+          "initiator": "parser, HTML line 117, priority VeryHigh, <link rel=stylesheet> in <head>, no media/print/async, no preload pattern"
+        }
+      ],
+      "materialSymbolsUsageOnHomepage": {
+        "spans": 6,
+        "uniqueGlyphs": ["arrow_forward", "alternate_email", "rss_feed", "mail"],
+        "note": "4 unique glyphs delivered by a 1.14MB two-axis variable font"
+      },
+      "outfitNote": "Outfit is declared in the Google Fonts CSS but no Outfit file was fetched on the homepage (document.fonts shows Outfit faces unloaded; font-family census finds Inter on 284 elements, Material Symbols on 6, no Outfit usage in the top families) - it is dead weight in the request URL for this template",
+      "otherConfirmedSignals": {
+        "dualAnalytics": "Vercel Insights script.js (2.3KB) + googletagmanager gtag/js G-V4DZ9TE0NV (170,795 bytes) + legacy google-analytics analytics.js (21,409 bytes) all load on the homepage",
+        "document": "73,656 bytes HTML (curl content-length), 21,950 transferred"
+      }
+    },
+    "deltaVsOriginalAudit": "original: 1.19MB fonts incl 1.1MB Material Symbols; now: 1.186MB fonts incl 1.138MB Material Symbols - same finding, same magnitude (Material Symbols URL version moved v### over time).",
+    "artifacts": ["f005-load-summary.json", "f005-load.har (HAR, gitignored)", "f001-f005-fontprobe.json"]
+  },
+  "notTestedHere": [
+    "The 10 MEDIUM/LOW findings were NOT re-verified (out of scope for this bounded increment; the hub forbade a fresh audit). Two incidental corroborations fell out of the F-005 capture and are recorded above: dual analytics still loads, and CSP unsafe-inline is still present in the response headers (see headers in f005-load-summary.json / curl below)."
+  ]
+}

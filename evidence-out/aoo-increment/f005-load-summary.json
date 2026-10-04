@@ -1,0 +1,279 @@
+{
+  "totals": {
+    "requestCount": 15,
+    "totalTransferredBytes": 1432199,
+    "totalContentBytes": 4451,
+    "byResourceType": {
+      "document": {
+        "count": 1,
+        "transferredBytes": 21950,
+        "contentBytes": 911
+      },
+      "script": {
+        "count": 3,
+        "transferredBytes": 194548,
+        "contentBytes": 1171
+      },
+      "stylesheet": {
+        "count": 3,
+        "transferredBytes": 9699,
+        "contentBytes": 700
+      },
+      "image": {
+        "count": 1,
+        "transferredBytes": 17244,
+        "contentBytes": 151
+      },
+      "other": {
+        "count": 3,
+        "transferredBytes": 1848,
+        "contentBytes": 1010
+      },
+      "font": {
+        "count": 2,
+        "transferredBytes": 1186459,
+        "contentBytes": 58
+      },
+      "xhr-fetch": {
+        "count": 2,
+        "transferredBytes": 451,
+        "contentBytes": 450
+      }
+    }
+  },
+  "thirdParty": {
+    "mainOrigin": "https://paul.kinlan.me",
+    "thirdPartyRequestCount": 8,
+    "thirdPartyTransferredBytes": 1380879,
+    "topOriginsByBytes": [
+      {
+        "origin": "https://fonts.gstatic.com",
+        "party": "third-party",
+        "count": 2,
+        "transferredBytes": 1186459
+      },
+      {
+        "origin": "https://www.googletagmanager.com",
+        "party": "third-party",
+        "count": 1,
+        "transferredBytes": 170795
+      },
+      {
+        "origin": "https://paul.kinlan.me",
+        "party": "first-party",
+        "count": 7,
+        "transferredBytes": 51320
+      },
+      {
+        "origin": "https://www.google-analytics.com",
+        "party": "third-party",
+        "count": 3,
+        "transferredBytes": 21860
+      },
+      {
+        "origin": "https://fonts.googleapis.com",
+        "party": "third-party",
+        "count": 2,
+        "transferredBytes": 1765
+      }
+    ],
+    "topOriginsByBytesTotal": 5,
+    "topOriginsByBytesTruncated": false
+  },
+  "renderBlockingCandidates": [
+    {
+      "url": "https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap",
+      "type": "stylesheet",
+      "initiator": {
+        "type": "parser",
+        "url": "https://paul.kinlan.me/",
+        "lineNumber": 116
+      },
+      "priority": "VeryHigh",
+      "basis": "parser-inserted stylesheet, VeryHigh priority",
+      "startedDateTime": "2026-10-04T23:03:24.284Z"
+    },
+    {
+      "url": "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap",
+      "type": "stylesheet",
+      "initiator": {
+        "type": "parser",
+        "url": "https://paul.kinlan.me/",
+        "lineNumber": 117
+      },
+      "priority": "VeryHigh",
+      "basis": "parser-inserted stylesheet, VeryHigh priority",
+      "startedDateTime": "2026-10-04T23:03:24.284Z"
+    },
+    {
+      "url": "https://paul.kinlan.me/css/tailwind.4e993cbe62618db21734f00020a426cebbf80206af83c704b6dea76b7c7ad68b.css",
+      "type": "stylesheet",
+      "initiator": {
+        "type": "parser",
+        "url": "https://paul.kinlan.me/",
+        "lineNumber": 161
+      },
+      "priority": "VeryHigh",
+      "basis": "parser-inserted stylesheet, VeryHigh priority",
+      "startedDateTime": "2026-10-04T23:03:24.284Z"
+    },
+    {
+      "url": "https://paul.kinlan.me/_vercel/insights/script.js",
+      "type": "script",
+      "initiator": {
+        "type": "parser",
+        "url": "https://paul.kinlan.me/",
+        "lineNumber": 55
+      },
+      "priority": "Low",
+      "basis": "parser-inserted script (confirm async/defer/type=module via DOM), Low priority",
+      "startedDateTime": "2026-10-04T23:03:24.279Z"
+    },
+    {
+      "url": "https://www.googletagmanager.com/gtag/js?id=G-V4DZ9TE0NV",
+      "type": "script",
+      "initiator": {
+        "type": "parser",
+        "url": "https://paul.kinlan.me/",
+        "lineNumber": 144
+      },
+      "priority": "Low",
+      "basis": "parser-inserted script (confirm async/defer/type=module via DOM), Low priority",
+      "startedDateTime": "2026-10-04T23:03:24.284Z"
+    }
+  ],
+  "renderBlockingCandidatesTotal": 5,
+  "renderBlockingCandidatesTruncated": false,
+  "weightOffenders": {
+    "largestByBytes": [
+      {
+        "url": "https://fonts.gstatic.com/s/materialsymbolsoutlined/v375/kJEPBvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzBwG-RpA6RzaxHMPdY40KH8nGzv3fzfVJO1Q.woff2",
+        "type": "font",
+        "transferredBytes": 1138171
+      },
+      {
+        "url": "https://www.googletagmanager.com/gtag/js?id=G-V4DZ9TE0NV",
+        "type": "script",
+        "transferredBytes": 170795
+      },
+      {
+        "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2",
+        "type": "font",
+        "transferredBytes": 48288
+      },
+      {
+        "url": "https://paul.kinlan.me/",
+        "type": "document",
+        "transferredBytes": 21950
+      },
+      {
+        "url": "https://www.google-analytics.com/analytics.js",
+        "type": "script",
+        "transferredBytes": 21409
+      },
+      {
+        "url": "https://paul.kinlan.me/images/me.png",
+        "type": "image",
+        "transferredBytes": 17244
+      },
+      {
+        "url": "https://paul.kinlan.me/css/tailwind.4e993cbe62618db21734f00020a426cebbf80206af83c704b6dea76b7c7ad68b.css",
+        "type": "stylesheet",
+        "transferredBytes": 7934
+      },
+      {
+        "url": "https://paul.kinlan.me/_vercel/insights/script.js",
+        "type": "script",
+        "transferredBytes": 2344
+      },
+      {
+        "url": "https://paul.kinlan.me/manifest.json",
+        "type": "other",
+        "transferredBytes": 1734
+      },
+      {
+        "url": "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap",
+        "type": "stylesheet",
+        "transferredBytes": 884
+      }
+    ],
+    "largestByBytesTotal": 15,
+    "largestByBytesTruncated": true,
+    "slowestByTime": [
+      {
+        "url": "https://fonts.gstatic.com/s/materialsymbolsoutlined/v375/kJEPBvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzBwG-RpA6RzaxHMPdY40KH8nGzv3fzfVJO1Q.woff2",
+        "type": "font",
+        "timeMs": 979.64
+      },
+      {
+        "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2",
+        "type": "font",
+        "timeMs": 720.82
+      },
+      {
+        "url": "https://www.googletagmanager.com/gtag/js?id=G-V4DZ9TE0NV",
+        "type": "script",
+        "timeMs": 602.27
+      },
+      {
+        "url": "https://paul.kinlan.me/",
+        "type": "document",
+        "timeMs": 403.12
+      },
+      {
+        "url": "https://paul.kinlan.me/images/me.png",
+        "type": "other",
+        "timeMs": 282.67
+      },
+      {
+        "url": "https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap",
+        "type": "stylesheet",
+        "timeMs": 215.31
+      },
+      {
+        "url": "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap",
+        "type": "stylesheet",
+        "timeMs": 214.43
+      },
+      {
+        "url": "https://www.google-analytics.com/j/collect?v=1&_v=j102&a=2101072633&t=pageview&_s=1&dl=https%3A%2F%2Fpaul.kinlan.me%2F&ul=en-us&dt=Modern%20Web%20Development%20with%20Chrome&sr=800x600&vp=780x437&_u=IEBAAEABAAAAACAAI~&jid=1795989109&gjid=1859621556&cid=1040526957.1791155005&tid=UA-114468-20&_gid=867332818.1791155005&_r=1&_slc=1&z=1451913692",
+        "type": "xhr-fetch",
+        "timeMs": 207.32
+      },
+      {
+        "url": "https://paul.kinlan.me/css/tailwind.4e993cbe62618db21734f00020a426cebbf80206af83c704b6dea76b7c7ad68b.css",
+        "type": "stylesheet",
+        "timeMs": 183.74
+      },
+      {
+        "url": "https://paul.kinlan.me/images/me.png",
+        "type": "image",
+        "timeMs": 182.62
+      }
+    ],
+    "slowestByTimeTotal": 15,
+    "slowestByTimeTruncated": true
+  },
+  "hygiene": {
+    "uncompressedTextOver2KB": [],
+    "uncompressedTextOver2KBTotal": 0,
+    "uncompressedTextOver2KBTruncated": false,
+    "missingCacheHeaders": [],
+    "missingCacheHeadersTotal": 0,
+    "missingCacheHeadersTruncated": false,
+    "redirects": [],
+    "redirectsTotal": 0,
+    "redirectsTruncated": false,
+    "httpErrors": [
+      {
+        "url": "https://www.google-analytics.com/g/collect?v=2&tid=G-V4DZ9TE0NV&gtm=45je69u2v878858148za200zd878858148xf1&_p=1791155004580&gcd=13l3l3l3l1l1&npa=0&dma=0&cid=1040526957.1791155005&frm=0&ngs=1&pscdl=noapi&rcb=0&sr=800x600&uaa=x86&uab=64&uafvl=Not%2520A(Brand%3B99.0.0.0%7CChromium%3B154.0.8037.92&uam=&uamb=0&uap=Linux&uapv=&uaw=0&ul=en-us&_s=1&tag_exp=115938466~115938468~118897920~118897930~120213116~120385422~120469145~120469153~121046263~121046271&sid=1791155006&sct=1&seg=0&dl=https%3A%2F%2Fpaul.kinlan.me%2F&dt=Modern%20Web%20Development%20with%20Chrome&en=page_view&_fv=1&_ss=1&_ee=1&tfd=2407",
+        "status": 0,
+        "type": "xhr-fetch",
+        "error": "net::ERR_ABORTED"
+      }
+    ],
+    "httpErrorsTotal": 1,
+    "httpErrorsTruncated": false
+  },
+  "note": "Compact, model-readable summary of network SIGNALS distilled from a HAR 1.2 log (the network analogue of the trace/heap summaries; the in-repo, lightweight memlab analogue). These are DESCRIPTIVE signals, not pass/fail verdicts: the model judges them against the principles (be-fast-and-stable, be-sustainable, be-private-and-secure). renderBlockingCandidates is GROUNDED in the real CDP signals we capture per request: the rich initiator (_initiator.type parser|script|preload + the inserting document url/line, or the script call frame), the request _priority (initial + final, after Network.resourceChangedPriority), and _renderBlockingStatus WHEN this Chrome build exposes it (omitted when not). Each candidate states its basis. This is the STARTING signal, not the final word: the HAR alone is partial, so CONFIRM and refine each candidate against the live DOM - use the dom and evaluate primitives to read the actual <head> placement and the async / defer / type=module attributes on the real elements (e.g. a parser-inserted module script is deferred by spec and is NOT render-blocking). Read this summary, never the raw .har; the raw .har is retained for the report, cross-run compare, and DevTools/HAR viewers."
+}
