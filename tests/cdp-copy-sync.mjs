@@ -88,8 +88,12 @@ function rel(file) {
 }
 
 // A minimal unified diff (DIFF_CONTEXT lines of context) built from an LCS over
-// lines. cdp.mjs is a few hundred lines, so the O(n*m) table is free and the
-// guard stays dependency-free.
+// lines. Hunk headers and bodies match GNU `diff -u` in the normal case, but on
+// ambiguous inputs (duplicate or similar lines) this small LCS tie-break can
+// order those body lines differently from GNU's Myers algorithm; it never
+// changes the pass/fail verdict, the sha256 hashes or the byte sizes. cdp.mjs is
+// a few hundred lines, so the O(n*m) table is free and the guard stays
+// dependency-free.
 function unifiedDiff(a, b) {
   const lcs = lcsTable(a, b);
   const ops = walkLcs(lcs, a, b);
@@ -103,10 +107,16 @@ function unifiedDiff(a, b) {
       if (ops[k].sign !== '+') aCount++;
       if (ops[k].sign !== '-') bCount++;
     }
-    out.push(`@@ -${aStart},${aCount} +${bStart},${bCount} @@`);
+    out.push(`@@ -${rangeLabel(aStart, aCount)} +${rangeLabel(bStart, bCount)} @@`);
     for (let k = from; k <= to; k++) out.push(`${ops[k].sign}${ops[k].text}`);
   }
   return out;
+}
+
+// GNU `diff -u` writes a hunk range as `-start,count`, dropping the `,count`
+// when the count is exactly 1 (`-start`), which is the common single-line case.
+function rangeLabel(start, count) {
+  return count === 1 ? `${start}` : `${start},${count}`;
 }
 
 function lcsTable(a, b) {
