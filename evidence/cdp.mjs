@@ -98,15 +98,52 @@ export async function launchChrome({ log = () => {}, headless = true } = {}) {
   return { proc, port, userDataDir, close };
 }
 
+// Retry a flaky bootstrap step a bounded number of times. Chrome for Testing
+// 154 occasionally boots with an empty /json/list (the default New Tab fails to
+// load with "incorrect profile type"), so we never use the default-target path
+// here. This retry only absorbs the tiny start-up race after we have already
+// created our own target, so it cannot mask a real browser hang.
+async function withRetry(fn, { label, attempts = 5, delayMs = 200 } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  throw new Error(`${label} (${attempts} attempts): ${lastError?.message ?? lastError}`, {
+    cause: lastError,
+  });
+}
+
 // Open a fresh CDP session against a new target (tab) and enable the domains we
 // rely on across the auditor. Returns the CDP client plus a per-target cleanup.
 export async function newSession(port, { log = () => {} } = {}) {
-  // Create a dedicated target so emulation overrides do not leak between pages.
-  const browser = await CDP({ port });
-  const { targetId } = await browser.Target.createTarget({ url: 'about:blank' });
-  await browser.close();
+  // Create a dedicated target via the /json/new HTTP endpoint and attach to the
+  // WebSocket URL it returns directly. A bare CDP({ port }) uses chrome-remote-
+  // interface's default target chooser, which reads /json/list and throws
+  // "No inspectable targets" when Chrome for Testing 154 boots without a usable
+  // default page (the default New Tab can fail with "incorrect profile type").
+  // /json/new does not depend on that page, so a fresh target is deterministic.
+  const target = await withRetry(() => CDP.New({ port }), { label: 'create CDP target' });
 
-  const client = await CDP({ port, target: targetId });
+  let client;
+  try {
+    client = await withRetry(
+      () => CDP({ target: target.webSocketDebuggerUrl }),
+      { label: 'attach to CDP target' },
+    );
+  } catch (err) {
+    // Best-effort cleanup if the attach retries are exhausted.
+    await CDP.Close({ port, id: target.id }).catch(() => {});
+    throw err;
+  }
+
+  const targetId = target.id;
   const { Page, Runtime, DOM, CSS, Emulation, Network } = client;
   await Promise.all([
     Page.enable(),
@@ -125,9 +162,7 @@ export async function newSession(port, { log = () => {} } = {}) {
       // ignore
     }
     try {
-      const tmp = await CDP({ port });
-      await tmp.Target.closeTarget({ targetId });
-      await tmp.close();
+      await CDP.Close({ port, id: targetId });
     } catch {
       // ignore
     }
