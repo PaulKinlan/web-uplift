@@ -12,7 +12,8 @@
 
 import { launchChrome, newSession } from '../evidence/cdp.mjs';
 
-const iterations = Number(process.argv[2]) || 15;
+const rawIterations = process.argv[2];
+const iterations = rawIterations === undefined ? 15 : Number(rawIterations);
 if (!Number.isInteger(iterations) || iterations < 1) {
   console.error(`usage: node tests/launch-loop.mjs <iterations>=15`);
   process.exit(2);
