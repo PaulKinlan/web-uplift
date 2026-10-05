@@ -289,7 +289,7 @@ function findingDialog(report, dir, f) {
       return '';
     })
     .join('');
-  return `<dialog id="fd-${esc(f.id)}" class="finding-dialog">
+  return `<dialog id="fd-${esc(f.id)}" class="finding-dialog" closedby="any">
   <form method="dialog" class="dialog-head">
     <div><span class="sev ${esc(f.severity)}">${esc(f.severity)}</span> ${f.effort ? `<span class="effort">${esc(f.effort)} effort</span>` : ''}</div>
     <button class="x" aria-label="Close" value="close">${ICON.close}</button>
@@ -743,10 +743,17 @@ const JS = `
       });
     });
   }
-  // Click-outside (light dismiss) for dialogs.
-  document.querySelectorAll('dialog.finding-dialog').forEach(function(d){
-    d.addEventListener('click',function(e){if(e.target===d){d.close();}});
-  });
+  // Light dismiss (backdrop click, plus the platform's Esc and back-gesture
+  // dismissal) is native via the closedby="any" attribute on the finding
+  // dialogs.
+  // TODO(baseline/dialog-closedby): delete this fallback once the closedby
+  // attribute is Baseline Widely Available; until then browsers without it keep
+  // the imperative backdrop dismissal.
+  if(!('closedBy' in HTMLDialogElement.prototype)){
+    document.querySelectorAll('dialog.finding-dialog').forEach(function(d){
+      d.addEventListener('click',function(e){if(e.target===d){d.close();}});
+    });
+  }
 })();
 `;
 

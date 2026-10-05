@@ -592,7 +592,11 @@ async function testScorecardScoringAndRender() {
   assert(html.startsWith('<!doctype html>'), 'scorecard: HTML should start with a doctype');
   assert(!html.includes('${'), 'scorecard: HTML contains an unresolved template placeholder');
   assert(!/>\s*undefined\s*</.test(html), 'scorecard: HTML contains a literal undefined');
-  const openDialogs = (html.match(/<dialog /g) || []).length;
+  // Count dialogs by their generated id rather than by the bare tag name: the
+  // inline script is part of this HTML, so prose that mentions a dialog element
+  // must not be counted as one (a TODO comment naming tag-and-attribute once
+  // unbalanced this very assertion).
+  const openDialogs = (html.match(/<dialog\s+id="fd-/g) || []).length;
   const closeDialogs = (html.match(/<\/dialog>/g) || []).length;
   assert(openDialogs === closeDialogs && openDialogs >= report.findings.length, 'scorecard: dialog tags are unbalanced');
 
@@ -604,6 +608,11 @@ async function testScorecardScoringAndRender() {
   assert(!html.includes('openFor'), 'scorecard: imperative openFor helper must be gone');
   assert(!html.includes('role="button"'), 'scorecard: fake-button roles must be gone (real buttons instead)');
   assert(html.includes("('commandForElement' in HTMLButtonElement.prototype)"), 'scorecard: fallback must be gated on commandForElement support');
+
+  // Light dismiss is native via closedby="any" on each dialog, with a
+  // support-gated imperative fallback for browsers without the attribute.
+  assert(html.includes('closedby="any"'), 'scorecard: dialogs must request native light dismiss');
+  assert(html.includes("('closedBy' in HTMLDialogElement.prototype)"), 'scorecard: the dismiss fallback must be gated on closedBy support');
 
   // The inline text scorecard leads with the overall + a link, same numbers.
   const text = renderTextScorecard(
