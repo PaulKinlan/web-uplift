@@ -339,12 +339,15 @@ export function renderScorecard(data) {
         .map((t) => {
           const f = (t.findingIds ?? []).map((id) => findingById.get(id)).find(Boolean);
           const sev = f?.severity ?? 'medium';
-          const open = f ? ` data-open="fd-${esc(f.id)}"` : '';
-          return `<li class="action ${esc(sev)}"${open} ${f ? 'role="button" tabindex="0"' : ''}>
-        <span class="rank">${t.priority ?? ''}</span>
+          const inner = `<span class="rank">${t.priority ?? ''}</span>
         <span class="action-title">${esc(t.title)}</span>
-        <span class="sev ${esc(sev)}">${esc(sev)}</span>
-      </li>`;
+        <span class="sev ${esc(sev)}">${esc(sev)}</span>`;
+          // Openers are real buttons wired to the finding dialog declaratively
+          // via Invoker Commands (commandfor/command="show-modal").
+          if (f) {
+            return `<li class="action-cell"><button class="action ${esc(sev)}" type="button" commandfor="fd-${esc(f.id)}" command="show-modal">${inner}</button></li>`;
+          }
+          return `<li class="action ${esc(sev)}">${inner}</li>`;
         })
         .join('\n')
     : '<li class="muted">No outstanding actions — every applicable principle passed.</li>';
@@ -365,11 +368,11 @@ export function renderScorecard(data) {
       <ul class="flist">
         ${g.items
           .map(
-            (f) => `<li class="fitem ${esc(f.severity)}" data-open="fd-${esc(f.id)}" role="button" tabindex="0">
+            (f) => `<li><button class="fitem ${esc(f.severity)}" type="button" commandfor="fd-${esc(f.id)}" command="show-modal">
           <span class="sev ${esc(f.severity)}">${esc(f.severity)}</span>
           <span class="fsummary">${esc(f.summary)}</span>
           ${f.effort ? `<span class="effort">${esc(f.effort)}</span>` : ''}
-        </li>`,
+        </button></li>`,
           )
           .join('\n')}
       </ul>
@@ -636,6 +639,8 @@ main{max-width:1000px;margin:0 auto;padding:22px}
 .actions{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .action{display:flex;align-items:center;gap:10px;background:#12161c;border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer}
 .action:hover{border-color:var(--accent)}
+.action-cell{list-style:none;padding:0}
+.action-cell>.action{width:100%;text-align:inherit;font:inherit;color:inherit}
 .action .rank{flex:0 0 24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:.8rem;font-weight:700}
 .action-title{flex:1}
 .tabs{display:flex;gap:4px;margin:22px 0 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
@@ -658,7 +663,7 @@ main{max-width:1000px;margin:0 auto;padding:22px}
 .fgroup{margin-bottom:18px}
 .fgroup h3{display:flex;align-items:center;gap:8px}
 .flist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
-.fitem{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer}
+.fitem{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;width:100%;text-align:inherit;font:inherit;color:inherit}
 .fitem:hover{border-color:var(--accent)}
 .fsummary{flex:1}
 .sev{font-size:.7rem;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:20px;font-weight:700}
@@ -724,12 +729,20 @@ const JS = `
   }
   tabs.forEach(function(t){t.addEventListener('click',function(){show(t.dataset.tab);});});
   document.querySelectorAll('[data-jump]').forEach(function(el){el.addEventListener('click',function(){show(el.dataset.jump);});});
-  // Deep-dive dialogs: any element with data-open="<dialogId>" opens it.
-  function openFor(el){var id=el.getAttribute('data-open');if(!id)return;var d=document.getElementById(id);if(d&&d.showModal){d.showModal();}}
-  document.querySelectorAll('[data-open]').forEach(function(el){
-    el.addEventListener('click',function(){openFor(el);});
-    el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();openFor(el);}});
-  });
+  // Deep-dive dialogs open declaratively via Invoker Commands
+  // (commandfor/command="show-modal" on the opener buttons).
+  // TODO(baseline/invoker-commands): delete this imperative fallback once
+  // Invoker Commands are Baseline Widely Available; until then browsers
+  // without support still open the dialog. Real buttons fire click on
+  // Enter/Space natively, so no keydown handling is needed.
+  if(!('commandForElement' in HTMLButtonElement.prototype)){
+    document.querySelectorAll('button[commandfor]').forEach(function(el){
+      el.addEventListener('click',function(){
+        var d=document.getElementById(el.getAttribute('commandfor'));
+        if(d&&d.showModal)d.showModal();
+      });
+    });
+  }
   // Click-outside (light dismiss) for dialogs.
   document.querySelectorAll('dialog.finding-dialog').forEach(function(d){
     d.addEventListener('click',function(e){if(e.target===d){d.close();}});

@@ -595,6 +595,15 @@ async function testScorecardScoringAndRender() {
   const closeDialogs = (html.match(/<\/dialog>/g) || []).length;
   assert(openDialogs === closeDialogs && openDialogs >= report.findings.length, 'scorecard: dialog tags are unbalanced');
 
+  // Finding openers are Invoker Command buttons (commandfor/command="show-modal")
+  // with a support-gated imperative fallback, not fake-button list items.
+  assert(html.includes('commandfor="fd-'), 'scorecard: openers must carry commandfor dialog ids');
+  assert(html.includes('command="show-modal"'), 'scorecard: openers must request show-modal');
+  assert(!html.includes('data-open'), 'scorecard: legacy data-open openers must be gone');
+  assert(!html.includes('openFor'), 'scorecard: imperative openFor helper must be gone');
+  assert(!html.includes('role="button"'), 'scorecard: fake-button roles must be gone (real buttons instead)');
+  assert(html.includes("('commandForElement' in HTMLButtonElement.prototype)"), 'scorecard: fallback must be gated on commandForElement support');
+
   // The inline text scorecard leads with the overall + a link, same numbers.
   const text = renderTextScorecard(
     { host: 'example', latest: { runId: 'r1', dir: join(repoRoot, 'examples'), report, ...scored } },
