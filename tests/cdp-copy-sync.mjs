@@ -42,42 +42,46 @@ const COPY_DIRS = [
 
 // copy-file steps in bin/web-uplift.mjs: only these specific files are vendored.
 // knowledge/ may hold other files that install does NOT copy, so it is listed
-// file-by-file rather than as a copy-dir.
+// file-by-file rather than as a copy-dir. The .pi skill-copy is a real tracked
+// copy (the .codex entry is a symlink and .claude is the source itself).
 const COPY_FILES = [
   ['knowledge/principles.json', '.web-uplift/knowledge/principles.json'],
   ['knowledge/baseline.mjs', '.web-uplift/knowledge/baseline.mjs'],
   ['knowledge/guidance.md', '.web-uplift/knowledge/guidance.md'],
   ['.claude/skills/web-audit/SKILL.md', '.web-uplift/skill/SKILL.md'],
+  ['.claude/skills/web-audit/SKILL.md', '.pi/skills/web-audit/SKILL.md'],
 ];
 
 const pairs = buildPairs();
 const failures = [];
-let identical = 0;
 
 for (const pair of pairs) {
   const source = readCopy(pair.srcAbs);
   const vendored = readCopy(pair.dstAbs);
 
-  if (source && vendored && sameBytes(source.bytes, vendored.bytes)) {
-    identical++;
+  if (source.state === 'ok' && vendored.state === 'ok' && sameBytes(source.bytes, vendored.bytes)) {
     console.log(
-      `${pair.srcRel} copies identical: ${pair.srcRel} == ${pair.dstRel} (sha256 ${source.sha}, ${source.bytes.length} bytes)`,
+      `copies identical: ${pair.srcRel} == ${pair.dstRel} (sha256 ${source.sha}, ${source.bytes.length} bytes)`,
     );
     continue;
   }
 
   failures.push(pair);
   const lines = [];
-  if (!source && !vendored) {
-    lines.push(`vendored copy is missing on both sides: ${pair.srcRel} and ${pair.dstRel}`);
-  } else if (!source) {
-    lines.push(`vendored copy has drifted: source is missing (${pair.srcRel} -> ${pair.dstRel})`);
-    lines.push(`  ${pair.srcRel.padEnd(40)} <missing>`);
-    lines.push(`  ${pair.dstRel.padEnd(40)} sha256 ${vendored.sha}  ${vendored.bytes.length} bytes`);
-  } else if (!vendored) {
-    lines.push(`vendored copy has drifted: vendored copy is missing (${pair.srcRel} -> ${pair.dstRel})`);
-    lines.push(`  ${pair.srcRel.padEnd(40)} sha256 ${source.sha}  ${source.bytes.length} bytes`);
-    lines.push(`  ${pair.dstRel.padEnd(40)} <missing>`);
+  const srcIssue = source.state === 'ok' ? null : source.state;
+  const dstIssue = vendored.state === 'ok' ? null : vendored.state;
+
+  if (srcIssue || dstIssue) {
+    if (srcIssue && dstIssue) {
+      const issue = srcIssue === dstIssue ? srcIssue : 'missing or unreadable';
+      lines.push(`vendored copy is ${issue} on both sides: ${pair.srcRel} and ${pair.dstRel}`);
+    } else if (srcIssue) {
+      lines.push(`vendored copy has drifted: source is ${srcIssue} (${pair.srcRel} -> ${pair.dstRel})`);
+    } else {
+      lines.push(`vendored copy has drifted: vendored copy is ${dstIssue} (${pair.srcRel} -> ${pair.dstRel})`);
+    }
+    lines.push(`  ${copySummary(source, pair.srcRel)}`);
+    lines.push(`  ${copySummary(vendored, pair.dstRel)}`);
   } else {
     lines.push(`vendored copy has drifted from its source (${pair.srcRel} -> ${pair.dstRel})`);
     lines.push(`  ${pair.srcRel.padEnd(40)} sha256 ${source.sha}  ${source.bytes.length} bytes`);
@@ -118,6 +122,14 @@ function buildPairs() {
     const srcFiles = walkDir(join(repoRoot, srcDir));
     const dstFiles = walkDir(join(repoRoot, dstDir));
     const rels = [...new Set([...srcFiles.keys(), ...dstFiles.keys()])].sort();
+    if (rels.length === 0) {
+      // A declared copy-dir must contribute at least one compared pair even
+      // when it is empty on both sides, otherwise deleting both directories
+      // would silently shrink coverage instead of failing. Emit one pair that
+      // names the declaration; readCopy reports both sides missing below.
+      out.push({ srcRel: srcDir, dstRel: dstDir, srcAbs: null, dstAbs: null });
+      continue;
+    }
     for (const relPath of rels) {
       out.push({
         srcRel: join(srcDir, relPath),
@@ -148,21 +160,31 @@ function walkDir(dir) {
   return files;
 }
 
-// Returns null when the file cannot be read, so a deleted vendored copy is
-// reported as drift instead of throwing a raw ENOENT at the reader.
+// Returns one of three states so a file that exists but cannot be read is
+// reported as unreadable rather than missing. A null/absent path or an ENOENT
+// read is missing; any other read error (e.g. EACCES) is unreadable. Both fail
+// the guard the same way - only the message differs.
 function readCopy(file) {
-  if (!file) return null;
+  if (!file) return { state: 'missing' };
   let bytes;
   try {
     bytes = new Uint8Array(readFileSync(file));
-  } catch {
-    return null;
+  } catch (error) {
+    return { state: error.code === 'ENOENT' ? 'missing' : 'unreadable' };
   }
   return {
+    state: 'ok',
     bytes,
     sha: createHash('sha256').update(bytes).digest('hex'),
     text: new TextDecoder().decode(bytes),
   };
+}
+
+// Formats one side of a pair for the drift report; non-'ok' states print their
+// reason (<missing> or <unreadable>) instead of a hash.
+function copySummary(copy, rel) {
+  if (copy.state === 'ok') return `${rel.padEnd(40)} sha256 ${copy.sha}  ${copy.bytes.length} bytes`;
+  return `${rel.padEnd(40)} <${copy.state}>`;
 }
 
 function sameBytes(a, b) {
@@ -174,12 +196,14 @@ function sameBytes(a, b) {
 }
 
 // A minimal unified diff (DIFF_CONTEXT lines of context) built from an LCS over
-// lines. Hunk headers and bodies match GNU `diff -u` in the normal case, but on
-// ambiguous inputs (duplicate or similar lines) this small LCS tie-break can
-// order those body lines differently from GNU's Myers algorithm; it never
-// changes the pass/fail verdict, the sha256 hashes or the byte sizes. The
-// vendored files are a few hundred lines, so the O(n*m) table is free and the
-// guard stays dependency-free.
+// lines. It is not a byte-for-byte GNU `diff -u` replica: on ambiguous inputs
+// (duplicate or similar lines) the LCS tie-break can order body lines
+// differently from GNU's Myers algorithm, and the lines come from
+// `text.split('\n')`, whose phantom trailing empty element shifts hunk headers
+// by one for any change that touches EOF. Neither affects the pass/fail
+// verdict, the sha256 hashes or the byte sizes. The vendored files are a few
+// hundred lines, so the O(n*m) table is free and the guard stays
+// dependency-free.
 function unifiedDiff(a, b, srcLabel, dstLabel) {
   const lcs = lcsTable(a, b);
   const ops = walkLcs(lcs, a, b);
