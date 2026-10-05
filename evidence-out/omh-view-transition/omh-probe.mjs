@@ -63,12 +63,16 @@ async function clickNav(client) {
   return rect;
 }
 
-async function runSession(label, strip) {
+async function runSession(label, strip, reduced = false) {
   console.log(`\n=== ${label} ===`);
   const chrome = await launchChrome({ log });
   try {
     const session = await newSession(chrome.port, { log });
     const { client } = session;
+    if (reduced) {
+      // Emulate the OS-level reduced-motion preference before any page script runs.
+      await client.Emulation.setEmulatedMedia({ features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    }
     // ORDER MATTERS: the delete must be installed BEFORE the recorder, because the
     // recorder captures the availability flag when it runs.
     if (strip) {
@@ -106,7 +110,12 @@ async function runSession(label, strip) {
     check(`${label}: the view swapped (heading changed)`, after.heading !== before.heading, { before: before.heading, after: after.heading });
     check(`${label}: no uncaught errors on the page`, (after.errors ?? []).length === 0, after.errors);
 
-    if (strip) {
+    check(`${label}: the query media matches the reduced-motion emulation`, reduced ? (await evaluate(client, `matchMedia('(prefers-reduced-motion: reduce)').matches`)) === true : true, null);
+    if (reduced) {
+      check('reduced-motion: the transition is still requested exactly once', after.vt.calls === 1, after.vt);
+      check('reduced-motion: the transition callback ran, so the swap still happened', after.vt.callbacks === 1, after.vt);
+      check('reduced-motion: ZERO pseudo-element animations run (the animation is suppressed)', maxAnimations === 0, during);
+    } else if (strip) {
       check('no-support: the swap happened WITHOUT any view-transition call', after.vt.calls === 0, after.vt);
     } else {
       check('native: the hash swap requested exactly one view transition', after.vt.calls === 1, after.vt);
@@ -122,6 +131,7 @@ async function runSession(label, strip) {
 
 await runSession('native', false);
 await runSession('no-support', true);
+await runSession('reduced-motion', false, true);
 results.passed = passed; results.failed = failed;
 writeFileSync(`${OUT}/result.json`, JSON.stringify(results, null, 2));
 console.log(`\nPROBE TALLY: ${passed} passed, ${failed} failed`);

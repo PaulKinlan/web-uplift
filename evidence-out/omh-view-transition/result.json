@@ -16,6 +16,9 @@
     "native: no uncaught errors on the page": {
       "pass": true
     },
+    "native: the query media matches the reduced-motion emulation": {
+      "pass": true
+    },
     "native: the hash swap requested exactly one view transition": {
       "pass": true
     },
@@ -40,10 +43,40 @@
     "no-support: no uncaught errors on the page": {
       "pass": true
     },
+    "no-support: the query media matches the reduced-motion emulation": {
+      "pass": true
+    },
     "no-support: the swap happened WITHOUT any view-transition call": {
+      "pass": true
+    },
+    "reduced-motion: the initial view rendered": {
+      "pass": true
+    },
+    "reduced-motion: API availability is true (native path)": {
+      "pass": true
+    },
+    "reduced-motion: the hash actually changed on click": {
+      "pass": true
+    },
+    "reduced-motion: the view swapped (heading changed)": {
+      "pass": true
+    },
+    "reduced-motion: no uncaught errors on the page": {
+      "pass": true
+    },
+    "reduced-motion: the query media matches the reduced-motion emulation": {
+      "pass": true
+    },
+    "reduced-motion: the transition is still requested exactly once": {
+      "pass": true
+    },
+    "reduced-motion: the transition callback ran, so the swap still happened": {
+      "pass": true
+    },
+    "reduced-motion: ZERO pseudo-element animations run (the animation is suppressed)": {
       "pass": true
     }
   },
-  "passed": 14,
+  "passed": 25,
   "failed": 0
 }
