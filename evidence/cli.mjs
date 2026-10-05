@@ -930,6 +930,31 @@ async function mapBounded(items, limit, task) {
 // already on from newSession; we attach the lifecycle listeners, navigate, then
 // build entries. Response bodies are fetched as base64 via Network.getResponseBody
 // (CDP returns a string; no Node Buffer involved).
+// The fixed `sleep(opts.duration || opts.wait)` is the observation window for
+// requests the page fires after load, but it must not also decide whether a
+// response is available to fetch: under host CPU starvation the CDP events can
+// still be queued when the sleep ends, and a request still PENDING at that point
+// silently yields no body and a response.status of 0 in the HAR. Wait, bounded,
+// for every recorded request to reach a terminal state (finished, failed, or a
+// redirect that was followed) before snapshotting.
+const NETWORK_IDLE_DEADLINE_MS = 10000;
+
+async function waitForNetworkIdle(records, deadlineMs, log) {
+  const started = Date.now();
+  const pendingNow = () => records.filter((r) => !r.finished && !r.failed && !r.redirectedTo).length;
+  let pending = pendingNow();
+  while (pending > 0 && Date.now() - started < deadlineMs) {
+    await sleep(50);
+    pending = pendingNow();
+  }
+  if (pending > 0) {
+    log(
+      `[evidence] network did not settle within ${deadlineMs}ms: ${pending} request(s) still pending; their bodies will be missing`,
+    );
+  }
+  return { pending, ms: Date.now() - started };
+}
+
 async function har(client, url, opts, log) {
   const active = new Map(); // requestId -> current aggregate record
   const records = []; // one record per HAR entry; redirects reuse requestId but get their own entry
@@ -993,6 +1018,7 @@ async function har(client, url, opts, log) {
     if (rec) {
       rec.endTs = p.timestamp;
       rec.encodedDataLength = p.encodedDataLength;
+      rec.finished = true;
     }
   });
   client.Network.loadingFailed((p) => {
@@ -1004,14 +1030,20 @@ async function har(client, url, opts, log) {
     }
   });
 
-  await client.Page.navigate({ url: 'about:blank' });
-  await sleep(150);
-  await applyConditions(client, opts, log);
-
-  const loaded = client.Page.loadEventFired();
-  await client.Page.navigate({ url });
-  await loaded;
-  log(`[evidence] loaded ${url}; recording network`);
+  // navigate() registers its load waiter BEFORE each navigation. The previous
+  // hand-rolled form here registered the target waiter after
+  // navigate('about:blank') + sleep(150), so under load about:blank's own load
+  // event could still be pending at registration and resolve the waiter instead
+  // of the target's, leaving the primitive waiting on nothing while the real page
+  // was still fetching (web-uplift-e13: records stuck at response.status 0).
+  const navStartedAt = Date.now();
+  await navigate(client, url, {
+    settleMs: 0,
+    log,
+    beforeTargetNavigate: () => applyConditions(client, opts, log),
+  });
+  const loadWaitMs = Date.now() - navStartedAt;
+  log(`[evidence] loaded ${url} after ${loadWaitMs}ms; recording network`);
 
   if (opts.interact) {
     try {
@@ -1021,6 +1053,10 @@ async function har(client, url, opts, log) {
     }
   }
   await sleep(opts.duration || opts.wait);
+
+  // The observation window above is a minimum, not a verdict: settle the network
+  // before snapshotting so a response that is merely late is still captured.
+  const settle = await waitForNetworkIdle(records, NETWORK_IDLE_DEADLINE_MS, log);
 
   // Optionally fetch response bodies (base64 via the CDP string result).
   //
@@ -1057,9 +1093,16 @@ async function har(client, url, opts, log) {
   return {
     artifact: out,
     summaryArtifact: summaryOut,
+    loadWaitMs,
+    networkSettleMs: settle.ms,
+    networkPendingAtSnapshot: settle.pending,
     ...summary.totals,
     statusBreakdown: tallyStatuses(har12.log.entries),
-    note: 'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).',
+    note:
+      'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).' +
+      (settle.pending > 0
+        ? ` WARNING: ${settle.pending} request(s) were still pending when the network was snapshotted (load waited ${loadWaitMs}ms, settle waited ${settle.ms}ms); their bodies and statuses are missing from this HAR, which is a harness/load artifact rather than absence.`
+        : ''),
   };
 }
 
