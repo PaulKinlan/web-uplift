@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import http from 'node:http';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { gather } from '../evidence/cli.mjs';
-import { resolveChromePath } from '../evidence/cdp.mjs';
+import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -18,6 +18,7 @@ try {
   testSyntaxChecks();
   testPackageRootImportIsSideEffectFree();
   testChromeCandidateDiscovery();
+  await testLaunchRetryAndDiagnostics();
   testSchemaValidation();
   testAtomicCoverageValidator();
   testGuidanceUsage();
@@ -1996,5 +1997,68 @@ function testChromeCandidateDiscovery() {
       else process.env[name] = value;
     }
     rmSync(home, { recursive: true, force: true });
+  }
+}
+
+// The launch layer must retry the WHOLE attempt (a fresh profile dir each time)
+// and must say WHY it failed, because "still alive but silent" (a wedge) and
+// "exited early" (a crash) are different faults with different fixes, and a
+// bare "timed out" collapses them into one symptom. A fake CHROME_BIN that exits
+// immediately, and one that fails once and then prints the DevTools line,
+// exercise the retry, the diagnostics, the recovery and the profile-dir cleanup
+// with no real browser, so this stays cheap and deterministic.
+async function testLaunchRetryAndDiagnostics() {
+  const savedBin = process.env.CHROME_BIN;
+  const dir = mkdtempSync(join(tmpdir(), 'web-uplift-launch-retry-'));
+  try {
+    // Every attempt exits immediately: retry, then a diagnostic failure.
+    const marker = join(dir, 'attempts');
+    const failing = join(dir, 'failing-chrome');
+    writeFileSync(failing, `#!/bin/sh\necho attempt >> "${marker}"\nexit 7\n`, { mode: 0o755 });
+    const profiles = [];
+    process.env.CHROME_BIN = failing;
+    let error = null;
+    try {
+      await launchChrome({
+        log: (line) => {
+          const match = /profile (\S+)\)/.exec(line);
+          if (match) profiles.push(match[1]);
+        },
+      });
+    } catch (err) {
+      error = err;
+    }
+    assert(error instanceof Error, 'launchChrome must reject when every attempt fails');
+    assert(/exited early/.test(error.message), `launch failure must name the early exit: ${error.message}`);
+    assert(/code 7/.test(error.message), `launch failure must report the exit code: ${error.message}`);
+    assert(/freshProfile=true/.test(error.message), `launch failure must report a fresh profile: ${error.message}`);
+    assert(/load=/.test(error.message), `launch failure must report host load: ${error.message}`);
+    const spawns = existsSync(marker) ? readFileSync(marker, 'utf8').trim().split('\n').filter(Boolean).length : 0;
+    assert(profiles.length > 1, `launchChrome must retry the whole launch, saw ${profiles.length} attempt(s)`);
+    assert(spawns === profiles.length, `each retry must spawn once, marker=${spawns} profiles=${profiles.length}`);
+    assert(new Set(profiles).size === profiles.length, 'each retry must use a fresh profile dir');
+    for (const profile of profiles) {
+      assert(!existsSync(profile), `a failed launch must clean up its profile dir: ${profile}`);
+    }
+
+    // A transient failure followed by a good launch must recover on retry.
+    const counter = join(dir, 'count');
+    const flaky = join(dir, 'flaky-chrome');
+    writeFileSync(
+      flaky,
+      `#!/bin/sh\nn=$(cat "${counter}" 2>/dev/null || echo 0)\nn=$((n + 1))\necho $n > "${counter}"\n` +
+        `if [ "$n" -ge 2 ]; then echo "DevTools listening on ws://127.0.0.1:9222/" 1>&2; sleep 30; fi\nexit 5\n`,
+      { mode: 0o755 },
+    );
+    process.env.CHROME_BIN = flaky;
+    const handle = await launchChrome({ log: () => {} });
+    assert(handle.port === 9222, `a recovered launch must parse the DevTools port, got ${handle.port}`);
+    assert(readFileSync(counter, 'utf8').trim() === '2', 'the flaky launch must recover on its second attempt');
+    await handle.close();
+    assert(!existsSync(handle.userDataDir), `close must remove the profile dir: ${handle.userDataDir}`);
+  } finally {
+    if (savedBin === undefined) delete process.env.CHROME_BIN;
+    else process.env.CHROME_BIN = savedBin;
+    rmSync(dir, { recursive: true, force: true });
   }
 }

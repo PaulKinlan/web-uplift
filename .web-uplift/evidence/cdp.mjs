@@ -230,11 +230,80 @@ function removeDirNow(dir) {
   }
 }
 
-// Launch headless Chrome with an ephemeral remote-debugging port and return a
-// handle. We parse the actual port from the "DevTools listening on ws://..."
-// line Chrome prints to stderr (remote-debugging-port=0 picks a free port).
-export async function launchChrome({ log = () => {}, headless = true } = {}) {
-  const chromePath = resolveChromePath();
+// The per-attempt endpoint wait is deliberately kept near 20 s, and the number
+// comes from data rather than feel: a healthy launch on this VM measured 979 ms
+// min / 1397 ms median / 2003 ms p90-max across 8 launches with these exact
+// flags at ~84% CPU steal. That is 10-20x a normal launch, so this constant is
+// NOT the binding constraint. When it fires, Chrome never printed the DevTools
+// line at all, which is a failed or wedged start (crash, unusable profile, lost
+// race), not a slow one; a larger number would only turn a fast failure into a
+// slow one. The fix for that is retrying the launch, not waiting longer.
+const DEVTOOLS_ENDPOINT_TIMEOUT_MS = 20000;
+
+// A wedge or a lost race is transient and a fresh attempt is cheap (1-2 s), so
+// retry the WHOLE launch - new profile dir included - with a small jittered
+// backoff rather than a fixed lockstep delay on an already starved box.
+const LAUNCH_ATTEMPTS = 3;
+const LAUNCH_BACKOFF_BASE_MS = 250;
+const LAUNCH_BACKOFF_MAX_MS = 1000;
+
+function launchBackoffMs(attempt) {
+  const base = Math.min(LAUNCH_BACKOFF_MAX_MS, LAUNCH_BACKOFF_BASE_MS * 2 ** (attempt - 1));
+  return base + Math.floor(Math.random() * LAUNCH_BACKOFF_BASE_MS);
+}
+
+// Load and since-boot CPU steal, so a starved host can be told from a broken
+// launch at a glance. Linux-only (this module already reads /proc for pgid);
+// absent fields are omitted rather than guessed.
+function hostLoadSummary() {
+  const parts = [];
+  try {
+    const [one, five, fifteen] = readFileSync('/proc/loadavg', 'utf8').trim().split(/\s+/);
+    parts.push(`load=${one}/${five}/${fifteen}`);
+  } catch {
+    // no /proc/loadavg on this platform
+  }
+  try {
+    const cpu = readFileSync('/proc/stat', 'utf8').split('\n').find((line) => line.startsWith('cpu '));
+    const ticks = cpu ? cpu.trim().split(/\s+/).slice(1).map(Number) : [];
+    const total = ticks.reduce((sum, value) => sum + value, 0);
+    if (ticks.length > 7 && total > 0) {
+      parts.push(`cpu steal=${((ticks[7] / total) * 100).toFixed(1)}% since boot`);
+    }
+  } catch {
+    // no /proc/stat on this platform
+  }
+  return parts.join(', ');
+}
+
+function lastStderrLine(text) {
+  const lines = String(text).split('\n').map((line) => line.trim()).filter(Boolean);
+  return lines.length > 0 ? lines[lines.length - 1] : '(stderr empty)';
+}
+
+// A launch failure has to say WHICH failure it was: alive-but-silent (a wedge)
+// and exited-early (a crash) are different faults with different fixes, and a
+// bare "timed out" collapses them into one symptom. Every attempt mkdtemps its
+// own profile, so freshProfile=true is a property, not a claim.
+function describeLaunchFailure({ attempts, reasons, detail }) {
+  const proc = detail.proc;
+  const alive = proc ? !procExited(proc) : 'n/a (no process)';
+  const exit = proc ? `exitCode=${proc.exitCode}, signal=${proc.signalCode}` : 'exitCode=n/a';
+  const host = hostLoadSummary();
+  return (
+    `Chrome launch failed after ${attempts} attempt(s); reasons: ${reasons.join(' | ')}; ` +
+    `last attempt: browser alive=${alive}, ${exit}, freshProfile=true, ` +
+    `stderr=${JSON.stringify(lastStderrLine(detail.stderrText))}` +
+    (host ? `; ${host}` : '')
+  );
+}
+
+// One launch attempt: a fresh profile dir, a spawn, and a bounded wait for the
+// "DevTools listening on ws://..." line Chrome prints to stderr
+// (remote-debugging-port=0 picks a free port). Returns { ok: true, handle } or
+// { ok: false, detail } and never throws, so launchChrome() can retry the whole
+// attempt and report every reason it failed.
+async function launchChromeOnce({ chromePath, headless, log }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'web-uplift-cdp-'));
   log(`[browser] launching ${chromePath} (${headless ? 'headless' : 'headed'}, profile ${userDataDir})`);
 
@@ -264,9 +333,9 @@ export async function launchChrome({ log = () => {}, headless = true } = {}) {
     );
   } catch (err) {
     // spawn itself failed (binary vanished, EACCES): no process, no group,
-    // just the empty profile dir to drop before failing loudly.
+    // just the empty profile dir to drop before reporting.
     removeDirNow(userDataDir);
-    throw err;
+    return { ok: false, detail: { reason: `spawn failed: ${err.message}`, proc: null, stderrText: '' } };
   }
 
   installInterruptNet();
@@ -296,7 +365,15 @@ export async function launchChrome({ log = () => {}, headless = true } = {}) {
         removed = removeDirNow(userDataDir);
         if (!removed && attempt < 3) await sleep(150);
       }
-      if (!removed) log(`[browser] profile dir survived teardown: ${userDataDir}`);
+      if (!removed) {
+        // Loud on purpose, and unconditional: a leaked multi-MB profile dir per
+        // failed launch is how a flake fills /tmp, and the `log` sink is silent
+        // under --quiet, which is how the 4.4MB husk went unnoticed. Now that
+        // launches are retried, the failure path is common rather than rare.
+        console.error(
+          `[browser] WARNING: leaked profile dir ${userDataDir}; the Chrome tree is gone but removal failed, remove it by hand`,
+        );
+      }
       // The tree is dead; drop our side of the stderr pipe so it cannot pin the
       // event loop of a process that is otherwise done.
       proc.stderr.destroy();
@@ -305,45 +382,78 @@ export async function launchChrome({ log = () => {}, headless = true } = {}) {
     }
   }
 
+  let stderrText = '';
   let port;
   try {
     port = await new Promise((resolve, reject) => {
-      let buf = '';
       const timeout = setTimeout(
-        () => reject(new Error('Timed out waiting for Chrome DevTools endpoint')),
-        20000,
+        () =>
+          reject(
+            new Error(`timed out waiting for the DevTools endpoint after ${DEVTOOLS_ENDPOINT_TIMEOUT_MS}ms`),
+          ),
+        DEVTOOLS_ENDPOINT_TIMEOUT_MS,
       );
       proc.stderr.on('data', (chunk) => {
-        buf += chunk.toString();
-        const match = buf.match(/DevTools listening on ws:\/\/[^:]+:(\d+)\//);
+        stderrText += chunk.toString();
+        const match = stderrText.match(/DevTools listening on ws:\/\/[^:]+:(\d+)\//);
         if (match) {
           clearTimeout(timeout);
           resolve(Number(match[1]));
         }
       });
-      proc.on('exit', (code) => {
+      proc.on('exit', (code, signal) => {
         clearTimeout(timeout);
-        reject(new Error(`Chrome exited early (code ${code}) before listening`));
+        reject(new Error(`Chrome exited early (code ${code}, signal ${signal}) before listening`));
       });
     });
   } catch (err) {
-    // Launch failed loudly for the caller, but the browser we did spawn (or its
-    // wedged tree) must not outlive the failure.
+    // The browser we spawned (or its wedged tree) must not outlive the failure,
+    // and its profile dir must not be left behind for the next attempt.
     await close();
-    throw err;
+    return { ok: false, detail: { reason: err.message, proc, stderrText } };
   }
 
   log(`[browser] DevTools port ${port}`);
+  return { ok: true, handle: { proc, port, userDataDir, close } };
+}
 
-  return { proc, port, userDataDir, close };
+// Launch headless Chrome, retrying the WHOLE attempt (fresh profile dir) a
+// bounded number of times. See DEVTOOLS_ENDPOINT_TIMEOUT_MS for why a longer
+// wait is not the fix, and describeLaunchFailure for what a failure reports.
+export async function launchChrome({ log = () => {}, headless = true } = {}) {
+  const chromePath = resolveChromePath();
+  const reasons = [];
+  let lastDetail = null;
+  for (let attempt = 1; attempt <= LAUNCH_ATTEMPTS; attempt++) {
+    const result = await launchChromeOnce({ chromePath, headless, log });
+    if (result.ok) {
+      if (attempt > 1) log(`[browser] launch recovered on attempt ${attempt}/${LAUNCH_ATTEMPTS}`);
+      return result.handle;
+    }
+    lastDetail = result.detail;
+    reasons.push(result.detail.reason);
+    if (attempt < LAUNCH_ATTEMPTS) {
+      const backoff = launchBackoffMs(attempt);
+      log(
+        `[browser] launch attempt ${attempt}/${LAUNCH_ATTEMPTS} failed (${result.detail.reason}); ` +
+          `retrying in ${backoff}ms with a fresh profile`,
+      );
+      await sleep(backoff);
+    }
+  }
+  throw new Error(describeLaunchFailure({ attempts: LAUNCH_ATTEMPTS, reasons, detail: lastDetail }));
 }
 
 // Retry a flaky bootstrap step a bounded number of times. Chrome for Testing
 // 154 occasionally boots with an empty /json/list (the default New Tab fails to
 // load with "incorrect profile type"), so we never use the default-target path
 // here. This retry only absorbs the tiny start-up race after we have already
-// created our own target, so it cannot mask a real browser hang.
-async function withRetry(fn, { label, attempts = 5, delayMs = 200 } = {}) {
+// created our own target, so it cannot mask a real browser hang. Under host CPU
+// starvation a CDP.New attach can also end in ECONNRESET ("socket hang up"),
+// which exhausted the old flat 5-attempt/200ms budget on 2026-10-05, so the
+// budget is bigger and the delay backs off with jitter instead of hammering a
+// starved box in lockstep.
+async function withRetry(fn, { label, attempts = 8, delayMs = 200, maxDelayMs = 2000 } = {}) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -351,7 +461,8 @@ async function withRetry(fn, { label, attempts = 5, delayMs = 200 } = {}) {
     } catch (err) {
       lastError = err;
       if (attempt < attempts) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        const base = Math.min(maxDelayMs, delayMs * 2 ** (attempt - 1));
+        await sleep(base + Math.floor(Math.random() * delayMs));
       }
     }
   }
