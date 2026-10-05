@@ -12,7 +12,7 @@
 // page. The intelligence lives in the model (following SKILL.md), not here.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import CDP from 'chrome-remote-interface';
@@ -66,7 +66,7 @@ function installInterruptNet() {
   interruptNetInstalled = true;
   const sweep = () => {
     for (const browser of liveBrowsers) {
-      killGroup(browser.proc, 'SIGKILL');
+      killGroup(browser, 'SIGKILL');
       removeDirNow(browser.userDataDir);
     }
   };
@@ -81,19 +81,42 @@ function installInterruptNet() {
   }
 }
 
-// Signal the whole browser tree. -pid is Chrome's own process group (it was
-// spawned detached, so pid === pgid); if the group is already gone (ESRCH) or
-// the platform has no groups, fall back to the main pid alone and ignore
-// already-dead errors.
-function killGroup(proc, signal) {
+// Record the process-group id a launched browser runs in. Chrome is spawned
+// detached, so it leads its own process group and its pid IS that group id; we
+// read it back instead of assuming it, so killGroup() can refuse to signal a
+// group it cannot tie to this child. Without /proc (non-Linux) the
+// detached-spawn contract is the only proof available, so record the pid.
+function readPgid(pid) {
   try {
-    process.kill(-proc.pid, signal);
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    // comm can contain spaces and parentheses, so the fixed-width fields start
+    // after the last ')'; pgrp is the third of them.
+    return Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[2]);
   } catch {
+    return pid;
+  }
+}
+
+// Signal the whole browser tree, but only ever a group we can prove is this
+// child's: the recorded pgid has to be the child's own pid. When they differ
+// (the child is not its own group leader) -pgid could name an unrelated group,
+// so signal the single pid instead. That fallback also covers a group that is
+// already gone (ESRCH) or a platform without groups; already-dead errors are
+// ignored either way.
+function killGroup(browser, signal) {
+  const { proc, pgid } = browser;
+  if (pgid === proc.pid) {
     try {
-      proc.kill(signal);
+      process.kill(-pgid, signal);
+      return;
     } catch {
-      // already dead
+      // no such group any more; the main pid may still be worth signalling
     }
+  }
+  try {
+    proc.kill(signal);
+  } catch {
+    // already dead
   }
 }
 
@@ -188,7 +211,7 @@ export async function launchChrome({ log = () => {}, headless = true } = {}) {
   }
 
   installInterruptNet();
-  const browser = { proc, userDataDir };
+  const browser = { proc, pgid: readPgid(proc.pid), userDataDir };
   liveBrowsers.add(browser);
 
   let closed = false;
@@ -196,9 +219,14 @@ export async function launchChrome({ log = () => {}, headless = true } = {}) {
     if (closed) return; // idempotent: an explicit close plus a caller's finally
     closed = true;
     try {
-      killGroup(proc, 'SIGTERM');
+      // Liveness guard before the first group signal: while the child is alive
+      // its pid cannot be recycled, so -pid provably names this child's group.
+      // Once it has exited its group is gone and that number could belong to
+      // something else by now, so send nothing and let the bounded escalation
+      // settle on the recorded wait status below.
+      if (!procExited(proc)) killGroup(browser, 'SIGTERM');
       if (!(await waitForProcExit(proc, TERM_GRACE_MS))) {
-        killGroup(proc, 'SIGKILL');
+        killGroup(browser, 'SIGKILL');
         await waitForProcExit(proc, KILL_GRACE_MS);
       }
       await waitForGroupDrain(proc, GROUP_DRAIN_MS);
