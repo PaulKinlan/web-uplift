@@ -744,10 +744,11 @@ const JS = `
     });
   }
   // Light dismiss (backdrop click, plus the platform's Esc and back-gesture
-  // dismissal) is native via closedby="any" on the finding dialogs.
-  // TODO(baseline/dialog-closedby): delete this fallback once <dialog closedby>
-  // is Baseline Widely Available; until then browsers without it keep the
-  // imperative backdrop dismissal.
+  // dismissal) is native via the closedby="any" attribute on the finding
+  // dialogs.
+  // TODO(baseline/dialog-closedby): delete this fallback once the closedby
+  // attribute is Baseline Widely Available; until then browsers without it keep
+  // the imperative backdrop dismissal.
   if(!('closedBy' in HTMLDialogElement.prototype)){
     document.querySelectorAll('dialog.finding-dialog').forEach(function(d){
       d.addEventListener('click',function(e){if(e.target===d){d.close();}});
