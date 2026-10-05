@@ -904,6 +904,27 @@ function summariseTrace(events) {
   };
 }
 
+// Maximum in-flight Network.getResponseBody calls for --bodies. The calls share
+// one CDP socket, so a small pool hides nearly all of the per-call latency while
+// keeping the socket and the peak body memory bounded (see the har body-fetch
+// loop).
+const BODY_FETCH_CONCURRENCY = 8;
+
+// Run `task` over `items` with at most `limit` in flight at once. Completion
+// order is deliberately not preserved: callers write results into their own
+// items, so the ordering of the returned promise is irrelevant. Used by the
+// network body fetch, where each item is an independent CDP round trip.
+async function mapBounded(items, limit, task) {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      await task(item);
+    }
+  });
+  await Promise.all(workers);
+}
+
 // har: record the network over the load (+ optional --interact / --duration)
 // via the CDP Network domain and assemble a valid HAR 1.2 log. Network.enable is
 // already on from newSession; we attach the lifecycle listeners, navigate, then
@@ -1002,16 +1023,24 @@ async function har(client, url, opts, log) {
   await sleep(opts.duration || opts.wait);
 
   // Optionally fetch response bodies (base64 via the CDP string result).
+  //
+  // Each fetch is an independent, requestId-keyed round trip multiplexed over
+  // the one CDP socket, so awaiting them one at a time is a pure N-deep
+  // waterfall with no ordering benefit. Fetch them concurrently but bounded:
+  // unbounded fan-out over a request-heavy page would queue every body on the
+  // socket and hold them all in memory at once, which is worse on a 2-vCPU box
+  // than the waterfall it replaces. The per-record try/catch and the in-place
+  // rec.body assignment keep HAR assembly unchanged.
   if (opts.bodies) {
-    for (const rec of records) {
-      if (!rec.response || rec.failed || rec.redirectedTo) continue;
+    const retrievable = records.filter((rec) => rec.response && !rec.failed && !rec.redirectedTo);
+    await mapBounded(retrievable, BODY_FETCH_CONCURRENCY, async (rec) => {
       try {
         const body = await client.Network.getResponseBody({ requestId: rec.requestId });
         rec.body = body; // { body: string, base64Encoded: bool }
       } catch {
         // Some bodies (e.g. redirects, data: URIs) are not retrievable.
       }
-    }
+    });
   }
 
   const har12 = buildHar(records, log);
