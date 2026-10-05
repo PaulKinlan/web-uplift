@@ -2078,20 +2078,57 @@ async function images(client, url, opts, log) {
 // that runs after load cannot see what fired during it. The collector is
 // attached for every primitive, so the same block also rides along on whatever
 // else happened to be running when the page logged something.
+// The interact probe used to read the collector after a fixed 250ms sleep. That
+// is the 7kl flake: evaluate(opts.interact) resolves as soon as the SCRIPT's own
+// value resolves (typically a setTimeout id), so the click -> throw ->
+// Runtime.exceptionThrown -> CDP -> Node chain had to finish inside 250ms of
+// wall clock or the capture read zero entries. Poll for a new entry instead, up
+// to a bounded deadline, and report how long it waited and whether anything was
+// still pending, so a miss is attributable rather than inferred (web-uplift-3t2).
+const CONSOLE_INTERACT_DEADLINE_MS = 2000;
+const CONSOLE_INTERACT_POLL_MS = 25;
+
+async function waitForInteractEvidence(collector, beforeCount, deadlineMs) {
+  const started = Date.now();
+  let count = collector.entries.length;
+  while (count <= beforeCount && Date.now() - started < deadlineMs) {
+    await sleep(CONSOLE_INTERACT_POLL_MS);
+    count = collector.entries.length;
+  }
+  return { waitedMs: Date.now() - started, pending: count <= beforeCount };
+}
+
 async function consolePrimitive(client, url, opts, log, collector) {
   await navigate(client, url, {
     settleMs: opts.wait ?? 1500,
     log,
     beforeTargetNavigate: () => applyConditions(client, opts, log),
   });
+  const beforeInteract = collector.entries.length;
+  let interactWaitMs = null;
+  let interactPending = false;
   if (opts.interact) {
     try {
       await evaluate(client, opts.interact);
     } catch (err) {
       log(`[evidence] interact script error: ${err.message.split('\n')[0]}`);
     }
+    const settled = await waitForInteractEvidence(
+      collector,
+      beforeInteract,
+      opts.interactDeadlineMs ?? CONSOLE_INTERACT_DEADLINE_MS,
+    );
+    interactWaitMs = settled.waitedMs;
+    interactPending = settled.pending;
+    log(
+      `[evidence] console interact: waited ${interactWaitMs}ms for a new entry` +
+        (interactPending ? ' (deadline reached, none recorded)' : ''),
+    );
+  } else {
+    // Nothing to wait for beyond the load itself: keep the short settle so
+    // entries still in flight over CDP from the load are captured.
+    await sleep(250);
   }
-  await sleep(250);
 
   const block = collector.summary();
   log(
@@ -2101,6 +2138,7 @@ async function consolePrimitive(client, url, opts, log, collector) {
     primitive: 'console',
     url,
     scannedAt: new Date().toISOString(),
+    ...(opts.interact ? { interactWaitMs, interactEvidencePending: interactPending } : {}),
     console: block,
   };
   return emit(opts, result, client);

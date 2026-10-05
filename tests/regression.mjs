@@ -200,6 +200,29 @@ async function testConsoleEvidence() {
         interactResult.console.entries.some((e) => e.text.includes('fixture interact exception')),
       `console: an error raised by --interact was not captured: ${JSON.stringify(interactResult.console)}`,
     );
+
+    // The poll path, not just the zero-delay happy path: an interact that throws
+    // only after a delay LONGER than the old fixed 250ms window must still be
+    // captured, and the result must say how long it waited. On the fixed sleep
+    // this case read zero entries, which is the 7kl signature.
+    const delayedResult = await gather('console', `${base}/clean`, {
+      quiet: true,
+      wait: 400,
+      interact: "setTimeout(() => document.querySelector('#boom').click(), 700)",
+    });
+    assert(
+      delayedResult.console.exceptionCount === 1 &&
+        delayedResult.console.entries.some((e) => e.text.includes('fixture interact exception')),
+      `console: an interact error raised after the old 250ms window was not captured: ${JSON.stringify(delayedResult.console)}`,
+    );
+    assert(
+      delayedResult.interactEvidencePending === false,
+      `console: the poll must report that evidence arrived rather than pending: ${JSON.stringify({ wait: delayedResult.interactWaitMs, pending: delayedResult.interactEvidencePending })}`,
+    );
+    assert(
+      typeof delayedResult.interactWaitMs === 'number' && delayedResult.interactWaitMs >= 650,
+      `console: the poll must wait for the delayed entry and report how long it waited: ${delayedResult.interactWaitMs}`,
+    );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
