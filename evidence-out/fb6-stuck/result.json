@@ -1,0 +1,34 @@
+{
+  "url": "file:///tmp/fb6-scorecard.html",
+  "checks": {
+    "the topbar is a named scroll-state container": {
+      "pass": true
+    },
+    "at the top the bar is not stuck (barTop=0 but page not scrolled)": {
+      "pass": true
+    },
+    "at the top there is NO stuck cue (shadow none)": {
+      "pass": true
+    },
+    "after scrolling the page really moved": {
+      "pass": true
+    },
+    "the bar is stuck to the top (barTop === 0)": {
+      "pass": true
+    },
+    "stuck: the bar gains a shadow": {
+      "pass": true
+    },
+    "stuck: the bottom border accents (colour changes)": {
+      "pass": true
+    },
+    "no layout shift: the bar height is identical stuck vs not stuck": {
+      "pass": true
+    },
+    "fallback: with the query container neutralised the bar is flat (no cue) while still sticky": {
+      "pass": true
+    }
+  },
+  "passed": 9,
+  "failed": 0
+}
