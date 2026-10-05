@@ -1705,14 +1705,25 @@ async function testLocaleTimezoneConditions() {
 }
 
 async function testHarRedirects() {
+  // Also covers the --bodies path: the document plus 12 scripts is more than the
+  // body-fetch pool's in-flight limit, so the pool has to recycle its workers,
+  // and the redirect entry must still end up with no body attached.
+  const BODY_COUNT = 12;
   const server = http.createServer((req, res) => {
-    if (req.url === '/start') {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/start') {
       res.writeHead(302, { Location: '/final' });
       res.end('redirecting');
       return;
     }
+    if (/^\/s\d+\.js$/.test(path)) {
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      res.end(`window.__body_${path.slice(2, -3)} = true;`);
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end('<!doctype html><title>ok</title><link rel="icon" href="data:,">ok');
+    const scripts = Array.from({ length: BODY_COUNT }, (_, i) => `<script src="/s${i}.js"></script>`).join('');
+    res.end(`<!doctype html><title>ok</title><link rel="icon" href="data:,">${scripts}ok`);
   });
 
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
@@ -1722,6 +1733,7 @@ async function testHarRedirects() {
     const result = await gather('har', `http://127.0.0.1:${port}/start`, {
       quiet: true,
       wait: 250,
+      bodies: true,
       out,
     });
     assert(result.statusBreakdown['302'] === 1, `HAR status breakdown missed redirect: ${JSON.stringify(result.statusBreakdown)}`);
@@ -1731,6 +1743,26 @@ async function testHarRedirects() {
       summary.hygiene.redirects.some((r) => r.status === 302 && r.location === '/final'),
       `HAR summary missed redirect hygiene entry: ${JSON.stringify(summary.hygiene.redirects)}`,
     );
+
+    // --bodies must attach every retrievable body, including past the pool's
+    // concurrency limit, and must not attach one to the redirect entry.
+    const har = JSON.parse(readFileSync(out, 'utf8'));
+    const withBody = har.log.entries.filter((e) => e.response?.content?.text !== undefined);
+    assert(
+      withBody.length === BODY_COUNT + 1,
+      `--bodies must capture ${BODY_COUNT + 1} bodies (document + ${BODY_COUNT} scripts), got ${withBody.length}`,
+    );
+    for (let i = 0; i < BODY_COUNT; i++) {
+      const entry = har.log.entries.find((e) => e.request.url.endsWith(`/s${i}.js`));
+      assert(
+        entry?.response?.content?.text === `window.__body_${i} = true;`,
+        `--bodies missed or corrupted /s${i}.js body: ${JSON.stringify(entry?.response?.content)}`,
+      );
+    }
+    const redirectEntry = har.log.entries.find((e) => e.request.url.endsWith('/start'));
+    assert(redirectEntry?.response?.content?.text == null, '--bodies must not attach a body to the redirect entry');
+    const documentEntry = har.log.entries.find((e) => e.request.url.endsWith('/final'));
+    assert(documentEntry?.response?.content?.text?.includes('ok'), '--bodies must capture the document body');
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
