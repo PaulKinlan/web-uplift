@@ -1,0 +1,32 @@
+{
+  "url": "file:///tmp/i5q-scorecard.html",
+  "sha": "fleet/i5q @ 1647fa0 + closedby change",
+  "checks": {
+    "native: closedby=\"any\" present on the dialog": {
+      "pass": true
+    },
+    "native: support predicate is true (fallback skipped)": {
+      "pass": true
+    },
+    "native: a backdrop click light-dismisses the dialog": {
+      "pass": true
+    },
+    "native: Escape dismisses the dialog": {
+      "pass": true
+    },
+    "fallback: closedby=\"any\" present on the dialog": {
+      "pass": true
+    },
+    "fallback: support predicate is false (fallback armed)": {
+      "pass": true
+    },
+    "fallback: a backdrop click light-dismisses the dialog": {
+      "pass": true
+    },
+    "fallback: Escape dismisses the dialog": {
+      "pass": true
+    }
+  },
+  "passed": 8,
+  "failed": 0
+}
