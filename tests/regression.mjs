@@ -30,6 +30,7 @@ try {
   await testThrottlingConditions();
   await testLocaleTimezoneConditions();
   await testHarRedirects();
+  await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
@@ -2160,6 +2161,50 @@ async function testHarWaitsForPendingResponses() {
     assert(
       slow?.response?.content?.text === '{"slow":true}',
       `har must capture a body that arrives after the observation window: ${JSON.stringify(slow?.response?.content)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// The trackers primitive records HOSTNAMES, so a third party whose hostname
+// merely ENDS WITH the first-party hostname ('notlocalhost' for a page on
+// 'localhost') must still be counted, while a SUBDOMAIN of the first party
+// ('sub.localhost') must not be. The old bare `!endsWith(firstParty)` suffix
+// match classified the first case as first-party and dropped it, and with it any
+// known tracker on such a host.
+async function testTrackersThirdPartySuffix() {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(
+      '<!doctype html><title>trackers-fixture</title><link rel="icon" href="data:,">' +
+        '<img src="http://notlocalhost:9/tracker.js" alt="">' +
+        '<img src="http://sub.localhost:9/sub.js" alt=""><h1>trackers fixture</h1>',
+    );
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const result = await gather('trackers', `http://localhost:${port}/`, { quiet: true, wait: 1500 });
+    const third = (result.topThirdPartyByRequests || []).map((e) => e.origin);
+    assert(
+      result.firstParty === 'localhost',
+      `trackers must record the page hostname as firstParty, got ${result.firstParty}`,
+    );
+    assert(
+      third.includes('notlocalhost'),
+      `a third party whose host only ends with the first-party host must still be counted: ${JSON.stringify(third)}`,
+    );
+    assert(
+      !third.includes('localhost'),
+      `the first-party host itself must not be counted as third-party: ${JSON.stringify(third)}`,
+    );
+    // Without this the test still passes with the subdomain clause deleted from
+    // isFirstPartyHost (a mutant reduced to `host === firstParty` classifies
+    // sub.localhost as third-party).
+    assert(
+      !third.includes('sub.localhost'),
+      `a SUBDOMAIN of the first-party host must count as first-party: ${JSON.stringify(third)}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
