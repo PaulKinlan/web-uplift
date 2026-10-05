@@ -1993,7 +1993,16 @@ async function trackers(client, url, opts, log) {
   let firstParty = '';
   try { firstParty = new URL(url).hostname; } catch {}
   const all = [...origins.values()];
-  const thirdParty = all.filter(o => o.origin !== firstParty && !o.origin.endsWith(firstParty));
+  // o.origin is a HOSTNAME (see requestWillBeSent above), so compare hostnames.
+  // The old `!o.origin.endsWith(firstParty)` suffix-matched a hostname against a
+  // bare hostname, so a genuine third party whose name merely ENDS WITH the
+  // first-party name ('notlocalhost' for 'localhost', 'notexample.com' for
+  // 'example.com') was classified first-party and dropped from thirdParty,
+  // thirdPartyOrigins and topThirdPartyByRequests. The first-party host itself
+  // and its subdomains stay first-party, matching the tracker comparison below.
+  const isFirstPartyHost = (host) =>
+    firstParty !== '' && (host === firstParty || host.endsWith('.' + firstParty));
+  const thirdParty = all.filter((o) => !isFirstPartyHost(o.origin));
   const trackersFound = thirdParty.filter(o => [...KNOWN_TRACKERS].some(t => o.origin === t || o.origin.endsWith('.' + t)));
   announceCap('trackers.topThirdPartyByRequests', Math.min(thirdParty.length, 15), thirdParty.length, log);
   const summary = {
