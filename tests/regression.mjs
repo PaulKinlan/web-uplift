@@ -30,6 +30,7 @@ try {
   await testThrottlingConditions();
   await testLocaleTimezoneConditions();
   await testHarRedirects();
+  await testHarWaitsForPendingResponses();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
   await testFeaturesPrimitive();
@@ -2102,5 +2103,49 @@ async function testLaunchRetryAndDiagnostics() {
     if (savedBin === undefined) delete process.env.CHROME_BIN;
     else process.env.CHROME_BIN = savedBin;
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// har records the network while a page loads, but a response can land after the
+// fixed observation window: a fetch/XHR the page fires post-load, or a CDP event
+// still queued under host CPU starvation. The primitive must settle the network
+// before snapshotting rather than trusting the sleep, and it must say how long
+// the load waiter took (web-uplift-e13). The server here deliberately holds the
+// response past the window, so a primitive that trusts the sleep reports
+// response.status 200 with no body and a non-zero pending count.
+async function testHarWaitsForPendingResponses() {
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/slow.json') {
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"slow":true}');
+      }, 1500);
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(
+      '<!doctype html><title>slow-fixture</title><link rel="icon" href="data:,">' +
+        '<script>fetch("/slow.json");</script><h1>slow</h1>',
+    );
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const out = join(tmp, 'slow-network.har');
+    const result = await gather('har', `http://127.0.0.1:${port}/`, { quiet: true, wait: 400, bodies: true, out });
+    assert(Number.isFinite(result.loadWaitMs), `har must report how long the load waiter took: ${result.loadWaitMs}`);
+    assert(
+      result.networkPendingAtSnapshot === 0,
+      `har must settle the network before snapshotting; ${result.networkPendingAtSnapshot} still pending`,
+    );
+    const har = JSON.parse(readFileSync(out, 'utf8'));
+    const slow = har.log.entries.find((e) => e.request.url.endsWith('/slow.json'));
+    assert(
+      slow?.response?.content?.text === '{"slow":true}',
+      `har must capture a body that arrives after the observation window: ${JSON.stringify(slow?.response?.content)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
   }
 }
