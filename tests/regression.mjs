@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { gather } from '../evidence/cli.mjs';
+import { gather, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -34,6 +34,7 @@ try {
   await testHarWaitsForPendingResponses();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
+  await testConsoleInteractDeadlineValidation();
   await testFeaturesPrimitive();
   testBatchDryRunUsesRetainedDirs();
   testBatchFlowDryRun();
@@ -171,7 +172,9 @@ async function testConsoleEvidence() {
     // Every primitive carries the block, and the artifact a primitive writes has
     // to agree with its stdout: that is what emit() is for.
     const out = join(tmp, 'console-dom-artifact.json');
-    const cli = await runAsync(process.execPath, ['evidence/cli.mjs', 'dom', `${base}/noisy`, '--wait', '300', '--out', out]);
+    const cli = await runAsync(process.execPath, [
+      'evidence/cli.mjs', 'dom', `${base}/noisy`, '--wait', '300', '--out', out, '--interact-deadline', '2000',
+    ]);
     assert(cli.status === 0, `console: dom CLI failed:\n${cli.stderr}`);
     const artifact = JSON.parse(readFileSync(out, 'utf8'));
     const stdout = JSON.parse(cli.stdout);
@@ -193,6 +196,9 @@ async function testConsoleEvidence() {
     const interactResult = await gather('console', `${base}/clean`, {
       quiet: true,
       wait: 400,
+      // An explicit deadline: under load the zero-delay click's exception can
+      // cross the old fixed 250ms window, which was the 7kl flake.
+      interactDeadlineMs: 2000,
       interact: "setTimeout(() => document.querySelector('#boom').click(), 0)",
     });
     assert(
@@ -200,6 +206,79 @@ async function testConsoleEvidence() {
         interactResult.console.entries.some((e) => e.text.includes('fixture interact exception')),
       `console: an error raised by --interact was not captured: ${JSON.stringify(interactResult.console)}`,
     );
+    assert(
+      interactResult.interactObserved === true && interactResult.interactEvidencePending === false,
+      `console: a captured interact must report observed evidence and no truncation: ${JSON.stringify({ observed: interactResult.interactObserved, pending: interactResult.interactEvidencePending, wait: interactResult.interactWaitMs })}`,
+    );
+
+    // AC1: a benign entry at +0ms must not mask a throw at +100ms. A poll that
+    // returns on the FIRST new entry misses the exception; the trailing silence
+    // window is what catches it.
+    const mixedResult = await gather('console', `${base}/clean`, {
+      quiet: true,
+      wait: 400,
+      interactDeadlineMs: 2000,
+      interact:
+        "setTimeout(() => console.warn('fixture benign entry'), 0);" +
+        "setTimeout(() => document.querySelector('#boom').click(), 100)",
+    });
+    assert(
+      mixedResult.console.warningCount === 1 &&
+        mixedResult.console.entries.some((e) => e.text.includes('fixture benign entry')),
+      `console: the benign interact entry was not captured: ${JSON.stringify(mixedResult.console)}`,
+    );
+    assert(
+      mixedResult.console.exceptionCount === 1 &&
+        mixedResult.console.entries.some((e) => e.text.includes('fixture interact exception')),
+      `console: a throw after an earlier benign entry was missed (first-entry-only exit): ${JSON.stringify(mixedResult.console)}`,
+    );
+
+    // AC2: a quiet interaction costs the default settle, not the hard deadline,
+    // and is not reported as a pending failure.
+    const quietResult = await gather('console', `${base}/clean`, { quiet: true, wait: 400, interact: 'void 0' });
+    assert(
+      quietResult.interactObserved === false && quietResult.interactEvidencePending === false,
+      `console: a quiet interact must not report observed or pending evidence: ${JSON.stringify({ observed: quietResult.interactObserved, pending: quietResult.interactEvidencePending })}`,
+    );
+    assert(
+      quietResult.interactWaitMs >= 200 && quietResult.interactWaitMs < 1000,
+      `console: a quiet interact must return on the default settle, not the hard deadline: ${quietResult.interactWaitMs}ms`,
+    );
+
+    // AC3: with an explicit longer deadline, an entry that only arrives at +700ms
+    // is still captured, and the reported wait reflects it.
+    const delayedResult = await gather('console', `${base}/clean`, {
+      quiet: true,
+      wait: 400,
+      interactDeadlineMs: 2000,
+      interact: "setTimeout(() => document.querySelector('#boom').click(), 700)",
+    });
+    assert(
+      delayedResult.console.exceptionCount === 1 &&
+        delayedResult.console.entries.some((e) => e.text.includes('fixture interact exception')),
+      `console: an interact error raised after the old 250ms window was not captured: ${JSON.stringify(delayedResult.console)}`,
+    );
+    assert(
+      delayedResult.interactEvidencePending === false,
+      `console: the poll must report that evidence arrived rather than pending: ${JSON.stringify({ wait: delayedResult.interactWaitMs, pending: delayedResult.interactEvidencePending })}`,
+    );
+    assert(
+      typeof delayedResult.interactWaitMs === 'number' && delayedResult.interactWaitMs >= 650,
+      `console: the poll must wait for the delayed entry and report how long it waited: ${delayedResult.interactWaitMs}`,
+    );
+
+    // A typo'd --interact-deadline must fail fast at parse time rather than
+    // becoming an unbounded wait (NaN / Infinity) or a vacuous one (<= 0). These
+    // are parse errors, so no browser is launched (web-uplift-3t2 review).
+    for (const bad of ['foo', '0', '-5', 'Infinity', 'NaN', '']) {
+      const rejected = await runAsync(process.execPath, [
+        'evidence/cli.mjs', 'console', `${base}/clean`, '--interact', 'void 0', '--interact-deadline', bad,
+      ]);
+      assert(
+        rejected.status !== 0 && /--interact-deadline must be a positive number/.test(rejected.stderr),
+        `console: --interact-deadline ${bad} must be rejected with a usage error, got status ${rejected.status}: ${rejected.stderr}`,
+      );
+    }
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
@@ -2209,4 +2288,41 @@ async function testTrackersThirdPartySuffix() {
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
+}
+
+// The interact deadline must be validated in the LOOP, not only in the CLI
+// parser: a caller that passes opts.interactDeadlineMs directly to gather()
+// bypasses parseArgs, and a non-finite or non-positive value would make
+// `elapsed >= NaN` false forever with sleep(NaN) spinning at 0ms. No browser is
+// needed here: the helper only reads collector.entries.
+// The interact deadline must be bounded by the LOOP, not only by the CLI parser:
+// gather() calls never go through parseArgs, and NaN/Infinity are not nullish, so
+// a bad programmatic value used to make `elapsed >= NaN` false forever with
+// sleep(NaN) spinning at 0ms. A bad value must degrade to the default bounded
+// wait (the parser keeps its fail-fast usage error for CLI typos). No browser is
+// needed here: the helper only reads collector.entries.
+async function testConsoleInteractDeadlineValidation() {
+  const fake = { entries: [] };
+  for (const bad of [NaN, Infinity, -Infinity, 0, -5, null, undefined, '']) {
+    const r = await waitForInteractEvidence(fake, 0, bad);
+    assert(
+      r.deadlineMs === 250 && r.observed === false && r.pending === false && r.waitedMs >= 200 && r.waitedMs < 1000,
+      `a bad deadline (${String(bad)}) must degrade to the default bounded wait: ${JSON.stringify(r)}`,
+    );
+  }
+
+  // A numeric string is coerced, and a valid number is honoured.
+  const str = await waitForInteractEvidence(fake, 0, '500');
+  assert(str.deadlineMs === 500 && str.waitedMs >= 450, `a numeric string deadline must be coerced: ${JSON.stringify(str)}`);
+  const num = await waitForInteractEvidence(fake, 0, 60);
+  assert(num.deadlineMs === 60 && num.waitedMs >= 55, `a valid deadline must be honoured: ${JSON.stringify(num)}`);
+
+  // An entry that arrives during the wait is observed and not reported pending.
+  const collector = { entries: [] };
+  setTimeout(() => collector.entries.push({ kind: 'exception', level: 'error', source: 'runtime', text: 'x' }), 20);
+  const seen = await waitForInteractEvidence(collector, 0, 500);
+  assert(
+    seen.observed === true && seen.pending === false,
+    `an entry during the wait must be observed and not pending: ${JSON.stringify(seen)}`,
+  );
 }
