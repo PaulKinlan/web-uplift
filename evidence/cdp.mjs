@@ -13,7 +13,7 @@
 // page. The intelligence lives in the model (following SKILL.md), not here.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import CDP from 'chrome-remote-interface';
@@ -36,6 +36,19 @@ function chromeCacheGlobs(home) {
   return CHROME_CACHE_LAYOUTS.map((parts) => join(home, ...parts, '*', 'chrome-linux64', 'chrome'));
 }
 
+// A candidate path can exist without being a usable binary: a directory, a
+// zero-byte file, or a partial extraction left by an interrupted cache
+// download. Returning one of those defers the failure to spawn (EACCES) instead
+// of falling through to the next candidate, so require an executable file.
+function isExecutableFile(path) {
+  try {
+    const stat = statSync(path);
+    return stat.isFile() && (stat.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
 function cachedChromeCandidates(home) {
   const found = [];
   for (const parts of CHROME_CACHE_LAYOUTS) {
@@ -45,14 +58,13 @@ function cachedChromeCandidates(home) {
       versions = readdirSync(root, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .map((entry) => entry.name)
-        .sort()
-        .reverse(); // newest-looking version first
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true })); // newest version first
     } catch {
       continue; // no such cache on this machine
     }
     for (const version of versions) {
       const binary = join(root, version, 'chrome-linux64', 'chrome');
-      if (existsSync(binary)) found.push(binary);
+      if (isExecutableFile(binary)) found.push(binary);
     }
   }
   return found;
@@ -73,7 +85,7 @@ export function resolveChromePath() {
   const home = homedir();
   const candidates = chromeCandidates(home);
   for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
+    if (isExecutableFile(candidate)) return candidate;
   }
   throw new Error(
     `No Chrome binary found. Tried: ${candidates.join(', ')}. ` +

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import http from 'node:http';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -1945,11 +1945,12 @@ function listFiles(dir, predicate, out = []) {
 // cache > distro).
 function testChromeCandidateDiscovery() {
   const home = mkdtempSync(join(tmpdir(), 'web-uplift-chrome-cache-'));
-  const cft = join(home, '.cache', 'chrome', 'linux-999.0.8037.99', 'chrome-linux64', 'chrome');
+  const cftNew = join(home, '.cache', 'chrome', 'linux-1000.0.0.0', 'chrome-linux64', 'chrome');
+  const cftOld = join(home, '.cache', 'chrome', 'linux-999.0.8037.99', 'chrome-linux64', 'chrome');
   const puppeteer = join(home, '.cache', 'puppeteer', 'chrome', 'linux-888.0.0.0', 'chrome-linux64', 'chrome');
   const alias = join(home, 'chrome-path-alias');
   const binOverride = join(home, 'chrome-bin-override');
-  for (const file of [cft, puppeteer, alias, binOverride]) {
+  for (const file of [cftNew, cftOld, puppeteer, alias, binOverride]) {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   }
@@ -1961,10 +1962,20 @@ function testChromeCandidateDiscovery() {
     delete process.env.CHROME_PATH;
 
     assert(
-      resolveChromePath() === cft,
-      `CHROME_BIN unset: must find the Chrome for Testing cache binary, got ${resolveChromePath()}`,
+      resolveChromePath() === cftNew,
+      `CHROME_BIN unset: the newest cache version must win (numeric sort, not lexicographic), got ${resolveChromePath()}`,
     );
-    rmSync(cft);
+    // A cache path that exists but is not an executable file (a partial extract
+    // or directory husk) must be skipped, not returned and left to fail at spawn.
+    chmodSync(cftNew, 0o644);
+    assert(
+      resolveChromePath() === cftOld,
+      `a non-executable cache entry must be skipped in favour of the next candidate, got ${resolveChromePath()}`,
+    );
+    chmodSync(cftNew, 0o755);
+    assert(resolveChromePath() === cftNew, `an executable cache entry must be used, got ${resolveChromePath()}`);
+    rmSync(cftNew);
+    rmSync(cftOld);
     assert(
       resolveChromePath() === puppeteer,
       `CHROME_BIN unset: must fall back to the Puppeteer cache layout, got ${resolveChromePath()}`,
