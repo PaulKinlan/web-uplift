@@ -193,6 +193,9 @@ async function testConsoleEvidence() {
     const interactResult = await gather('console', `${base}/clean`, {
       quiet: true,
       wait: 400,
+      // An explicit deadline: under load the zero-delay click's exception can
+      // cross the old fixed 250ms window, which was the 7kl flake.
+      interactDeadlineMs: 2000,
       interact: "setTimeout(() => document.querySelector('#boom').click(), 0)",
     });
     assert(
@@ -200,14 +203,51 @@ async function testConsoleEvidence() {
         interactResult.console.entries.some((e) => e.text.includes('fixture interact exception')),
       `console: an error raised by --interact was not captured: ${JSON.stringify(interactResult.console)}`,
     );
+    assert(
+      interactResult.interactObserved === true && interactResult.interactEvidencePending === false,
+      `console: a captured interact must report observed evidence and no truncation: ${JSON.stringify({ observed: interactResult.interactObserved, pending: interactResult.interactEvidencePending, wait: interactResult.interactWaitMs })}`,
+    );
 
-    // The poll path, not just the zero-delay happy path: an interact that throws
-    // only after a delay LONGER than the old fixed 250ms window must still be
-    // captured, and the result must say how long it waited. On the fixed sleep
-    // this case read zero entries, which is the 7kl signature.
+    // AC1: a benign entry at +0ms must not mask a throw at +100ms. A poll that
+    // returns on the FIRST new entry misses the exception; the trailing silence
+    // window is what catches it.
+    const mixedResult = await gather('console', `${base}/clean`, {
+      quiet: true,
+      wait: 400,
+      interactDeadlineMs: 2000,
+      interact:
+        "setTimeout(() => console.warn('fixture benign entry'), 0);" +
+        "setTimeout(() => document.querySelector('#boom').click(), 100)",
+    });
+    assert(
+      mixedResult.console.warningCount === 1 &&
+        mixedResult.console.entries.some((e) => e.text.includes('fixture benign entry')),
+      `console: the benign interact entry was not captured: ${JSON.stringify(mixedResult.console)}`,
+    );
+    assert(
+      mixedResult.console.exceptionCount === 1 &&
+        mixedResult.console.entries.some((e) => e.text.includes('fixture interact exception')),
+      `console: a throw after an earlier benign entry was missed (first-entry-only exit): ${JSON.stringify(mixedResult.console)}`,
+    );
+
+    // AC2: a quiet interaction costs the default settle, not the hard deadline,
+    // and is not reported as a pending failure.
+    const quietResult = await gather('console', `${base}/clean`, { quiet: true, wait: 400, interact: 'void 0' });
+    assert(
+      quietResult.interactObserved === false && quietResult.interactEvidencePending === false,
+      `console: a quiet interact must not report observed or pending evidence: ${JSON.stringify({ observed: quietResult.interactObserved, pending: quietResult.interactEvidencePending })}`,
+    );
+    assert(
+      quietResult.interactWaitMs >= 200 && quietResult.interactWaitMs < 1000,
+      `console: a quiet interact must return on the default settle, not the hard deadline: ${quietResult.interactWaitMs}ms`,
+    );
+
+    // AC3: with an explicit longer deadline, an entry that only arrives at +700ms
+    // is still captured, and the reported wait reflects it.
     const delayedResult = await gather('console', `${base}/clean`, {
       quiet: true,
       wait: 400,
+      interactDeadlineMs: 2000,
       interact: "setTimeout(() => document.querySelector('#boom').click(), 700)",
     });
     assert(

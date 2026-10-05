@@ -2078,24 +2078,50 @@ async function images(client, url, opts, log) {
 // that runs after load cannot see what fired during it. The collector is
 // attached for every primitive, so the same block also rides along on whatever
 // else happened to be running when the page logged something.
-// The interact probe used to read the collector after a fixed 250ms sleep. That
+// The interact probe used to read the collector after a fixed 250ms sleep, which
 // is the 7kl flake: evaluate(opts.interact) resolves as soon as the SCRIPT's own
 // value resolves (typically a setTimeout id), so the click -> throw ->
 // Runtime.exceptionThrown -> CDP -> Node chain had to finish inside 250ms of
-// wall clock or the capture read zero entries. Poll for a new entry instead, up
-// to a bounded deadline, and report how long it waited and whether anything was
-// still pending, so a miss is attributable rather than inferred (web-uplift-3t2).
-const CONSOLE_INTERACT_DEADLINE_MS = 2000;
+// wall clock or the capture read zero entries (web-uplift-3t2).
+//
+// The wait is two-phase and bounded:
+//   1. poll for the first new entry, up to the deadline;
+//   2. once entries appear, keep polling until a trailing silence window passes
+//      with no further entries, so a benign entry at +0ms cannot mask a throw at
+//      +100ms the way a first-entry-only exit would;
+// and it never runs past the deadline.
+//
+// The default deadline is the 250ms settle this probe always had, so a quiet
+// interaction costs what it always did and is not reported as a failure; a
+// caller that knows it expects late evidence raises it with --interact-deadline.
+const CONSOLE_INTERACT_DEADLINE_MS = 250;
+const CONSOLE_INTERACT_SILENCE_MS = 250;
 const CONSOLE_INTERACT_POLL_MS = 25;
 
 async function waitForInteractEvidence(collector, beforeCount, deadlineMs) {
   const started = Date.now();
-  let count = collector.entries.length;
-  while (count <= beforeCount && Date.now() - started < deadlineMs) {
-    await sleep(CONSOLE_INTERACT_POLL_MS);
-    count = collector.entries.length;
+  let seen = beforeCount;
+  let observed = false;
+  let lastEntryAt = 0;
+  for (;;) {
+    const elapsed = Date.now() - started;
+    if (elapsed >= deadlineMs) {
+      // The deadline ended the wait. It only truncated something if evidence was
+      // live; a genuinely quiet interaction is not a pending failure.
+      return { waitedMs: elapsed, observed, pending: observed };
+    }
+    const count = collector.entries.length;
+    if (count > seen) {
+      observed = true;
+      lastEntryAt = Date.now();
+      seen = count;
+    }
+    if (observed && Date.now() - lastEntryAt >= CONSOLE_INTERACT_SILENCE_MS) {
+      return { waitedMs: Date.now() - started, observed, pending: false };
+    }
+    // Clamp the final poll to the remaining budget so the deadline is a ceiling.
+    await sleep(Math.min(CONSOLE_INTERACT_POLL_MS, Math.max(0, deadlineMs - (Date.now() - started))));
   }
-  return { waitedMs: Date.now() - started, pending: count <= beforeCount };
 }
 
 async function consolePrimitive(client, url, opts, log, collector) {
@@ -2106,7 +2132,8 @@ async function consolePrimitive(client, url, opts, log, collector) {
   });
   const beforeInteract = collector.entries.length;
   let interactWaitMs = null;
-  let interactPending = false;
+  let interactObserved = null;
+  let interactPending = null;
   if (opts.interact) {
     try {
       await evaluate(client, opts.interact);
@@ -2119,10 +2146,11 @@ async function consolePrimitive(client, url, opts, log, collector) {
       opts.interactDeadlineMs ?? CONSOLE_INTERACT_DEADLINE_MS,
     );
     interactWaitMs = settled.waitedMs;
+    interactObserved = settled.observed;
     interactPending = settled.pending;
     log(
-      `[evidence] console interact: waited ${interactWaitMs}ms for a new entry` +
-        (interactPending ? ' (deadline reached, none recorded)' : ''),
+      `[evidence] console interact: waited ${interactWaitMs}ms; observed=${interactObserved}` +
+        (interactPending ? ' (the deadline truncated a still-active wait)' : ''),
     );
   } else {
     // Nothing to wait for beyond the load itself: keep the short settle so
@@ -2138,7 +2166,7 @@ async function consolePrimitive(client, url, opts, log, collector) {
     primitive: 'console',
     url,
     scannedAt: new Date().toISOString(),
-    ...(opts.interact ? { interactWaitMs, interactEvidencePending: interactPending } : {}),
+    ...(opts.interact ? { interactWaitMs, interactObserved, interactEvidencePending: interactPending } : {}),
     console: block,
   };
   return emit(opts, result, client);
@@ -3017,6 +3045,7 @@ function parseArgs(argv) {
     else if (a === '--expr-file') args.expr = readFileSync(argv[++i], 'utf8');
     else if (a === '--interact') args.interact = argv[++i];
     else if (a === '--interact-file') args.interact = readFileSync(argv[++i], 'utf8');
+    else if (a === '--interact-deadline') args.interactDeadlineMs = Number(argv[++i]);
     else if (a === '--full-page') args.fullPage = true;
     else if (a === '--no-screenshots') args.screenshots = false;
     else if (a === '--bodies') args.bodies = true;
@@ -3093,7 +3122,7 @@ async function main() {
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css --max-nodes n --max-stops n\n' +
         '         --cpu-throttle n --network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse\n' +
         '         --locale de-DE --timezone Asia/Tokyo\n' +
-        '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f\n' +
+        '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f --interact-deadline ms\n' +
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies --quiet',
     );
     process.exit(1);
