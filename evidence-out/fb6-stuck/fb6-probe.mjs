@@ -2,7 +2,7 @@
 // VISUAL plus computed-style: the sticky topbar must look flat at the top and gain the
 // stuck cue (shadow + accented border) once it is stuck, with no layout shift.
 // Raw CDP via evidence/cdp.mjs. No Playwright/Puppeteer.
-import { launchChrome, newSession, navigate, evaluate, sleep } from '/home/exedev/worktrees/web-uplift-mw-invoker/evidence/cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep } from '../../evidence/cdp.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 const URL_ = 'file:///tmp/fb6-scorecard.html';
@@ -29,7 +29,7 @@ const styles = (client) => evaluate(client, `(() => {
 
 async function shot(session, name) {
   const { data } = await session.client.Page.captureScreenshot({ format: 'png', captureBeyondViewport: false });
-  writeFileSync(`${OUT}/${name}`, Buffer.from(data, 'base64'));
+  writeFileSync(`${OUT}/${name}`, Uint8Array.from(atob(data), (c) => c.charCodeAt(0)));
   console.log(`[shot] ${OUT}/${name} (${(data.length / 1024).toFixed(0)} KB)`);
 }
 
