@@ -40,5 +40,18 @@ function render() {
   unmount = scenario.mount(section, mode) ?? null;
 }
 
-addEventListener('hashchange', render);
+// View transitions are Baseline Newly available (Chrome 111, Firefox 144,
+// Safari 18, Edge 111), so the route swap keeps a plain render for browsers
+// without them rather than leaving the view unswapped.
+// TODO(baseline/view-transitions): call document.startViewTransition(render)
+// directly once view transitions are Baseline Widely Available.
+function swapView() {
+  if (typeof document.startViewTransition === 'function') {
+    document.startViewTransition(render);
+  } else {
+    render();
+  }
+}
+
+addEventListener('hashchange', swapView);
 render();
