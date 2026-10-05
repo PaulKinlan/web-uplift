@@ -46,6 +46,7 @@ try {
   await testBaselineOracle();
   await testFlowNormalize();
   await testLaunchSessionLoop();
+  await testNoOrphanBrowser();
   console.log('tests OK');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
@@ -1384,6 +1385,17 @@ function assert(condition, message) {
 async function testLaunchSessionLoop() {
   const result = await runAsync(process.execPath, [join(repoRoot, 'tests', 'launch-loop.mjs'), '3']);
   assert(result.status === 0, `launch-session loop failed:
+${result.stderr || result.stdout}`);
+}
+
+// Deterministic teardown guard (web-uplift-knz): every browser the harness
+// launches must be fully gone (process tree AND profile dir) after close().
+// The launcher used to leave a wedged browser group and one /tmp/web-uplift-cdp-*
+// husk per boot, which the (now stopped) VM reaper had to clean up. Kept cheap:
+// one browser in the suite; the standalone default is three.
+async function testNoOrphanBrowser() {
+  const result = await runAsync(process.execPath, [join(repoRoot, 'tests', 'no-orphan-browser.mjs'), '1']);
+  assert(result.status === 0, `no-orphan-browser failed:
 ${result.stderr || result.stdout}`);
 }
 
