@@ -1,10 +1,11 @@
 // Thin Chrome DevTools Protocol launcher + client wrapper.
 //
 // This deliberately uses the raw CDP via the `chrome-remote-interface` package
-// (a thin CDP client, NOT a browser-automation framework). We drive the system
-// Chrome at /usr/bin/google-chrome-stable, launched headless with an ephemeral
-// debugging port, and parse the chosen port from Chrome's stderr. No Playwright,
-// no Puppeteer.
+// (a thin CDP client, NOT a browser-automation framework). We drive a locally
+// installed Chrome - CHROME_BIN/CHROME_PATH, a versioned Chrome for Testing or
+// Puppeteer cache, or a distro binary (see chromeCandidates) - launched headless
+// with an ephemeral debugging port, and parse the chosen port from Chrome's
+// stderr. No Playwright, no Puppeteer.
 //
 // IMPORTANT: this module is a GENERIC harness. It makes no judgements and knows
 // nothing about principles, checks, or what "good" looks like. It only knows how
@@ -12,26 +13,72 @@
 // page. The intelligence lives in the model (following SKILL.md), not here.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import CDP from 'chrome-remote-interface';
 
-const CHROME_CANDIDATES = [
-  process.env.CHROME_BIN,
-  '/usr/bin/google-chrome-stable',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-].filter(Boolean);
+// Chrome binary discovery. Env overrides come first (CHROME_PATH is honoured as
+// an alias of CHROME_BIN because other Chrome tooling uses it), then the
+// versioned caches Chrome for Testing and Puppeteer install into, then the
+// distro paths. A fleet VM has no distro Chrome at all, so without the cache
+// entries the harness could only run with CHROME_BIN exported by hand.
+const CHROME_ENV_VARS = ['CHROME_BIN', 'CHROME_PATH'];
+
+// Each cached install lands under its own versioned directory, so these are
+// globbed one level deep rather than pinned to a version.
+const CHROME_CACHE_LAYOUTS = [
+  ['.cache', 'chrome'], // Chrome for Testing / @puppeteer/browsers default cache
+  ['.cache', 'puppeteer', 'chrome'], // Puppeteer's own cache
+];
+
+function chromeCacheGlobs(home) {
+  return CHROME_CACHE_LAYOUTS.map((parts) => join(home, ...parts, '*', 'chrome-linux64', 'chrome'));
+}
+
+function cachedChromeCandidates(home) {
+  const found = [];
+  for (const parts of CHROME_CACHE_LAYOUTS) {
+    const root = join(home, ...parts);
+    let versions;
+    try {
+      versions = readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort()
+        .reverse(); // newest-looking version first
+    } catch {
+      continue; // no such cache on this machine
+    }
+    for (const version of versions) {
+      const binary = join(root, version, 'chrome-linux64', 'chrome');
+      if (existsSync(binary)) found.push(binary);
+    }
+  }
+  return found;
+}
+
+function chromeCandidates(home) {
+  const overrides = CHROME_ENV_VARS.map((name) => process.env[name]).filter(Boolean);
+  const distro = [
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ];
+  return [...new Set([...overrides, ...cachedChromeCandidates(home), ...distro])];
+}
 
 export function resolveChromePath() {
-  for (const candidate of CHROME_CANDIDATES) {
+  const home = homedir();
+  const candidates = chromeCandidates(home);
+  for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;
   }
   throw new Error(
-    `No Chrome binary found. Tried: ${CHROME_CANDIDATES.join(', ')}. ` +
-      'Set CHROME_BIN to override.',
+    `No Chrome binary found. Tried: ${candidates.join(', ')}. ` +
+      `Cache locations searched: ${chromeCacheGlobs(home).join(' and ')}. ` +
+      'Set CHROME_BIN (or CHROME_PATH) to override.',
   );
 }
 
