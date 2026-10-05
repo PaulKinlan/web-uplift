@@ -3045,7 +3045,17 @@ function parseArgs(argv) {
     else if (a === '--expr-file') args.expr = readFileSync(argv[++i], 'utf8');
     else if (a === '--interact') args.interact = argv[++i];
     else if (a === '--interact-file') args.interact = readFileSync(argv[++i], 'utf8');
-    else if (a === '--interact-deadline') args.interactDeadlineMs = Number(argv[++i]);
+    else if (a === '--interact-deadline') {
+      // A typo must not silently become an unbounded wait: NaN makes
+      // `elapsed >= NaN` false forever and sleep(NaN) a 0ms spin, Infinity never
+      // exits, and <= 0 makes the wait vacuous. Accept only a finite positive ms.
+      const raw = argv[++i];
+      const ms = Number(raw);
+      if (!(Number.isFinite(ms) && ms > 0)) {
+        throw new Error(`--interact-deadline must be a positive number of milliseconds, got ${raw}`);
+      }
+      args.interactDeadlineMs = ms;
+    }
     else if (a === '--full-page') args.fullPage = true;
     else if (a === '--no-screenshots') args.screenshots = false;
     else if (a === '--bodies') args.bodies = true;

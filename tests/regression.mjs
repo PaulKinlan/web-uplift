@@ -171,7 +171,9 @@ async function testConsoleEvidence() {
     // Every primitive carries the block, and the artifact a primitive writes has
     // to agree with its stdout: that is what emit() is for.
     const out = join(tmp, 'console-dom-artifact.json');
-    const cli = await runAsync(process.execPath, ['evidence/cli.mjs', 'dom', `${base}/noisy`, '--wait', '300', '--out', out]);
+    const cli = await runAsync(process.execPath, [
+      'evidence/cli.mjs', 'dom', `${base}/noisy`, '--wait', '300', '--out', out, '--interact-deadline', '2000',
+    ]);
     assert(cli.status === 0, `console: dom CLI failed:\n${cli.stderr}`);
     const artifact = JSON.parse(readFileSync(out, 'utf8'));
     const stdout = JSON.parse(cli.stdout);
@@ -263,6 +265,19 @@ async function testConsoleEvidence() {
       typeof delayedResult.interactWaitMs === 'number' && delayedResult.interactWaitMs >= 650,
       `console: the poll must wait for the delayed entry and report how long it waited: ${delayedResult.interactWaitMs}`,
     );
+
+    // A typo'd --interact-deadline must fail fast at parse time rather than
+    // becoming an unbounded wait (NaN / Infinity) or a vacuous one (<= 0). These
+    // are parse errors, so no browser is launched (web-uplift-3t2 review).
+    for (const bad of ['foo', '0', '-5', 'Infinity']) {
+      const rejected = await runAsync(process.execPath, [
+        'evidence/cli.mjs', 'console', `${base}/clean`, '--interact', 'void 0', '--interact-deadline', bad,
+      ]);
+      assert(
+        rejected.status !== 0 && /--interact-deadline must be a positive number/.test(rejected.stderr),
+        `console: --interact-deadline ${bad} must be rejected with a usage error, got status ${rejected.status}: ${rejected.stderr}`,
+      );
+    }
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
