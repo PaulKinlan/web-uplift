@@ -1732,7 +1732,11 @@ async function testHarRedirects() {
     const out = join(tmp, 'network.har');
     const result = await gather('har', `http://127.0.0.1:${port}/start`, {
       quiet: true,
-      wait: 250,
+      // 2.5s, not the 250ms this test used before it asserted on bodies: the
+      // subresource loadingFinished events that make a body retrievable can
+      // arrive well after the load event on a heavily stolen-CPU box, so a
+      // tight window makes --bodies assertions flap for environmental reasons.
+      wait: 2500,
       bodies: true,
       out,
     });
