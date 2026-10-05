@@ -2,12 +2,13 @@
 import http from 'node:http';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { gather } from '../evidence/cli.mjs';
+import { resolveChromePath } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -16,6 +17,7 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', 'reports', 'scratch']);
 try {
   testSyntaxChecks();
   testPackageRootImportIsSideEffectFree();
+  testChromeCandidateDiscovery();
   testSchemaValidation();
   testAtomicCoverageValidator();
   testGuidanceUsage();
@@ -1933,4 +1935,55 @@ function listFiles(dir, predicate, out = []) {
     else if (predicate(full)) out.push(full);
   }
   return out;
+}
+
+// resolveChromePath must find a Chrome for Testing / Puppeteer cache binary when
+// CHROME_BIN is not set. The fleet VMs have no distro Chrome, so before this an
+// npm test run there failed only after it had already queued for the single
+// heavy slot. No browser is launched: the candidates are plain files in a fake
+// HOME, which also pins the override precedence (CHROME_BIN > CHROME_PATH >
+// cache > distro).
+function testChromeCandidateDiscovery() {
+  const home = mkdtempSync(join(tmpdir(), 'web-uplift-chrome-cache-'));
+  const cft = join(home, '.cache', 'chrome', 'linux-999.0.8037.99', 'chrome-linux64', 'chrome');
+  const puppeteer = join(home, '.cache', 'puppeteer', 'chrome', 'linux-888.0.0.0', 'chrome-linux64', 'chrome');
+  const alias = join(home, 'chrome-path-alias');
+  const binOverride = join(home, 'chrome-bin-override');
+  for (const file of [cft, puppeteer, alias, binOverride]) {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
+
+  const saved = new Map(['HOME', 'CHROME_BIN', 'CHROME_PATH'].map((name) => [name, process.env[name]]));
+  try {
+    process.env.HOME = home;
+    delete process.env.CHROME_BIN;
+    delete process.env.CHROME_PATH;
+
+    assert(
+      resolveChromePath() === cft,
+      `CHROME_BIN unset: must find the Chrome for Testing cache binary, got ${resolveChromePath()}`,
+    );
+    rmSync(cft);
+    assert(
+      resolveChromePath() === puppeteer,
+      `CHROME_BIN unset: must fall back to the Puppeteer cache layout, got ${resolveChromePath()}`,
+    );
+    process.env.CHROME_PATH = alias;
+    assert(
+      resolveChromePath() === alias,
+      `CHROME_PATH must be honoured as a CHROME_BIN alias, got ${resolveChromePath()}`,
+    );
+    process.env.CHROME_BIN = binOverride;
+    assert(
+      resolveChromePath() === binOverride,
+      `CHROME_BIN must win over CHROME_PATH, got ${resolveChromePath()}`,
+    );
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
 }
