@@ -1,5 +1,26 @@
 # Changelog — web-uplift
 
+## [0.4.2] - 2026-10-05
+
+### Fixed
+- **Intermittent `No inspectable targets` failure in the evidence harness.**
+  `newSession()` read Chrome's `/json/list` through a bare `CDP({ port })` and
+  assumed a default page target existed. Chrome for Testing 154 sometimes boots
+  with an empty list because the default New Tab fails to load (`incorrect
+  profile type`), so roughly 1 in 3 browser boots threw and `npm test` could not
+  be used as a merge gate. `newSession()` now creates its own target through the
+  `/json/new` HTTP endpoint and attaches to the returned WebSocket URL directly,
+  with a bounded retry only for the start-up race, so a real browser-start
+  failure still fails loudly. The public API is unchanged.
+
+### Added
+- `tests/launch-loop.mjs`, a guard that runs the launch plus session loop and
+  fails on any miss, wired into `tests/regression.mjs`.
+- `docs/aoo-first-increment.md` and `evidence-out/aoo-increment/`: the first
+  increment proposal for the two high findings (F-001 no dark mode, F-005 1.19MB
+  fonts) on paul.kinlan.me, with the live re-verification artifacts.
+  Documentation and evidence only, no runtime behaviour.
+
 ## [0.2.3] - 2026-07-07
 
 ### Added

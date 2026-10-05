@@ -119,15 +119,26 @@ for breaking skill/schema changes):
    `.claude/skills/web-audit/SKILL.md` per the `files` allowlist).
 6. `git tag v<VERSION> && git push && git push --tags`.
 
-### Current release: v0.4.1
+### Current release: v0.4.2
 
-Patch over v0.4.0. `a11ytree` gains `--max-nodes <n>` and `--max-stops <n>`. Its
-tree projection and focus walk were fixed at 400 nodes and 60 stops, which a
-content-heavy page blows through (a live run against a personal blog measured
-831 AX nodes), and there was no way to ask for the rest even though the caps
-were reported. The defaults are unchanged, the effective values are echoed in
-the output (`tree.maxNodes`, `focusOrder.maxStops`), and the skill row says how
-to widen them.
+Patch over v0.4.1. Fixes the intermittent `npm test` failure in the evidence
+harness and adds a regression guard. Chrome for Testing 154 sometimes boots with
+an empty `/json/list` because the default New Tab fails to load (`incorrect
+profile type`); `newSession()` read that list through a bare `CDP({ port })` and
+assumed a default page target existed, so roughly 1 in 3 browser boots threw
+`No inspectable targets` and the suite could not be used as a merge gate.
+`newSession()` now creates its own target through the `/json/new` HTTP endpoint
+and attaches to the returned WebSocket URL directly, with a bounded retry only
+for the start-up race, so it no longer depends on a default page existing. The
+public API is unchanged (`newSession(port) -> { client, targetId, close }`).
+`tests/launch-loop.mjs` is a new guard that runs the launch plus session loop and
+fails on any miss.
+
+The same tree also carries `docs/aoo-first-increment.md` and
+`evidence-out/aoo-increment/`: the first increment proposal for the two high
+findings (F-001 no dark mode, F-005 1.19MB fonts) on paul.kinlan.me, with the
+live re-verification artifacts. Documentation and evidence only, no runtime
+behaviour. v0.4.1, the previous release, added `a11ytree --max-nodes/--max-stops`.
 
 v0.4.0, the previous release, introduced the six evidence primitives built since
 v0.3.0 (`axe`, `console`, `targets`, `features`, `resilience`, `a11ytree`), the
