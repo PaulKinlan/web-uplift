@@ -22,13 +22,41 @@ const CHANGELOG_PATH = join(repoRoot, 'CHANGELOG.md');
 const PACKAGE_PATH = join(repoRoot, 'package.json');
 
 // Matches the file's heading format, `## [0.4.1] - 2026-09-25`, and tolerates a
-// bare `## 0.4.1` or a `v` prefix so the check does not break on formatting drift.
-const ENTRY = /^##\s+\[?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\]?\s*(?:-\s*(.*))?$/;
+// bare `## 0.4.1`, a `v` prefix, and a space-separated date
+// (`## [0.4.1] 2026-09-25`), so the check does not break on formatting drift.
+// The dashless form still requires a real date, so `## [0.4.1] trailing prose`
+// stays unrecognised exactly as it was before.
+const ENTRY =
+  /^##\s+\[?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\]?\s*(?:-\s*(.*)|\s+(\d{4}-\d{2}-\d{2}))?$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+// Drop fenced code blocks before scanning. A version heading quoted inside a
+// ``` / ~~~ fence is documentation (an example, a pasted transcript), not a
+// release entry, and used to satisfy the check and hide a missing entry.
+function stripFencedCode(text) {
+  const opener = /^\s{0,3}(`{3,}|~{3,})/;
+  const closer = /^\s{0,3}(`{3,}|~{3,})\s*$/;
+  const kept = [];
+  let fence = null;
+  for (const line of text.split('\n')) {
+    if (fence === null) {
+      const open = opener.exec(line);
+      if (open) fence = open[1];
+      else kept.push(line);
+    } else {
+      const close = closer.exec(line);
+      // Only a fence of the same character, at least as long, closes it.
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
+        fence = null;
+      }
+    }
+  }
+  return kept.join('\n');
 }
 
 // Read the version to check: the explicit argument wins, else package.json.
@@ -64,11 +92,11 @@ try {
   fail(`FAIL: cannot read CHANGELOG.md: ${err.message}`);
 }
 
-// Collect every release heading in the file.
+// Collect every release heading in the file, ignoring anything fenced.
 const entries = [];
-for (const line of changelog.split('\n')) {
+for (const line of stripFencedCode(changelog).split('\n')) {
   const match = ENTRY.exec(line);
-  if (match) entries.push({ version: match[1], date: (match[2] ?? '').trim() });
+  if (match) entries.push({ version: match[1], date: (match[2] ?? match[3] ?? '').trim() });
 }
 
 if (entries.length === 0) {

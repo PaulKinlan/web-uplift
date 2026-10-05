@@ -26,10 +26,11 @@ Grep the outgoing version literal before declaring the bump done:
 grep -rn "0\.4\.1" package.json package-lock.json .web-uplift/manifest.json AGENTS.md
 ```
 
-`package-lock.json` is the one that gets missed. Neither the v0.4.0 nor the
-v0.4.1 release commit bumped it: it sat at `0.3.0` while `package.json` read
-`0.4.0` and then `0.4.1`, and was only synced later by an unrelated commit that
-added a dependency.
+`package-lock.json` is the one that gets missed. It was already stale at the
+v0.3.0 release, where it read `0.2.3` while `package.json` said `0.3.0`, and
+neither the v0.4.0 nor the v0.4.1 release commit bumped it either: it sat at
+`0.3.0` while `package.json` read `0.4.0` and then `0.4.1`, and was only synced
+later by an unrelated commit that added a dependency.
 
 ## The CHANGELOG entry is mandatory
 
