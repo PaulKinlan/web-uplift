@@ -2032,13 +2032,46 @@ async function testLaunchRetryAndDiagnostics() {
     assert(/exited early/.test(error.message), `launch failure must name the early exit: ${error.message}`);
     assert(/code 7/.test(error.message), `launch failure must report the exit code: ${error.message}`);
     assert(/freshProfile=true/.test(error.message), `launch failure must report a fresh profile: ${error.message}`);
-    assert(/load=/.test(error.message), `launch failure must report host load: ${error.message}`);
+    assert(/alive=false/.test(error.message), `launch failure must report liveness: ${error.message}`);
+    assert(/stderr=/.test(error.message), `launch failure must report stderr: ${error.message}`);
+    if (existsSync('/proc/loadavg')) {
+      assert(/load=/.test(error.message), `launch failure must report host load: ${error.message}`);
+    }
     const spawns = existsSync(marker) ? readFileSync(marker, 'utf8').trim().split('\n').filter(Boolean).length : 0;
     assert(profiles.length > 1, `launchChrome must retry the whole launch, saw ${profiles.length} attempt(s)`);
     assert(spawns === profiles.length, `each retry must spawn once, marker=${spawns} profiles=${profiles.length}`);
     assert(new Set(profiles).size === profiles.length, 'each retry must use a fresh profile dir');
     for (const profile of profiles) {
       assert(!existsSync(profile), `a failed launch must clean up its profile dir: ${profile}`);
+    }
+
+    // A wedge (browser still alive but never printing the DevTools line) must be
+    // reported as ALIVE, not as the SIGTERM-killed process that teardown leaves
+    // behind. The short timeout keeps this cheap, and this is the assertion that
+    // fails if liveness is read after close() instead of before it.
+    const wedging = join(dir, 'wedging-chrome');
+    writeFileSync(wedging, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    const wedgeProfiles = [];
+    process.env.CHROME_BIN = wedging;
+    let wedgeError = null;
+    try {
+      await launchChrome({
+        devtoolsTimeoutMs: 400,
+        log: (line) => {
+          const match = /profile (\S+)\)/.exec(line);
+          if (match) wedgeProfiles.push(match[1]);
+        },
+      });
+    } catch (err) {
+      wedgeError = err;
+    }
+    assert(wedgeError instanceof Error, 'a wedged chrome must fail the launch');
+    assert(/alive=true/.test(wedgeError.message), `a wedge must be reported as alive-but-silent: ${wedgeError.message}`);
+    assert(/signal=null/.test(wedgeError.message), `a wedge must not be reported as signal-killed: ${wedgeError.message}`);
+    assert(/stderr=/.test(wedgeError.message), `a wedge must report stderr: ${wedgeError.message}`);
+    assert(wedgeProfiles.length > 1, `a wedged launch must still retry, saw ${wedgeProfiles.length}`);
+    for (const profile of wedgeProfiles) {
+      assert(!existsSync(profile), `a wedged launch must clean up its profile dir: ${profile}`);
     }
 
     // A transient failure followed by a good launch must recover on retry.

@@ -286,9 +286,12 @@ function lastStderrLine(text) {
 // bare "timed out" collapses them into one symptom. Every attempt mkdtemps its
 // own profile, so freshProfile=true is a property, not a claim.
 function describeLaunchFailure({ attempts, reasons, detail }) {
-  const proc = detail.proc;
-  const alive = proc ? !procExited(proc) : 'n/a (no process)';
-  const exit = proc ? `exitCode=${proc.exitCode}, signal=${proc.signalCode}` : 'exitCode=n/a';
+  // Read the snapshot taken BEFORE teardown: close() signals the browser and
+  // waits for it to exit, so re-reading the process here would always report
+  // alive=false/signal=SIGTERM and erase the alive-but-silent vs exited-early
+  // distinction this message exists to make.
+  const alive = detail.spawned ? String(detail.alive) : 'n/a (no process)';
+  const exit = detail.spawned ? `exitCode=${detail.exitCode}, signal=${detail.signal}` : 'exitCode=n/a';
   const host = hostLoadSummary();
   return (
     `Chrome launch failed after ${attempts} attempt(s); reasons: ${reasons.join(' | ')}; ` +
@@ -303,7 +306,7 @@ function describeLaunchFailure({ attempts, reasons, detail }) {
 // (remote-debugging-port=0 picks a free port). Returns { ok: true, handle } or
 // { ok: false, detail } and never throws, so launchChrome() can retry the whole
 // attempt and report every reason it failed.
-async function launchChromeOnce({ chromePath, headless, log }) {
+async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'web-uplift-cdp-'));
   log(`[browser] launching ${chromePath} (${headless ? 'headless' : 'headed'}, profile ${userDataDir})`);
 
@@ -335,7 +338,17 @@ async function launchChromeOnce({ chromePath, headless, log }) {
     // spawn itself failed (binary vanished, EACCES): no process, no group,
     // just the empty profile dir to drop before reporting.
     removeDirNow(userDataDir);
-    return { ok: false, detail: { reason: `spawn failed: ${err.message}`, proc: null, stderrText: '' } };
+    return {
+      ok: false,
+      detail: {
+        reason: `spawn failed: ${err.message}`,
+        spawned: false,
+        alive: false,
+        exitCode: null,
+        signal: null,
+        stderrText: '',
+      },
+    };
   }
 
   installInterruptNet();
@@ -388,10 +401,8 @@ async function launchChromeOnce({ chromePath, headless, log }) {
     port = await new Promise((resolve, reject) => {
       const timeout = setTimeout(
         () =>
-          reject(
-            new Error(`timed out waiting for the DevTools endpoint after ${DEVTOOLS_ENDPOINT_TIMEOUT_MS}ms`),
-          ),
-        DEVTOOLS_ENDPOINT_TIMEOUT_MS,
+          reject(new Error(`timed out waiting for the DevTools endpoint after ${devtoolsTimeoutMs}ms`)),
+        devtoolsTimeoutMs,
       );
       proc.stderr.on('data', (chunk) => {
         stderrText += chunk.toString();
@@ -407,10 +418,22 @@ async function launchChromeOnce({ chromePath, headless, log }) {
       });
     });
   } catch (err) {
+    // Snapshot liveness, exit state and stderr BEFORE teardown: close() signals
+    // and reaps the browser, so reading them afterwards would report every
+    // timeout as an exited process (signal=SIGTERM) and hide the wedge-vs-crash
+    // difference this diagnostic exists to draw.
+    const detail = {
+      reason: err.message,
+      spawned: true,
+      alive: !procExited(proc),
+      exitCode: proc.exitCode,
+      signal: proc.signalCode,
+      stderrText,
+    };
     // The browser we spawned (or its wedged tree) must not outlive the failure,
     // and its profile dir must not be left behind for the next attempt.
     await close();
-    return { ok: false, detail: { reason: err.message, proc, stderrText } };
+    return { ok: false, detail };
   }
 
   log(`[browser] DevTools port ${port}`);
@@ -420,12 +443,18 @@ async function launchChromeOnce({ chromePath, headless, log }) {
 // Launch headless Chrome, retrying the WHOLE attempt (fresh profile dir) a
 // bounded number of times. See DEVTOOLS_ENDPOINT_TIMEOUT_MS for why a longer
 // wait is not the fix, and describeLaunchFailure for what a failure reports.
-export async function launchChrome({ log = () => {}, headless = true } = {}) {
+export async function launchChrome({
+  log = () => {},
+  headless = true,
+  // Overridable so tests can exercise the timeout/wedge path without a 20 s
+  // wait; production callers keep the measured constant.
+  devtoolsTimeoutMs = DEVTOOLS_ENDPOINT_TIMEOUT_MS,
+} = {}) {
   const chromePath = resolveChromePath();
   const reasons = [];
   let lastDetail = null;
   for (let attempt = 1; attempt <= LAUNCH_ATTEMPTS; attempt++) {
-    const result = await launchChromeOnce({ chromePath, headless, log });
+    const result = await launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs });
     if (result.ok) {
       if (attempt > 1) log(`[browser] launch recovered on attempt ${attempt}/${LAUNCH_ATTEMPTS}`);
       return result.handle;
@@ -745,5 +774,7 @@ export async function withSession(fn, { log = () => {} } = {}) {
   }
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 export { sleep };
