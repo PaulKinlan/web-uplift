@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { gather } from '../evidence/cli.mjs';
+import { gather, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -34,6 +34,7 @@ try {
   await testHarWaitsForPendingResponses();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
+  await testConsoleInteractDeadlineValidation();
   await testFeaturesPrimitive();
   testBatchDryRunUsesRetainedDirs();
   testBatchFlowDryRun();
@@ -269,7 +270,7 @@ async function testConsoleEvidence() {
     // A typo'd --interact-deadline must fail fast at parse time rather than
     // becoming an unbounded wait (NaN / Infinity) or a vacuous one (<= 0). These
     // are parse errors, so no browser is launched (web-uplift-3t2 review).
-    for (const bad of ['foo', '0', '-5', 'Infinity']) {
+    for (const bad of ['foo', '0', '-5', 'Infinity', 'NaN', '']) {
       const rejected = await runAsync(process.execPath, [
         'evidence/cli.mjs', 'console', `${base}/clean`, '--interact', 'void 0', '--interact-deadline', bad,
       ]);
@@ -2287,4 +2288,41 @@ async function testTrackersThirdPartySuffix() {
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
+}
+
+// The interact deadline must be validated in the LOOP, not only in the CLI
+// parser: a caller that passes opts.interactDeadlineMs directly to gather()
+// bypasses parseArgs, and a non-finite or non-positive value would make
+// `elapsed >= NaN` false forever with sleep(NaN) spinning at 0ms. No browser is
+// needed here: the helper only reads collector.entries.
+// The interact deadline must be bounded by the LOOP, not only by the CLI parser:
+// gather() calls never go through parseArgs, and NaN/Infinity are not nullish, so
+// a bad programmatic value used to make `elapsed >= NaN` false forever with
+// sleep(NaN) spinning at 0ms. A bad value must degrade to the default bounded
+// wait (the parser keeps its fail-fast usage error for CLI typos). No browser is
+// needed here: the helper only reads collector.entries.
+async function testConsoleInteractDeadlineValidation() {
+  const fake = { entries: [] };
+  for (const bad of [NaN, Infinity, -Infinity, 0, -5, null, undefined, '']) {
+    const r = await waitForInteractEvidence(fake, 0, bad);
+    assert(
+      r.deadlineMs === 250 && r.observed === false && r.pending === false && r.waitedMs >= 200 && r.waitedMs < 1000,
+      `a bad deadline (${String(bad)}) must degrade to the default bounded wait: ${JSON.stringify(r)}`,
+    );
+  }
+
+  // A numeric string is coerced, and a valid number is honoured.
+  const str = await waitForInteractEvidence(fake, 0, '500');
+  assert(str.deadlineMs === 500 && str.waitedMs >= 450, `a numeric string deadline must be coerced: ${JSON.stringify(str)}`);
+  const num = await waitForInteractEvidence(fake, 0, 60);
+  assert(num.deadlineMs === 60 && num.waitedMs >= 55, `a valid deadline must be honoured: ${JSON.stringify(num)}`);
+
+  // An entry that arrives during the wait is observed and not reported pending.
+  const collector = { entries: [] };
+  setTimeout(() => collector.entries.push({ kind: 'exception', level: 'error', source: 'runtime', text: 'x' }), 20);
+  const seen = await waitForInteractEvidence(collector, 0, 500);
+  assert(
+    seen.observed === true && seen.pending === false,
+    `an entry during the wait must be observed and not pending: ${JSON.stringify(seen)}`,
+  );
 }
