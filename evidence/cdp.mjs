@@ -35,6 +35,119 @@ export function resolveChromePath() {
   );
 }
 
+// --- deterministic browser teardown ---------------------------------------
+//
+// Chrome boots a whole tree (browser, zygote, renderers, gpu, crashpad) and
+// re-flushes its profile (Local State, Variations) while it shuts down. So
+// teardown must signal the TREE, wait for it to be gone, escalate to SIGKILL if
+// it is not, and only then remove the profile dir. A single SIGTERM to the
+// main pid plus an immediate rmSync leaves (a) a wedged browser when the main
+// pid never processes the signal and (b) a /tmp/web-uplift-cdp-* husk per boot
+// when Chrome re-creates the files the rmSync just deleted.
+
+const TERM_GRACE_MS = 5000; // SIGTERM -> wait for a graceful browser shutdown
+const KILL_GRACE_MS = 2000; // SIGKILL -> wait for even a wedged tree to die
+const GROUP_DRAIN_MS = 1000; // stragglers (crashpad) after the main pid exits
+
+// Browsers this process has launched but not torn down. Chrome is spawned
+// detached, so its pid IS its process-group id: kill(-pid) reaches the whole
+// tree and can never include this process or its own group.
+const liveBrowsers = new Set();
+let interruptNetInstalled = false;
+
+// Ctrl-C (SIGINT), CI timeouts (SIGTERM) and terminal close (SIGHUP) kill this
+// process WITHOUT running 'exit' handlers (Node's default signal death skips
+// them), so the async close() below cannot run. This synchronous net SIGKILLs
+// every still-live browser group and drops its profile dir, then restores the
+// default disposition. Installed on the first launch, never at import time,
+// so importing this module stays side-effect free.
+function installInterruptNet() {
+  if (interruptNetInstalled) return;
+  interruptNetInstalled = true;
+  const sweep = () => {
+    for (const browser of liveBrowsers) {
+      killGroup(browser.proc, 'SIGKILL');
+      removeDirNow(browser.userDataDir);
+    }
+  };
+  process.on('exit', sweep);
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.once(signal, () => {
+      sweep();
+      // Our once-listener has already been removed. If nobody else listens,
+      // re-deliver so the process still dies the way it would have without us.
+      if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
+    });
+  }
+}
+
+// Signal the whole browser tree. -pid is Chrome's own process group (it was
+// spawned detached, so pid === pgid); if the group is already gone (ESRCH) or
+// the platform has no groups, fall back to the main pid alone and ignore
+// already-dead errors.
+function killGroup(proc, signal) {
+  try {
+    process.kill(-proc.pid, signal);
+  } catch {
+    try {
+      proc.kill(signal);
+    } catch {
+      // already dead
+    }
+  }
+}
+
+function groupHasMembers(proc) {
+  try {
+    process.kill(-proc.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function procExited(proc) {
+  return proc.exitCode !== null || proc.signalCode !== null;
+}
+
+function waitForProcExit(proc, ms) {
+  if (procExited(proc)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    function finish(result) {
+      clearTimeout(timer);
+      proc.removeListener('exit', onExit);
+      resolve(result);
+    }
+    function onExit() {
+      finish(true);
+    }
+    const timer = setTimeout(() => finish(false), ms);
+    proc.on('exit', onExit);
+  });
+}
+
+// Bounded wait for the group to be empty after the main pid is gone, so a
+// straggler cannot re-create profile files under the dir we are about to rm.
+function waitForGroupDrain(proc, ms) {
+  const deadline = Date.now() + ms;
+  return new Promise((resolve) => {
+    (function poll() {
+      if (!groupHasMembers(proc)) return resolve(true);
+      if (Date.now() >= deadline) return resolve(false);
+      setTimeout(poll, 50);
+    })();
+  });
+}
+
+function removeDirNow(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Launch headless Chrome with an ephemeral remote-debugging port and return a
 // handle. We parse the actual port from the "DevTools listening on ws://..."
 // line Chrome prints to stderr (remote-debugging-port=0 picks a free port).
@@ -43,57 +156,97 @@ export async function launchChrome({ log = () => {}, headless = true } = {}) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'web-uplift-cdp-'));
   log(`[browser] launching ${chromePath} (${headless ? 'headless' : 'headed'}, profile ${userDataDir})`);
 
-  const proc = spawn(
-    chromePath,
-    [
-      // Headed for `flow record` (the user interacts); headless everywhere else.
-      ...(headless ? ['--headless=new'] : []),
-      '--remote-debugging-port=0',
-      '--no-sandbox',
-      `--user-data-dir=${userDataDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-gpu',
-      '--disable-dev-shm-usage',
-      '--hide-scrollbars=false',
-    ],
-    { stdio: ['ignore', 'ignore', 'pipe'] },
-  );
-
-  const port = await new Promise((resolve, reject) => {
-    let buf = '';
-    const timeout = setTimeout(
-      () => reject(new Error('Timed out waiting for Chrome DevTools endpoint')),
-      20000,
+  let proc;
+  try {
+    proc = spawn(
+      chromePath,
+      [
+        // Headed for `flow record` (the user interacts); headless everywhere else.
+        ...(headless ? ['--headless=new'] : []),
+        '--remote-debugging-port=0',
+        '--no-sandbox',
+        `--user-data-dir=${userDataDir}`,
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        '--hide-scrollbars=false',
+      ],
+      {
+        stdio: ['ignore', 'ignore', 'pipe'],
+        // Chrome leads its own process group (setsid), so teardown can signal
+        // the whole browser tree with kill(-pid) without ever touching this
+        // process's group. See killGroup().
+        detached: true,
+      },
     );
-    proc.stderr.on('data', (chunk) => {
-      buf += chunk.toString();
-      const match = buf.match(/DevTools listening on ws:\/\/[^:]+:(\d+)\//);
-      if (match) {
-        clearTimeout(timeout);
-        resolve(Number(match[1]));
-      }
-    });
-    proc.on('exit', (code) => {
-      clearTimeout(timeout);
-      reject(new Error(`Chrome exited early (code ${code}) before listening`));
-    });
-  });
+  } catch (err) {
+    // spawn itself failed (binary vanished, EACCES): no process, no group,
+    // just the empty profile dir to drop before failing loudly.
+    removeDirNow(userDataDir);
+    throw err;
+  }
 
-  log(`[browser] DevTools port ${port}`);
+  installInterruptNet();
+  const browser = { proc, userDataDir };
+  liveBrowsers.add(browser);
 
+  let closed = false;
   async function close() {
+    if (closed) return; // idempotent: an explicit close plus a caller's finally
+    closed = true;
     try {
-      proc.kill('SIGTERM');
-    } catch {
-      // ignore
-    }
-    try {
-      rmSync(userDataDir, { recursive: true, force: true });
-    } catch {
-      // ignore
+      killGroup(proc, 'SIGTERM');
+      if (!(await waitForProcExit(proc, TERM_GRACE_MS))) {
+        killGroup(proc, 'SIGKILL');
+        await waitForProcExit(proc, KILL_GRACE_MS);
+      }
+      await waitForGroupDrain(proc, GROUP_DRAIN_MS);
+      // Only now is the profile dir safe to remove: every process that could
+      // re-create Local State / Variations is gone.
+      let removed = false;
+      for (let attempt = 1; attempt <= 3 && !removed; attempt++) {
+        removed = removeDirNow(userDataDir);
+        if (!removed && attempt < 3) await sleep(150);
+      }
+      if (!removed) log(`[browser] profile dir survived teardown: ${userDataDir}`);
+      // The tree is dead; drop our side of the stderr pipe so it cannot pin the
+      // event loop of a process that is otherwise done.
+      proc.stderr.destroy();
+    } finally {
+      liveBrowsers.delete(browser);
     }
   }
+
+  let port;
+  try {
+    port = await new Promise((resolve, reject) => {
+      let buf = '';
+      const timeout = setTimeout(
+        () => reject(new Error('Timed out waiting for Chrome DevTools endpoint')),
+        20000,
+      );
+      proc.stderr.on('data', (chunk) => {
+        buf += chunk.toString();
+        const match = buf.match(/DevTools listening on ws:\/\/[^:]+:(\d+)\//);
+        if (match) {
+          clearTimeout(timeout);
+          resolve(Number(match[1]));
+        }
+      });
+      proc.on('exit', (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`Chrome exited early (code ${code}) before listening`));
+      });
+    });
+  } catch (err) {
+    // Launch failed loudly for the caller, but the browser we did spawn (or its
+    // wedged tree) must not outlive the failure.
+    await close();
+    throw err;
+  }
+
+  log(`[browser] DevTools port ${port}`);
 
   return { proc, port, userDataDir, close };
 }
