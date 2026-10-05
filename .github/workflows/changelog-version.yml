@@ -1,0 +1,29 @@
+name: changelog-version
+
+# Release hygiene. A `chore: release` commit in this repo neither wrote nor
+# required a CHANGELOG.md entry, so the file silently rotted at 0.2.3 while
+# package.json reached 0.4.1 (the 0.3.0-0.4.1 entries at the top of CHANGELOG.md
+# had to be reconstructed from git history afterwards). This workflow runs the
+# dependency-free guard that makes a version without an entry a hard failure.
+#
+# It needs no `npm ci`, no Chrome and no model in the loop: the script reads two
+# files (package.json and CHANGELOG.md) and exits. See RELEASING.md for the
+# checklist it enforces one step of.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  changelog-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: CHANGELOG.md has an entry for package.json's version
+        run: node tests/changelog-version-check.mjs
