@@ -2169,15 +2169,17 @@ async function testHarWaitsForPendingResponses() {
 
 // The trackers primitive records HOSTNAMES, so a third party whose hostname
 // merely ENDS WITH the first-party hostname ('notlocalhost' for a page on
-// 'localhost') must still be counted. The old bare `!endsWith(firstParty)`
-// suffix match classified it as first-party and dropped it, and with it any
+// 'localhost') must still be counted, while a SUBDOMAIN of the first party
+// ('sub.localhost') must not be. The old bare `!endsWith(firstParty)` suffix
+// match classified the first case as first-party and dropped it, and with it any
 // known tracker on such a host.
 async function testTrackersThirdPartySuffix() {
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(
       '<!doctype html><title>trackers-fixture</title><link rel="icon" href="data:,">' +
-        '<img src="http://notlocalhost:9/tracker.js" alt=""><h1>trackers fixture</h1>',
+        '<img src="http://notlocalhost:9/tracker.js" alt="">' +
+        '<img src="http://sub.localhost:9/sub.js" alt=""><h1>trackers fixture</h1>',
     );
   });
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
@@ -2196,6 +2198,13 @@ async function testTrackersThirdPartySuffix() {
     assert(
       !third.includes('localhost'),
       `the first-party host itself must not be counted as third-party: ${JSON.stringify(third)}`,
+    );
+    // Without this the test still passes with the subdomain clause deleted from
+    // isFirstPartyHost (a mutant reduced to `host === firstParty` classifies
+    // sub.localhost as third-party).
+    assert(
+      !third.includes('sub.localhost'),
+      `a SUBDOMAIN of the first-party host must count as first-party: ${JSON.stringify(third)}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));

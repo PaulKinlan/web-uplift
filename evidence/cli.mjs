@@ -2001,7 +2001,9 @@ async function trackers(client, url, opts, log) {
   // thirdPartyOrigins and topThirdPartyByRequests. The first-party host itself
   // and its subdomains stay first-party, matching the tracker comparison below.
   const isFirstPartyHost = (host) =>
-    firstParty !== '' && (host === firstParty || host.endsWith('.' + firstParty));
+    typeof host === 'string' &&
+    firstParty !== '' &&
+    (host === firstParty || host.endsWith('.' + firstParty));
   const thirdParty = all.filter((o) => !isFirstPartyHost(o.origin));
   const trackersFound = thirdParty.filter(o => [...KNOWN_TRACKERS].some(t => o.origin === t || o.origin.endsWith('.' + t)));
   announceCap('trackers.topThirdPartyByRequests', Math.min(thirdParty.length, 15), thirdParty.length, log);
