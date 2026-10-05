@@ -614,6 +614,13 @@ async function testScorecardScoringAndRender() {
   assert(html.includes('closedby="any"'), 'scorecard: dialogs must request native light dismiss');
   assert(html.includes("('closedBy' in HTMLDialogElement.prototype)"), 'scorecard: the dismiss fallback must be gated on closedBy support');
 
+  // The sticky topbar is a scroll-state query container and the stuck-state cue
+  // lives on its descendant surface (a container query cannot style its own
+  // container), so both halves must survive.
+  assert(html.includes('container-type:scroll-state') && html.includes('container-name:topbar'), 'scorecard: the topbar must be a named scroll-state container');
+  assert(html.includes('@container topbar scroll-state(stuck: top)'), 'scorecard: the stuck-state rule must query the topbar container');
+  assert(html.includes('class="topbar-surface"'), 'scorecard: the topbar must keep its queryable surface element');
+
   // The inline text scorecard leads with the overall + a link, same numbers.
   const text = renderTextScorecard(
     { host: 'example', latest: { runId: 'r1', dir: join(repoRoot, 'examples'), report, ...scored } },

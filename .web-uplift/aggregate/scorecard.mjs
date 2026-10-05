@@ -482,8 +482,10 @@ export function renderScorecard(data) {
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">web-uplift <span class="muted">scorecard</span></div>
-  <div class="host">${esc(report.url || host)}</div>
+  <div class="topbar-surface">
+    <div class="brand">web-uplift <span class="muted">scorecard</span></div>
+    <div class="host">${esc(report.url || host)}</div>
+  </div>
 </header>
 
 <main>
@@ -628,7 +630,17 @@ body{margin:0;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;b
 h1,h2,h3,h4{margin:0 0 .4em}
 a{color:var(--accent)}
 .muted{color:var(--muted)}
-.topbar{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+/* The sticky bar is the scroll-state container; the query can only style its
+   DESCENDANTS (never the container itself), so .topbar-surface carries the
+   visual and gains the stuck cue. Browsers without scroll-state queries ignore
+   both declarations and keep today's flat bar, which is the intended fallback;
+   no cleanup is needed when this reaches Baseline. Only paint properties change
+   when stuck, so scroll anchoring cannot oscillate. */
+.topbar{position:sticky;top:0;z-index:5;container-type:scroll-state;container-name:topbar}
+.topbar-surface{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid var(--line);background:var(--bg);transition:box-shadow .2s ease,border-bottom-color .2s ease}
+@container topbar scroll-state(stuck: top){
+  .topbar-surface{box-shadow:0 6px 14px rgb(0 0 0 / .28);border-bottom-color:var(--accent)}
+}
 .brand{font-weight:700;letter-spacing:.2px}
 .host{color:var(--muted);font-size:.9rem;word-break:break-all}
 main{max-width:1000px;margin:0 auto;padding:22px}
