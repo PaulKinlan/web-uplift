@@ -23,6 +23,7 @@ try {
   testSchemaValidation();
   testAtomicCoverageValidator();
   testGuidanceUsage();
+  testGuidanceVersionPinnedInDocs();
   testInstalledEvidenceCli();
   testUpdateDryRunReadsInstallManifest();
   testCachedUpdateWarning();
@@ -2384,6 +2385,40 @@ function testIconSatisfiesMatrix() {
       assert(
         iconSatisfies(icons, size) === direct(icons, size),
         `iconSatisfies must classify like the direct construction for ${size}: ${JSON.stringify(icons)}`,
+      );
+    }
+  }
+}
+
+// The audit docs tell the model to run modern-web-guidance through npx. They must
+// all name the version pinned as guidanceCatalogVersion in
+// knowledge/principles.json: an unpinned @latest has no lockfile entry and no
+// integrity check, so it makes audits irreproducible and lets a compromised
+// publish execute on the audit host (factory-audit TM-006, web-uplift-2op). This
+// check is what stops a version bump from leaving a stale literal or an @latest
+// behind in any of the docs the model reads.
+function testGuidanceVersionPinnedInDocs() {
+  const pinned = readJson('knowledge/principles.json').guidanceCatalogVersion;
+  assert(
+    /^modern-web-guidance@\d+\.\d+\.\d+$/.test(pinned),
+    `guidanceCatalogVersion must pin a concrete version, got ${pinned}`,
+  );
+  const docs = [
+    'knowledge/guidance.md',
+    'runner/README.md',
+    'AGENTS.md',
+    '.github/copilot-instructions.md',
+    'web-uplift.example.json',
+    'schema/config.schema.json',
+  ];
+  for (const rel of docs) {
+    const text = readFileSync(join(repoRoot, rel), 'utf8');
+    const refs = [...text.matchAll(/modern-web-guidance@([^\s"'`]+)/g)].map((m) => m[1]);
+    assert(refs.length > 0, `${rel} must name the pinned guidance version (${pinned})`);
+    for (const ref of refs) {
+      assert(
+        `modern-web-guidance@${ref}` === pinned,
+        `${rel} names modern-web-guidance@${ref}, but guidanceCatalogVersion is ${pinned}`,
       );
     }
   }
