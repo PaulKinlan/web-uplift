@@ -5320,6 +5320,52 @@ function testAwaitCensus() {
   }
 }
 
+// THE WHOLE RAW-DERIVED SURFACE, shared by every failure route (web-uplift-17o rev8): three
+// revisions each missed a DIFFERENT consumer of the failed fetch, and the third miss (the
+// shell verdict) was a value DERIVED from the gated ones rather than a member of them - a
+// check that names fields can only catch the fields somebody remembered, and a hand-written
+// list per route would repeat that mistake one route at a time. So every route's summary is
+// walked the same way: each EMITTED key must be either unknown (null) or on the explicit
+// meaningful-without-raw list, with its reason. A key added to the summary later must be
+// classified here or the suite fails - the same reason the census is enforced.
+// THE GUARANTEE, STATED AT ITS ACTUAL WIDTH: the walk covers top-level keys and the
+// immediate members of the raw group. Allowlisted OBJECTS (rendered, screenshots) are NOT
+// recursed into - recursing buys little (render facts exist regardless of the raw fetch)
+// and a stated guarantee must match what is actually walked, since an over-broad guarantee
+// is the same defect as a false value.
+function assertUnknownRawSurface(summary, routeLabel, assert) {
+  const meaningfulWithoutRaw = new Map([
+    ['type', 'the primitive name - a fact about the run'],
+    ['url', 'the audited URL - an input fact'],
+    ['finalUrl', 'the REQUESTED URL when the exchange failed (it is assigned only once the exchange resolves), the final URL otherwise - a run fact, not a comparison'],
+    ['fetchedStatus', 'the recorded status when one arrived (null when none did) - a run fact'],
+    ['fetchError', 'the record of the failure - not a claim about the page'],
+    ['crawlerUserAgent', 'the user agent used - a run fact'],
+    ['rawComparisonUsable', 'the gate itself'],
+    ['rawComparisonNote', 'the explanation of why the comparison is absent'],
+    ['renderedEmpty', 'describes the RENDER, which exists regardless of the raw fetch'],
+    ['rendered', 'rendered-page facts - the render exists regardless of the raw fetch'],
+    ['screenshots', 'captured from the render, same reason'],
+    ['console', 'what the page logged while rendering - browser-side runtime behavior, exists regardless of the raw fetch (the walk caught this key unclassified on the 404 route, which is the mechanism working)'],
+    ['signalsFor', 'static metadata'],
+    ['note', 'static documentation'],
+  ]);
+  const notUnknown = [];
+  for (const [k, v] of Object.entries(summary)) {
+    if (meaningfulWithoutRaw.has(k)) continue;
+    if (k === 'raw') {
+      if (v && typeof v === 'object' && Object.values(v).every((x) => x === null)) continue;
+      notUnknown.push(`raw=${JSON.stringify(v)}`);
+      continue;
+    }
+    if (v !== null) notUnknown.push(`${k}=${JSON.stringify(v)}`);
+  }
+  assert(
+    notUnknown.length === 0,
+    `discoverability (${routeLabel} route): with no raw document, EVERY raw-derived key must be unknown; these are not - null them or classify them with a reason: ${notUnknown.join(', ')}`,
+  );
+}
+
 // web-uplift-17o rev4: the raw-fetch exchange is bounded AND the bound is configurable, and
 // a timed-out raw fetch is never reported as evidence about the page. The slow-but-successful
 // control only passes because the budget was raised - a fixed bound would be a product
@@ -5417,47 +5463,7 @@ async function testFetchDeadlineAndRawComparison() {
       typeof timed.rawComparisonNote === 'string' && timed.rawComparisonNote.includes('network condition'),
       'discoverability: the summary must SAY the comparison is not evidence about the page',
     );
-    // THE WHOLE RAW-DERIVED SURFACE, not named fields: three revisions each missed a
-    // DIFFERENT consumer of the failed fetch, and the third miss (the shell verdict) was a
-    // value DERIVED from the gated ones rather than a member of them - a test that names
-    // fields can only catch the fields somebody remembered. So instead enumerate the
-    // EMITTED keys: each must be either unknown (null) or on the explicit
-    // meaningful-without-raw list, with its reason. A key added to the summary later must
-    // be classified here or the test fails - the same reason the census is enforced.
-    // THE GUARANTEE, STATED AT ITS ACTUAL WIDTH: the walk covers top-level keys and the
-    // immediate members of the raw group. Allowlisted OBJECTS (rendered, screenshots) are
-    // NOT recursed into - recursing buys little (render facts exist regardless of the raw
-    // fetch) and a stated guarantee must match what is actually walked, since an over-broad
-    // guarantee is the same defect as a false value.
-    const meaningfulWithoutRaw = new Map([
-      ['type', 'the primitive name - a fact about the run'],
-      ['url', 'the audited URL - an input fact'],
-      ['finalUrl', 'the REQUESTED URL when the exchange failed (it is assigned only once the exchange resolves), the final URL otherwise - a run fact, not a comparison'],
-      ['fetchedStatus', 'null itself when no response arrived'],
-      ['fetchError', 'the record of the failure - not a claim about the page'],
-      ['crawlerUserAgent', 'the user agent used - a run fact'],
-      ['rawComparisonUsable', 'the gate itself'],
-      ['rawComparisonNote', 'the explanation of why the comparison is absent'],
-      ['renderedEmpty', 'describes the RENDER, which exists regardless of the raw fetch'],
-      ['rendered', 'rendered-page facts - the render exists regardless of the raw fetch'],
-      ['screenshots', 'captured from the render, same reason'],
-      ['signalsFor', 'static metadata'],
-      ['note', 'static documentation'],
-    ]);
-    const notUnknown = [];
-    for (const [k, v] of Object.entries(timed)) {
-      if (meaningfulWithoutRaw.has(k)) continue;
-      if (k === 'raw') {
-        if (v && typeof v === 'object' && Object.values(v).every((x) => x === null)) continue;
-        notUnknown.push(`raw=${JSON.stringify(v)}`);
-        continue;
-      }
-      if (v !== null) notUnknown.push(`${k}=${JSON.stringify(v)}`);
-    }
-    assert(
-      notUnknown.length === 0,
-      `discoverability: with the raw fetch failed, EVERY raw-derived key must be unknown; these are not - null them or classify them with a reason: ${notUnknown.join(', ')}`,
-    );
+    assertUnknownRawSurface(timed, 'timeout', assert);
 
     // 6a. THE NON-2XX ROUTE: a 404 page is a response ABOUT the resource, not the document
     //     - the gate must not treat it as usable, and the STATUS is still recorded, so the
@@ -5471,13 +5477,36 @@ async function testFetchDeadlineAndRawComparison() {
     assert(
       nfSummary.rawComparisonUsable === false &&
         nfSummary.fetchedStatus === 404 &&
-        nfSummary.isJsShell === null &&
-        nfSummary.coveragePct === null &&
         typeof nfSummary.rawComparisonNote === 'string' &&
         nfSummary.rawComparisonNote.includes('404'),
-      `discoverability: a non-2xx must be unusable, unknown-surfaced, with the status recorded and named (${JSON.stringify({ usable: nfSummary.rawComparisonUsable, status: nfSummary.fetchedStatus, isJsShell: nfSummary.isJsShell, coveragePct: nfSummary.coveragePct, note: nfSummary.rawComparisonNote && nfSummary.rawComparisonNote.slice(0, 60) })})`,
+      `discoverability: a non-2xx must be unusable with the status recorded and named (${JSON.stringify({ usable: nfSummary.rawComparisonUsable, status: nfSummary.fetchedStatus })})`,
     );
+    assertUnknownRawSurface(nfSummary, 'non-2xx', assert);
     nf.close();
+
+    // 6a-ii. THE BODY-READ ROUTE, end to end: the SAME server cannot stall the raw fetch
+    //        and serve the browser (a uniformly stalling body also hangs the navigation -
+    //        correct, but a different route), so split by user agent: the crawler fetch
+    //        stalls mid-body and the budget fires; the browser gets a complete page. The
+    //        summary gets the same whole-surface guard, not a hand-written field list.
+    const bodyStall = http.createServer((req, res) => {
+      if ((req.headers['user-agent'] || '').includes('web-uplift-discoverability')) {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.write('<!doctype html><title>crawler-half</title>');
+        return; // never ends the body for the raw fetch
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><title>Browser Half</title><h1>Browser Half Heading</h1><p>complete for the browser</p>');
+    });
+    await new Promise((r) => bodyStall.listen(0, '127.0.0.1', r));
+    configureFetchDeadline(400);
+    const stalledSummary = await gather('discoverability', `http://127.0.0.1:${bodyStall.address().port}/`, { quiet: true, wait: 300, screenshots: false });
+    assert(
+      stalledSummary.rawComparisonUsable === false && typeof stalledSummary.fetchError === 'string',
+      `discoverability: a body-read failure must be unusable with the error recorded (${JSON.stringify({ usable: stalledSummary.rawComparisonUsable, fetchError: stalledSummary.fetchError && stalledSummary.fetchError.slice(0, 60) })})`,
+    );
+    assertUnknownRawSurface(stalledSummary, 'body-read', assert);
+    bodyStall.close();
 
     // 6b. THE EMPTY-200 ROUTE STAYS USABLE: a completed empty response is OBSERVED evidence
     //     that the raw document was empty - the real empty-document signal the tool exists

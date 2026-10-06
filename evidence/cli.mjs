@@ -2301,20 +2301,28 @@ async function discoverability(client, url, opts, log) {
   // THE USABILITY GATE - the single authority on whether the raw document was retrieved,
   // with the routes by which it was NOT ENUMERATED here so a route added later must be
   // classified rather than silently defaulting to "usable" (the same failure the fields
-  // had before the surface was asserted; testFetchDeadlineAndRawComparison exercises every
-  // route). USABLE MEANS WE RETRIEVED THE DOCUMENT THE URL NAMES (coord's ruling):
-  //   1. the exchange threw - a network error, an abort/timeout, a redirect with no
-  //      location, a refusal by the page-derived fetch guard;
+  // had before the surface was asserted; the route coverage is stated narrowly below).
+  // USABLE MEANS WE RETRIEVED THE DOCUMENT THE URL NAMES (coord's ruling):
+  //   1. the exchange threw - a network error, an abort/timeout, or a refusal by the
+  //      page-derived fetch guard (including the redirect hop-limit);
   //   2. the body read threw or exceeded the cap (it happens inside the same try, so it
   //      arrives through route 1 as a fetchError);
   //   3. the final response is not a SUCCESS (2xx): a 404 or 500 page is a response ABOUT
   //      the resource, not the document, and comparing the rendered page against it
-  //      manufactures exactly the false claim this gate exists to prevent. A 3xx that
-  //      resolves to a 2xx is fine. The status is still RECORDED, so nothing is lost: the
-  //      operator sees the 404 as a status, not as a misleading "not a JS shell".
+  //      manufactures exactly the false claim this gate exists to prevent. A LOCATION-LESS
+  //      3xx lands here too: the fetch helper returns it as a response (it does not throw),
+  //      so the status check is what rejects it. A 3xx that resolves to a 2xx is fine.
+  //      The status is still RECORDED, so nothing is lost: the operator sees the 404 as a
+  //      status, not as a misleading "not a JS shell".
   // A genuinely EMPTY 200 body is DIFFERENT AND STAYS USABLE: a completed empty response is
   // observed evidence that the raw document was empty - the real empty-document signal the
   // tool exists to report. The distinction is deliberate, not incidental.
+  // ROUTE COVERAGE, STATED NARROWLY: the timeout, body-read and non-2xx routes are
+  // exercised END-TO-END through discoverability by testFetchDeadlineAndRawComparison; the
+  // guard-refusal and size-cap mechanisms are exercised at the safeFetch level by
+  // testSafeFetchRedirectAndSizeGuard; a location-less 3xx is NOT exercised through
+  // discoverability - it lands on the same status check the 404 route exercises, and
+  // saying that is more useful than claiming a coverage the tests do not have.
   const rawComparisonUsable =
     fetchError === null && rawStatus !== null && rawStatus >= 200 && rawStatus < 300;
   const renderedTokens = contentTokens(rendered.text);
