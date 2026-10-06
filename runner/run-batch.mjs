@@ -317,7 +317,6 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
     console.error(`Refused run at ${siteDir} is not a real path below the output root (a link in the chain?): not touching anything through it.`);
     return `could not quarantine: ${siteDir} is not a real path below ${outRoot}`;
   }
-  return null;
   // Step 1, the one that actually matters. EVERY failure here is loud: the exclusion
   // itself no longer depends on this succeeding (resolution reads the tool's pointer),
   // but a run that cannot be quarantined must not pass silently either.
@@ -336,6 +335,7 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
   } catch (err) {
     console.error(`Could not write the refusal marker: ${err.message}`);
   }
+  return null;
 }
 
 // COMPLETION CHECK - WHAT THIS ACTUALLY GUARANTEES. Read this before trusting it:

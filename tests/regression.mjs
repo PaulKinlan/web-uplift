@@ -4091,8 +4091,8 @@ function testBatchWriteScope() {
     });
     assert(/done \(coverage complete\)\s+https:\/\/later\.example\//.test(deletes.stdout), `batch deleted run dir: a LATER url must still complete:\n${deletes.stdout}`);
     assert(
-      /failed\s+https:\/\/deleter\.example\//.test(deletes.stdout),
-      `batch deleted run dir: the destructive URL must be reported on a FAILURE line, not merely appear somewhere:\n${deletes.stdout}`,
+      /https:\/\/deleter\.example\/: run directory unusable/.test(deletes.stdout),
+      `batch deleted run dir: the destructive URL must carry its own failure REASON in the summary, not merely appear somewhere:\n${deletes.stdout}`,
     );
     // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
     //    readFileSync was missing from the runner's imports: the lookup threw, the catch
