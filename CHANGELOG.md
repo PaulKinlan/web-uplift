@@ -9,6 +9,17 @@
 > entry mandatory, and `tests/changelog-version-check.mjs` fails a version that
 > has no entry here.
 
+## [Unreleased]
+
+- **axe primitive**: the page is now navigated and analysed with its own
+  Content-Security-Policy enforced; the policy is lifted only for the injection
+  of the vendored axe-core (a strict `script-src` otherwise refuses it) and
+  restored immediately afterwards. Previously the policy was lifted before
+  navigation, so a page's own blocked inline scripts could run during the audit.
+  The result now records that the injection bypass happened
+  (`cspBypassedForInjection`, `cspBypassNote`) so a reader can tell this run from
+  one where the policy was never lifted.
+
 ## [0.4.2] - 2026-10-05
 
 ### Fixed
