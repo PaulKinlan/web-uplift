@@ -39,6 +39,7 @@ try {
   testGuidanceVersionPinnedInDocs();
   testHeadlessAllowlistIsScoped();
   testHeadlessAllowlistMatchesSkillContract();
+  testSkillWriteContractGuard();
   testRedactHeaderList();
   testInstalledEvidenceCli();
   testInstalledTreeRelativeImportsResolve();
@@ -3670,6 +3671,18 @@ function testHeadlessAllowlistIsScoped() {
     allowed.includes(`Bash(npx -y --ignore-scripts ${pinned}:*)`),
     `the guidance allowlist entry must name the pinned ${pinned}: ${allowed}`,
   );
+}
+
+// The skill-vs-write-scope contract has its own dependency-free guard (same
+// shape as tests/cdp-copy-sync.mjs, for the same reason: it must be runnable
+// with no npm install). Drive it here so `npm test` covers the contract that
+// refused a COMPLETED audit in web-uplift-ies run 4: SKILL.md instructed
+// `scratch/` while allowedRoots allowed only the run's --out directory
+// (web-uplift-16f). The guard carries its own mutation controls, so a neutered
+// check fails there rather than here.
+function testSkillWriteContractGuard() {
+  const guard = spawnSync(process.execPath, [join(repoRoot, 'tests', 'skill-write-contract.mjs')], { encoding: 'utf8' });
+  assert(guard.status === 0, `skill-write-contract guard must pass: ${guard.stderr || guard.stdout}`);
 }
 // A page controls the manifest href and the redirects the raw fetch follows, and
 // both are fetched by the privileged Node process. The guard must refuse every

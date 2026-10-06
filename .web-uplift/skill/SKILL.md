@@ -419,8 +419,11 @@ different one. If you want evidence the HINT does not mention, gather it.
 ### 3. Gather the evidence
 
 Run the primitives and tools you planned. Keep artifacts (screenshots, videos,
-heap summaries, layout JSON, Lighthouse JSON) under the report directory or
-`scratch/` (gitignored). Capture enough that a reader could verify each finding.
+heap summaries, layout JSON, Lighthouse JSON) under the report directory:
+everything a run writes stays inside that run directory, which is also the
+headless runner's write scope. Ad-hoc helper scripts and fetched reference
+material belong in `<report directory>/scratch/`. Capture enough that a reader
+could verify each finding.
 
 ### 4. Judge every check, then derive every principle (quality without shaming)
 

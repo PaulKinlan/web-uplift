@@ -157,6 +157,23 @@ export function diffTrees(before, after) {
   return { added: added.sort(), modified: modified.sort(), deleted: deleted.sort() };
 }
 
+// The headless-audit write contract, both halves in one place (web-uplift-16f):
+// an agent auditing an untrusted page may write ANYTHING, but only under its
+// run's --out directory, and its ad-hoc scratch work (helper scripts, fetched
+// reference material) belongs in `<run dir>/scratch` — the placement SKILL.md's
+// artifact rule must teach verbatim. WHY scratch lives INSIDE the run directory
+// instead of a repo-root scratch/: the run directory is already the one allowed
+// root, so the contract needs no second root and confinement never widens;
+// scratch beside the run keeps every artifact a reader needs with the run that
+// produced it (SKILL's own justification); and a repo-root scratch/ would
+// persist across runs — helper code written under one site's influence would
+// survive into the next site's audit, outside every run's accounting. The drift
+// this prevents is real: run 4 of web-uplift-ies completed a full 58/58 audit
+// and was then refused because SKILL said `scratch/` while allowedRoots said
+// `reports/` only. tests/skill-write-contract.mjs fails when either half moves.
+export const SCRATCH_SUBDIR = 'scratch';
+export const allowedRootsFor = (outRoot) => [outRoot];
+
 // Of the changes in a diff (paths relative to `base`), the ones that resolve
 // outside every allowed root. This is the refusal test: a fix run may touch the
 // declared source tree, its own report directory, and anything the operator

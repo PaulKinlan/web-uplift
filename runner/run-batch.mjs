@@ -46,7 +46,7 @@ import { fileURLToPath } from 'node:url';
 import { AGENTS } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
-import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from './write-scope.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor } from './write-scope.mjs';
 import { launchChrome, newSession } from '../evidence/cdp.mjs';
 
 const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
@@ -123,9 +123,9 @@ function writeScopeFor(url, siteDir, scopeBefore, agentError) {
   const changes = diffTrees(scopeBefore, snapshotScope());
   return {
     url,
-    allowedRoots: [outRoot],
+    allowedRoots: allowedRootsFor(outRoot),
     changed: changes,
-    escapedOutsideScope: escapedChanges(changes, projectRoot, [outRoot]),
+    escapedOutsideScope: escapedChanges(changes, projectRoot, allowedRootsFor(outRoot)),
     agentError: agentError ? String(agentError.message || agentError) : null,
     recordWrittenTo: siteDir,
   };
