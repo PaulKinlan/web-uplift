@@ -5181,8 +5181,10 @@ async function testCdpDeadline() {
   // are answered by the BROWSER, not the page, so a never-responding server never reaches
   // them; their firing is demonstrated by the STUB-CLIENT cases below (web-uplift-4ux).
   // What remains unreproduced is a REAL wedged browser mid-trace (a frozen Chrome on a
-  // live socket): that would need SIGSTOP on a real browser, and a test whose failure
-  // mode is a hang would hang the gate, so it stays out of the suite.
+  // live socket): wedging a real browser takes an OS-level freeze or a stalling proxy on
+  // the CDP port, and the stubs below already reproduce its observable failure - the
+  // event never arrives, the command is never acked - in-process, with no browser to
+  // wedge and no flake, so the real wedge stays out of the suite.
   const { gather, trace } = await import(pathToFileURL(join(repoRoot, 'evidence/cli.mjs')).href);
   const { configureCdpDeadlines } = await import(pathToFileURL(join(repoRoot, 'evidence/cdp.mjs')).href);
   const bhUrl = `http://127.0.0.1:${blackhole.address().port}/`;
@@ -5234,9 +5236,10 @@ async function testCdpDeadline() {
   // web-uplift-4ux: STUB FIRING REPRO for the two tracing bounds of the trace path. The
   // starved case above stalls the PAGE side, which fires the load-event bound before the
   // browser is ever asked to answer the two tracing waits. These cases drive the exported
-  // trace() directly with a fake client: NO BROWSER exists anywhere in the test, the only
-  // timer is withDeadline's own, so the test CANNOT HANG - the worst case is that the
-  // deadline rejects, which IS the assertion. What the stubs demonstrate: the
+  // trace() directly with a fake client: no browser exists in these cases, and every
+  // await on the path is either withDeadline-wrapped or a fixed sleep(), so no stub-side
+  // wait can be unbounded - the bound-firing cases EXPECT the deadline rejection (the
+  // healthy control would fail loudly instead). What the stubs demonstrate: the
   // tracing-COMPLETE bound fires with the actionable error when the event never arrives,
   // the tracing-END bound fires when the command is never acked, and the healthy control
   // writes both artifacts when the event does arrive. What they do NOT demonstrate: a real
@@ -5307,7 +5310,11 @@ async function testCdpDeadline() {
         endErr.message.includes(`timed out after ${STUB_DEADLINE_MS}ms waiting for the browser to end tracing for ${stubUrl}`),
       `4ux stub: an unacked Tracing.end must fire its own bound (${endErr && endErr.message})`,
     );
-    // (c) HEALTHY CONTROL: same stub, event fires -> trace completes and writes both artifacts.
+    // (c) HEALTHY CONTROL: same stub, event fires -> trace completes and writes both
+    // artifacts. The control races a setTimeout(0) against the bound, so it gets a
+    // GENEROUS deadline: the small bound above is for the firing cases only, and a tiny
+    // deadline under fleet load is a known flake shape in this suite.
+    configureCdpDeadlines({ navigationMs: 10000, callMs: 10000 });
     const stubOkOut = join(tmp, 'trace-stub-ok.json');
     const stubOk = await trace(
       stubClient({ completeFires: true, endResolves: true }),

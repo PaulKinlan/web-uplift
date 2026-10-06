@@ -795,7 +795,7 @@ async function axe(client, url, opts, log) {
 // exports (safeFetch, waitForInteractEvidence): the tracing bounds guard BROWSER-fired
 // events, which no stub can reach through gather() because gather launches a real
 // Chrome - the regression suite drives trace() directly with a fake client to show the
-// bounds fire, and that is the only consumer of this export.
+// bounds fire; the only consumer of this export in this repo is that suite.
 export async function trace(client, url, opts, log) {
   // The navigation below calls Page.navigate DIRECTLY rather than through navigate() because
   // the trace must start before navigationStart is captured; the bound is the same one
