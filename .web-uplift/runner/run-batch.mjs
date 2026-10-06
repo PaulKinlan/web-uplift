@@ -238,14 +238,16 @@ async function worker() {
       failures.push({ url, reason: `wrote outside --out: ${scope.escapedOutsideScope.join(', ')}` });
       // Quarantine the run: rename its report out of the way and leave a record.
       //
-      // This is DEFENCE IN DEPTH AND EVIDENCE, not the thing that makes the refusal
-      // stick. Completion is decided by hasCompletedLatest() below, which reads only the
-      // pointer this tool writes on a successful run - so a refused run cannot resolve
-      // as current for a later --resume no matter what it leaves on disk, and no planted
-      // file can change that decision. (resolveLatest() in run-history.mjs still has a
-      // "newest directory containing a report" fallback, and the batch deliberately no
-      // longer calls it; the reporting consumers, such as the scorecard, still do, where
-      // it is a presentation convenience rather than a completion decision.)
+      // ADVISORY EVIDENCE AND DEFENCE IN DEPTH, not a guarantee. Completion is decided by
+      // hasCompletedLatest() below: WITHIN this batch by our own in-memory set, which no
+      // file can influence; ACROSS a resume from a pointer on disk, which the agent being
+      // audited can write too - so a planted pointer naming a run that looks valid can
+      // still make a later --resume skip that URL. That residual is real and is not
+      // something this tool can close; its boundary is operator-provided external
+      // isolation (the fixer's --isolation flag - THIS batch runner has no isolation flag
+      // of its own). resolveLatest() in run-history.mjs keeps its "newest directory
+      // containing a report" fallback for reporting consumers such as the scorecard,
+      // where it is a presentation convenience; the batch deliberately does not call it.
       const quarantineProblem = await quarantineRefusedRun(siteDir, { url, escapedOutsideScope: scope.escapedOutsideScope });
       if (quarantineProblem) failures.push({ url, reason: quarantineProblem });
       console.error(
@@ -273,8 +275,17 @@ async function worker() {
         await annotateReport(siteDir, { agent: agentName, runId: planned.runId });
         const validation = validateAtomicReport(join(siteDir, 'report.json'));
         if (validation.ok) {
+          try {
+            updateLatest(planned.hostRoot, planned.runId);
+          } catch (err) {
+            // Publication failed, so this URL is NOT complete. Adding it to the in-memory
+            // set before this point meant a DUPLICATE url later in the same resume batch
+            // was skipped even though nothing was ever published for it.
+            failures.push({ url, reason: `completion could not be published: ${err.message}` });
+            console.error(`failed         ${url}: could not publish completion: ${err.message}`);
+            continue;
+          }
           completedThisBatch.add(url);
-          updateLatest(planned.hostRoot, planned.runId);
           console.log(`done (coverage complete)     ${url}`);
         } else {
           failures.push({ url, reason: `atomic coverage validation failed: ${validation.detail}` });
@@ -298,44 +309,47 @@ function dryRunDir(url) {
   return { dir: join(hostRoot, runId), hostRoot, host, runId };
 }
 
-// Take a refused run out of the running without depending on a deletion succeeding, or
-// on a marker the agent could arrange to be unwritable.
+// Quarantine a refused run: rename its report and leave a marker.
 //
-// RENAME, not delete: latest resolution looks for the report FILENAME, so renaming it
-// excludes the run by construction. The earlier version wrote a marker and deleted the
-// report inside ONE try block, so an agent could plant a dangling symlink at the marker
-// path, make that write fail, and thereby suppress the deletion - leaving a perfectly
-// resumable report behind. Each step here is independently guarded, and the rename (the
-// load-bearing one) goes first.
+// BOTH STEPS ARE ADVISORY, and neither is what makes the refusal stick. Within this batch
+// the in-memory set excludes the URL; across a resume the completion state comes from disk,
+// which the agent can write, so this quarantine improves the odds rather than guaranteeing
+// anything. RENAME rather than delete because a rename cannot be half-done: the earlier
+// version wrote a marker and deleted the report inside ONE try block, so an agent could
+// plant a dangling symlink at the marker path, make that write fail, and suppress the
+// deletion - leaving a resumable report behind. The steps are independently guarded and the
+// rename goes first, so a failing marker cannot suppress it.
 //
-// The run directory is verified to be a real directory before anything touches it: the
-// agent shares this tree and could replace its run directory with a symlink to another
-// run, and anything following that path would act on the wrong run.
+// The run directory is verified to be a real path below the output root before anything
+// touches it: the agent shares this tree and could replace its run directory (or an
+// ancestor) with a symlink to another run, and anything following that path would act on
+// the wrong run.
 async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
   const realDir = isRealUnderOutput(siteDir);
   if (!realDir) {
     console.error(`Refused run at ${siteDir} is not a real path below the output root (a link in the chain?): not touching anything through it.`);
     return `could not quarantine: ${siteDir} is not a real path below ${outRoot}`;
   }
-  // Step 1, the one that actually matters. EVERY failure here is loud: the exclusion
-  // itself no longer depends on this succeeding (resolution reads the tool's pointer),
-  // but a run that cannot be quarantined must not pass silently either.
+  // EVERY failure below is loud and NAMED, and the two steps are independent: an
+  // impossible rename records its problem but still attempts the advisory marker, so one
+  // failing step cannot suppress the other.
+  let problem = null;
   try {
     await rename(join(siteDir, 'report.json'), join(siteDir, 'report.refused.json'));
   } catch (err) {
     // ENOENT means there was no report to quarantine, which is a fine outcome.
     if (err?.code !== 'ENOENT') {
-      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). The refusal still stands for this batch, but the report is still on disk and a later resume reads its completion state FROM DISK.`);
-      return `could not quarantine the refused report (${err.code || err.message}): the report is still on disk`;
+      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). For THIS batch the refusal stands; across a resume the state comes from disk, which the agent can write, so the report being still present is a real residual.`);
+      problem = `could not quarantine the refused report (${err.code || err.message}): the report is still on disk`;
     }
   }
-  // Step 2, diagnostic only: its failure must not affect step 1.
   try {
     await writeFile(join(siteDir, 'run-refused.json'), JSON.stringify({ url, reason: 'wrote outside --out', escapedOutsideScope, at: new Date().toISOString() }, null, 2) + '\n');
   } catch (err) {
     console.error(`Could not write the refusal marker: ${err.message}`);
+    if (!problem) problem = `could not write the refusal marker: ${err.message}`;
   }
-  return null;
+  return problem;
 }
 
 // COMPLETION CHECK - WHAT THIS ACTUALLY GUARANTEES. Read this before trusting it:

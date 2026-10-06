@@ -3980,6 +3980,42 @@ function testBatchWriteScope() {
     const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
     assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
 
+
+    // 11. A PUBLICATION FAILURE MUST NOT MARK THE URL COMPLETE. The in-memory set used to be
+    //     updated BEFORE the publication call, so when publication threw (here: the output
+    //     root is made unwritable, so both the symlink and its pointer-file fallback fail)
+    //     a DUPLICATE url later in the same resume batch was skipped even though nothing had
+    //     been published for it.
+    const dupOut = join(root, 'dup-out');
+    mkdirSync(dupOut, { recursive: true });
+    try {
+      const dup = drive({
+        args: ['https://dup.example/', 'https://dup.example/'],
+        extraArgs: ['--concurrency', '1', '--out', 'dup-out', '--resume'],
+        // Make the HOST directory unwritable (that is where the pointer is published), so
+        // the symlink AND its pointer-file fallback both fail - and so the duplicate's own
+        // run directory cannot be created either, which is itself proof it was attempted
+        // rather than skipped by the in-memory set.
+        body: `d=$(ls -dt ${JSON.stringify(dupOut)}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncp ${JSON.stringify(findings)} "$d/report.json"\nchmod 0500 "$(dirname \"$d\")"`,
+      });
+      assert(/could not publish completion/.test(dup.stderr), `batch publication failure: the failure must be reported:\n${dup.stderr}`);
+      const dupFailures = (dup.stdout.match(/https:\/\/dup\.example\//g) || []).length;
+      assert(
+        dupFailures >= 2,
+        `batch publication failure: the URL whose publication FAILED must not count as complete, so the duplicate must still be ATTEMPTED (saw ${dupFailures} mentions):\n${dup.stdout}`,
+      );
+    } finally {
+      // Restore what the fixture made read-only, or the suite's own cleanup cannot
+      // descend into it (this cost one run to learn).
+      try {
+        for (const entry of readdirSync(dupOut)) {
+          try {
+            chmodSync(join(dupOut, entry), 0o755);
+          } catch { /* best effort */ }
+        }
+        chmodSync(dupOut, 0o755);
+      } catch { /* best effort */ }
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
