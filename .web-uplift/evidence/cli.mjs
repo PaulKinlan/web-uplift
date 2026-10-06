@@ -77,6 +77,8 @@ import { join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { BlockList, isIP } from 'node:net';
+import { lookup } from 'node:dns/promises';
 import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
@@ -1602,6 +1604,156 @@ function round(n) {
 const CRAWLER_UA =
   'Mozilla/5.0 (compatible; web-uplift-discoverability/1.0; +https://github.com/PaulKinlan/web-uplift)';
 
+// --- page-derived fetch guard (SSRF) ---------------------------------------
+//
+// A page controls the manifest href (read straight from the live DOM) and the
+// redirects the discoverability fetch follows, and both are fetched by this
+// PRIVILEGED Node process with the body persisted into the report. Unguarded, a
+// malicious audited page could make the auditor read cloud metadata, loopback or
+// private-range services (threat model I2 / F-003, web-uplift-2kh). Every
+// Node-side fetch of a page-derived URL goes through safeFetch below.
+//
+// The audited target's own HOST is exempt from the private-address rule: auditing
+// 127.0.0.1 on purpose (which this repo's whole test suite does) is the operator's
+// explicit choice, not something the page controls, and the page cannot widen that
+// exemption to any other host. Everything else is validated per hop, fails
+// closed, and reads a bounded body.
+const FETCH_SCHEMES = new Set(['http:', 'https:']);
+const FETCH_MAX_BYTES = 2 * 1024 * 1024;
+const FETCH_MAX_REDIRECTS = 5;
+
+const BLOCKED_ADDRESSES = new BlockList();
+for (const [network, prefix] of [
+  ['0.0.0.0', 8], // "this network"
+  ['10.0.0.0', 8], // RFC1918
+  ['100.64.0.0', 10], // CGNAT
+  ['127.0.0.0', 8], // loopback
+  ['169.254.0.0', 16], // link-local, including the 169.254.169.254 metadata service
+  ['172.16.0.0', 12], // RFC1918
+  ['192.0.0.0', 24], // IETF protocol assignments
+  ['192.168.0.0', 16], // RFC1918
+  ['198.18.0.0', 15], // benchmarking
+  ['224.0.0.0', 4], // multicast
+  ['240.0.0.0', 4], // reserved
+]) BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv4');
+for (const [network, prefix] of [
+  ['::', 128], // unspecified
+  ['::1', 128], // loopback
+  ['fc00::', 7], // unique local
+  ['fe80::', 10], // link-local
+  ['ff00::', 8], // multicast
+]) BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv6');
+// No ::ffff:0:0/96 rule on purpose: net.BlockList already matches an
+// IPv4-mapped address against the IPv4 subnets, so adding the mapped range would
+// block EVERY IPv4 address, public ones included (measured, not assumed).
+
+// The WHATWG URL parser already normalises every IPv4 literal encoding
+// (2130706433, 0x7f.0.0.1, 0177.0.0.1 and 127.1 all become 127.0.0.1), so the
+// hostname can be classified directly; IPv6 hosts keep their brackets, which
+// net.isIP() does not accept.
+function normalizedHost(hostname) {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+}
+
+function targetHostOf(url) {
+  try {
+    return normalizedHost(new URL(url).hostname);
+  } catch {
+    return '';
+  }
+}
+
+function isBlockedAddress(address) {
+  const host = normalizedHost(address);
+  const version = isIP(host);
+  if (version === 0) return false;
+  return BLOCKED_ADDRESSES.check(host, version === 4 ? 'ipv4' : 'ipv6');
+}
+
+// Resolve a page-derived URL to one this process may fetch, or throw a reason.
+// `targetHost` is the audited target's hostname (see the note above).
+export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetHost } = {}) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl, base);
+  } catch {
+    throw new Error(`refused: not a valid URL (${String(rawUrl).slice(0, 120)})`);
+  }
+  if (!FETCH_SCHEMES.has(parsed.protocol)) {
+    throw new Error(`refused: scheme "${parsed.protocol}" is not http(s)`);
+  }
+  const host = normalizedHost(parsed.hostname);
+  if (targetHost && host === targetHost) return parsed;
+  if (isIP(host)) {
+    if (isBlockedAddress(host)) {
+      throw new Error(`refused: ${parsed.hostname} is a loopback, link-local or private address`);
+    }
+    return parsed;
+  }
+  let addresses;
+  try {
+    addresses = await lookup(host, { all: true, verbatim: true });
+  } catch (e) {
+    // Fail closed: a name this process cannot resolve is not fetched at all.
+    throw new Error(`refused: ${host} did not resolve (${e?.code || e?.message || 'lookup failed'})`);
+  }
+  if (addresses.length === 0) throw new Error(`refused: ${host} resolved to no address`);
+  const blocked = addresses.find((a) => isBlockedAddress(a.address));
+  if (blocked) {
+    throw new Error(`refused: ${host} resolves to ${blocked.address}, a loopback, link-local or private address`);
+  }
+  return parsed;
+}
+
+function concatChunks(chunks, total) {
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+async function readBodyCapped(res, maxBytes) {
+  const reader = res.body?.getReader();
+  if (!reader) return '';
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`refused: response body exceeded ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(concatChunks(chunks, total));
+}
+
+// Follow redirects by hand. Node's fetch follows them internally, so validating
+// only the first URL is exactly the naive fix that a redirect defeats: here every
+// hop is validated before it is requested, the hop count is bounded, and the body
+// is capped. RESIDUAL LIMITATION, stated rather than papered over: the addresses
+// are validated as resolved, but global fetch gives no way to pin the address the
+// connection actually uses, so a name that re-resolves between this check and the
+// connect is not fully covered (DNS rebinding).
+export async function safeFetch(rawUrl, { base, targetHost, headers, maxBytes = FETCH_MAX_BYTES } = {}) {
+  let current = await assertPageDerivedFetchAllowed(rawUrl, { base, targetHost });
+  for (let hop = 0; hop <= FETCH_MAX_REDIRECTS; hop++) {
+    const res = await fetch(current.href, { redirect: 'manual', headers });
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+    if (location === null) {
+      return { res, url: current.href, text: () => readBodyCapped(res, maxBytes) };
+    }
+    if (hop === FETCH_MAX_REDIRECTS) throw new Error(`refused: more than ${FETCH_MAX_REDIRECTS} redirects`);
+    current = await assertPageDerivedFetchAllowed(location, { base: current.href, targetHost });
+  }
+  throw new Error('refused: redirect loop');
+}
+
 export function stripHtmlToText(html) {
   return String(html || '')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -1695,10 +1847,16 @@ async function discoverability(client, url, opts, log) {
   let fetchError = null;
   let finalUrl = url;
   try {
-    const res = await fetch(url, { redirect: 'follow', headers: { 'user-agent': CRAWLER_UA, accept: 'text/html' } });
-    rawStatus = res.status;
-    finalUrl = res.url || url;
-    rawHtml = await res.text();
+    const fetched = await safeFetch(url, {
+      // The audited target is the operator's explicit choice, so its own host is
+      // exempt from the private-address rule (this suite audits 127.0.0.1); every
+      // redirect hop is still validated before it is requested.
+      targetHost: targetHostOf(url),
+      headers: { 'user-agent': CRAWLER_UA, accept: 'text/html' },
+    });
+    rawStatus = fetched.res.status;
+    finalUrl = fetched.url;
+    rawHtml = await fetched.text();
     log(`[evidence] discoverability: raw HTML ${rawStatus}, ${byteLength(rawHtml)} bytes`);
   } catch (e) {
     fetchError = String(e?.message || e);
@@ -2740,12 +2898,13 @@ async function resilience(client, url, opts, log) {
   const manifest = { href: manifestHref, found: false, fetchError: null, data: null, fields: null, icons: [] };
   if (manifestHref) {
     try {
-      const res = await fetch(manifestHref, {
-        redirect: 'follow',
+      const fetched = await safeFetch(manifestHref, {
+        base: url,
+        targetHost: targetHostOf(url),
         headers: { 'user-agent': CRAWLER_UA, accept: 'application/manifest+json,application/json,*/*' },
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      manifest.data = await res.json();
+      if (!fetched.res.ok) throw new Error(`HTTP ${fetched.res.status}`);
+      manifest.data = JSON.parse(await fetched.text());
       manifest.found = true;
       manifest.fields = Object.fromEntries(RESILIENCE_MANIFEST_FIELDS.map((f) => [f, manifest.data[f] ?? null]));
       manifest.icons = (manifest.data.icons || []).slice(0, 10).map((i) => ({ src: i?.src || null, sizes: i?.sizes || null, type: i?.type || null, purpose: i?.purpose || null }));
@@ -2761,6 +2920,10 @@ async function resilience(client, url, opts, log) {
   let swScriptHasFetchListener = null;
   if (swScriptUrl) {
     try {
+      // Deliberately NOT routed through safeFetch: a service worker's script URL
+      // is same-origin with its registration by web-platform rule, so this path is
+      // not a cross-origin SSRF and the F-003 finding text lumps it in wrongly
+      // (web-uplift-2kh). It also persists nothing: only a regex result is kept.
       const res = await fetch(swScriptUrl, { headers: { 'user-agent': CRAWLER_UA } });
       const text = await res.text();
       swScriptHasFetchListener = /addEventListener\(\s*['"]fetch['"]|\.onfetch\s*=/.test(text);
