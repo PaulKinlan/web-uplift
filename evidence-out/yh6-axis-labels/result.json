@@ -1,0 +1,105 @@
+{
+  "floorPx": 12,
+  "measurements": [
+    {
+      "state": "before",
+      "viewport": "wide",
+      "vpWidth": 1280,
+      "text": "100",
+      "renderedHeight": 17,
+      "renderedWidth": 27.83,
+      "fontSizeComputed": "10px",
+      "labelRight": 206.67,
+      "plotLeft": 213.86,
+      "svgWidth": 956,
+      "holderScrollWidth": 956,
+      "holderClientWidth": 956,
+      "viewportWidth": 1280
+    },
+    {
+      "state": "before",
+      "viewport": "narrow",
+      "vpWidth": 400,
+      "text": "100",
+      "renderedHeight": 6,
+      "renderedWidth": 9.94,
+      "fontSizeComputed": "10px",
+      "labelRight": 45.03,
+      "plotLeft": 47.61,
+      "svgWidth": 356,
+      "holderScrollWidth": 412,
+      "holderClientWidth": 356,
+      "viewportWidth": 400
+    },
+    {
+      "state": "after",
+      "viewport": "wide",
+      "vpWidth": 1280,
+      "text": "100",
+      "renderedHeight": 20,
+      "renderedWidth": 33.41,
+      "fontSizeComputed": "12px",
+      "labelRight": 212.24,
+      "plotLeft": 225.54,
+      "svgWidth": 956,
+      "holderScrollWidth": 956,
+      "holderClientWidth": 956,
+      "viewportWidth": 1280
+    },
+    {
+      "state": "after",
+      "viewport": "narrow",
+      "vpWidth": 400,
+      "text": "100",
+      "renderedHeight": 14,
+      "renderedWidth": 22.11,
+      "fontSizeComputed": "12px",
+      "labelRight": 58.97,
+      "plotLeft": 67.76,
+      "svgWidth": 640,
+      "holderScrollWidth": 640,
+      "holderClientWidth": 356,
+      "viewportWidth": 400
+    }
+  ],
+  "checks": {
+    "before/wide: the chart is actually laid out (non-zero geometry)": {
+      "pass": true
+    },
+    "before/narrow: the chart is actually laid out (non-zero geometry)": {
+      "pass": true
+    },
+    "after/wide: the chart is actually laid out (non-zero geometry)": {
+      "pass": true
+    },
+    "wide: the chart is inside the viewport at capture time, so the picture is not empty": {
+      "pass": true
+    },
+    "wide: the widest axis label renders at least 12px high (measured, not nominal)": {
+      "pass": true
+    },
+    "wide: the label does not overlap the plot area": {
+      "pass": true
+    },
+    "after/narrow: the chart is actually laid out (non-zero geometry)": {
+      "pass": true
+    },
+    "narrow: the chart is inside the viewport at capture time, so the picture is not empty": {
+      "pass": true
+    },
+    "narrow: the widest axis label renders at least 12px high (measured, not nominal)": {
+      "pass": true
+    },
+    "narrow: the label does not overlap the plot area": {
+      "pass": true
+    },
+    "the narrow case improved over the shipped 10px rule": {
+      "pass": true
+    },
+    "narrow: the chart no longer shrinks below its natural width (holder scrolls instead)": {
+      "pass": true
+    }
+  },
+  "passed": 12,
+  "failed": 0
+}
