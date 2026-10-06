@@ -1,0 +1,82 @@
+{
+  "url": "http://127.0.0.1:8123/",
+  "checks": {
+    "native: the initial view rendered": {
+      "pass": true
+    },
+    "native: API availability is true (native path)": {
+      "pass": true
+    },
+    "native: the hash actually changed on click": {
+      "pass": true
+    },
+    "native: the view swapped (heading changed)": {
+      "pass": true
+    },
+    "native: no uncaught errors on the page": {
+      "pass": true
+    },
+    "native: the query media matches the reduced-motion emulation": {
+      "pass": true
+    },
+    "native: the hash swap requested exactly one view transition": {
+      "pass": true
+    },
+    "native: the transition callback ran (the swap happened inside the transition)": {
+      "pass": true
+    },
+    "native: a transition genuinely ran (pseudo-element animations observed after the click)": {
+      "pass": true
+    },
+    "no-support: the initial view rendered": {
+      "pass": true
+    },
+    "no-support: API availability is false (fallback path)": {
+      "pass": true
+    },
+    "no-support: the hash actually changed on click": {
+      "pass": true
+    },
+    "no-support: the view swapped (heading changed)": {
+      "pass": true
+    },
+    "no-support: no uncaught errors on the page": {
+      "pass": true
+    },
+    "no-support: the query media matches the reduced-motion emulation": {
+      "pass": true
+    },
+    "no-support: the swap happened WITHOUT any view-transition call": {
+      "pass": true
+    },
+    "reduced-motion: the initial view rendered": {
+      "pass": true
+    },
+    "reduced-motion: API availability is true (native path)": {
+      "pass": true
+    },
+    "reduced-motion: the hash actually changed on click": {
+      "pass": true
+    },
+    "reduced-motion: the view swapped (heading changed)": {
+      "pass": true
+    },
+    "reduced-motion: no uncaught errors on the page": {
+      "pass": true
+    },
+    "reduced-motion: the query media matches the reduced-motion emulation": {
+      "pass": true
+    },
+    "reduced-motion: the transition is still requested exactly once": {
+      "pass": true
+    },
+    "reduced-motion: the transition callback ran, so the swap still happened": {
+      "pass": true
+    },
+    "reduced-motion: ZERO pseudo-element animations run (the animation is suppressed)": {
+      "pass": true
+    }
+  },
+  "passed": 25,
+  "failed": 0
+}

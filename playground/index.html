@@ -34,6 +34,14 @@
     .guidance { font-size: 0.85rem; padding: 0.6rem 0.8rem; border-radius: 0.4rem;
       background: color-mix(in srgb, currentColor 8%, transparent); }
     button { font: inherit; cursor: pointer; }
+    /* The route swap uses a view transition, so honour a reduced-motion request by
+       disabling the transition's pseudo-element animations. The swap itself still
+       happens: only the animation is suppressed. */
+    @media (prefers-reduced-motion: reduce) {
+      ::view-transition-group(*),
+      ::view-transition-old(*),
+      ::view-transition-new(*) { animation: none; }
+    }
   </style>
 </head>
 <body>
