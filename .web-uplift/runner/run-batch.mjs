@@ -362,7 +362,10 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
 //    skip that URL. That is a REAL RESIDUAL, not a guarantee: the honest boundary for
 //    it is operator-supplied isolation (--isolation), the same conclusion we reached
 //    for fix mode, because a tool that shares a writable tree with its adversary cannot
-//    authenticate what it reads from that tree.
+//    authenticate what it reads from that tree. resolveLatest() in run-history.mjs now
+//    contains the pointer's TARGET, so it cannot name a directory outside the host
+//    root; that bounds WHERE a pointer points and cannot authenticate WHICH run it
+//    names, which is exactly why this residual stands.
 //  * The refusal quarantine (a renamed report, a marker) is therefore ADVISORY EVIDENCE
 //    and defence in depth. It is worth having and it is never the thing that makes a
 //    decision correct.

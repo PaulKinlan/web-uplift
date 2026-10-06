@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import http from 'node:http';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -47,6 +47,7 @@ try {
   await testScorecardRejectsEscapingComparisonRunIds();
   await testScorecardReservesImageBoxes();
   await testReservedImageBoxInBrowser();
+  await testLatestPointerCannotEscapeTheRunRoot();
   await testInstallSurfaceMatchesWhatInstallVendors();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
@@ -2438,6 +2439,47 @@ async function testReservedImageBoxInBrowser() {
       `${measured.pending.unsized.height}px pending -> ${measured.decoded.unsized.height}px decoded, marker moved ` +
       `${(measured.decoded.unsized.markerTop - measured.pending.unsized.markerTop).toFixed(1)}px`,
   );
+}
+
+// The `latest` pointer is a file in a tree the audited agent can write, and a consumer
+// reads it as the directory to load a run's report from. A planted target must not be
+// able to name a directory outside the host's run root; a legitimate target still
+// resolves, and with no legitimate pointer at all the fallback is the newest run INSIDE
+// the tree (web-uplift-9t8).
+async function testLatestPointerCannotEscapeTheRunRoot() {
+  const { resolveLatest } = await import('../runner/run-history.mjs');
+  const hostRoot = join(tmp, 'pointer-host');
+  const inside = join(hostRoot, '20260101-000000');
+  const outside = join(tmp, 'pointer-outside');
+  for (const dir of [inside, outside]) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'report.json'), '{}');
+  }
+
+  // Positive control: a pointer naming a real run in the tree resolves to it.
+  writeFileSync(join(hostRoot, 'latest.txt'), '20260101-000000\n');
+  assert(resolveLatest(hostRoot) === inside, `pointer: a legitimate pointer must resolve to its run dir, got ${resolveLatest(hostRoot)}`);
+
+  // The text form with parent segments.
+  writeFileSync(join(hostRoot, 'latest.txt'), '../pointer-outside\n');
+  const escapedTxt = resolveLatest(hostRoot);
+  assert(
+    escapedTxt !== outside && !String(escapedTxt ?? '').includes('pointer-outside'),
+    `pointer: a planted latest.txt must not resolve outside the run root, got ${escapedTxt}`,
+  );
+
+  // The symlink form, which is what a dev box writes.
+  rmSync(join(hostRoot, 'latest.txt'), { force: true });
+  symlinkSync('../pointer-outside', join(hostRoot, 'latest'), 'dir');
+  const escapedLink = resolveLatest(hostRoot);
+  assert(
+    escapedLink !== outside && !String(escapedLink ?? '').includes('pointer-outside'),
+    `pointer: a planted symlink must not resolve outside the run root, got ${escapedLink}`,
+  );
+
+  // ...and a refused pointer falls back to the newest run inside the tree, not to the
+  // directory the pointer named.
+  assert(escapedLink === inside, `pointer: a refused pointer must fall back to a run inside the tree, got ${escapedLink}`);
 }
 
 function testInstalledEvidenceCli() {

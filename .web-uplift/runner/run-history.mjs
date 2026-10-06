@@ -28,6 +28,11 @@ import {
   readlinkSync,
 } from 'node:fs';
 import { join, basename } from 'node:path';
+// The containment helpers live with the artifact-path module, which imports nothing
+// itself, so reaching them from runner/ adds no cycle: aggregate/scorecard.mjs already
+// imports this file. Reusing this one helper is deliberate - a second containment
+// variant would be a second thing to keep correct.
+import { containedChildDir } from '../aggregate/artifact-path.mjs';
 
 // Turn a URL (or arbitrary string) into the host slug used as the per-host
 // reports directory name. Mirrors derivedOut() in evidence/cli.mjs and slugify()
@@ -76,11 +81,28 @@ export function updateLatest(hostRoot, runId) {
 
 // Resolve the latest run dir for a host (symlink target or latest.txt content);
 // fall back to the most recent run dir by name if no pointer exists.
+//
+// The pointer is a file in a tree the audited agent can write, so its content is
+// UNTRUSTED: a planted target could name a directory outside reports/<host>/ and a
+// consumer would then read that directory's report instead of one this tool produced.
+// The target is therefore contained with the same helper the scorecard uses for its
+// comparison identifiers (aggregate/artifact-path.mjs), which requires a single-segment
+// name resolving to a direct child of the host root. A target that fails the check is
+// treated as no pointer at all, so the newest run by name inside the tree is used.
+//
+// Containment is the whole of this helper's job, and it is worth being precise about
+// what it does not do, because runner/run-batch.mjs states the same boundary for its
+// completion check: containing the target bounds WHERE a pointer can point, it cannot
+// AUTHENTICATE WHICH run is current. A planted target naming a legitimate earlier run
+// inside the tree is still read as current. The honest boundary for that is
+// operator-supplied isolation: a tool that shares a writable tree with its adversary
+// cannot authenticate what it reads from that tree.
 export function resolveLatest(hostRoot) {
   const link = join(hostRoot, 'latest');
   if (isSymlink(link)) {
     try {
-      return join(hostRoot, readlinkSync(link));
+      const contained = containedChildDir(hostRoot, readlinkSync(link));
+      if (contained) return contained;
     } catch {
       /* dangling */
     }
@@ -88,7 +110,10 @@ export function resolveLatest(hostRoot) {
   const txt = join(hostRoot, 'latest.txt');
   if (existsSync(txt)) {
     const id = readFileSync(txt, 'utf8').trim();
-    if (id) return join(hostRoot, id);
+    if (id) {
+      const contained = containedChildDir(hostRoot, id);
+      if (contained) return contained;
+    }
   }
   const runs = listRuns(hostRoot);
   return runs.length ? runs[runs.length - 1].dir : null;
