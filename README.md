@@ -441,8 +441,12 @@ exchange, per hop (default 30000; env `WEB_UPLIFT_FETCH_DEADLINE_MS`). One
 behaviour matters when you shorten the fetch budget: when the raw fetch fails
 or times out - or the response is not a success (a 404 page is ABOUT the
 resource, not the document) - the discoverability comparison is reported as
-UNKNOWN (`coveragePct: null`, every raw-derived field null), not as a finding
-about the page. A completed, empty 200 stays usable: observed emptiness is real
+UNKNOWN: every raw-derived COMPARISON field is null (`coveragePct`, `isJsShell`,
+the presence comparisons, the empty-mount list, the raw size stats), not a
+finding about the page. The RUN FACTS survive by design - `fetchedStatus`
+records the status when one arrived, `fetchError` records the failure,
+`finalUrl` records the requested URL - precisely so an operator reads a 404 as
+a status rather than as an absence. A completed, empty 200 stays usable: observed emptiness is real
 evidence. A short budget therefore produces ABSENCE OF EVIDENCE, never evidence
 of absence.
 

@@ -207,10 +207,14 @@ trusting a zero. It likewise reports the whole comparison as UNKNOWN when the
 raw document was never retrieved: a failed or timed-out fetch
 (`--fetch-deadline`), or a non-2xx response - a 404 page is ABOUT the resource,
 not the document, while a completed empty 200 stays usable, because observed
-emptiness is real evidence. Every raw-derived field is then null
-(`rawComparisonUsable: false` says why): a fetch failure is a network
-condition, so a short budget produces ABSENCE OF EVIDENCE, never evidence of
-absence.
+emptiness is real evidence. Every raw-derived COMPARISON field is then null
+(`rawComparisonUsable: false` says why) - the coverage, the shell verdict, the
+presence comparisons, the empty-mount list and the raw size stats - while the
+RUN FACTS survive by design: `fetchedStatus` records the status when one
+arrived, `fetchError` records the failure and `finalUrl` records the requested
+URL, so an operator reads a 404 as a status rather than as an absence. A fetch
+failure is a network condition, so a short budget produces ABSENCE OF EVIDENCE,
+never evidence of absence.
 
 You may also run **any other tool you judge useful** at inspection time. None of
 these is wired into the runtime; you invoke them yourself when they help:
