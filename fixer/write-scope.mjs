@@ -46,8 +46,14 @@ export function isExcludedPath(relPath) {
   const parts = relPath.split(sep);
   if (parts.some((p) => EXCLUDE_SEGMENTS.has(p))) return true;
   // `.git` itself must stay walkable (only its noisy children are skipped), or the
-  // hook/config tripwire never gets reached.
-  if (parts[0] === '.git' && parts.length > 1) return !GIT_KEEP.has(parts[1]);
+  // hook/config tripwire never gets reached. Matching the LAST `.git` segment, not
+  // parts[0], is what makes this work for an out-of-tree --target whose keys start
+  // with `..` - otherwise that repository's object store would be walked.
+  const gitAt = parts.lastIndexOf('.git');
+  if (gitAt !== -1) {
+    const next = parts[gitAt + 1];
+    if (next !== undefined && !GIT_KEEP.has(next)) return true;
+  }
   return false;
 }
 

@@ -163,9 +163,9 @@ const allowedRoots = [scopeRoot, outRoot, ...allowWrite];
 let escapedOutsideScope = false;
 let agentFailure = null;
 
-// The walk covers the invocation directory AND the target when the target sits
-// outside it, so an out-of-tree --target still gets a per-run diff.
-const snapshotScope = () => snapshotTree(projectRoot, { extraRoots: [scopeRoot] });
+// The walk covers the invocation directory, the target when it sits outside it,
+// and any operator-allowed root, so an out-of-tree path still gets a per-run diff.
+const snapshotScope = () => snapshotTree(projectRoot, { extraRoots: [scopeRoot, ...allowWrite] });
 
 function fixExtra(findingsPath, iteration) {
   return (
@@ -232,7 +232,15 @@ if (agentFailure) {
   );
   process.exit(1);
 }
-const baseline = await readReport(findingsPath);
+let baseline;
+try {
+  baseline = await readReport(findingsPath);
+} catch (err) {
+  // The same named failure the iteration loop reports: a baseline the fixer cannot
+  // read is a run it cannot score, not a stack trace.
+  console.error(`Cannot start the climb: ${err.message || err} (write-scope records: ${scopeRecordPaths()} in ${outDir})`);
+  process.exit(1);
+}
 const startIssues = countOutstanding(baseline);
 const baselineRemaining = remaining(baseline);
 const goalOf = (report) => {
@@ -390,40 +398,51 @@ if (agentFailure) {
 // before -> after comparison automatically (audit -> fix -> re-audit -> compare).
 // If no iteration ran (e.g. the goal was already met at baseline), the working
 // report was never written; fall back to the baseline as the final state.
-try {
-  const finalReport = existsSync(join(outDir, 'report.json'))
-    ? await readReport(join(outDir, 'report.json'))
-    : baseline;
-  const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
-  await snapshotRun(outDir, afterRun.dir, finalReport);
-  updateLatest(afterRun.hostRoot, afterRun.runId);
-
-  const cmp = compareReports(baseline, finalReport, { dirA: beforeRun.dir, dirB: afterRun.dir });
-  const md = renderCompareMd(cmp, {
-    hostName: beforeRun.host,
-    runAId: beforeRun.runId,
-    runBId: afterRun.runId,
-    dirA: beforeRun.dir,
-    dirB: afterRun.dir,
-  });
-  await writeFile(join(afterRun.dir, 'compare.json'), JSON.stringify({ host: beforeRun.host, runA: beforeRun.runId, runB: afterRun.runId, ...cmp }, null, 2) + '\n');
-  await writeFile(join(afterRun.dir, 'compare.md'), md);
-  // A copy at the working outDir too, for convenience.
-  await writeFile(join(outDir, 'compare.md'), md);
-  console.log(`\nBefore -> after comparison written to ${join(afterRun.dir, 'compare.md')}`);
-  console.log(`  outstanding ${cmp.summary.outstandingBefore} -> ${cmp.summary.outstandingAfter}, ` +
-    `resolved ${cmp.summary.resolved}, new ${cmp.summary.newlyIntroduced}, persisting ${cmp.summary.persisting}`);
-  // Roll the retained runs into the interactive scorecard.html (gauges, top-3,
-  // deep-dive, history, before/after) so a fix run leaves a shareable summary.
+//
+// SKIPPED when the run was refused or an agent failed: recording a retained run,
+// moving the host's `latest` pointer and rebuilding the scorecard would publish a
+// tampered (or half-finished) tree as the newest result for that host.
+if (escapedOutsideScope || agentFailure) {
+  console.log(
+    '\nNot recording a retained run or scorecard: the climb was refused, so there is no valid result ' +
+      `to publish (records: ${scopeRecordPaths()} in ${outDir}).`,
+  );
+} else {
   try {
-    const data = buildScorecardData(beforeRun.hostRoot, beforeRun.host, new Date().toISOString().slice(0, 16).replace('T', ' '));
-    await writeFile(join(beforeRun.hostRoot, 'scorecard.html'), renderScorecard(data));
-    console.log(`Scorecard written to ${join(beforeRun.hostRoot, 'scorecard.html')}`);
+    const finalReport = existsSync(join(outDir, 'report.json'))
+      ? await readReport(join(outDir, 'report.json'))
+      : baseline;
+    const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
+    await snapshotRun(outDir, afterRun.dir, finalReport);
+    updateLatest(afterRun.hostRoot, afterRun.runId);
+
+    const cmp = compareReports(baseline, finalReport, { dirA: beforeRun.dir, dirB: afterRun.dir });
+    const md = renderCompareMd(cmp, {
+      hostName: beforeRun.host,
+      runAId: beforeRun.runId,
+      runBId: afterRun.runId,
+      dirA: beforeRun.dir,
+      dirB: afterRun.dir,
+    });
+    await writeFile(join(afterRun.dir, 'compare.json'), JSON.stringify({ host: beforeRun.host, runA: beforeRun.runId, runB: afterRun.runId, ...cmp }, null, 2) + '\n');
+    await writeFile(join(afterRun.dir, 'compare.md'), md);
+    // A copy at the working outDir too, for convenience.
+    await writeFile(join(outDir, 'compare.md'), md);
+    console.log(`\nBefore -> after comparison written to ${join(afterRun.dir, 'compare.md')}`);
+    console.log(`  outstanding ${cmp.summary.outstandingBefore} -> ${cmp.summary.outstandingAfter}, ` +
+      `resolved ${cmp.summary.resolved}, new ${cmp.summary.newlyIntroduced}, persisting ${cmp.summary.persisting}`);
+    // Roll the retained runs into the interactive scorecard.html (gauges, top-3,
+    // deep-dive, history, before/after) so a fix run leaves a shareable summary.
+    try {
+      const data = buildScorecardData(beforeRun.hostRoot, beforeRun.host, new Date().toISOString().slice(0, 16).replace('T', ' '));
+      await writeFile(join(beforeRun.hostRoot, 'scorecard.html'), renderScorecard(data));
+      console.log(`Scorecard written to ${join(beforeRun.hostRoot, 'scorecard.html')}`);
+    } catch (err) {
+      console.error(`Could not emit scorecard: ${err.message}`);
+    }
   } catch (err) {
-    console.error(`Could not emit scorecard: ${err.message}`);
+    console.error(`Could not emit before/after comparison: ${err.message}`);
   }
-} catch (err) {
-  console.error(`Could not emit before/after comparison: ${err.message}`);
 }
 
 process.exitCode = passed && !escapedOutsideScope && !agentFailure ? 0 : 1;

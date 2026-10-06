@@ -3044,7 +3044,8 @@ async function testFixWriteScopeDiffing() {
 
     // .git is walked ONLY where an injected agent could plant persistence: a hook
     // that runs on the operator's next commit is the classic backdoor, while the
-    // object store is large and noisy.
+    // object store is large and noisy. The rule must hold for a .git that sits in an
+    // out-of-tree root too, where keys begin with `..` instead of `.git`.
     mkdirSync(join(root, '.git', 'hooks'), { recursive: true });
     mkdirSync(join(root, '.git', 'objects', 'ab'), { recursive: true });
     const beforeGit = snapshotTree(root);
@@ -3061,16 +3062,29 @@ async function testFixWriteScopeDiffing() {
     );
 
     // A --target outside the invocation directory is still walked, so its edits
-    // appear in the diff instead of reading as "no file changes".
+    // appear in the diff instead of reading as "no file changes". A .git inside
+    // that external root must obey the same policy as one at the base.
     const outsideTarget = mkdtempSync(join(tmpdir(), 'web-uplift-target-'));
     try {
       writeFileSync(join(outsideTarget, 'page.html'), 'before');
+      mkdirSync(join(outsideTarget, '.git', 'hooks'), { recursive: true });
+      mkdirSync(join(outsideTarget, '.git', 'objects', 'cd'), { recursive: true });
       const b2 = snapshotTree(root, { extraRoots: [outsideTarget] });
       writeFileSync(join(outsideTarget, 'page.html'), 'after');
+      writeFileSync(join(outsideTarget, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nevil\n');
+      writeFileSync(join(outsideTarget, '.git', 'objects', 'cd', 'blob'), 'noise');
       const d2 = diffTrees(b2, snapshotTree(root, { extraRoots: [outsideTarget] }));
       assert(
         d2.modified.some((p) => p.endsWith(join('page.html'))),
         `scope: an out-of-tree --target must still be diffed, got ${JSON.stringify(d2)}`,
+      );
+      assert(
+        d2.added.some((p) => p.endsWith(join('.git', 'hooks', 'pre-commit'))),
+        `scope: an out-of-tree .git hook must be detected, got ${JSON.stringify(d2.added)}`,
+      );
+      assert(
+        !d2.added.some((p) => p.includes(join('.git', 'objects'))),
+        'scope: an out-of-tree git object store must stay excluded',
       );
     } finally {
       rmSync(outsideTarget, { recursive: true, force: true });
@@ -3206,6 +3220,20 @@ function testFixModeScopeEdgeCases() {
       `fix scope: the escaped path must be recorded despite the crash, got ${JSON.stringify(escA.escapedOutsideScope)}`,
     );
     assert(typeof escA.agentError === 'string' && escA.agentError.length > 0, 'fix scope: the agent error must be recorded in the diff record');
+    // A refused run must not be published as a result: no retained after-run and
+    // no scorecard, or a tampered tree becomes the newest run for that host.
+    assert(/Not recording a retained run/.test(a.res.stdout), `fix scope: a refused run must record no result:\n${a.res.stdout}`);
+    const hostDirs = readdirSync(join(root, 'reports-edge-crash'));
+    assert(hostDirs.length === 1, `fix scope: expected one host dir, got ${JSON.stringify(hostDirs)}`);
+    const hostEntries = readdirSync(join(root, 'reports-edge-crash', hostDirs[0]));
+    assert(
+      !hostEntries.some((e) => e.endsWith('-after')),
+      `fix scope: a refused run must not record an after-run, got ${JSON.stringify(hostEntries)}`,
+    );
+    assert(
+      !existsSync(join(root, 'reports-edge-crash', hostDirs[0], 'scorecard.html')),
+      'fix scope: a refused run must not publish a scorecard',
+    );
 
     // B: the baseline audit (no --findings) spawns the same write-capable agent
     // under the same untrusted context, so it must be scoped too - otherwise the
@@ -3244,6 +3272,36 @@ function testFixModeScopeEdgeCases() {
       diffD.changed.added.includes(join('dist', 'bundle.js')),
       `fix scope: an allowed build output must still be recorded in the diff, got ${JSON.stringify(diffD.changed.added)}`,
     );
+
+    // F: a baseline audit that exits 0 without writing report.json used to die on
+    // an unguarded readReport - a raw stack where the run should name the problem.
+    const f = drive({ outName: 'edge-no-report', skipFindings: true, body: `printf 'nothing' > /dev/null` });
+    assert(f.res.status !== 0, `fix scope: a baseline audit with no report must fail the run (exit ${f.res.status})`);
+    assert(/Cannot start the climb/.test(f.res.stderr), `fix scope: the baseline failure must be named:\n${f.res.stderr}`);
+    assert(
+      !/Unhandled|^\s+at .+:\d+:\d+\)?$/m.test(f.res.stderr),
+      `fix scope: the baseline failure must not be a raw stack trace:\n${f.res.stderr}`,
+    );
+
+    // G: an out-of-tree --allow-write directory is permitted AND walked, so its
+    // edits are in the diff instead of silently missing from it.
+    const allowTarget = mkdtempSync(join(tmpdir(), 'web-uplift-allow-'));
+    try {
+      const g = drive({
+        outName: 'edge-allow-outside',
+        extraArgs: ['--allow-write', allowTarget],
+        body: `${inScope}\nprintf 'built' > ${JSON.stringify(join(allowTarget, 'bundle.js'))}\n${report('edge-allow-outside')}`,
+      });
+      assert(!/CONFINEMENT FAILURE/.test(g.res.stderr), `fix scope: an out-of-tree --allow-write dir must be permitted:\n${g.res.stderr}`);
+      const diffG = JSON.parse(readFileSync(join(g.outDir, 'iter-1-diff.json'), 'utf8'));
+      assert(
+        diffG.changed.added.some((p) => p.endsWith('bundle.js')),
+        `fix scope: an out-of-tree --allow-write dir must be walked, got ${JSON.stringify(diffG.changed.added)}`,
+      );
+      assert(diffG.escapedOutsideScope.length === 0, `fix scope: an allowed root must not be an escape: ${JSON.stringify(diffG.escapedOutsideScope)}`);
+    } finally {
+      rmSync(allowTarget, { recursive: true, force: true });
+    }
 
     // E: --allow-write must NOT widen the refusal for anything else.
     const e = drive({
