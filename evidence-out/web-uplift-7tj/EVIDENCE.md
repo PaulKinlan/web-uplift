@@ -53,8 +53,22 @@ attempt was refused by the permission system (the CLI itself recorded all six
 tool_use ids); under the new one every attempt executed (usage output, exit
 clean) and nothing was denied.
 
+## Bounded real audit attempt (same day, follow-up)
+
+A real headless audit was also attempted through the production runner
+(`npm run batch -- https://paul.kinlan.me --agent claude --max-turns 80`, the
+spawn line in `audit-run-stdout.txt` shows the full derived `--allowedTools`
+list in production). Operator-bounded at 600s; the runner exited 124 at the
+bound with the audit mid-flight. Before the cut the agent had produced 53
+artifact files under the run's `evidence/` (40 JSON: axe, a11ytree, cookies,
+discoverability, layout, screenshots, ...) over ~9.5 minutes, and the streamed
+log contains ZERO permission denials (grep -ci 'permission|denied' -> 0).
+What was NOT reached: `report.json` + schema validation (skill step 6), so
+end-to-end audit COMPLETION remains unverified; only the permission mechanism
+(the 7tj blocker) is proven fixed on the real engine. `runner/README.md` states
+exactly this.
+
 ## Not exercised here
 
-A full end-to-end headless audit (`npm run batch -- <url> --agent claude`) is a
-separate, longer run; see the bead and `runner/README.md` for its status. This
-probe proves the permission mechanism (the 7tj blocker), not audit completeness.
+End-to-end audit completion (report.json + schema validation) was not reached
+inside the 10-minute bound above; that remains the one unverified claim.

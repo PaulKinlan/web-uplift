@@ -18,7 +18,7 @@ at the same canonical skill, so the methodology cannot drift.
 
 | Agent | Interactive entry point | Headless `--agent` | Status |
 |---|---|---|---|
-| Claude Code | `.claude/skills/web-audit/` (native skill) | `claude` | wired (scoped allowlist A/B-verified through the real `claude` CLI; end-to-end headless audit NOT re-run since the tightening) |
+| Claude Code | `.claude/skills/web-audit/` (native skill) | `claude` | wired (scoped allowlist A/B-verified through the real `claude` CLI; a 10-min-bounded headless audit ran ~9.5 min of evidence gathering with zero permission denials but was cut by the operator bound before completing, so end-to-end completion is unverified) |
 | Codex | `.codex/skills/web-audit` -> symlink to the Claude skill; `AGENTS.md` | `codex` | wired (dry-run verified) |
 | Gemini CLI | `.gemini/commands/web-audit.toml` (`{{args}}` wrapper) | `gemini` | wired (dry-run verified) |
 | Antigravity | `.agents/skills/web-audit.md` (wrapper) | `agy` | wired (dry-run verified) |
