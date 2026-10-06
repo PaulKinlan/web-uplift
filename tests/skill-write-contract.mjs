@@ -42,17 +42,32 @@ export function skillWriteContractViolations(skillText, gitignoreText) {
   }
   // Any scratch path the skill instructs OUTSIDE the run directory is the
   // exact drift that refused web-uplift-ies run 4: a write path the runner's
-  // allowedRoots can never contain.
+  // allowedRoots can never contain. The qualifier only exempts the contract
+  // phrase itself (stripped above); every other `scratch/` token counts,
+  // however it is spelled — bare, relative (./scratch/), absolute (/scratch/),
+  // or composed ($(pwd)/scratch/) — because all of them land outside the run
+  // directory. Prose uses of the word without a trailing slash ("from
+  // scratch") are not write paths and must not trip the guard; a control below
+  // pins that.
   const withoutContractPhrase = skillText.split(SKILL_CONTRACT_PHRASE).join('');
-  const stray = withoutContractPhrase.match(/`scratch\/`|(^|[^/\w.-])scratch\//gm);
+  const stray = withoutContractPhrase.match(/(^|[^A-Za-z0-9_-])scratch\//gm);
   if (stray) {
     violations.push(
       `SKILL.md still instructs write paths outside the run directory: ${stray.map((s) => s.trim()).join(', ')}`,
     );
   }
-  if (/^scratch\/$/m.test(gitignoreText)) {
+  // The .gitignore half, line-based so pattern variants (scratch, /scratch/,
+  // scratch/*) cannot slip past a single exact-string form; comment lines are
+  // documentation, not reservations, and a negation (!scratch/) un-ignores
+  // rather than reserves, so neither counts.
+  const reserved = gitignoreText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && !line.startsWith('!'))
+    .filter((line) => /^\/?scratch\/?\*?$/.test(line));
+  if (reserved.length) {
     violations.push(
-      '.gitignore reserves a top-level scratch/ — the instructed-write half of the contract lives inside the run directory now',
+      `.gitignore reserves a top-level scratch path (${reserved.join(', ')}) — the instructed-write half of the contract lives inside the run directory now`,
     );
   }
   return violations;
@@ -104,6 +119,25 @@ if (skillWriteContractViolations(skillText.split(SKILL_CONTRACT_PHRASE).join('')
 }
 if (skillWriteContractViolations(skillText, `scratch/\n${gitignoreText}`).length === 0) {
   problems.push('mutation control: a .gitignore reserving top-level scratch/ must violate the contract');
+}
+// Spelling variants a narrower pattern once missed (review of web-uplift-16f):
+// relative, absolute and composed scratch paths are all outside the run
+// directory and must be flagged; every .gitignore reservation form must be too.
+for (const spelled of ['Put helpers in ./scratch/ before judging.', 'Write frames to /scratch/frames/.', 'Cache guidance under $(pwd)/scratch/guidance/.']) {
+  if (skillWriteContractViolations(spelled, gitignoreText).length === 0) {
+    problems.push(`mutation control: an instructed path spelled as in ${JSON.stringify(spelled)} must violate the contract`);
+  }
+}
+for (const reserved of ['scratch', '/scratch/', 'scratch/*']) {
+  if (skillWriteContractViolations(skillText, `${reserved}\n`).length === 0) {
+    problems.push(`mutation control: a .gitignore reserving ${JSON.stringify(reserved)} must violate the contract`);
+  }
+}
+// False-positive control: prose that merely contains the word must NOT violate,
+// or the guard would punish unrelated SKILL edits into deleting the check.
+const benign = `Keep everything under ${SKILL_CONTRACT_PHRASE}. Reports may say a page was built from scratch by its author.`;
+if (skillWriteContractViolations(benign, gitignoreText).length !== 0) {
+  problems.push('false-positive control: prose \'from scratch\' beside the contract phrase must not violate the contract');
 }
 
 if (problems.length) {
