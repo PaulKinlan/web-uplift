@@ -3652,6 +3652,7 @@ function testHeadlessAllowlistIsScoped() {
   for (const entry of [
     'Bash(node evidence/cli.mjs:*)',
     'Bash(node .web-uplift/evidence/cli.mjs:*)',
+    'Bash(mkdir:*)',
     'Bash(ffmpeg:*)',
   ]) {
     assert(allowed.includes(entry), `the headless allowlist must keep the intended ${entry}: ${allowed}`);
@@ -3936,12 +3937,18 @@ function testHeadlessAllowlistMatchesSkillContract() {
   }
 
   // 4. The production claude args carry EXACTLY the derived rules (so the
-  //    contract cannot be bypassed by a hand-maintained copy in the args).
+  //    contract cannot be bypassed by a hand-maintained copy in the args) -
+  //    in BOTH directions: every derived rule is present, and nothing beyond
+  //    the fixed file-tools prefix and the derived rules has been hand-added
+  //    (a widening entry such as `Bash(node:*)` must fail here, not pass
+  //    silently because the subset direction still holds).
   const args = AGENTS.claude.args('prompt', { maxTurns: 3, root });
   const allowed = args[args.indexOf('--allowedTools') + 1];
-  for (const rule of rules) {
-    assert(allowed.includes(rule), `claude --allowedTools must carry the derived rule ${rule}: ${allowed}`);
-  }
+  const expected = ['Read,Write,Edit,Glob,Grep', ...rules].join(',');
+  assert(
+    allowed === expected,
+    `claude --allowedTools must be EXACTLY the file tools plus the derived rules, nothing more, nothing less.\nexpected: ${expected}\nactual:   ${allowed}`,
+  );
 }
 function testRedactHeaderList() {
   const list = [
