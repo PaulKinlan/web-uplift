@@ -4264,6 +4264,27 @@ async function testCredentialRedactionHelpers() {
     `redaction: an array value is replaced at its own span and nothing else moves (${redactBodyText(arrIn)})`,
   );
 
+  // NESTING IS COVERED BY CONSTRUCTION - and this is the exact-string assertion that proves it.
+  // The walker used to jump to the end of a NON-credential key's value unconditionally, which
+  // skipped an entire container instead of descending into it, so a nested credential survived
+  // unchanged (and the valid-JSON path returned it, so the heuristic never saw it). Each of
+  // these compares the WHOLE string, so a missed redaction and a corrupted body both fail.
+  const nestedObj = `{"outer":{"token":"${SECRET}","keep":1},"page":2}`;
+  assert(
+    redactBodyText(nestedObj) === '{"outer":{"token":"[redacted]","keep":1},"page":2}',
+    `redaction: a credential NESTED in an object must be redacted with every other byte preserved (${redactBodyText(nestedObj)})`,
+  );
+  const nestedArr = `{"list":[{"apiKey":"${SECRET}","n":1},{"n":2}],"page":2}`;
+  assert(
+    redactBodyText(nestedArr) === '{"list":[{"apiKey":"[redacted]","n":1},{"n":2}],"page":2}',
+    `redaction: a credential NESTED in an array of objects must be redacted with every other byte preserved (${redactBodyText(nestedArr)})`,
+  );
+  const multi = `{"token":"${SECRET}","outer":{"password":"${SECRET}"},"page":2}`;
+  assert(
+    redactBodyText(multi) === '{"token":"[redacted]","outer":{"password":"[redacted]"},"page":2}',
+    `redaction: MULTIPLE credential keys, at least one nested, must all be redacted (${redactBodyText(multi)})`,
+  );
+
   // THE DOCUMENTED GAPS, asserted so they cannot be mistaken for coverage later:
   // a base64-encoded body is not text-searchable, and a credential whose name does not
   // look like one is not detected. Both are stated in the artifact's own note.

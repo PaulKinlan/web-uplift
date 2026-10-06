@@ -1137,7 +1137,7 @@ async function har(client, url, opts, log) {
     note:
       'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).' +
       ' Credential redaction, by default, controlled by ONE flag (--no-redact-headers keeps everything raw and accepts the publication risk). There are TWO paths, and they are not equally strong:' +
-      ' STRUCTURED INPUTS - parsed, so this part holds BY CONSTRUCTION: credential-named HEADERS (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token) by name; request URLs and each entry\'s queryString, parsed as URLs; JSON bodies, parsed and redacted by DECODED KEY, which is what covers array values, nested values and unicode-escaped keys such as "tok\\u0065n" (a redacted JSON body is re-emitted canonically, since the guarantee comes from parsing); the REDIRECT TARGET, absolute or relative, parsed as a URL; URL-VALUED HEADERS including the Referer; and the INITIATOR fields (the inserting document and the JS call-frame URL).' +
+      ' STRUCTURED INPUTS - parsed, so this part holds BY CONSTRUCTION: credential-named HEADERS (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token) by name; request URLs and each entry\'s queryString, parsed as URLs; JSON bodies, parsed and redacted by DECODED KEY, which is what covers array values, nested values and unicode-escaped keys such as "tok\\u0065n" (a redacted JSON body keeps every byte of the original EXCEPT the replaced value spans, so its formatting is preserved exactly); the REDIRECT TARGET, absolute or relative, parsed as a URL; URL-VALUED HEADERS including the Referer; and the INITIATOR fields (the inserting document and the JS call-frame URL).' +
       ' Names are matched as whole words after splitting on separators AND camelCase, so accessToken, refreshToken, apiKey and clientSecret are recognised along with the separator-delimited spellings.' +
       ' UNSTRUCTURED TEXT - a Heuristic, NOT a guarantee: recorded bodies that are not parseable JSON (an inline script, an HTML document) go through a text scanner that covers `name=value`, `name: value`, quoted keys, and quoted values including escapes and line continuations. It cannot enumerate every syntax an arbitrary script can use, so treat a non-JSON recorded body as sensitive and read the structured fields above for the claims that hold by construction.' +
       ' STILL NOT covered, stated so nobody assumes blanket protection: (1) base64-encoded bodies, which are not text-searchable and whose credential remains recoverable by decoding; (2) a credential whose field, parameter or header NAME does not look like one - the test is names-based because the tool cannot know which value in an arbitrary body is a secret, and it deliberately errs towards over-redacting ambiguous names (`code`, `key`, or a sort-key name all redact); (3) WIRE LENGTHS - request body size is recomputed from the redacted text, but response bodySize and _transferSize are measurements of the ORIGINAL bytes, so for an uncompressed response the length of a redacted value can still be inferred. Treat a HAR as sensitive whenever the audited site handled credentials.' +
@@ -1812,8 +1812,18 @@ function credentialValueSpans(text) {
     } catch {
       name = null;
     }
-    if (typeof name === 'string' && isCredentialName(name)) spans.push([v, vEnd]);
-    i = vEnd;
+    if (typeof name === 'string' && isCredentialName(name)) {
+      spans.push([v, vEnd]);
+      i = vEnd; // the whole value is being replaced, so nothing inside it needs examining
+    } else {
+      // DESCEND into container values for a NON-credential key. The walker used to jump to the
+      // end of the value unconditionally, which skipped every nested object and array, so a
+      // credential one level down was never examined (and the valid-JSON path returned its
+      // result, so the heuristic scanner never got a second chance at that body). A scalar
+      // contains no keys, so only containers descend.
+      const vc = text[v];
+      i = vc === '{' || vc === '[' ? v + 1 : vEnd;
+    }
   }
   return spans;
 }
