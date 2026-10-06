@@ -230,12 +230,17 @@ function historyChart(runs, { w = 640, h = 180, pad = 28 } = {}) {
   const grid = [0, 50, 90, 100]
     .map((v) => `<line class="grid" x1="${pad}" y1="${y(v)}" x2="${w - pad}" y2="${y(v)}"></line><text class="axis" x="4" y="${y(v) + 3}">${v}</text>`)
     .join('');
-  return `<svg class="history" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Overall score across ${n} runs">
+  // The SVG scales with its container (viewBox 640 wide, width:100%), so the axis
+  // labels scale down with it and 12 user units rendered at ~400px of viewport was
+  // still under the legibility floor. The min-width in user units keeps the chart at
+  // its natural size and the wrapper scrolls horizontally instead, so the labels keep
+  // their rendered size at every viewport width.
+  return `<div class="history-scroll"><svg class="history" viewBox="0 0 ${w} ${h}" width="100%" style="min-width:${w}px" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Overall score across ${n} runs">
   ${grid}
   <path class="area" d="${area}"></path>
   <path class="spark" d="${line}"></path>
   ${dots}
-</svg>`;
+</svg></div>`;
 }
 
 // A tiny inline sparkline for one outcome's score across runs (0-100). Nulls
@@ -681,8 +686,9 @@ main{max-width:1000px;margin:0 auto;padding:22px}
 .sev{font-size:.7rem;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:20px;font-weight:700}
 .sev.critical{background:#4a1512;color:#ffb4a8}.sev.high{background:#4a2a12;color:#ffd0a8}.sev.medium{background:#3a3212;color:#ffe9a8}.sev.low{background:#1d3320;color:#b6f0c4}
 .effort{font-size:.72rem;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:1px 7px}
-.history{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:16px}
-.history .grid{stroke:var(--line)}.history .axis{fill:var(--muted);font-size:10px}
+.history-scroll{overflow-x:auto;margin-bottom:16px}
+.history{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
+.history .grid{stroke:var(--line)}.history .axis{fill:var(--muted);font-size:12px}
 .history .area{fill:rgba(91,141,239,.12)}
 .history .spark{fill:none;stroke:var(--accent);stroke-width:2}
 .history circle.good{fill:var(--good)}.history circle.ok{fill:var(--ok)}.history circle.poor{fill:var(--poor)}

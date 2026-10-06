@@ -689,6 +689,13 @@ async function testScorecardScoringAndRender() {
   assert(!html.includes('role="button"'), 'scorecard: fake-button roles must be gone (real buttons instead)');
   assert(html.includes("('commandForElement' in HTMLButtonElement.prototype)"), 'scorecard: fallback must be gated on commandForElement support');
 
+  // The history chart's axis labels must not scale below the legibility floor, and the
+  // chart keeps its natural width inside a scroll wrapper so a narrow viewport cannot
+  // shrink the label rendering (viewBox arithmetic: the CSS size is in user units).
+  assert(html.includes('.history .axis{fill:var(--muted);font-size:12px}'), 'scorecard: axis labels must use the 12px floor, not the old 10px');
+  assert(html.includes('class="history-scroll"'), 'scorecard: the chart needs its scroll wrapper');
+  assert(html.includes('style="min-width:640px"'), 'scorecard: the chart must keep its natural width inside the scroll wrapper');
+
   // Light dismiss is native via closedby="any" on each dialog, with a
   // support-gated imperative fallback for browsers without the attribute.
   assert(html.includes('closedby="any"'), 'scorecard: dialogs must request native light dismiss');
