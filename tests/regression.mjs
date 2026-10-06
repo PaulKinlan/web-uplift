@@ -56,6 +56,7 @@ try {
   testAwaitCensus();
   await testFetchDeadlineAndRawComparison();
   await testLaunchAttributionForHungPrimitive();
+  await testOperatorLaunchAttribution();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -5950,6 +5951,64 @@ async function testLaunchAttributionForHungPrimitive() {
       rmSync(browserProfile, { recursive: true, force: true });
     }
     hung.close();
+    rmSync(runTmp, { recursive: true, force: true });
+  }
+}
+
+// Operator-path launch attribution (web-uplift-6x7): the flow record/replay
+// subcommands launch chrome too, and a failed launch attempt used to record
+// nothing at all. Both now write the same launches.jsonl marker.
+async function testOperatorLaunchAttribution() {
+  const runTmp = mkdtempSync(join(tmpdir(), 'web-uplift-flow-launch-'));
+  const launchesFile = join(runTmp, 'launches.jsonl');
+  try {
+    // 1. THE OPERATOR PATH: `flow replay` launches chrome through the same
+    //    recordLaunch the agent-run primitives use. A zero-step flow keeps
+    //    this cheap: launch, attribute, close (the child's own finally).
+    const flowPath = join(runTmp, 'flow.json');
+    writeFileSync(flowPath, JSON.stringify({ title: 'empty', steps: [] }));
+    const replay = await runAsync(
+      process.execPath,
+      [join(repoRoot, 'runner/flow.mjs'), 'replay', flowPath, '--url', 'https://example.com', '--out', join(runTmp, 'evidence')],
+      { env: { ...process.env, WEB_UPLIFT_LAUNCH_LOG: launchesFile } },
+    );
+    assert(replay.status === 0, `flow replay must succeed: ${replay.stderr}`);
+    assert(existsSync(launchesFile), `flow replay must write a launch marker to WEB_UPLIFT_LAUNCH_LOG; none exists (replay stderr: ${replay.stderr.slice(-300)})`);
+    const lines = readFileSync(launchesFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const replayMark = lines.find((l) => l.primitive === 'flow-replay');
+    assert(replayMark, `flow replay must be attributed in launches.jsonl: ${lines.map((l) => JSON.stringify(l)).join(' | ')}`);
+    assert(
+      replayMark.outcome === 'launched' && Number.isInteger(replayMark.pid) && replayMark.profileDir.includes('web-uplift-cdp-'),
+      `the operator marker must look like every other launch marker: ${JSON.stringify(replayMark)}`,
+    );
+
+    // 2. THE FAILED LAUNCH: an attempt that dies before the DevTools endpoint
+    //    records what it knew - pid, profile, reason - with outcome 'failed'.
+    //    A 50ms devtools budget forces the failure against real chrome (real
+    //    boots take hundreds of ms); the attempt's own close() reaps the tree,
+    //    so nothing here leaks.
+    process.env.WEB_UPLIFT_LAUNCH_LOG = launchesFile;
+    let launchErr = null;
+    try {
+      await launchChrome({ log: () => {}, devtoolsTimeoutMs: 50 });
+    } catch (e) {
+      launchErr = e;
+    } finally {
+      delete process.env.WEB_UPLIFT_LAUNCH_LOG;
+    }
+    assert(launchErr, 'a 50ms devtools budget must fail the launch');
+    const failedMarks = readFileSync(launchesFile, 'utf8')
+      .trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+      .filter((l) => l.outcome === 'failed');
+    assert(failedMarks.length > 0, 'a failed launch attempt must be recorded in launches.jsonl');
+    const fm = failedMarks[failedMarks.length - 1];
+    assert(Number.isInteger(fm.pid) && fm.pid > 0, `the failed attempt must record the pid it created: ${JSON.stringify(fm)}`);
+    assert(
+      typeof fm.reason === 'string' && fm.reason.includes('timed out'),
+      `the failed attempt must record why it died: ${JSON.stringify(fm)}`,
+    );
+  } finally {
+    delete process.env.WEB_UPLIFT_LAUNCH_LOG;
     rmSync(runTmp, { recursive: true, force: true });
   }
 }
