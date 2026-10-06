@@ -2136,6 +2136,11 @@ async function testScorecardReservesImageBoxes() {
     return b;
   })());
   writeFileSync(join(dirs[0], 'short-sof-components.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 0x08, 0x00, 0x0b, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00]));
+  // A PNG whose declared chunk is not fully present: 24 bytes carry the signature, the
+  // chunk length and type, and the dimension fields, but the rest of the 13-byte IHDR
+  // data and its checksum are missing. The earlier check accepted this on length alone
+  // and read dimensions out of a chunk the file does not contain.
+  writeFileSync(join(dirs[0], 'short-ihdr.png'), pngHeader(400, 250).subarray(0, 24));
   writeFileSync(join(dirs[0], 'junk.png'), Buffer.from('not an image at all'));
   // The two counterexamples from the review: shapes the EARLIER parser sized from
   // bytes the file does not claim to contain, which is what makes these fixtures
@@ -2222,6 +2227,7 @@ async function testScorecardReservesImageBoxes() {
         { before: 'bad.gif', after: 'fill.jpg', caption: 'truncated GIF' },
         { before: 'bad.jpg', after: 'vp8l.webp', caption: 'truncated JPEG' },
         { before: 'bad.webp', after: 'after.jpg', caption: 'bad WebP sync' },
+        { before: 'short-ihdr.png', after: 'after.jpg', caption: 'chunk not fully present' },
         { before: 'junk.png', after: 'after.jpg', caption: 'not an image' },
         { before: 'short-sof.jpg', after: 'before.png', caption: 'segment too short for its fields' },
         { before: 'undersized-riff.webp', after: 'after.jpg', caption: 'container too small for its fields' },
@@ -2264,6 +2270,7 @@ async function testScorecardReservesImageBoxes() {
       ['bad.jpg', 'jpeg', readFileSync(join(dirs[0], 'bad.jpg'))],
       ['bad.webp', 'webp', readFileSync(join(dirs[1], 'bad.webp'))],
       ['junk.png', 'png', readFileSync(join(dirs[0], 'junk.png'))],
+      ['short-ihdr.png', 'png', readFileSync(join(dirs[0], 'short-ihdr.png'))],
       ['short-sof.jpg', 'jpeg', readFileSync(join(dirs[0], 'short-sof.jpg'))],
       ['undersized-riff.webp', 'webp', readFileSync(join(dirs[0], 'undersized-riff.webp'))],
       ['oversized-chunk.webp', 'webp', readFileSync(join(dirs[0], 'oversized-chunk.webp'))],

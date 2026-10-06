@@ -212,9 +212,12 @@ function imageSize(buf) {
   const usable = (width, height) => (width > 0 && height > 0 ? { width, height } : null);
   try {
     // PNG: 8-byte signature, then an IHDR chunk that declares its own length and type
-    // ahead of the dimensions.
+    // ahead of the dimensions. The whole declared chunk has to be present before its
+    // fields are used - 12 bytes of length and type, 13 of data, 4 of CRC - so a
+    // 24-byte buffer holding the signature and the dimensions but not the rest of the
+    // chunk it claims is not read.
     if (
-      buf.length >= 24 &&
+      buf.length >= 33 &&
       buf.readUInt32BE(0) === 0x89504e47 &&
       buf.readUInt32BE(4) === 0x0d0a1a0a &&
       buf.readUInt32BE(8) === 13 &&
@@ -255,9 +258,10 @@ function imageSize(buf) {
         if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
           // A start-of-frame declares its own length, and that length has to cover the
           // precision, the size AND every component entry it claims: eight bytes plus
-          // three per component. A flat minimum of eight let a segment with no
-          // component entries at all be given a size.
-          if (j + 8 > buf.length) return null;
+          // three per component. The minimum is checked BEFORE the component count is
+          // read, so that byte is inside the segment as well as inside the buffer - the
+          // rule applies to every field, not only to the ones whose value is used.
+          if (len < 8 || j + 8 > buf.length) return null;
           const components = buf[j + 8];
           if (components < 1 || len < 8 + 3 * components) return null;
           return usable(buf.readUInt16BE(j + 6), buf.readUInt16BE(j + 4));
