@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, redactHeaderList, safeFetch, waitForInteractEvidence } from '../evidence/cli.mjs';
+import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, redactHeaderList, safeFetch, scanTextForSecrets, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { AGENTS } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
@@ -41,6 +41,8 @@ try {
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
+  await testSecretsArtifactDoesNotPersistMatches();
+  testSecretsScanDoesNotPersistMatchCharacters();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
   await testConsoleInteractDeadlineValidation();
@@ -2993,4 +2995,71 @@ async function testHarRedactsCredentialHeaders() {
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
+}
+
+// The secrets scan reports what it matched without republishing it: a finding
+// carries the pattern, severity, source and the match length, never a character
+// of the credential. The old shape kept the first six and last four characters
+// (and the whole value for a match of twelve characters or fewer), and those
+// findings are written into run artifacts that can be published (web-uplift-u5n).
+async function testSecretsArtifactDoesNotPersistMatches() {
+  const secret = 'NOTAREALKEY_FIXTURE_ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/clean') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><title>clean</title><body>nothing secret here</body>');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(
+      '<!doctype html><title>secrets</title><link rel="icon" href="data:,">' +
+        `<script>const api_key="${secret}";</script>`,
+    );
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const out = join(tmp, 'secrets.json');
+    const result = await gather('secrets', `http://127.0.0.1:${port}/`, { quiet: true, wait: 300, out });
+    assert(result.totalFindings >= 1, `the fixture secret must still be reported: ${JSON.stringify(result.findings)}`);
+    const finding = result.findings.find((f) => f.match !== undefined);
+    assert(finding && finding.match === '[redacted]', `a finding must not carry the matched value: ${JSON.stringify(finding)}`);
+    assert(
+      typeof finding.matchLength === 'number' && finding.matchLength > 0,
+      `a finding should report the match length instead of the value: ${JSON.stringify(finding)}`,
+    );
+    const artifact = readFileSync(out, 'utf8');
+    for (const [label, text] of [['the artifact', artifact], ['stdout', JSON.stringify(result)]]) {
+      assert(!text.includes(secret), `${label} must not carry the matched value`);
+    }
+    const clean = await gather('secrets', `http://127.0.0.1:${port}/clean`, { quiet: true, wait: 300 });
+    assert(clean.totalFindings === 0, `a page with no secret must report none: ${JSON.stringify(clean.findings)}`);
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// The persisted shape itself, without a browser. The fixture value is built at
+// runtime so this file contains no provider-shaped key literal, and the scan is
+// asked directly: what a finding may carry is the pattern, severity, source and
+// the match LENGTH, never a character of the matched value. This is the precise
+// check for the old behaviour, which kept the first six and last four characters
+// of the match (web-uplift-u5n).
+function testSecretsScanDoesNotPersistMatchCharacters() {
+  const value = 'sk_' + 'live_' + 'A'.repeat(30);
+  const findings = scanTextForSecrets(`const api_key="${value}"`, 'unit fixture');
+  assert(findings.length > 0, `the fixture value must be reported: ${JSON.stringify(findings)}`);
+  for (const finding of findings) {
+    if (finding.match === undefined) continue; // the "more matches" note carries no value
+    assert(finding.match === '[redacted]', `a finding must not carry the matched value: ${JSON.stringify(finding)}`);
+    assert(
+      typeof finding.matchLength === 'number' && finding.matchLength > 0,
+      `a finding should report the match length instead of the value: ${JSON.stringify(finding)}`,
+    );
+  }
+  const serialised = JSON.stringify(findings);
+  assert(!serialised.includes(value.slice(0, 6)), 'no part of the matched value may be persisted (head)');
+  assert(!serialised.includes(value.slice(-4)), 'no part of the matched value may be persisted (tail)');
+  assert(!serialised.includes(value), 'the whole matched value must never be persisted');
 }
