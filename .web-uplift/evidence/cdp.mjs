@@ -240,6 +240,99 @@ function removeDirNow(dir) {
 // slow one. The fix for that is retrying the launch, not waiting longer.
 const DEVTOOLS_ENDPOINT_TIMEOUT_MS = 20000;
 
+// Hard deadlines for the CDP waits. A starved host can leave a browser that
+// never answers: Page.loadEventFired never fires, the attach never completes,
+// the domain enables never resolve. Until these bounds existed a run on such a
+// host hung forever (the dl6 reproduction), and nothing on the path failed
+// loudly. Now every wait on the attach and navigation path is bounded, and the
+// failure names what it waited for, the bound, and how to raise it
+// (--cdp-deadline / WEB_UPLIFT_CDP_DEADLINE_MS). The defaults are overridable
+// per call so tests can use tiny values, and from the CLI via
+// configureCdpDeadlines (main wires the flag and the environment there).
+let navigationDeadlineMsDefault = 30000;
+let cdpCallDeadlineMsDefault = 30000;
+
+export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
+  if (Number.isFinite(navigationMs) && navigationMs > 0) navigationDeadlineMsDefault = navigationMs;
+  if (Number.isFinite(callMs) && callMs > 0) cdpCallDeadlineMsDefault = callMs;
+}
+
+// Bound a CDP wait. A rejection carries the bound, what was being awaited, and
+// how to raise the bound, so a starved host produces an actionable error
+// instead of an indefinite hang.
+//
+// THE COMPLETE AWAIT CENSUS - enforced, not read. A judgement-based version of this list
+// was wrong three times, and a bucket-summed version hid a miscount behind a grand total
+// that agreed, so the authoritative classification is INDIVIDUAL and lives in the test:
+// testAwaitCensus (tests/regression.mjs) matches every non-comment await line in the two
+// evidence files against exactly one disposition rule (exactly one - a line matching zero
+// or two rules fails), and fails - naming the file, line and text - when a site is
+// unclassified or a rule's count drifts. THE CENSUS'S LIMIT, stated plainly: it verifies
+// that every site is CLASSIFIED; it cannot verify that a bound is still PRESENT at a
+// classified site. That is what review and the targeted tests are for, and the census must
+// never be read as a proof of boundedness. (No manual recipe is given here: the previous
+// one went stale within a revision. The test IS the recipe.)
+//
+// WHAT THE CENSUS SHOWS, in summary. Bounded by withDeadline (this bead's helper): in
+// newSession the target create, the attach, the cleanup-Close after an attach failure and
+// the domain enables; in session.close() both teardown awaits; in navigate() the two
+// navigations, the two load events and the pre-navigation preparation; in the console
+// collector the Runtime/Log enables; in trace the two direct navigations, the load wait,
+// applyConditions, Tracing.start, Tracing.end, tracingComplete and the interact evaluate;
+// in resilience the ServiceWorker.enable, the offline switch, the offline-reload navigate
+// and the online restore; in safeFetch the response-body reads. Bounded transitively:
+// applyConditions' six internals and sw.enable's internal enable (every caller wraps the
+// call). Bounded by their own deadlines: the fetch exchange (AbortSignal), the capped body
+// reader, har's network-idle wait, --interact's poll, the headers docPromise timeout, and
+// resilience's offline load race. Bounded by pre-existing mechanisms: the launch endpoint
+// poll and its grace-bounded teardown, sleeps, withRetry around bounded calls, the gather
+// spine. EXCLUDED WITH REASON: the per-primitive content probes after or outside the shared
+// spine (evaluate() probes, screenshots, getResponseBody, screencast, heap, axe, a11y and
+// friends) - a wedge there hangs ONE primitive's evidence, not the CLI's ability to reach
+// or leave a page, and several carry their own bounds - plus ONE page-side await inside an
+// evaluate template (not a host await at all), and the evaluate() helper's own
+// Runtime.evaluate, which is the content-probe mechanism itself.
+//
+// THE WARNING for the next primitive: an await added to either file fails testAwaitCensus
+// until it is classified, so an omission is LOUD now rather than silent. A NEW primitive
+// that awaits client.* directly inherits NOTHING from this census: the trace primitive was
+// exactly that hole, found by enumeration, not by the sweeps that preceded it.
+// The current navigation bound, for callers that navigate directly (the trace
+// primitive) and must take the same bound navigate() uses, flag included.
+export function getNavigationDeadlineMs() {
+  return navigationDeadlineMsDefault;
+}
+
+// The current CDP-call bound, for primitives that enable domains directly
+// (resilience's ServiceWorker.enable) and must take the same bound newSession()
+// uses, flag included.
+export function getCdpCallDeadlineMs() {
+  return cdpCallDeadlineMsDefault;
+}
+
+export function withDeadline(promise, ms, description) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(() => {
+      rejectPromise(
+        new Error(
+          `web-uplift: timed out after ${ms}ms waiting for ${description} ` +
+            '(raise the bound with --cdp-deadline <ms> or WEB_UPLIFT_CDP_DEADLINE_MS)',
+        ),
+      );
+    }, ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolvePromise(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        rejectPromise(e);
+      },
+    );
+  });
+}
+
 // A wedge or a lost race is transient and a fresh attempt is cheap (1-2 s), so
 // retry the WHOLE launch - new profile dir included - with a small jittered
 // backoff rather than a fixed lockstep delay on an already starved box.
@@ -502,47 +595,53 @@ async function withRetry(fn, { label, attempts = 8, delayMs = 200, maxDelayMs = 
 
 // Open a fresh CDP session against a new target (tab) and enable the domains we
 // rely on across the auditor. Returns the CDP client plus a per-target cleanup.
-export async function newSession(port, { log = () => {} } = {}) {
+export async function newSession(port, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault } = {}) {
   // Create a dedicated target via the /json/new HTTP endpoint and attach to the
   // WebSocket URL it returns directly. A bare CDP({ port }) uses chrome-remote-
   // interface's default target chooser, which reads /json/list and throws
   // "No inspectable targets" when Chrome for Testing 154 boots without a usable
   // default page (the default New Tab can fail with "incorrect profile type").
   // /json/new does not depend on that page, so a fresh target is deterministic.
-  const target = await withRetry(() => CDP.New({ port }), { label: 'create CDP target' });
+  const target = await withRetry(
+    () => withDeadline(CDP.New({ port }), cdpDeadlineMs, 'the browser to accept a new target (CDP /json/new)'),
+    { label: 'create CDP target' },
+  );
 
   let client;
   try {
     client = await withRetry(
-      () => CDP({ target: target.webSocketDebuggerUrl }),
+      () => withDeadline(CDP({ target: target.webSocketDebuggerUrl }), cdpDeadlineMs, 'the browser to accept a CDP attach'),
       { label: 'attach to CDP target' },
     );
   } catch (err) {
-    // Best-effort cleanup if the attach retries are exhausted.
-    await CDP.Close({ port, id: target.id }).catch(() => {});
+    // Best-effort cleanup if the attach retries are exhausted - and BOUNDED, because the
+    // browser that just exhausted the attach deadline is exactly the browser that may never
+    // answer this Close either: an unbounded cleanup await after a deadline has fired is how
+    // a bounded operation still hangs.
+    await withDeadline(CDP.Close({ port, id: target.id }), cdpDeadlineMs, 'the browser to close the unattached target').catch(() => {});
     throw err;
   }
 
   const targetId = target.id;
   const { Page, Runtime, DOM, CSS, Emulation, Network } = client;
-  await Promise.all([
-    Page.enable(),
-    Runtime.enable(),
-    DOM.enable(),
-    CSS.enable(),
-    Network.enable(),
-  ]);
+  await withDeadline(
+    Promise.all([Page.enable(), Runtime.enable(), DOM.enable(), CSS.enable(), Network.enable()]),
+    cdpDeadlineMs,
+    'the browser to enable the CDP domains',
+  );
   void Emulation;
   log('[browser] session ready');
 
   async function close() {
+    // Teardown is bounded for the same reason: by the time close() runs, the browser may
+    // already have proven itself unresponsive.
     try {
-      await client.close();
+      await withDeadline(client.close(), cdpDeadlineMs, 'the CDP client to close');
     } catch {
       // ignore
     }
     try {
-      await CDP.Close({ port, id: targetId });
+      await withDeadline(CDP.Close({ port, id: targetId }), cdpDeadlineMs, 'the browser to close the target');
     } catch {
       // ignore
     }
@@ -563,19 +662,19 @@ export async function newSession(port, { log = () => {} } = {}) {
 export async function navigate(
   client,
   url,
-  { settleMs = 1200, log = () => {}, beforeTargetNavigate = null } = {},
+  { settleMs = 1200, log = () => {}, beforeTargetNavigate = null, navigationDeadlineMs = navigationDeadlineMsDefault } = {},
 ) {
   const { Page } = client;
 
   const blanked = Page.loadEventFired();
-  await Page.navigate({ url: 'about:blank' });
-  await blanked;
+  await withDeadline(Page.navigate({ url: 'about:blank' }), navigationDeadlineMs, `the about:blank navigation to be accepted (en route to ${url})`);
+  await withDeadline(blanked, navigationDeadlineMs, `the load event for about:blank (en route to ${url})`);
 
-  if (beforeTargetNavigate) await beforeTargetNavigate();
+  if (beforeTargetNavigate) await withDeadline(beforeTargetNavigate(), navigationDeadlineMs, 'the pre-navigation preparation');
 
   const loaded = Page.loadEventFired();
-  await Page.navigate({ url });
-  await loaded;
+  await withDeadline(Page.navigate({ url }), navigationDeadlineMs, `the navigation to ${url} to be accepted`);
+  await withDeadline(loaded, navigationDeadlineMs, `the load event for ${url}`);
   log(`[browser] loaded ${url}`);
   if (settleMs > 0) {
     await new Promise((r) => setTimeout(r, settleMs));
@@ -622,7 +721,7 @@ const collectors = new WeakMap();
 const CONSOLE_ENTRY_CAP = 100;
 const CONSOLE_BUFFER_CAP = 500;
 
-export async function attachConsoleCollector(client, { log = () => {} } = {}) {
+export async function attachConsoleCollector(client, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault } = {}) {
   const entries = [];
   const byKey = new Map(); // dedupe key -> recorded entry (with a repeat count)
   let ignoredCount = 0; // info/log/debug/verbose, counted but not itemised
@@ -698,10 +797,14 @@ export async function attachConsoleCollector(client, { log = () => {} } = {}) {
     }
   });
 
-  await Promise.all([
-    client.Runtime.enable().catch(() => {}),
-    client.Log.enable().catch((err) => log(`[evidence] console collector: Log.enable failed: ${err.message}`)),
-  ]);
+  await withDeadline(
+    Promise.all([
+      client.Runtime.enable().catch(() => {}),
+      client.Log.enable().catch((err) => log(`[evidence] console collector: Log.enable failed: ${err.message}`)),
+    ]),
+    cdpDeadlineMs,
+    'the browser to enable the console collector domains',
+  );
 
   function summary() {
     const consoleErrorCount = entries.filter((e) => e.kind === 'console' && e.level === 'error').length;

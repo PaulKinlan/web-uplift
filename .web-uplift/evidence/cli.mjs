@@ -73,13 +73,13 @@ import {
   existsSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, relative } from 'node:path';
+import { join, resolve, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { BlockList, isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
-import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence } from './cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs, getCdpCallDeadlineMs } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
 
@@ -792,6 +792,10 @@ async function axe(client, url, opts, log) {
 // AND a compact, model-readable summary (key timings, long tasks, blocking).
 // The model reads the summary, never the multi-MB raw trace.
 async function trace(client, url, opts, log) {
+  // The navigation below calls Page.navigate DIRECTLY rather than through navigate() because
+  // the trace must start before navigationStart is captured; the bound is the same one
+  // navigate() uses, read through the getter so the --cdp-deadline flag applies here too.
+  const navDeadline = getNavigationDeadlineMs();
   // The category set DevTools itself records for a performance profile, so the
   // resulting trace.json loads in chrome://tracing and the DevTools Performance
   // panel. We keep the devtools.timeline + disabled-by-default-devtools.timeline
@@ -820,25 +824,29 @@ async function trace(client, url, opts, log) {
   // Start tracing on a clean about:blank, then navigate so the whole load is in
   // the trace. navigate() already routes through about:blank, but we begin the
   // trace first so navigationStart is captured.
-  await client.Page.navigate({ url: 'about:blank' });
+  await withDeadline(client.Page.navigate({ url: 'about:blank' }), navDeadline, `the about:blank navigation to be accepted (en route to ${url})`);
   await sleep(150);
-  await applyConditions(client, opts, log);
+  await withDeadline(applyConditions(client, opts, log), navDeadline, `the pre-trace condition setup (en route to ${url})`);
 
-  await client.Tracing.start({
-    categories: categories.join(','),
-    transferMode: 'ReportEvents',
-    options: 'sampling-frequency=10000',
-  });
+  await withDeadline(
+    client.Tracing.start({
+      categories: categories.join(','),
+      transferMode: 'ReportEvents',
+      options: 'sampling-frequency=10000',
+    }),
+    navDeadline,
+    `the browser to start tracing (en route to ${url})`,
+  );
   log('[evidence] tracing started; navigating');
 
   const loaded = client.Page.loadEventFired();
-  await client.Page.navigate({ url });
-  await loaded;
+  await withDeadline(client.Page.navigate({ url }), navDeadline, `the navigation to ${url} to be accepted`);
+  await withDeadline(loaded, navDeadline, `the load event for ${url}`);
   log(`[evidence] loaded ${url}`);
 
   if (opts.interact) {
     try {
-      await evaluate(client, opts.interact);
+      await withDeadline(evaluate(client, opts.interact), navDeadline, `the interact script on ${url}`);
     } catch (err) {
       log(`[evidence] interact script error: ${err.message.split('\n')[0]}`);
     }
@@ -846,8 +854,8 @@ async function trace(client, url, opts, log) {
   await sleep(opts.wait);
 
   const done = new Promise((resolve) => client.Tracing.tracingComplete(resolve));
-  await client.Tracing.end();
-  await done;
+  await withDeadline(client.Tracing.end(), navDeadline, `the browser to end tracing for ${url}`);
+  await withDeadline(done, navDeadline, `the trace to complete for ${url}`);
   log(`[evidence] tracing complete: ${events.length} events`);
 
   // The devtools-loadable artifact is the raw event array under { traceEvents }.
@@ -2049,17 +2057,42 @@ function concatChunks(chunks, total) {
   return out;
 }
 
-async function readBodyCapped(res, maxBytes) {
+// The exchange is time-bounded, because a starved host can stall a fetch or a body read
+// indefinitely - and the discoverability primitive fetches BEFORE its first navigation, so
+// an unbounded stall here would hang the CLI before any page is reached.
+const SAFEFETCH_DEADLINE_MS = 30000;
+// The fetch exchange budget is CONFIGURABLE (--fetch-deadline / WEB_UPLIFT_FETCH_DEADLINE_MS),
+// because a fixed bound turns a slow-but-successful response into a recorded error - and
+// downstream of that error, evidence that was never gathered gets read as evidence about the
+// page. Operators on slow networks raise it; tests override it per call.
+let fetchDeadlineMsDefault = SAFEFETCH_DEADLINE_MS;
+export function configureFetchDeadline(ms) {
+  if (Number.isFinite(ms) && ms > 0) fetchDeadlineMsDefault = ms;
+}
+
+export async function readBodyCapped(res, maxBytes, deadlineMs = fetchDeadlineMsDefault) {
   const reader = res.body?.getReader();
   if (!reader) return '';
   const chunks = [];
   let total = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    let read;
+    try {
+      read = await withDeadline(reader.read(), deadlineMs, 'the response body to arrive');
+    } catch (e) {
+      // Best-effort and DETACHED, not awaited: a stalled cancellation must not delay the
+      // timeout this catch exists to deliver (cleanup-after-deadline, the class from rev2).
+      reader.cancel().catch(() => {});
+      throw new Error(
+        `web-uplift: a response body read did not complete within ${deadlineMs}ms (the host may be starved)`,
+        { cause: e },
+      );
+    }
+    const { done, value } = read;
     if (done) break;
     total += value.byteLength;
     if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
+      reader.cancel().catch(() => {}); // detached best-effort, as above
       throw new Error(`refused: response body exceeded ${maxBytes} bytes`);
     }
     chunks.push(value);
@@ -2074,17 +2107,18 @@ async function readBodyCapped(res, maxBytes) {
 // are validated as resolved, but global fetch gives no way to pin the address the
 // connection actually uses, so a name that re-resolves between this check and the
 // connect is not fully covered (DNS rebinding).
-export async function safeFetch(rawUrl, { base, targetOrigin, headers, maxBytes = FETCH_MAX_BYTES } = {}) {
+export async function safeFetch(rawUrl, { base, targetOrigin, headers, maxBytes = FETCH_MAX_BYTES, deadlineMs = fetchDeadlineMsDefault } = {}) {
   let current = await assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin });
   for (let hop = 0; hop <= FETCH_MAX_REDIRECTS; hop++) {
-    const res = await fetch(current.href, { redirect: 'manual', headers });
+    const res = await fetch(current.href, { redirect: 'manual', headers, signal: AbortSignal.timeout(deadlineMs) });
     const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
     if (location === null) {
-      return { res, url: current.href, text: () => readBodyCapped(res, maxBytes) };
+      return { res, url: current.href, text: () => readBodyCapped(res, maxBytes, deadlineMs) };
     }
     // Drain and drop a redirect body: it is not evidence, and an uncancelled
-    // stream can pin a socket.
-    await res.body?.cancel().catch(() => {});
+    // stream can pin a socket. Detached, not awaited: a stalled cancellation must
+    // not hang the hop loop.
+    res.body?.cancel().catch(() => {});
     if (hop === FETCH_MAX_REDIRECTS) throw new Error(`refused: more than ${FETCH_MAX_REDIRECTS} redirects`);
     current = await assertPageDerivedFetchAllowed(location, { base: current.href, targetOrigin });
   }
@@ -2253,28 +2287,85 @@ async function discoverability(client, url, opts, log) {
     })()`,
   );
 
-  // 3. Compare rendered content against the raw HTML.
-  const rawText = stripHtmlToText(rawHtml);
+  // 3. Compare rendered content against the raw HTML - as ONE block derived from the
+  // usability condition, so no sibling field can emit a false "absent" on the sole basis
+  // that the fetch failed. (rev5: coverage and the shell verdict were gated, but the
+  // presence comparisons still emitted false from an empty string - the same class one
+  // level down, and gating per-line is how a fourth sibling gets missed in a later
+  // revision.) When the raw document was never retrieved, EVERY comparison field - the
+  // shell verdict included, since it consumes the gated fields - is null, and the summary
+  // says why. Fields that describe the RENDERED page (renderedEmpty,
+  // rendered.*, the screenshots) stay computed: the render exists regardless of the raw
+  // fetch, so they are not comparisons and they remain meaningful - that is the answer to
+  // "is any field legitimately meaningful without raw HTML".
+  // THE USABILITY GATE - the single authority on whether the raw document was retrieved,
+  // with the routes by which it was NOT ENUMERATED here so a route added later must be
+  // classified rather than silently defaulting to "usable" (the same failure the fields
+  // had before the surface was asserted; the route coverage is stated narrowly below).
+  // USABLE MEANS WE RETRIEVED THE DOCUMENT THE URL NAMES (coord's ruling):
+  //   1. the exchange threw - a network error, an abort/timeout, or a refusal by the
+  //      page-derived fetch guard (including the redirect hop-limit);
+  //   2. the body read threw or exceeded the cap (it happens inside the same try, so it
+  //      arrives through route 1 as a fetchError);
+  //   3. the final response is not a SUCCESS (2xx): a 404 or 500 page is a response ABOUT
+  //      the resource, not the document, and comparing the rendered page against it
+  //      manufactures exactly the false claim this gate exists to prevent. A LOCATION-LESS
+  //      3xx lands here too: the fetch helper returns it as a response (it does not throw),
+  //      so the status check is what rejects it. A 3xx that resolves to a 2xx is fine.
+  //      The status is still RECORDED, so nothing is lost: the operator sees the 404 as a
+  //      status, not as a misleading "not a JS shell".
+  // A genuinely EMPTY 200 body is DIFFERENT AND STAYS USABLE: a completed empty response is
+  // observed evidence that the raw document was empty - the real empty-document signal the
+  // tool exists to report. The distinction is deliberate, not incidental.
+  // ROUTE COVERAGE, STATED NARROWLY: the timeout, body-read and non-2xx routes are
+  // exercised END-TO-END through discoverability by testFetchDeadlineAndRawComparison; the
+  // guard-refusal and size-cap mechanisms are exercised at the safeFetch level by
+  // testSafeFetchRedirectAndSizeGuard; a location-less 3xx is NOT exercised through
+  // discoverability - it lands on the same status check the 404 route exercises, and
+  // saying that is more useful than claiming a coverage the tests do not have.
+  const rawComparisonUsable =
+    fetchError === null && rawStatus !== null && rawStatus >= 200 && rawStatus < 300;
   const renderedTokens = contentTokens(rendered.text);
-  const rawTokens = contentTokens(rawText);
-  let overlap = 0;
-  for (const t of renderedTokens) if (rawTokens.has(t)) overlap++;
   // If the rendered page produced essentially no content, coverage is undefined
   // (not 100%) - the render likely failed, redirected, or the page is genuinely
   // empty. Surface that honestly rather than manufacture a perfect score.
   const renderedEmpty = renderedTokens.size < 3;
-  const coveragePct = renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100);
-  const emptyMounts = detectEmptyMounts(rawHtml);
-  const titleInRaw = rendered.title ? contentPresentInRaw(rendered.title, rawText) : null;
-  const h1InRaw = rendered.h1.length ? rendered.h1.some((h) => contentPresentInRaw(h, rawText)) : null;
-  const metaInRaw = rendered.metaDescription ? /name=["']description["']/i.test(rawHtml) : null;
-  // A JS shell: an empty SPA mount with almost no content in the raw HTML, or a
-  // content-rich rendered page whose text is essentially absent from the raw.
-  // Only assertable when we actually got rendered content to compare against.
-  const isJsShell =
-    coveragePct != null &&
-    ((emptyMounts.length > 0 && coveragePct < 25) || (renderedTokens.size >= 50 && coveragePct < 10));
-
+  const { coveragePct, emptyMounts, titleInRaw, h1InRaw, metaInRaw, rawStats, isJsShell } = rawComparisonUsable
+    ? (() => {
+        const rawText = stripHtmlToText(rawHtml);
+        const rawTokens = contentTokens(rawText);
+        let overlap = 0;
+        for (const t of renderedTokens) if (rawTokens.has(t)) overlap++;
+        const coverage = renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100);
+        const mounts = detectEmptyMounts(rawHtml);
+        return {
+          coveragePct: coverage,
+          emptyMounts: mounts,
+          titleInRaw: rendered.title ? contentPresentInRaw(rendered.title, rawText) : null,
+          h1InRaw: rendered.h1.length ? rendered.h1.some((h) => contentPresentInRaw(h, rawText)) : null,
+          metaInRaw: rendered.metaDescription ? /name=["']description["']/i.test(rawHtml) : null,
+          rawStats: { htmlBytes: byteLength(rawHtml), textChars: rawText.length, contentTokens: rawTokens.size },
+          // The verdict consumes the gated fields, so it is produced under the SAME
+          // condition: unknown (null) whenever coverage is undefined, whether the raw
+          // document is missing or the render was empty. "Not a shell" is a claim; it must
+          // never be emitted for a comparison that did not happen.
+          isJsShell:
+            coverage == null
+              ? null
+              : (mounts.length > 0 && coverage < 25) ||
+                (renderedTokens.size >= 50 && coverage < 10),
+        };
+      })()
+    : {
+        coveragePct: null,
+        emptyMounts: null,
+        titleInRaw: null,
+        h1InRaw: null,
+        metaInRaw: null,
+        // "0 bytes / 0 tokens" would be a claim about a document that was never retrieved.
+        rawStats: { htmlBytes: null, textChars: null, contentTokens: null },
+        isJsShell: null,
+      };
   // Visual proof: a browser view (JS on, already loaded) vs a crawler view (JS
   // disabled, reloaded). For a shell site the crawler view is blank/near-empty -
   // the single most legible evidence for this finding. Unless --no-screenshots.
@@ -2306,7 +2397,17 @@ async function discoverability(client, url, opts, log) {
     fetchedStatus: rawStatus,
     fetchError,
     crawlerUserAgent: CRAWLER_UA,
-    coveragePct, // share of rendered content words that also appear in the raw server HTML (null if the render was empty)
+    coveragePct, // share of rendered content words that also appear in the raw server HTML (null if the render was empty OR the raw fetch failed/timed out)
+    rawComparisonUsable, // false when the raw document was never retrieved: coveragePct and isJsShell are then NOT evidence about the page, and must not be reported as such
+    ...(rawComparisonUsable
+      ? {}
+      : {
+          rawComparisonNote:
+            (fetchError
+              ? `The raw HTML fetch failed or timed out (${fetchError})`
+              : `The raw HTML fetch returned a non-success status (${rawStatus}) - a response ABOUT the resource, not the document`) +
+            ', so there is no raw document to compare against the rendered page. A fetch failure is a network condition, not a property of the page; the status, when one arrived, is recorded as fetchedStatus.',
+        }),
     contentVisibleWithoutJs: coveragePct,
     isJsShell,
     renderedEmpty,
@@ -2321,11 +2422,7 @@ async function discoverability(client, url, opts, log) {
       h1Count: rendered.h1.length,
       framework: rendered.framework,
     },
-    raw: {
-      htmlBytes: byteLength(rawHtml),
-      textChars: rawText.length,
-      contentTokens: rawTokens.size,
-    },
+    raw: rawStats,
     screenshots, // { rendered, crawler } - browser view (JS on) vs crawler view (JS off)
     signalsFor: ['be-discoverable', 'be-agent-ready'],
     note:
@@ -3229,7 +3326,7 @@ export function iconSatisfies(icons, size) {
 
 async function resilience(client, url, opts, log) {
   const sw = attachServiceWorkerState(client, url);
-  await sw.enable();
+  await withDeadline(sw.enable(), getCdpCallDeadlineMs(), 'the browser to enable the ServiceWorker domain');
 
   // Online first, so a service worker can install, activate and cache.
   await navigate(client, url, {
@@ -3348,14 +3445,23 @@ async function resilience(client, url, opts, log) {
 
   // Go offline for real and reload: does a fallback render, or does the
   // navigation fail? Page.navigate reports the net error directly.
-  await client.Network.emulateNetworkConditions({ offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await withDeadline(
+    client.Network.emulateNetworkConditions({ offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }),
+    getCdpCallDeadlineMs(),
+    'the browser to switch the network offline',
+  );
   const offlineBudget = Math.max(opts.wait ?? 1500, 1500) + 3000;
   let navigationFailed = false;
   let errorText = null;
   let offlinePage = null;
   try {
     const loaded = client.Page.loadEventFired();
-    const nav = await client.Page.navigate({ url });
+    // Bounded by the primitive's OWN offline budget, not the navigation default: this
+    // navigate runs AFTER the network goes offline, and an offline failure response is the
+    // normal path (navigationFailed is the expected outcome for a page with no fallback).
+    // The load wait stays a Promise.race with the same budget - already bounded, so the
+    // bead's helper is not layered on top of it.
+    const nav = await withDeadline(client.Page.navigate({ url }), offlineBudget, `the navigation to ${url} to be accepted`);
     errorText = nav?.errorText || null;
     navigationFailed = !!errorText;
     if (!navigationFailed) await Promise.race([loaded, sleep(offlineBudget)]);
@@ -3387,7 +3493,11 @@ async function resilience(client, url, opts, log) {
       log(`[evidence] resilience: offline screenshot failed: ${String(e?.message || e)}`);
     }
   }
-  await client.Network.emulateNetworkConditions({ offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await withDeadline(
+    client.Network.emulateNetworkConditions({ offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }),
+    getCdpCallDeadlineMs(),
+    'the browser to switch the network back online',
+  );
   log(
     navigationFailed
       ? `[evidence] resilience: offline navigation FAILED (${errorText})`
@@ -3672,6 +3782,8 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--out') args.out = argv[++i];
+    else if (a === '--cdp-deadline') args.cdpDeadline = Number(argv[++i]);
+    else if (a === '--fetch-deadline') args.fetchDeadline = Number(argv[++i]);
     else if (a === '--emulate-media') args.emulateMediaRaw = argv[++i];
     else if (a === '--viewport') args.viewportRaw = argv[++i];
     else if (a === '--max-nodes') args.maxNodes = Number(argv[++i]);
@@ -3779,9 +3891,36 @@ async function main() {
         '         --locale de-DE --timezone Asia/Tokyo\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f --interact-deadline ms\n' +
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies\n' +
+        '         --cdp-deadline ms (bound every CDP attach/navigation wait; default 30000)\n' +
+        '         --fetch-deadline ms (bound each raw-fetch exchange; default 30000)\n' +
         '         --no-redact-headers (keep raw credential header values; publication risk) --quiet',
     );
     process.exit(1);
+  }
+  // --out names a FILE: a directory (EISDIR) or a missing parent surfaces at the
+  // first writeFileSync as a raw syscall error, which reads as a tool bug rather
+  // than an argument mistake (the dl6 footgun). Validate once here - opts.out
+  // flows into every writeFileSync site - before any browser is launched.
+  if (args.out) {
+    const resolvedOut = resolve(args.out);
+    if (existsSync(resolvedOut) && statSync(resolvedOut).isDirectory()) {
+      console.error(`web-uplift: --out names a directory, but it must be a file path: ${resolvedOut}`);
+      process.exit(1);
+    }
+    const outDir = dirname(resolvedOut);
+    if (!existsSync(outDir)) {
+      console.error(`web-uplift: --out's directory does not exist: ${outDir}`);
+      process.exit(1);
+    }
+  }
+  // The flag beats the environment; either overrides the CDP wait defaults.
+  const deadlineArg = Number(args.cdpDeadline ?? process.env.WEB_UPLIFT_CDP_DEADLINE_MS);
+  if (Number.isFinite(deadlineArg) && deadlineArg > 0) {
+    configureCdpDeadlines({ navigationMs: deadlineArg, callMs: deadlineArg });
+  }
+  const fetchDeadlineArg = Number(args.fetchDeadline ?? process.env.WEB_UPLIFT_FETCH_DEADLINE_MS);
+  if (Number.isFinite(fetchDeadlineArg) && fetchDeadlineArg > 0) {
+    configureFetchDeadline(fetchDeadlineArg);
   }
   const result = await gather(primitive, url, args);
   // Print the result (or artifact pointer) as JSON to stdout for the model.

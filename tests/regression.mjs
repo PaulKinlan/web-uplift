@@ -1,4 +1,13 @@
 #!/usr/bin/env node
+// SUITE CONVENTION, learned the expensive way (web-uplift-17o): a test that needs a local
+// server must drive the CLI IN-PROCESS via gather() - NOT by running the CLI as a child with
+// an in-process server. spawnSync blocks the parent's event loop, so the in-process server
+// never answers the child's browser (observed directly: zero server hits and a 30s timeout
+// on a HEALTHY page, for trace and dom alike). Worse, that failure mode MIMICS a starvation
+// defect: a healthy page simply times out, indistinguishable from the behaviour under test,
+// so a harness built that way cannot observe the behaviour it exists to check. The --out
+// argument-validation tests are the exception: they exit before any browser launches, so a
+// child run with an in-process server is safe there.
 import http from 'node:http';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,6 +50,9 @@ try {
   await testHarRedirects();
   await testCredentialRedactionHelpers();
   await testHarCredentialRedaction();
+  await testCdpDeadline();
+  testAwaitCensus();
+  await testFetchDeadlineAndRawComparison();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -5011,3 +5023,526 @@ async function testHarCredentialRedaction() {
     server.close();
   }
 }
+
+// web-uplift-17o: a starved host can leave the browser never answering, and until the CDP
+// deadline landed the evidence CLI waited INDEFINITELY (the dl6 reproduction). The honest
+// evidence is a BOUNDED REPRODUCTION of the wait, not an assertion that a timeout constant
+// exists: a server that accepts connections and never responds is the starvation condition
+// itself (the load event never fires), and the navigation must fail loudly within the order
+// of the deadline, naming the URL, the bound and how to raise it.
+async function testCdpDeadline() {
+  const { withDeadline, launchChrome, newSession, navigate } = await import(
+    pathToFileURL(join(repoRoot, 'evidence/cdp.mjs')).href
+  );
+
+  // THE MECHANISM, directly: a promise that never settles must reject within the bound,
+  const t0 = Date.now();
+  let mechErr = null;
+  try {
+    await withDeadline(new Promise(() => {}), 120, 'the test wait');
+  } catch (e) {
+    mechErr = e;
+  }
+  assert(
+    mechErr && mechErr.message.includes('timed out after 120ms waiting for the test wait'),
+    `17o deadline: a never-settling wait must reject with the loud text (${mechErr && mechErr.message})`,
+  );
+  assert(
+    mechErr && mechErr.message.includes('--cdp-deadline'),
+    '17o deadline: the error must say how to raise the bound',
+  );
+  assert(
+    Date.now() - t0 < 5000,
+    `17o deadline: the rejection must arrive at the order of the bound, not the suite timeout (${Date.now() - t0}ms)`,
+  );
+  // and a promise that settles must pass through undisturbed.
+  assert(
+    (await withDeadline(Promise.resolve(42), 120, 'a settled wait')) === 42,
+    '17o deadline: a settling promise must pass through',
+  );
+
+  // --out naming a directory (or a path with a missing parent) must fail LOUDLY AND FAST,
+  // before any browser is launched - the raw EISDIR used to surface from writeFileSync
+  // mid-run and read as a tool bug.
+  const healthy = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<!doctype html><title>ok</title><p>healthy</p>');
+  });
+  await new Promise((res) => healthy.listen(0, '127.0.0.1', res));
+  const page = `http://127.0.0.1:${healthy.address().port}/`;
+  const t1 = Date.now();
+  const badOut = run(process.execPath, ['evidence/cli.mjs', 'dom', page, '--out', tmp]);
+  assert(badOut.status !== 0, `17o --out: a directory must be rejected (exit ${badOut.status})`);
+  assert(
+    (badOut.stderr || '').includes('must be a file path') && (badOut.stderr || '').includes(tmp),
+    `17o --out: the error must name the path (${badOut.stderr})`,
+  );
+  assert(
+    !(badOut.stderr || '').includes('[browser] launching'),
+    `17o --out: the rejection must precede any browser launch, asserted by the ABSENCE of the launch diagnostic, not inferred from elapsed time (${badOut.stderr})`,
+  );
+  const missingParent = run(process.execPath, ['evidence/cli.mjs', 'dom', page, '--out', join(tmp, 'no-such-dir', 'x.json')]);
+  assert(
+    missingParent.status !== 0 && (missingParent.stderr || '').includes('does not exist'),
+    `17o --out: a missing parent directory must be rejected loudly (${missingParent.stderr})`,
+  );
+  assert(
+    !(missingParent.stderr || '').includes('[browser] launching'),
+    '17o --out: the missing-parent rejection must also precede any browser launch (absence of the launch diagnostic)',
+  );
+
+  // THE REAL PATH: a server that accepts connections and never answers. The first
+  // navigation (about:blank) completes; the second load event never fires, and the
+  // deadline must turn an indefinite hang into a loud, bounded failure.
+  const sockets = new Set();
+  // The handler firing IS the proof the target was contacted: a deadline that fires BEFORE
+  // the target navigation (e.g. on the about:blank pre-step under load) leaves this at zero,
+  // and the starved assertions below REQUIRE it to have increased - otherwise the test would
+  // pass without ever reproducing the starvation it claims to reproduce.
+  let blackholeHits = 0;
+  const blackhole = http.createServer(() => {
+    blackholeHits += 1;
+    /* accept and never answer */
+  });
+  blackhole.on('connection', (sock) => {
+    sockets.add(sock);
+    sock.on('close', () => sockets.delete(sock));
+  });
+  await new Promise((res) => blackhole.listen(0, '127.0.0.1', res));
+  const chrome = await launchChrome({ log: () => {} });
+  try {
+    const session = await newSession(chrome.port, { log: () => {} });
+    try {
+      const starvedUrl = `http://127.0.0.1:${blackhole.address().port}/`;
+      const hitsBeforeNav = blackholeHits;
+      const t2 = Date.now();
+      let navErr = null;
+      try {
+        // 1500ms, not a few hundred: under fleet load the about:blank pre-step alone can
+        // exceed a very small deadline (observed in the first gate run), and the bound must
+        // survive that while still firing promptly on the never-responding target. Every
+        // step's message names the ultimate target URL, so the assertion holds whichever
+        // step the bound fires on - and the run is bounded either way, which is the claim.
+        await navigate(session.client, starvedUrl, { settleMs: 0, navigationDeadlineMs: 1500 });
+      } catch (e) {
+        navErr = e;
+      }
+      const elapsed = Date.now() - t2;
+      assert(
+        navErr && navErr.message.includes('timed out after 1500ms'),
+        `17o: a starved navigation must fail loudly with the bound (${navErr && navErr.message})`,
+      );
+      assert(
+        navErr &&
+          (navErr.message.includes(`the load event for ${starvedUrl}`) ||
+            navErr.message.includes(`the navigation to ${starvedUrl}`)),
+        `17o: the failure must identify the TARGET wait, not the about:blank pre-step (${navErr && navErr.message})`,
+      );
+      assert(
+        blackholeHits > hitsBeforeNav,
+        `17o: the black-hole server must have been CONTACTED (hits ${hitsBeforeNav} -> ${blackholeHits}) - otherwise the starvation was never reached and this test proves nothing`,
+      );
+      assert(
+        elapsed < 15000,
+        `17o: the starved navigation must return at the order of the deadline, not the suite timeout (${elapsed}ms)`,
+      );
+      // CONTROL: the same navigation with a generous deadline against a healthy server must
+      // complete, so the bound is not just always-failing.
+      let controlErr = null;
+      try {
+        await navigate(session.client, page, { settleMs: 0, navigationDeadlineMs: 20000 });
+      } catch (e) {
+        controlErr = e;
+      }
+      assert(
+        !controlErr,
+        `17o control: a healthy navigation under a generous deadline must complete (${controlErr && controlErr.message})`,
+      );
+    } finally {
+      await session.close();
+    }
+  } finally {
+    await chrome.close();
+  }
+
+  // THE TRACE PATH, reproduced the same way: the trace primitive navigates DIRECTLY (it
+  // must start tracing before navigationStart), and before this revision its load wait had
+  // no bound at all - the hole found while writing the residual note. Driven IN-PROCESS via
+  // gather() (the suite's convention, as the har tests do it): a CLI child cannot be used
+  // here because spawnSync blocks this process's event loop, which would freeze the test's
+  // own servers - observed directly: SERVER HITS 0 and a 30s timeout on a healthy page.
+  // The deadline is set through the same module state the CLI flag writes, and RESTORED in
+  // the finally so the rest of the suite keeps the production defaults.
+  // COVERAGE, STATED PRECISELY SO IT DOES NOT OVERCLAIM: this case reproduces a PAGE-side
+  // stall (the server never answers, so the navigation and load waits must fire their
+  // bounds). The mechanism itself is unit-tested (a never-settling promise rejects within
+  // the bound; a settling one passes through), and the tracing call sites are enumerated and
+  // code-covered - but a WEDGED-BROWSER firing of the tracingComplete / Tracing.end bounds
+  // is NOT reproduced here: those events are fired by the browser, not the page, so the
+  // never-responding server cannot stall them. That firing reproduction (SIGSTOP mid-trace)
+  // is tracked on another bead.
+  const { gather } = await import(pathToFileURL(join(repoRoot, 'evidence/cli.mjs')).href);
+  const { configureCdpDeadlines } = await import(pathToFileURL(join(repoRoot, 'evidence/cdp.mjs')).href);
+  const bhUrl = `http://127.0.0.1:${blackhole.address().port}/`;
+  const hitsBeforeTrace = blackholeHits;
+  try {
+    configureCdpDeadlines({ navigationMs: 4000, callMs: 4000 });
+    const t3 = Date.now();
+    let traceErr = null;
+    try {
+      await gather('trace', bhUrl, { quiet: true, wait: 100, out: join(tmp, 'trace-starved.json') });
+    } catch (e) {
+      traceErr = e;
+    }
+    const traceElapsed = Date.now() - t3;
+    assert(
+      traceErr && traceErr.message.includes('timed out after 4000ms'),
+      `17o trace: a starved trace must fail loudly with the bound (${traceErr && traceErr.message})`,
+    );
+    assert(
+      traceErr &&
+        (traceErr.message.includes(`the load event for ${bhUrl}`) ||
+          traceErr.message.includes(`the navigation to ${bhUrl}`)),
+      `17o trace: the failure must identify the TARGET wait, not the about:blank pre-step (${traceErr && traceErr.message})`,
+    );
+    assert(
+      blackholeHits > hitsBeforeTrace,
+      `17o trace: the black-hole server must have been CONTACTED (hits ${hitsBeforeTrace} -> ${blackholeHits}) - otherwise the starvation was never reached`,
+    );
+    assert(
+      traceElapsed < 30000,
+      `17o trace: the starved trace must return at the order of the deadline, not the suite timeout (${traceElapsed}ms)`,
+    );
+  } finally {
+    configureCdpDeadlines({ navigationMs: 30000, callMs: 30000 });
+  }
+  // HEALTHY CONTROL for the same primitive: a wrap added to a real primitive whose
+  // generous-deadline behaviour is not asserted would let the fix break the primitive
+  // silently, and trace is user-visible - so it must still succeed when healthy.
+  let healthyTraceErr = null;
+  try {
+    await gather('trace', page, { quiet: true, wait: 200, out: join(tmp, 'trace-ok.json') });
+  } catch (e) {
+    healthyTraceErr = e;
+  }
+  assert(
+    !healthyTraceErr && existsSync(join(tmp, 'trace-ok.json')),
+    `17o trace control: a healthy trace under the default deadline must complete and write its artifact (${healthyTraceErr && healthyTraceErr.message})`,
+  );
+  // RESILIENCE: its initial load goes through navigate() (bounded above), and its offline
+  // reload is wrapped with its own offlineBudget; the suite's existing resilience tests
+  // drive the primitive healthy against a local server, including that reload - so the
+  // healthy control for this wrap already exists in the suite rather than being duplicated.
+  blackhole.close();
+  for (const sock of sockets) sock.destroy();
+  healthy.close();
+}
+
+// web-uplift-17o, the census ENFORCED. The completeness claim is arithmetic, and this test is
+// what keeps it true rather than read: every non-comment await line in the two evidence files
+// must match exactly one disposition rule below, and each rule's count must equal its
+// expectation. A NEW await that matches nothing fails HERE, naming the file, the line number
+// and the text, so the next author classifies it (bounds it, or records the exclusion with
+// its reason) in the census comment next to withDeadline in evidence/cdp.mjs - and a
+// classification that drifts fails the same way. The expected counts live here, not in
+// prose, so this is the one authoritative list; the comment summarises and points here.
+function testAwaitCensus() {
+  // The rules match the ACTUAL bounded call sites, not shapes that merely look bounded: the
+  // fetch rule requires the AbortSignal on the same line, so removing the signal leaves the
+  // site UNCLASSIFIED (loud) rather than still "bounded"; and the primitive dispatch is
+  // excluded, because it can run the unbounded content probes. Each site must match EXACTLY
+  // ONE rule (checked below): first-match-permissive is how a dispatch got called bounded.
+  // THE CENSUS'S LIMIT, stated plainly: it verifies that every site is CLASSIFIED. It cannot
+  // verify that a bound is still PRESENT at a classified site - that is what review and the
+  // targeted tests are for.
+  const rules = [
+    ['bounded:withDeadline', /await withDeadline\(|await withRetry\(/],
+    ['bounded:navigate-helper', /await navigate\(/],
+    ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable/],
+    ['bounded:sleep', /await sleep\(|await new Promise\(\(r\) => setTimeout/],
+    ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|return await fn\(\)/],
+    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await fetch\(.*AbortSignal|await fetched\.text\(\)|await docPromise/],
+    ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
+    ['excluded:page-side-template', /await navigator\./],
+    ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],
+  ];
+  const expected = {
+    'evidence/cdp.mjs': {
+      'bounded:withDeadline': 12,
+      'bounded:pre-existing-mechanism': 7,
+      'bounded:sleep': 4,
+      'bounded:gather-spine': 4,
+      'excluded:primitive-probe': 2,
+    },
+    'evidence/cli.mjs': {
+      'bounded:withDeadline': 13,
+      'bounded:navigate-helper': 20,
+      'bounded:transitive-caller-wraps': 7,
+      'bounded:sleep': 22,
+      'bounded:own-deadline': 8,
+      'bounded:gather-spine': 6,
+      'excluded:primitive-probe': 61,
+      'excluded:page-side-template': 1,
+    },
+  };
+  for (const [file, expect] of Object.entries(expected)) {
+    const lines = readFileSync(join(repoRoot, file), 'utf8').split('\n');
+    const counts = {};
+    const unmatched = [];
+    let total = 0;
+    lines.forEach((ln, i) => {
+      if (!ln.includes('await ') || ln.trim().startsWith('//')) return;
+      total += 1;
+      const matches = rules.filter(([, re]) => re.test(ln));
+      if (matches.length !== 1) {
+        unmatched.push(
+          `${file}:${i + 1} [${matches.length === 0 ? 'NO' : matches.length + ' (' + matches.map((m) => m[0]).join(',') + ')'} rule match(es)]: ${ln.trim().slice(0, 100)}`,
+        );
+        return;
+      }
+      counts[matches[0][0]] = (counts[matches[0][0]] || 0) + 1;
+    });
+    assert(
+      unmatched.length === 0,
+      `await census: ${unmatched.length} await site(s) in ${file} match NO disposition rule - classify them in the census comment next to withDeadline in evidence/cdp.mjs and in this test:\n  ${unmatched.join('\n  ')}`,
+    );
+    const expectTotal = Object.values(expect).reduce((a, b) => a + b, 0);
+    assert(
+      total === expectTotal,
+      `await census: ${file} has ${total} non-comment await sites but the census expects ${expectTotal} - a site was added or removed without updating the census (testAwaitCensus + the comment next to withDeadline)`,
+    );
+    for (const [name, n] of Object.entries(expect)) {
+      assert(
+        (counts[name] || 0) === n,
+        `await census: ${file} disposition '${name}' holds ${counts[name] || 0} site(s), expected ${n} - a classification drifted; update the census with the reason`,
+      );
+    }
+  }
+}
+
+// THE WHOLE RAW-DERIVED SURFACE, shared by every failure route (web-uplift-17o rev8): three
+// revisions each missed a DIFFERENT consumer of the failed fetch, and the third miss (the
+// shell verdict) was a value DERIVED from the gated ones rather than a member of them - a
+// check that names fields can only catch the fields somebody remembered, and a hand-written
+// list per route would repeat that mistake one route at a time. So every route's summary is
+// walked the same way: each EMITTED key must be either unknown (null) or on the explicit
+// meaningful-without-raw list, with its reason. A key added to the summary later must be
+// classified here or the suite fails - the same reason the census is enforced.
+// THE GUARANTEE, STATED AT ITS ACTUAL WIDTH: the walk covers top-level keys and the
+// immediate members of the raw group. Allowlisted OBJECTS (rendered, screenshots) are NOT
+// recursed into - recursing buys little (render facts exist regardless of the raw fetch)
+// and a stated guarantee must match what is actually walked, since an over-broad guarantee
+// is the same defect as a false value.
+function assertUnknownRawSurface(summary, routeLabel, assert) {
+  const meaningfulWithoutRaw = new Map([
+    ['type', 'the primitive name - a fact about the run'],
+    ['url', 'the audited URL - an input fact'],
+    ['finalUrl', 'the REQUESTED URL when the exchange failed (it is assigned only once the exchange resolves), the final URL otherwise - a run fact, not a comparison'],
+    ['fetchedStatus', 'the recorded status when one arrived (null when none did) - a run fact'],
+    ['fetchError', 'the record of the failure - not a claim about the page'],
+    ['crawlerUserAgent', 'the user agent used - a run fact'],
+    ['rawComparisonUsable', 'the gate itself'],
+    ['rawComparisonNote', 'the explanation of why the comparison is absent'],
+    ['renderedEmpty', 'describes the RENDER, which exists regardless of the raw fetch'],
+    ['rendered', 'rendered-page facts - the render exists regardless of the raw fetch'],
+    ['screenshots', 'captured from the render, same reason'],
+    ['console', 'what the page logged while rendering - browser-side runtime behavior, exists regardless of the raw fetch (the walk caught this key unclassified on the 404 route, which is the mechanism working)'],
+    ['signalsFor', 'static metadata'],
+    ['note', 'static documentation'],
+  ]);
+  const notUnknown = [];
+  for (const [k, v] of Object.entries(summary)) {
+    if (meaningfulWithoutRaw.has(k)) continue;
+    if (k === 'raw') {
+      if (v && typeof v === 'object' && Object.values(v).every((x) => x === null)) continue;
+      notUnknown.push(`raw=${JSON.stringify(v)}`);
+      continue;
+    }
+    if (v !== null) notUnknown.push(`${k}=${JSON.stringify(v)}`);
+  }
+  assert(
+    notUnknown.length === 0,
+    `discoverability (${routeLabel} route): with no raw document, EVERY raw-derived key must be unknown; these are not - null them or classify them with a reason: ${notUnknown.join(', ')}`,
+  );
+}
+
+// web-uplift-17o rev4: the raw-fetch exchange is bounded AND the bound is configurable, and
+// a timed-out raw fetch is never reported as evidence about the page. The slow-but-successful
+// control only passes because the budget was raised - a fixed bound would be a product
+// regression (a slow response recorded as a fetch error, then an empty raw document compared
+// against the rendered page, manufacturing a JS-shell signal from a network condition).
+async function testFetchDeadlineAndRawComparison() {
+  const { safeFetch, readBodyCapped, configureFetchDeadline } = await import(
+    pathToFileURL(join(repoRoot, 'evidence/cli.mjs')).href
+  );
+
+  const slow = http.createServer((req, res) => {
+    setTimeout(() => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><title>slow</title><h1>Slow Canary Heading</h1><p>slow but successful content, present in the raw document</p>');
+    }, 800);
+  });
+  await new Promise((r) => slow.listen(0, '127.0.0.1', r));
+  const slowUrl = `http://127.0.0.1:${slow.address().port}/`;
+  const slowOrigin = new URL(slowUrl).origin;
+
+  const stallBody = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.write('<!doctype html><title>stall</title>');
+    // never ends the body
+  });
+  await new Promise((r) => stallBody.listen(0, '127.0.0.1', r));
+  const stallUrl = `http://127.0.0.1:${stallBody.address().port}/`;
+  const stallOrigin = new URL(stallUrl).origin;
+
+  try {
+    // 1. THE BOUND: a 200ms budget against an 800ms server fails loudly,
+    let fastErr = null;
+    try {
+      await safeFetch(slowUrl, { targetOrigin: slowOrigin, deadlineMs: 200 });
+    } catch (e) {
+      fastErr = e;
+    }
+    assert(fastErr, 'fetch deadline: a slow response under a small budget must fail rather than hang');
+    // 2. ...and the SAME fetch under a raised budget SUCCEEDS. WHAT THIS DEMONSTRATES,
+    //    stated narrowly: the budget override is APPLIED and effective at a small scale
+    //    (800ms server vs 200ms/5000ms budgets). What it does NOT demonstrate: a response
+    //    exceeding the PRODUCTION default (30s) remaining usable when an operator raises
+    //    the budget - exercising that literally would need a response slower than the
+    //    default, which does not belong in a suite. Say what was demonstrated.
+    const raised = await safeFetch(slowUrl, { targetOrigin: slowOrigin, deadlineMs: 5000 });
+    const raisedText = await raised.text();
+    assert(
+      raisedText.includes('Slow Canary Heading'),
+      `fetch deadline: a slow-but-successful response must arrive intact under a raised budget (${raisedText.length} chars)`,
+    );
+
+    // 3. STALLED BODY: headers arrive, the body never does -> the read times out loudly.
+    const stalled = await safeFetch(stallUrl, { targetOrigin: stallOrigin, deadlineMs: 1500 });
+    let bodyErr = null;
+    try {
+      await stalled.text();
+    } catch (e) {
+      bodyErr = e;
+    }
+    assert(
+      bodyErr && bodyErr.message.includes('did not complete within'),
+      `fetch deadline: a stalled body must fail loudly, naming the bound (${bodyErr && bodyErr.message})`,
+    );
+
+    // 4. STALLED CANCELLATION: a reader whose read() AND cancel() never resolve. The timeout
+    //    must throw WITHOUT awaiting the cancellation - cleanup awaited after a deadline is
+    //    how a bounded operation still hangs (the rev2 class, one layer down).
+    const neverReader = { read: () => new Promise(() => {}), cancel: () => new Promise(() => {}) };
+    const mockRes = { body: { getReader: () => neverReader } };
+    const t0 = Date.now();
+    let cancelErr = null;
+    try {
+      await readBodyCapped(mockRes, 1024 * 1024, 150);
+    } catch (e) {
+      cancelErr = e;
+    }
+    const cancelElapsed = Date.now() - t0;
+    assert(
+      cancelErr && cancelErr.message.includes('did not complete within 150ms'),
+      `fetch deadline: a stalled read must fail loudly (${cancelErr && cancelErr.message})`,
+    );
+    assert(
+      cancelElapsed < 3000,
+      `fetch deadline: the throw must NOT await a stalled cancellation (${cancelElapsed}ms)`,
+    );
+
+    // 5. THE DISTINCTION, end to end: a discoverability run whose raw fetch times out must
+    //    record the comparison as NOT USABLE - a timeout is a network condition, never
+    //    evidence that the page lacked raw content.
+    configureFetchDeadline(400); // the server answers at 800ms: the raw fetch times out
+    const timed = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });
+    assert(timed && timed.fetchError, `discoverability: the timed-out raw fetch must be recorded as an error (${JSON.stringify(timed && { fetchError: timed.fetchError })})`);
+    assert(timed.rawComparisonUsable === false, 'discoverability: the gate itself must be false when the raw fetch failed');
+    assert(
+      typeof timed.rawComparisonNote === 'string' && timed.rawComparisonNote.includes('network condition'),
+      'discoverability: the summary must SAY the comparison is not evidence about the page',
+    );
+    assertUnknownRawSurface(timed, 'timeout', assert);
+
+    // 6a. THE NON-2XX ROUTE: a 404 page is a response ABOUT the resource, not the document
+    //     - the gate must not treat it as usable, and the STATUS is still recorded, so the
+    //     operator sees the 404 as a status rather than as a misleading "not a JS shell".
+    const nf = http.createServer((req, res) => {
+      res.writeHead(404, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><title>Not Found</title><h1>404</h1>');
+    });
+    await new Promise((r) => nf.listen(0, '127.0.0.1', r));
+    const nfSummary = await gather('discoverability', `http://127.0.0.1:${nf.address().port}/`, { quiet: true, wait: 300, screenshots: false });
+    assert(
+      nfSummary.rawComparisonUsable === false &&
+        nfSummary.fetchedStatus === 404 &&
+        typeof nfSummary.rawComparisonNote === 'string' &&
+        nfSummary.rawComparisonNote.includes('404'),
+      `discoverability: a non-2xx must be unusable with the status recorded and named (${JSON.stringify({ usable: nfSummary.rawComparisonUsable, status: nfSummary.fetchedStatus })})`,
+    );
+    assertUnknownRawSurface(nfSummary, 'non-2xx', assert);
+    nf.close();
+
+    // 6a-ii. THE BODY-READ ROUTE, end to end: the SAME server cannot stall the raw fetch
+    //        and serve the browser (a uniformly stalling body also hangs the navigation -
+    //        correct, but a different route), so split by user agent: the crawler fetch
+    //        stalls mid-body and the budget fires; the browser gets a complete page. The
+    //        summary gets the same whole-surface guard, not a hand-written field list.
+    const bodyStall = http.createServer((req, res) => {
+      if ((req.headers['user-agent'] || '').includes('web-uplift-discoverability')) {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.write('<!doctype html><title>crawler-half</title>');
+        return; // never ends the body for the raw fetch
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><title>Browser Half</title><h1>Browser Half Heading</h1><p>complete for the browser</p>');
+    });
+    await new Promise((r) => bodyStall.listen(0, '127.0.0.1', r));
+    configureFetchDeadline(400);
+    const stalledSummary = await gather('discoverability', `http://127.0.0.1:${bodyStall.address().port}/`, { quiet: true, wait: 300, screenshots: false });
+    assert(
+      stalledSummary.rawComparisonUsable === false && typeof stalledSummary.fetchError === 'string',
+      `discoverability: a body-read failure must be unusable with the error recorded (${JSON.stringify({ usable: stalledSummary.rawComparisonUsable, fetchError: stalledSummary.fetchError && stalledSummary.fetchError.slice(0, 60) })})`,
+    );
+    assertUnknownRawSurface(stalledSummary, 'body-read', assert);
+    bodyStall.close();
+
+    // 6b. THE EMPTY-200 ROUTE STAYS USABLE: a completed empty response is OBSERVED evidence
+    //     that the raw document was empty - the real empty-document signal the tool exists
+    //     to report, deliberately distinct from "not retrieved".
+    const empty = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('');
+    });
+    await new Promise((r) => empty.listen(0, '127.0.0.1', r));
+    const emptySummary = await gather('discoverability', `http://127.0.0.1:${empty.address().port}/`, { quiet: true, wait: 300, screenshots: false });
+    assert(
+      emptySummary.rawComparisonUsable === true && emptySummary.fetchedStatus === 200 && emptySummary.raw.htmlBytes === 0,
+      `discoverability: an empty 200 must stay usable with the emptiness observed (${JSON.stringify({ usable: emptySummary.rawComparisonUsable, status: emptySummary.fetchedStatus, raw: emptySummary.raw })})`,
+    );
+    empty.close();
+
+    // 6c. THE RAISED-BUDGET CONTROL, end to end: the same page with the budget raised yields
+    //    a real comparison - this passes only because the budget is configurable.
+    configureFetchDeadline(5000);
+    const ok = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });
+    assert(
+      ok.rawComparisonUsable === true &&
+        ok.coveragePct !== null &&
+        ok.isJsShell === false &&
+        ok.titlePresentInRaw === true &&
+        ok.h1PresentInRaw === true &&
+        Array.isArray(ok.emptyMounts) &&
+        ok.raw.htmlBytes > 0,
+      `discoverability: with the budget raised, the slow-but-successful page must compare for real, siblings included (${JSON.stringify({ coveragePct: ok.coveragePct, isJsShell: ok.isJsShell, rawComparisonUsable: ok.rawComparisonUsable, titlePresentInRaw: ok.titlePresentInRaw, h1PresentInRaw: ok.h1PresentInRaw, emptyMounts: ok.emptyMounts, raw: ok.raw })})`,
+    );
+  } finally {
+    configureFetchDeadline(30000); // restore the production default for the rest of the suite
+    slow.close();
+    stallBody.close();
+  }
+}
+
+
+
