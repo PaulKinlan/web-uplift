@@ -5839,6 +5839,32 @@ async function testLaunchAttributionForHungPrimitive() {
     try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
   };
 
+  // Track the browser OUTSIDE the success path: any assertion failure below
+  // (including the mutation controls that prove this test can fail) must still
+  // reap the chrome, or a red run leaks an orphaned browser for the reaper -
+  // observed for real on 2026-10-06, when a pid-nulled mutant threw at the
+  // field asserts and left /tmp/web-uplift-cdp-* alive until the reaper's
+  // 10-minute orphan rule killed it. The marker's own fields are the FIRST
+  // source, but cleanup must not DEPEND on marker content: a marker with a
+  // nulled pid is exactly the mutation this test uses, so the finally also
+  // discovers the browser directly, as the chrome child of the CLI process we
+  // spawned (chrome is spawned by the CLI, then detached into its own group).
+  let browserPid = null;
+  let browserProfile = null;
+  const findLaunchedChrome = () => {
+    for (const entry of readdirSync('/proc')) {
+      if (!/^\d+$/.test(entry)) continue;
+      try {
+        const stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
+        const ppid = Number(stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)[1]);
+        if (ppid !== child.pid) continue;
+        const cmdline = readFileSync(`/proc/${entry}/cmdline`, 'utf8');
+        if (cmdline.includes('web-uplift-cdp-')) return Number(entry);
+      } catch { /* process vanished mid-scan */ }
+    }
+    return null;
+  };
+
   try {
     // Wait for the LAUNCH-TIME record (bounded; chrome launch on a loaded box
     // can take seconds). The marker must appear while the primitive is hung —
@@ -5851,7 +5877,14 @@ async function testLaunchAttributionForHungPrimitive() {
       }
       if (existsSync(launchesFile)) {
         const line = readFileSync(launchesFile, 'utf8').trim().split('\n').filter(Boolean)[0];
-        if (line) record = JSON.parse(line);
+        if (line) {
+          record = JSON.parse(line);
+          // Track for the finally's cleanup the moment the marker exists,
+          // BEFORE any assert can throw (a malformed marker still names a
+          // real browser).
+          if (Number.isInteger(record.pid)) browserPid = record.pid;
+          if (typeof record.profileDir === 'string') browserProfile = record.profileDir;
+        }
       }
       if (!record) await new Promise((r) => setTimeout(r, 250));
     }
@@ -5882,8 +5915,40 @@ async function testLaunchAttributionForHungPrimitive() {
     }
     assert(reaped, `the browser named by the marker (${record.pid}) must be reaped via the marker's pid`);
     rmSync(record.profileDir, { recursive: true, force: true });
+    browserPid = null; // reaped and verified above; the finally must not kill again.
+    // browserProfile STAYS SET: the group kill does not reach the crashpad
+    // handler (it double-forks out of the group - the reaper took one such
+    // remnant from a GREEN run of this test at 10 min), so the finally's
+    // profile-path sweep must run on the success path too. The repeated rmSync
+    // is idempotent (force: true).
   } finally {
     child.kill('SIGKILL');
+    if (!browserPid) browserPid = findLaunchedChrome();
+    // Resolve the profile BEFORE killing: a dead browser's cmdline is gone.
+    if (!browserProfile && browserPid) {
+      try {
+        const cmdline = readFileSync(`/proc/${browserPid}/cmdline`, 'utf8');
+        const m = /(\/tmp\/web-uplift-cdp-[^\0\s]+)/.exec(cmdline);
+        if (m) browserProfile = m[1];
+      } catch { /* already reaped */ }
+    }
+    if (browserPid) killTree(browserPid);
+    // chrome's crashpad handler is NOT in the browser's process group (it
+    // double-forks), so the group kill leaves it behind and the reaper takes
+    // it at 10 min - observed 2026-10-06. Sweep by the unique profile path,
+    // which only this launch's processes carry. (Never pkill -f from a shell:
+    // the pattern appears in the shell's own cmdline.)
+    if (browserProfile) {
+      for (const entry of readdirSync('/proc')) {
+        if (!/^\d+$/.test(entry)) continue;
+        try {
+          if (readFileSync(`/proc/${entry}/cmdline`, 'utf8').includes(browserProfile)) {
+            try { process.kill(Number(entry), 'SIGKILL'); } catch { /* gone */ }
+          }
+        } catch { /* process vanished mid-scan */ }
+      }
+      rmSync(browserProfile, { recursive: true, force: true });
+    }
     hung.close();
     rmSync(runTmp, { recursive: true, force: true });
   }
