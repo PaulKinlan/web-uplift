@@ -24,6 +24,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES } from '../install-surface.mjs';
 
 // Paths resolve from this file, never from cwd, so the guard gives the same
 // answer whether CI or a human runs it from anywhere in the tree.
@@ -33,23 +34,19 @@ const DIFF_CONTEXT = 3;
 
 // copy-dir steps in bin/web-uplift.mjs: the whole source directory is vendored,
 // so the guard compares the full recursive trees (including missing entries).
-const COPY_DIRS = [
-  ['evidence', '.web-uplift/evidence'],
-  ['aggregate', '.web-uplift/aggregate'],
-  ['runner', '.web-uplift/runner'],
-  ['schema', '.web-uplift/schema'],
-];
+//
+// Both lists below are BUILT from install-surface.mjs, which is also what the
+// installer reads, so the set the guard compares cannot fall behind the set the
+// installer copies. They used to be two hand-maintained lists (web-uplift-7mr).
+const COPY_DIRS = VENDORED_DIRS.map((dir) => [dir.source, `.web-uplift/${dir.dest}`]);
 
 // copy-file steps in bin/web-uplift.mjs: only these specific files are vendored.
 // knowledge/ may hold other files that install does NOT copy, so it is listed
 // file-by-file rather than as a copy-dir. The .pi skill-copy is a real tracked
 // copy (the .codex entry is a symlink and .claude is the source itself).
 const COPY_FILES = [
-  ['knowledge/principles.json', '.web-uplift/knowledge/principles.json'],
-  ['knowledge/baseline.mjs', '.web-uplift/knowledge/baseline.mjs'],
-  ['knowledge/guidance.md', '.web-uplift/knowledge/guidance.md'],
-  ['.claude/skills/web-audit/SKILL.md', '.web-uplift/skill/SKILL.md'],
-  ['.claude/skills/web-audit/SKILL.md', '.pi/skills/web-audit/SKILL.md'],
+  ...VENDORED_FILES.map((file) => [file.source, `.web-uplift/${file.dest}`]),
+  ...TRACKED_COPY_FILES.map((file) => [file.source, file.dest]),
 ];
 
 const pairs = buildPairs();

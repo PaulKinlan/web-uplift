@@ -48,6 +48,7 @@
     "runner/",
     "fixer/",
     "aggregate/",
+    "install-surface.mjs",
     "index.mjs",
     "mcp/",
     "knowledge/",

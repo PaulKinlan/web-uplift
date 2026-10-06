@@ -46,6 +46,7 @@ try {
   await testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase();
   await testScorecardRejectsEscapingComparisonRunIds();
   await testScorecardReservesImageBoxes();
+  await testInstallSurfaceMatchesWhatInstallVendors();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
   await testEvidenceTruncationReporting();
@@ -4114,5 +4115,49 @@ function testFixIsolatedRunPublishes() {
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// The installer vendors a set of files, and tests/cdp-copy-sync.mjs byte-compares
+// each tracked copy against its source. Both lists now come from
+// install-surface.mjs, and this drives a REAL install and compares what actually
+// appeared against what is declared - so a copy step nobody declared, or a
+// declaration the install no longer produces, fails here instead of quietly
+// escaping the byte-identity guard. The comparison runs one way against the
+// install's own output, not against the guard, so it cannot be circular
+// (web-uplift-7mr).
+async function testInstallSurfaceMatchesWhatInstallVendors() {
+  const { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES } = await import('../install-surface.mjs');
+  const target = join(tmp, 'surface-target');
+  const install = spawnSync(process.execPath, [join(repoRoot, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', target], { encoding: 'utf8' });
+  assert(install.status === 0, `surface: install failed: ${install.stderr || install.stdout}`);
+
+  const declared = [...VENDORED_DIRS.map((dir) => dir.dest), ...VENDORED_FILES.map((file) => file.dest)];
+  const walk = (dir, base = '') =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const rel = base ? `${base}/${entry.name}` : entry.name;
+      return entry.isDirectory() ? walk(join(dir, entry.name), rel) : [rel];
+    });
+  const actual = walk(join(target, '.web-uplift')).filter(
+    (rel) => rel !== 'manifest.json' && !rel.startsWith('node_modules/'),
+  );
+  assert(actual.length > 0, 'surface: the fixture install produced no vendored files');
+
+  const declaredCovers = (rel) => declared.some((dest) => rel === dest || rel.startsWith(`${dest}/`));
+  const undeclared = actual.filter((rel) => !declaredCovers(rel));
+  assert(
+    undeclared.length === 0,
+    `surface: install vendored ${JSON.stringify(undeclared)} without declaring it, so the byte-identity guard does not cover it`,
+  );
+  const notVendored = declared.filter((dest) => !actual.some((rel) => rel === dest || rel.startsWith(`${dest}/`)));
+  assert(
+    notVendored.length === 0,
+    `surface: ${JSON.stringify(notVendored)} is declared but the install did not produce it`,
+  );
+
+  // Tracked copies outside .web-uplift/ are compared by the guard too, so a
+  // declaration pointing at nothing has to fail just as loudly.
+  for (const copy of TRACKED_COPY_FILES) {
+    assert(existsSync(join(repoRoot, copy.dest)), `surface: tracked copy ${copy.dest} is declared but missing from the tree`);
   }
 }

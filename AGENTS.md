@@ -121,7 +121,8 @@ for breaking skill/schema changes):
 4. `git commit -m "chore: release v<VERSION>"`.
 5. `npm publish` (publishes `bin/`, `evidence/`, `runner/`, `fixer/`,
    `aggregate/`, `index.mjs`, `mcp/`, `knowledge/`, `schema/`, `tests/`, and the
-   `.claude/skills/web-audit/SKILL.md` per the `files` allowlist).
+   `.claude/skills/web-audit/SKILL.md`, and the root `install-surface.mjs` the
+   installer imports, per the `files` allowlist).
 6. `git tag v<VERSION> && git push && git push --tags`.
 
 ### Current release: v0.5.0

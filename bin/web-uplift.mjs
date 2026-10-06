@@ -39,6 +39,7 @@ import {
   statSync,
 } from 'node:fs';
 import { AGENT_NAMES } from '../runner/agents.mjs';
+import { VENDORED_DIRS, VENDORED_FILES } from '../install-surface.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -230,13 +231,16 @@ agent session (uses your subscription).`);
   // .web-uplift/ in the project so the in-session agent can call them directly
   // without depending on this package's checkout layout.
   const vendorRoot = join(projectRoot, '.web-uplift');
-  plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'evidence'), to: join(vendorRoot, 'evidence'), what: 'evidence primitives (raw-CDP CLI)' });
+  // The vendored surface is declared once in install-surface.mjs, which
+  // tests/cdp-copy-sync.mjs reads too, so the installer and the byte-identity guard
+  // cannot drift apart silently (web-uplift-7mr).
+  for (const dir of VENDORED_DIRS) {
+    plan.push({ action: 'copy-dir', from: join(PKG_ROOT, dir.source), to: join(vendorRoot, dir.dest), what: dir.what });
+  }
   // Vendor aggregate/ (scorecard, compare, aggregate) and runner/ (run-history,
   // flow, flow-record) too, so the in-session agent can generate the scorecard,
   // diff runs, and replay flows. Their cross-dir relative imports (../evidence,
   // ../runner) resolve because the layout is preserved under .web-uplift/.
-  plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'aggregate'), to: join(vendorRoot, 'aggregate'), what: 'scorecard + compare + aggregate' });
-  plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'runner'), to: join(vendorRoot, 'runner'), what: 'run history + user-flow record/replay' });
   // The vendored tree is not in the consumer's lockfile, so what was copied is
   // recorded in the install manifest below: without that record nothing in the
   // project names those packages or their versions, they stay invisible to the
@@ -244,11 +248,9 @@ agent session (uses your subscription).`);
   // carry different code (web-uplift-92b).
   const dependencyPlan = dependencyCopySteps(['chrome-remote-interface', 'web-features'], join(vendorRoot, 'node_modules'));
   plan.push(...dependencyPlan.steps);
-  plan.push({ action: 'copy-file', from: join(PKG_ROOT, '.claude/skills/web-audit/SKILL.md'), to: join(vendorRoot, 'skill', 'SKILL.md'), what: 'canonical web-audit SKILL.md' });
-  plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/principles.json'), to: join(vendorRoot, 'knowledge', 'principles.json'), what: 'principles spec' });
-  plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/baseline.mjs'), to: join(vendorRoot, 'knowledge', 'baseline.mjs'), what: 'baseline oracle' });
-  plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'schema'), to: join(vendorRoot, 'schema'), what: 'findings + config schema' });
-  plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/guidance.md'), to: join(vendorRoot, 'knowledge', 'guidance.md'), what: 'guidance lookup protocol' });
+  for (const file of VENDORED_FILES) {
+    plan.push({ action: 'copy-file', from: join(PKG_ROOT, file.source), to: join(vendorRoot, file.dest), what: file.what });
+  }
   plan.push({
     action: 'write',
     to: join(vendorRoot, 'manifest.json'),
