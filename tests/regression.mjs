@@ -5424,10 +5424,15 @@ async function testFetchDeadlineAndRawComparison() {
     // EMITTED keys: each must be either unknown (null) or on the explicit
     // meaningful-without-raw list, with its reason. A key added to the summary later must
     // be classified here or the test fails - the same reason the census is enforced.
+    // THE GUARANTEE, STATED AT ITS ACTUAL WIDTH: the walk covers top-level keys and the
+    // immediate members of the raw group. Allowlisted OBJECTS (rendered, screenshots) are
+    // NOT recursed into - recursing buys little (render facts exist regardless of the raw
+    // fetch) and a stated guarantee must match what is actually walked, since an over-broad
+    // guarantee is the same defect as a false value.
     const meaningfulWithoutRaw = new Map([
       ['type', 'the primitive name - a fact about the run'],
       ['url', 'the audited URL - an input fact'],
-      ['finalUrl', 'where the (failed) exchange left the client - a run fact, not a comparison'],
+      ['finalUrl', 'the REQUESTED URL when the exchange failed (it is assigned only once the exchange resolves), the final URL otherwise - a run fact, not a comparison'],
       ['fetchedStatus', 'null itself when no response arrived'],
       ['fetchError', 'the record of the failure - not a claim about the page'],
       ['crawlerUserAgent', 'the user agent used - a run fact'],
@@ -5454,7 +5459,42 @@ async function testFetchDeadlineAndRawComparison() {
       `discoverability: with the raw fetch failed, EVERY raw-derived key must be unknown; these are not - null them or classify them with a reason: ${notUnknown.join(', ')}`,
     );
 
-    // 6. THE RAISED-BUDGET CONTROL, end to end: the same page with the budget raised yields
+    // 6a. THE NON-2XX ROUTE: a 404 page is a response ABOUT the resource, not the document
+    //     - the gate must not treat it as usable, and the STATUS is still recorded, so the
+    //     operator sees the 404 as a status rather than as a misleading "not a JS shell".
+    const nf = http.createServer((req, res) => {
+      res.writeHead(404, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><title>Not Found</title><h1>404</h1>');
+    });
+    await new Promise((r) => nf.listen(0, '127.0.0.1', r));
+    const nfSummary = await gather('discoverability', `http://127.0.0.1:${nf.address().port}/`, { quiet: true, wait: 300, screenshots: false });
+    assert(
+      nfSummary.rawComparisonUsable === false &&
+        nfSummary.fetchedStatus === 404 &&
+        nfSummary.isJsShell === null &&
+        nfSummary.coveragePct === null &&
+        typeof nfSummary.rawComparisonNote === 'string' &&
+        nfSummary.rawComparisonNote.includes('404'),
+      `discoverability: a non-2xx must be unusable, unknown-surfaced, with the status recorded and named (${JSON.stringify({ usable: nfSummary.rawComparisonUsable, status: nfSummary.fetchedStatus, isJsShell: nfSummary.isJsShell, coveragePct: nfSummary.coveragePct, note: nfSummary.rawComparisonNote && nfSummary.rawComparisonNote.slice(0, 60) })})`,
+    );
+    nf.close();
+
+    // 6b. THE EMPTY-200 ROUTE STAYS USABLE: a completed empty response is OBSERVED evidence
+    //     that the raw document was empty - the real empty-document signal the tool exists
+    //     to report, deliberately distinct from "not retrieved".
+    const empty = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('');
+    });
+    await new Promise((r) => empty.listen(0, '127.0.0.1', r));
+    const emptySummary = await gather('discoverability', `http://127.0.0.1:${empty.address().port}/`, { quiet: true, wait: 300, screenshots: false });
+    assert(
+      emptySummary.rawComparisonUsable === true && emptySummary.fetchedStatus === 200 && emptySummary.raw.htmlBytes === 0,
+      `discoverability: an empty 200 must stay usable with the emptiness observed (${JSON.stringify({ usable: emptySummary.rawComparisonUsable, status: emptySummary.fetchedStatus, raw: emptySummary.raw })})`,
+    );
+    empty.close();
+
+    // 6c. THE RAISED-BUDGET CONTROL, end to end: the same page with the budget raised yields
     //    a real comparison - this passes only because the budget is configurable.
     configureFetchDeadline(5000);
     const ok = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });

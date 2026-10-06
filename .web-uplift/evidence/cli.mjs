@@ -2298,7 +2298,25 @@ async function discoverability(client, url, opts, log) {
   // rendered.*, the screenshots) stay computed: the render exists regardless of the raw
   // fetch, so they are not comparisons and they remain meaningful - that is the answer to
   // "is any field legitimately meaningful without raw HTML".
-  const rawComparisonUsable = fetchError === null && rawStatus !== null;
+  // THE USABILITY GATE - the single authority on whether the raw document was retrieved,
+  // with the routes by which it was NOT ENUMERATED here so a route added later must be
+  // classified rather than silently defaulting to "usable" (the same failure the fields
+  // had before the surface was asserted; testFetchDeadlineAndRawComparison exercises every
+  // route). USABLE MEANS WE RETRIEVED THE DOCUMENT THE URL NAMES (coord's ruling):
+  //   1. the exchange threw - a network error, an abort/timeout, a redirect with no
+  //      location, a refusal by the page-derived fetch guard;
+  //   2. the body read threw or exceeded the cap (it happens inside the same try, so it
+  //      arrives through route 1 as a fetchError);
+  //   3. the final response is not a SUCCESS (2xx): a 404 or 500 page is a response ABOUT
+  //      the resource, not the document, and comparing the rendered page against it
+  //      manufactures exactly the false claim this gate exists to prevent. A 3xx that
+  //      resolves to a 2xx is fine. The status is still RECORDED, so nothing is lost: the
+  //      operator sees the 404 as a status, not as a misleading "not a JS shell".
+  // A genuinely EMPTY 200 body is DIFFERENT AND STAYS USABLE: a completed empty response is
+  // observed evidence that the raw document was empty - the real empty-document signal the
+  // tool exists to report. The distinction is deliberate, not incidental.
+  const rawComparisonUsable =
+    fetchError === null && rawStatus !== null && rawStatus >= 200 && rawStatus < 300;
   const renderedTokens = contentTokens(rendered.text);
   // If the rendered page produced essentially no content, coverage is undefined
   // (not 100%) - the render likely failed, redirected, or the page is genuinely
@@ -2377,8 +2395,10 @@ async function discoverability(client, url, opts, log) {
       ? {}
       : {
           rawComparisonNote:
-            `The raw HTML fetch failed or timed out (${fetchError || 'no response'}), so there is no raw document ` +
-            'to compare against the rendered page. A timeout is a network condition, not a property of the page.',
+            (fetchError
+              ? `The raw HTML fetch failed or timed out (${fetchError})`
+              : `The raw HTML fetch returned a non-success status (${rawStatus}) - a response ABOUT the resource, not the document`) +
+            ', so there is no raw document to compare against the rendered page. A fetch failure is a network condition, not a property of the page; the status, when one arrived, is recorded as fetchedStatus.',
         }),
     contentVisibleWithoutJs: coveragePct,
     isJsShell,
