@@ -184,20 +184,80 @@ function gradeClass(score) {
 // Artifact paths are report-supplied, so containment lives in
 // ./artifact-path.mjs and is shared with aggregate/compare.mjs.
 
-// Inline a screenshot as a data URI so the imagery travels in the HTML. Video is
-// referenced by relative path (too big to inline). Returns null if unreadable.
-function dataUri(dir, relPath) {
+// Intrinsic pixel size of an image, read from its own bytes. The report inlines
+// screenshots as data URIs, so the browser has no network hop to learn the size
+// from: without width/height on the element its height is 0 until the bitmap
+// decodes, and everything below it jumps when it does. Reading the size here lets
+// the markup reserve the same box the image will occupy (web-uplift-xq5). Returns
+// null for anything it cannot read, and the caller then emits no size rather than a
+// guess.
+function imageSize(buf) {
+  try {
+    // PNG: 8-byte signature, then the IHDR chunk's width and height.
+    if (buf.length >= 24 && buf.readUInt32BE(0) === 0x89504e47 && buf.readUInt32BE(4) === 0x0d0a1a0a) {
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+    // GIF: logical screen descriptor, little-endian.
+    if (buf.length >= 10 && buf.toString('latin1', 0, 3) === 'GIF') {
+      return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
+    }
+    // JPEG: walk the markers to the start-of-frame, which carries the size.
+    if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xff) {
+          i++;
+          continue;
+        }
+        const marker = buf[i + 1];
+        const len = buf.readUInt16BE(i + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { width: buf.readUInt16BE(i + 7), height: buf.readUInt16BE(i + 5) };
+        }
+        i += 2 + len;
+      }
+      return null;
+    }
+    // WebP: three container shapes carry the size differently.
+    if (buf.length >= 30 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') {
+      const fourCc = buf.toString('latin1', 12, 16);
+      if (fourCc === 'VP8X') return { width: buf.readUIntLE(24, 3) + 1, height: buf.readUIntLE(27, 3) + 1 };
+      if (fourCc === 'VP8 ') return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+      if (fourCc === 'VP8L') {
+        const bits = buf.readUInt32LE(21);
+        return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// Inline a screenshot as a data URI so the imagery travels in the HTML, plus the
+// intrinsic size the markup needs to reserve the box before the bitmap decodes.
+// Video is referenced by relative path (too big to inline). Returns null if
+// unreadable.
+function imageData(dir, relPath) {
   try {
     const abs = containedArtifactPath(dir, relPath);
     if (!abs || !existsSync(abs)) return null;
     const ext = relPath.split('.').pop().toLowerCase();
     const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[ext];
     if (!mime) return null;
-    const b64 = readFileSync(abs, { encoding: 'base64' });
-    return `data:${mime};base64,${b64}`;
+    const buf = readFileSync(abs);
+    const size = imageSize(buf);
+    return { src: `data:${mime};base64,${buf.toString('base64')}`, ...(size ?? {}) };
   } catch {
     return null;
   }
+}
+
+// The size attributes a reserved box needs, or an empty string when the size could
+// not be read (in which case the element behaves as it did before: the box appears
+// when the bitmap does).
+function sizeAttrs(image) {
+  return image.width && image.height ? ` width="${image.width}" height="${image.height}"` : '';
 }
 
 // SVG ring gauge, Lighthouse-style: a track circle plus a coloured arc whose
@@ -291,8 +351,9 @@ function findingDialog(report, dir, f) {
     .map((a) => {
       const rel = `${encodeURI(report.__runId)}/${a.path}`;
       if (a.type === 'screenshot') {
-        const inline = dataUri(dir, a.path) ?? rel;
-        return `<figure><img loading="lazy" src="${esc(inline)}" alt="${esc(a.caption || 'evidence screenshot')}"><figcaption>${esc(a.caption || '')}${a.condition ? ` <span class="cond">(${esc(a.condition)})</span>` : ''}</figcaption></figure>`;
+        const image = imageData(dir, a.path);
+        const inline = image?.src ?? rel;
+        return `<figure><img loading="lazy"${image ? sizeAttrs(image) : ''} src="${esc(inline)}" alt="${esc(a.caption || 'evidence screenshot')}"><figcaption>${esc(a.caption || '')}${a.condition ? ` <span class="cond">(${esc(a.condition)})</span>` : ''}</figcaption></figure>`;
       }
       if (a.type === 'video') {
         return `<figure><video controls preload="none" src="${esc(rel)}"></video><figcaption>${esc(a.caption || 'evidence recording')}${a.condition ? ` <span class="cond">(${esc(a.condition)})</span>` : ''}</figcaption></figure>`;
@@ -474,10 +535,10 @@ export function renderScorecard(data) {
     const dirB = containedChildDir(comparisonRoot, cmp.runB);
     const pairs = (cmp.screenshotPairs ?? [])
       .map((p) => {
-        const beforeSrc = p.before && dirA ? (dataUri(dirA, p.before) ?? '') : '';
-        const afterSrc = p.after && dirB ? (dataUri(dirB, p.after) ?? '') : '';
-        if (!beforeSrc && !afterSrc) return '';
-        return `<div class="ba-pair"><figure><figcaption>Before</figcaption>${beforeSrc ? `<img loading="lazy" src="${esc(beforeSrc)}" alt="before">` : '<div class="noimg">n/a</div>'}</figure><figure><figcaption>After</figcaption>${afterSrc ? `<img loading="lazy" src="${esc(afterSrc)}" alt="after">` : '<div class="noimg">n/a</div>'}</figure><p class="ba-cap">${esc(p.caption || p.condition || '')}</p></div>`;
+        const before = p.before && dirA ? imageData(dirA, p.before) : null;
+        const after = p.after && dirB ? imageData(dirB, p.after) : null;
+        if (!before && !after) return '';
+        return `<div class="ba-pair"><figure><figcaption>Before</figcaption>${before ? `<img loading="lazy"${sizeAttrs(before)} src="${esc(before.src)}" alt="before">` : '<div class="noimg">n/a</div>'}</figure><figure><figcaption>After</figcaption>${after ? `<img loading="lazy"${sizeAttrs(after)} src="${esc(after.src)}" alt="after">` : '<div class="noimg">n/a</div>'}</figure><p class="ba-cap">${esc(p.caption || p.condition || '')}</p></div>`;
       })
       .join('');
     beforeAfter = `<div class="ba-summary">
@@ -731,7 +792,7 @@ svg.mini circle.good{fill:var(--good)}svg.mini circle.ok{fill:var(--ok)}svg.mini
 .ba-pairs{display:flex;flex-direction:column;gap:18px}
 .ba-pair{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
 .ba-pair>figure{display:inline-block;width:calc(50% - 8px);margin:0;vertical-align:top}
-.ba-pair img{width:100%;border-radius:8px;border:1px solid var(--line)}
+.ba-pair img{width:100%;height:auto;border-radius:8px;border:1px solid var(--line)}
 .ba-pair figcaption{color:var(--muted);font-size:.8rem;margin-bottom:4px}
 .ba-cap{color:var(--muted);font-size:.85rem;margin:.6em 0 0}
 .noimg{aspect-ratio:16/10;display:grid;place-items:center;color:var(--muted);border:1px dashed var(--line);border-radius:8px}
@@ -745,7 +806,7 @@ svg.mini circle.good{fill:var(--good)}svg.mini circle.ok{fill:var(--ok)}svg.mini
 .finding-dialog h4{margin-top:16px;font-size:.8rem;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
 .media{display:flex;flex-direction:column;gap:14px}
 .media figure{margin:0}
-.media img,.media video{width:100%;border-radius:8px;border:1px solid var(--line)}
+.media img,.media video{width:100%;height:auto;border-radius:8px;border:1px solid var(--line)}
 .media figcaption{color:var(--muted);font-size:.8rem;margin-top:4px}
 .cond{opacity:.8}
 .foot{max-width:1000px;margin:0 auto;padding:22px;color:var(--muted);font-size:.82rem;border-top:1px solid var(--line)}

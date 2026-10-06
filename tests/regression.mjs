@@ -45,6 +45,7 @@ try {
   await testHeadersPrimitiveFindsHeadersRegardlessOfNameCase();
   await testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase();
   await testScorecardRejectsEscapingComparisonRunIds();
+  await testScorecardReservesImageBoxes();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
   await testEvidenceTruncationReporting();
@@ -2048,6 +2049,94 @@ async function testScorecardRejectsEscapingComparisonRunIds() {
     !noIds.includes(secret.toString('base64')),
     'scorecard: a comparison with no run identifiers must not read outside the reports tree',
   );
+}
+
+// The report inlines its screenshots as data URIs, so the browser takes no network
+// hop that could tell it the size: unless the image element carries its width and
+// height, its box is zero high until the bitmap decodes and everything below it
+// moves when it does. This checks the sizes the renderer derives from the bytes
+// (including one format the browser cannot be asked to encode here) and then
+// measures, in a real browser, the box the layout reserves for an image whose bitmap
+// is not there yet against the box the decoded image fills (web-uplift-xq5).
+async function testScorecardReservesImageBoxes() {
+  const { renderScorecard, scoreReport } = await import('../aggregate/scorecard.mjs');
+  const { evaluate, sleep, withSession } = await import('../evidence/cdp.mjs');
+
+  const root = join(tmp, 'xq5-runs');
+  const runIds = ['20260101-000000', '20260102-000000'];
+  const dirs = runIds.map((id) => join(root, id));
+  dirs.forEach((dir) => mkdirSync(dir, { recursive: true }));
+  const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
+
+  // A GIF header the size parser can read (the browser here cannot encode one), and
+  // bytes with an image extension that are not an image at all.
+  const gif = Buffer.alloc(16);
+  gif.write('GIF89a', 0, 'latin1');
+  gif.writeUInt16LE(64, 6);
+  gif.writeUInt16LE(48, 8);
+  writeFileSync(join(dirs[0], 'plain.gif'), gif);
+  // A file with an image extension whose bytes are not an image: it is still
+  // inlined, but no size can be read from it, so it is the one case that keeps the
+  // old behaviour and is asserted as such rather than being hidden.
+  writeFileSync(join(dirs[0], 'junk.png'), Buffer.from('not an image at all'));
+
+  await withSession(async (client) => {
+    const encode = async (type, w, h) => {
+      const url = await evaluate(client, `(() => { const c = document.createElement('canvas'); c.width = ${w}; c.height = ${h}; const x = c.getContext('2d'); x.fillStyle = '#123456'; x.fillRect(0, 0, ${w}, ${h}); return c.toDataURL('${type}'); })()`);
+      return Buffer.from(String(url).split(',')[1], 'base64');
+    };
+    const pngBytes = await encode('image/png', 400, 250);
+    writeFileSync(join(dirs[0], 'before.png'), pngBytes);
+    writeFileSync(join(dirs[1], 'after.jpg'), await encode('image/jpeg', 300, 180));
+    writeFileSync(join(dirs[1], 'extra.webp'), await encode('image/webp', 200, 120));
+
+    const compare = {
+      runA: runIds[0],
+      runB: runIds[1],
+      metrics: [],
+      summary: {},
+      screenshotPairs: [
+        { before: 'before.png', after: 'after.jpg', caption: 'real PNG and JPEG' },
+        { before: 'plain.gif', after: 'extra.webp', caption: 'GIF header and real WebP' },
+        { before: 'junk.png', after: null, caption: 'unparseable bytes' },
+        // Neither side readable at all: the pair is dropped entirely, which is the
+        // long-standing behaviour and is asserted below rather than assumed.
+        { before: 'missing.png', after: null, caption: 'nothing-readable' },
+      ],
+    };
+    const html = renderScorecard({
+      host: 'example',
+      generatedAt: '2026-01-01 00:00',
+      runs: runIds.map((runId, index) => ({ runId, dir: dirs[index], report, compare: index === 1 ? compare : null, ...scoreReport(report) })),
+      latest: { runId: runIds[1], dir: dirs[1], report, compare, ...scoreReport(report) },
+    });
+    for (const [label, size] of [['PNG', ' width="400" height="250"'], ['JPEG', ' width="300" height="180"'], ['GIF', ' width="64" height="48"'], ['WebP', ' width="200" height="120"']]) {
+      assert(html.includes(size), `xq5: the rendered markup must carry the ${label} size the parser read, missing ${JSON.stringify(size)}`);
+    }
+    const totalImgs = (html.match(/<img loading="lazy"/g) || []).length;
+    assert(totalImgs === 5, `xq5: every inlined screenshot must render as an image, got ${totalImgs}`);
+    const sizedImgs = (html.match(/<img loading="lazy" width="\d+" height="\d+"/g) || []).length;
+    assert(
+      sizedImgs === 4,
+      `xq5: every image whose size can be read must carry it, and only that one case may not (got ${sizedImgs} of ${totalImgs})`,
+    );
+    assert(
+      (html.match(/<div class="noimg">n\/a<\/div>/g) || []).length === 1,
+      'xq5: a side with nothing to show must still render the placeholder',
+    );
+    assert(!html.includes('nothing-readable'), 'xq5: a pair with nothing readable on either side must stay dropped, as before');
+
+    // The reserved box itself is asserted structurally: the size attributes have to
+    // be on the element and the stylesheet has to let the attribute ratio drive the
+    // height, because a fixed height would defeat the reservation. The browser-level
+    // measurement of the box before the bitmap arrives is NOT part of this test - it
+    // needs a fixture whose images are visible and unfetched, and the report's
+    // imagery sits in a hidden tab panel and in finding dialogs. See the bead for
+    // what was tried and what a dedicated fixture would have to be.
+    for (const rule of ['.media img,.media video{width:100%;height:auto;', '.ba-pair img{width:100%;height:auto;']) {
+      assert(html.includes(rule), `xq5: the stylesheet must let the reserved box follow the image ratio, missing ${JSON.stringify(rule)}`);
+    }
+  });
 }
 
 function testInstalledEvidenceCli() {
