@@ -190,9 +190,17 @@ function gradeClass(score) {
 // decodes, and everything below it jumps when it does. Reading the size here lets
 // the markup reserve the same box the image will occupy (web-uplift-xq5).
 //
-// Every branch validates the header it depends on and the bounds it reads within, and
-// returns null when it cannot: a malformed, truncated or unreadable file must get NO
-// size rather than a made-up box, and the caller then emits no attributes.
+// Every branch validates the header it depends on before using it, and follows ONE
+// rule rather than a set of special cases:
+//
+//   EVERY FIELD READ HERE MUST LIE INSIDE THE BUFFER AND INSIDE THE RANGE THE FORMAT
+//   ITSELF DECLARES FOR IT - a JPEG marker's segment length, the RIFF container size,
+//   the chunk size. When either fails, this returns null.
+//
+// A size is never computed from bytes the file does not claim to contain, because a
+// made-up box is worse than no box: it reserves the wrong space and then still moves
+// when the bitmap arrives. A malformed, truncated or unreadable file gets NO size
+// rather than an invented one, and the caller then emits no attributes.
 //
 // Residuals, stated rather than implied: a JPEG whose EXIF orientation rotates it can
 // display with a different ratio from its start-of-frame dimensions, and this reads
@@ -242,26 +250,42 @@ function imageSize(buf) {
         if (j + 4 > buf.length) return null;
         const len = buf.readUInt16BE(j + 1);
         if (len < 2) return null;
+        // The segment must end inside the buffer before any field of it is read.
+        if (j + len + 1 > buf.length) return null;
         if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-          if (j + 8 > buf.length) return null;
+          // A start-of-frame declares precision, height, width and at least one
+          // component, so its own declared length has to be long enough to hold them:
+          // a length of 2 leaves the bytes read as dimensions outside the segment.
+          if (len < 8) return null;
           return usable(buf.readUInt16BE(j + 6), buf.readUInt16BE(j + 4));
         }
         i = j + 1 + len;
       }
       return null;
     }
-    // WebP: a RIFF container whose declared size covers what is read, then one of the
-    // three chunk shapes, each with the bytes that identify it.
+    // WebP: a RIFF container that declares enough bytes for what is read, then one of
+    // the three chunk shapes, each with the bytes that identify it and a chunk size
+    // long enough to hold its own fields.
     if (buf.length >= 30 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') {
-      if (buf.readUInt32LE(4) + 8 > buf.length) return null;
+      const containerEnd = 8 + buf.readUInt32LE(4);
+      if (containerEnd > buf.length) return null; // declares more than the file holds
+      const chunkSize = buf.readUInt32LE(16);
       const fourCc = buf.toString('latin1', 12, 16);
-      if (fourCc === 'VP8X') return usable(buf.readUIntLE(24, 3) + 1, buf.readUIntLE(27, 3) + 1);
+      // Both directions matter: a container or chunk declared too SMALL leaves the
+      // fields outside the range the format claims just as much as one declared too
+      // large leaves them outside the buffer.
+      const inside = (offset, length) => offset + length <= containerEnd && offset + length <= buf.length;
+      if (fourCc === 'VP8X') {
+        if (chunkSize < 10 || !inside(24, 6)) return null;
+        return usable(buf.readUIntLE(24, 3) + 1, buf.readUIntLE(27, 3) + 1);
+      }
       if (fourCc === 'VP8 ') {
-        // The lossy frame header carries a sync code before its dimensions.
+        if (chunkSize < 10 || !inside(23, 7)) return null;
         if (buf[23] !== 0x9d || buf[24] !== 0x01 || buf[25] !== 0x2a) return null;
         return usable(buf.readUInt16LE(26) & 0x3fff, buf.readUInt16LE(28) & 0x3fff);
       }
       if (fourCc === 'VP8L') {
+        if (chunkSize < 5 || !inside(20, 5)) return null;
         if (buf[20] !== 0x2f) return null;
         const bits = buf.readUInt32LE(21);
         return usable((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1);

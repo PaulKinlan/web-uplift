@@ -2135,6 +2135,24 @@ async function testScorecardReservesImageBoxes() {
     return b;
   })());
   writeFileSync(join(dirs[0], 'junk.png'), Buffer.from('not an image at all'));
+  // The two counterexamples from the review: shapes the EARLIER parser sized from
+  // bytes the file does not claim to contain, which is what makes these fixtures
+  // distinguish validation from its absence. A start-of-frame whose declared segment
+  // length (2) cannot hold the dimension fields the old walk read past its end, and a
+  // RIFF container declaring size 0 while the fields sit at offsets 24-29.
+  writeFileSync(
+    join(dirs[0], 'short-sof.jpg'),
+    Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]),
+  );
+  writeFileSync(join(dirs[0], 'undersized-riff.webp'), (() => {
+    const b = Buffer.alloc(30);
+    b.write('RIFF', 0, 'latin1');
+    b.writeUInt32LE(0, 4);
+    b.write('WEBP', 8, 'latin1');
+    b.write('VP8X', 12, 'latin1');
+    b.writeUInt32LE(10, 16);
+    return b;
+  })());
 
   await withSession(async (client) => {
     const encode = async (type, w, h) => {
@@ -2180,7 +2198,12 @@ async function testScorecardReservesImageBoxes() {
         { before: 'bad.jpg', after: 'vp8l.webp', caption: 'truncated JPEG' },
         { before: 'bad.webp', after: 'after.jpg', caption: 'bad WebP sync' },
         { before: 'junk.png', after: 'after.jpg', caption: 'not an image' },
+        { before: 'short-sof.jpg', after: 'before.png', caption: 'segment too short for its fields' },
+        { before: 'undersized-riff.webp', after: 'after.jpg', caption: 'container too small for its fields' },
         { before: 'missing.png', after: 'after.jpg', caption: 'absent file' },
+        // Neither side readable: the pair is dropped, which is the production rule and
+        // was left uncovered when this test was rewritten.
+        { before: 'missing.png', after: 'also-missing.png', caption: 'nothing-readable' },
       ],
     };
     const html = renderScorecard({
@@ -2214,6 +2237,8 @@ async function testScorecardReservesImageBoxes() {
       ['bad.jpg', 'jpeg', readFileSync(join(dirs[0], 'bad.jpg'))],
       ['bad.webp', 'webp', readFileSync(join(dirs[1], 'bad.webp'))],
       ['junk.png', 'png', readFileSync(join(dirs[0], 'junk.png'))],
+      ['short-sof.jpg', 'jpeg', readFileSync(join(dirs[0], 'short-sof.jpg'))],
+      ['undersized-riff.webp', 'webp', readFileSync(join(dirs[0], 'undersized-riff.webp'))],
     ]) {
       const src = `src="data:image/${ext};base64,${bytes.toString('base64')}"`;
       const tag = html.match(new RegExp(`<img[^>]*${escRe(src)}[^>]*>`))?.[0];
@@ -2224,6 +2249,7 @@ async function testScorecardReservesImageBoxes() {
       (html.match(/<div class="noimg">n\/a<\/div>/g) || []).length === 1,
       'xq5: a side with nothing to show must still render the placeholder',
     );
+    assert(!html.includes('nothing-readable'), 'xq5: a pair with nothing readable on either side must stay dropped');
     for (const rule of ['.media img,.media video{width:100%;height:auto;', '.ba-pair img{width:100%;height:auto;']) {
       assert(html.includes(rule), `xq5: the stylesheet must let the reserved box follow the image ratio, missing ${JSON.stringify(rule)}`);
     }
