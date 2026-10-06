@@ -4243,6 +4243,27 @@ async function testCredentialRedactionHelpers() {
   const cont = redactBodyText("var x = { password: 'head\\\n" + SECRET + "tail', page: 2 };");
   assert(!cont.includes(SECRET), `redaction: a JS LINE CONTINUATION inside the value must not end the match (${cont})`);
 
+  // FIDELITY: the assertion that catches BOTH classes of corruption. The redacted body must be
+  // byte-identical to the input EXCEPT at the redacted spans - so a body that still round-trips
+  // with a credential in it fails, and so does a body that lost a field or changed a number.
+  // Re-serialising used to drop a __proto__ field through the prototype setter and round a large
+  // integer; the splice path must not.
+  const proto = `{"__proto__":{"x":1},"token":"${SECRET}","big":9007199254740993,"page":2}`;
+  const protoOut = redactBodyText(proto);
+  assert(
+    protoOut === `{"__proto__":{"x":1},"token":"[redacted]","big":9007199254740993,"page":2}`,
+    `redaction: the body must differ from the input ONLY at the redacted span\n  in : ${proto}\n  out: ${protoOut}`,
+  );
+  assert(protoOut.includes('__proto__'), 'redaction: a __proto__ field must survive (re-serialising dropped it through the prototype setter)');
+  assert(protoOut.includes('9007199254740993'), 'redaction: an integer beyond the safe range must survive unchanged (re-serialising rounded it)');
+  const cleanBody = '{"page":2,"big":9007199254740993}';
+  assert(redactBodyText(cleanBody) === cleanBody, 'redaction: a body with no credential-named field must be recorded byte-identical');
+  const arrIn = `{"token":["${SECRET}","other"],"page":2}`;
+  assert(
+    redactBodyText(arrIn) === '{"token":"[redacted]","page":2}',
+    `redaction: an array value is replaced at its own span and nothing else moves (${redactBodyText(arrIn)})`,
+  );
+
   // THE DOCUMENTED GAPS, asserted so they cannot be mistaken for coverage later:
   // a base64-encoded body is not text-searchable, and a credential whose name does not
   // look like one is not detected. Both are stated in the artifact's own note.

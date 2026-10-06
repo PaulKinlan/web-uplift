@@ -1732,35 +1732,111 @@ export function redactQueryList(list) {
 
 // Redact credential-named fields inside body text (form-encoded or JSON-ish). The
 // name and every other field survive; only the value becomes [redacted].
-// STRUCTURED redaction: parse, walk, redact by DECODED key name, re-emit. This is the path
-// with a by-construction guarantee - an array value, a nested object, a unicode-escaped key
-// (`tok\u0065n`) and any other JSON shape is covered because the KEY is what we test, not the
-// text around it. The text scanner below cannot enumerate those shapes and no longer claims to.
-function redactJsonValue(value) {
-  if (Array.isArray(value)) return value.map(redactJsonValue);
-  if (value && typeof value === 'object') {
-    const out = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = isCredentialName(k) ? REDACTED_HEADER_VALUE : redactJsonValue(v);
+// STRUCTURED redaction: PARSE TO LOCATE, SPLICE TO REDACT, NEVER RE-SERIALIZE.
+//
+// An earlier version parsed the body and re-stringified a fresh object. That corrupts evidence:
+// a `__proto__` key was assigned through the ordinary object's prototype setter and VANISHED
+// from the output, and integers beyond JavaScript's safe range were silently rounded. Both are
+// the same defect - the recorded body no longer matched the bytes received.
+//
+// So the parse is used ONLY to decide whether the text is valid JSON; the redaction itself walks
+// the ORIGINAL text, finds each credential-named key's value span, and replaces just that span.
+// Every other byte is copied through untouched: no prototype setter, no numeric rounding, no
+// formatting drift, no field that can disappear.
+
+// End offset of the JSON value starting at `i` (string, container, or bare primitive).
+function jsonValueEnd(text, i) {
+  const c = text[i];
+  if (c === '"') {
+    let k = i + 1;
+    while (k < text.length) {
+      if (text[k] === '\\') { k += 2; continue; }
+      if (text[k] === '"') return k + 1;
+      k += 1;
     }
-    return out;
+    return text.length;
   }
-  return value;
+  if (c === '{' || c === '[') {
+    let depth = 0;
+    let k = i;
+    while (k < text.length) {
+      const ch = text[k];
+      if (ch === '"') {
+        k += 1;
+        while (k < text.length) {
+          if (text[k] === '\\') { k += 2; continue; }
+          if (text[k] === '"') { k += 1; break; }
+          k += 1;
+        }
+        continue;
+      }
+      if (ch === '{' || ch === '[') depth += 1;
+      else if (ch === '}' || ch === ']') {
+        depth -= 1;
+        if (depth === 0) return k + 1;
+      }
+      k += 1;
+    }
+    return text.length;
+  }
+  let k = i;
+  while (k < text.length && !/[,\]}\s]/.test(text[k])) k += 1;
+  return k;
 }
 
-// Returns the redacted JSON text, or null when the input is not JSON (so the caller falls
-// back to the heuristic text scanner). Re-serialising is the cost of the guarantee and is
-// stated in the artifact note: a redacted JSON body is re-emitted canonically.
+// [start, end) spans of the VALUES belonging to credential-named keys. A string token is a key
+// when the next non-space character is ':'; the key token is decoded with JSON.parse so a
+// unicode-escaped name is compared as its real name.
+function credentialValueSpans(text) {
+  const spans = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== '"') { i += 1; continue; }
+    const keyStart = i;
+    i += 1;
+    while (i < text.length) {
+      if (text[i] === '\\') { i += 2; continue; }
+      if (text[i] === '"') { i += 1; break; }
+      i += 1;
+    }
+    const keyToken = text.slice(keyStart, i);
+    let j = i;
+    while (j < text.length && /\s/.test(text[j])) j += 1;
+    if (text[j] !== ':') continue;
+    let v = j + 1;
+    while (v < text.length && /\s/.test(text[v])) v += 1;
+    const vEnd = jsonValueEnd(text, v);
+    let name = null;
+    try {
+      name = JSON.parse(keyToken);
+    } catch {
+      name = null;
+    }
+    if (typeof name === 'string' && isCredentialName(name)) spans.push([v, vEnd]);
+    i = vEnd;
+  }
+  return spans;
+}
+
+// Returns the redacted text, or null when the input is not valid JSON (the caller then falls
+// back to the heuristic text scanner).
 function redactJsonText(text) {
   const trimmed = text.trim();
   if (!/^[[{]/.test(trimmed)) return null;
-  let parsed;
   try {
-    parsed = JSON.parse(trimmed);
+    JSON.parse(text); // validity only: the redaction below never re-serialises
   } catch {
     return null;
   }
-  return JSON.stringify(redactJsonValue(parsed));
+  const spans = credentialValueSpans(text);
+  if (!spans.length) return text;
+  let out = '';
+  let last = 0;
+  for (const [s0, e0] of spans) {
+    out += text.slice(last, s0) + `"${REDACTED_HEADER_VALUE}"`;
+    last = e0;
+  }
+  return out + text.slice(last);
 }
 
 export function redactBodyText(text) {
