@@ -2063,7 +2063,11 @@ const SECRET_PATTERNS = [
   { id: 'bearer-token', re: /(?:bearer|authorization)["\s:=]+([A-Za-z0-9_-]{20,})/gi, severity: 'high', desc: 'Bearer/Authorization token' },
 ];
 
-function scanTextForSecrets(text, source) {
+// `seen` deduplicates across the sources one scan walks (page HTML, inline
+// scripts, external JS, meta tags). It keys on the RAW match, which is never put
+// on a finding: findings carry a fixed placeholder and the match length only, so
+// an artifact can never republish credential material (web-uplift-u5n).
+export function scanTextForSecrets(text, source, seen = new Set()) {
   const findings = [];
   for (const p of SECRET_PATTERNS) {
     p.re.lastIndex = 0;
@@ -2072,11 +2076,26 @@ function scanTextForSecrets(text, source) {
       count++;
       if (count <= 3) {
         const matched = m[0];
-        const redacted = matched.length > 12 ? matched.slice(0, 6) + '…' + matched.slice(-4) : matched;
-        findings.push({ pattern: p.id, severity: p.severity, description: p.desc, source, match: redacted });
+        const key = `${p.id}:${matched}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        findings.push({
+          pattern: p.id,
+          severity: p.severity,
+          description: p.desc,
+          source,
+          match: '[redacted]',
+          matchLength: matched.length,
+        });
       }
     }
-    if (count > 3) findings.push({ pattern: p.id, severity: p.severity, description: p.desc, source, note: `+${count - 3} more matches` });
+    if (count > 3) {
+      const key = `${p.id}:`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        findings.push({ pattern: p.id, severity: p.severity, description: p.desc, source, note: `+${count - 3} more matches` });
+      }
+    }
   }
   return findings;
 }
@@ -2085,36 +2104,34 @@ async function secrets(client, url, opts, log) {
   log('[secrets] scanning ' + url);
   await navigate(client, url, { settleMs: opts.wait || 3000, log });
   const findings = [];
+  const seen = new Set();
   // 1. Page HTML
   const html = await evaluate(client, 'document.documentElement.outerHTML');
-  findings.push(...scanTextForSecrets(html || '', 'page HTML'));
+  findings.push(...scanTextForSecrets(html || '', 'page HTML', seen));
   // 2. Inline scripts
   const inline = await evaluate(client, "[...document.querySelectorAll('script:not([src])')].map(s=>s.textContent).join('\\n')");
-  findings.push(...scanTextForSecrets(inline || '', 'inline scripts'));
+  findings.push(...scanTextForSecrets(inline || '', 'inline scripts', seen));
   // 3. External JS (sample first 20)
   const scripts = await evaluate(client, "(() => { const all = [...document.querySelectorAll('script[src]')].map(s => s.src); return { urls: all.slice(0, 20), total: all.length }; })()");
   const scriptUrls = scripts?.urls || [];
   for (const su of scriptUrls) {
     try {
       const js = await evaluate(client, `fetch('${su}').then(r=>r.text()).catch(()=>'')`, { awaitPromise: true });
-      if (js) findings.push(...scanTextForSecrets(js, 'external JS: ' + su.split('/').pop()));
+      if (js) findings.push(...scanTextForSecrets(js, 'external JS: ' + su.split('/').pop(), seen));
     } catch {}
   }
   // 4. Meta tags
   const meta = await evaluate(client, "[...document.querySelectorAll('meta')].map(m=>m.content||'').join(' ')");
-  findings.push(...scanTextForSecrets(meta || '', 'meta tags'));
-  // Deduplicate
-  const seen = new Set();
-  const deduped = findings.filter(f => { const k = f.pattern + ':' + (f.match || ''); if (seen.has(k)) return false; seen.add(k); return true; });
-  announceCap('secrets.findings', 30, deduped.length, log);
+  findings.push(...scanTextForSecrets(meta || '', 'meta tags', seen));
+  announceCap('secrets.findings', 30, findings.length, log);
   announceCap('secrets.externalScriptsScanned', scriptUrls.length, scripts?.total ?? scriptUrls.length, log);
   const summary = {
     primitive: 'secrets',
     url,
     scannedAt: new Date().toISOString(),
-    totalFindings: deduped.length,
-    findings: deduped.slice(0, 30),
-    findingsTruncated: deduped.length > 30,
+    totalFindings: findings.length,
+    findings: findings.slice(0, 30),
+    findingsTruncated: findings.length > 30,
     externalScriptsScanned: scriptUrls.length,
     externalScriptsTotal: scripts?.total ?? scriptUrls.length,
     externalScriptsTruncated: (scripts?.total ?? scriptUrls.length) > scriptUrls.length,
