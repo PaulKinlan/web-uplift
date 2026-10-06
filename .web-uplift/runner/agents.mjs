@@ -32,11 +32,39 @@ export const AGENTS = {
       '-p', prompt,
       '--output-format', 'json',
       '--max-turns', String(maxTurns),
-      // Scoped permissions instead of a blanket bypass. Bash(node:*) lets the
-      // agent run the evidence primitives (node evidence/cli.mjs ...); npx lets
-      // it query the Modern Web Guidance feed and run Lighthouse if it chooses.
+      // Scoped permissions instead of a blanket bypass. The old list granted
+      // Bash(node:*) and Bash(npx:*), which match ANY trailing arguments, so a
+      // page that talked the agent into `node -e '<code>'` or `npx -y <package>`
+      // got arbitrary execution in the same process tree that ingests untrusted
+      // page text (threat model I4, web-uplift-tia).
+      //
+      // These rules are STRING PREFIXES. The CLI's own help documents the glob
+      // form `Bash(git *)` as well, but the binary is compiled and the exact
+      // matcher could not be determined locally, so this list assumes the
+      // conservative PREFIX reading. That shapes what is safe to write here:
+      //   - The guidance prefix ends at `modern-web-guidance@0.0.172`, so a
+      //     lookalike package (`modern-web-guidance-evil`) does NOT match it, and
+      //     `modern-web-guidance@0.0.1721` is not a published version. The pin is
+      //     guidanceCatalogVersion in knowledge/principles.json and is asserted by
+      //     tests/regression.mjs.
+      //   - A bare tool name would NOT be safe: `Bash(npx -y lighthouse:*)` is a
+      //     prefix and also matches `npx -y lighthouse-evil`, so Lighthouse is
+      //     deliberately not allowed here. Add it as
+      //     `Bash(npx -y lighthouse@<exact version>:*)` if a run needs it.
+      // RESIDUAL, not closable here: the node entries are PATH prefixes and the
+      // agent has Write, so it could write `evidence/cli.mjs<something>` and run it
+      // through the matching prefix. This list narrows which commands are
+      // reachable; it is NOT an execution sandbox, and container/VM isolation stays
+      // the enforcement boundary for untrusted sites (see README).
       '--allowedTools',
-      'Read,Write,Edit,Glob,Grep,Bash(node:*),Bash(npx:*),Bash(mkdir:*),Bash(ffmpeg:*)',
+      [
+        'Read,Write,Edit,Glob,Grep',
+        'Bash(node evidence/cli.mjs:*)',
+        'Bash(node .web-uplift/evidence/cli.mjs:*)',
+        'Bash(npx -y --ignore-scripts modern-web-guidance@0.0.172:*)',
+        'Bash(mkdir:*)',
+        'Bash(ffmpeg:*)',
+      ].join(','),
     ],
   },
   codex: {
