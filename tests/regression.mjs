@@ -55,6 +55,7 @@ try {
   await testCdpDeadline();
   testAwaitCensus();
   await testFetchDeadlineAndRawComparison();
+  await testLaunchAttributionForHungPrimitive();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -5795,6 +5796,96 @@ async function testFetchDeadlineAndRawComparison() {
     configureFetchDeadline(30000); // restore the production default for the rest of the suite
     slow.close();
     stallBody.close();
+  }
+}
+
+// Launch-time attribution (web-uplift-4wx): a primitive still IN FLIGHT when the
+// job dies leaves no result artifact, and the browser's profile/pid only ever
+// reached the caller's stderr stream — so a surviving or orphaned chrome could
+// not be tied to the invocation that launched it. With WEB_UPLIFT_LAUNCH_LOG
+// set (the batch runner points it at <run dir>/launches.jsonl for every agent
+// child), the CLI appends a marker AT LAUNCH. This test is the bead's
+// acceptance control, run for real: a primitive against a server that never
+// responds is killed EXTERNALLY mid-flight, and the launches.jsonl line alone
+// must attribute it — and is then USED to reap the browser, which is the
+// post-mortem flow the file exists for. The CLI runs as a child (async spawn,
+// never spawnSync: the in-process server must keep answering).
+async function testLaunchAttributionForHungPrimitive() {
+  const hung = http.createServer(() => {
+    // accepts and never responds: the navigation stays in flight
+  });
+  await new Promise((r) => hung.listen(0, '127.0.0.1', r));
+  const hungUrl = `http://127.0.0.1:${hung.address().port}/`;
+  const runTmp = mkdtempSync(join(tmpdir(), 'web-uplift-launches-'));
+  const launchesFile = join(runTmp, 'launches.jsonl');
+  const outFile = join(runTmp, 'out.json');
+
+  const child = spawn(
+    process.execPath,
+    [join(repoRoot, 'evidence/cli.mjs'), 'dom', hungUrl, '--out', outFile],
+    {
+      cwd: repoRoot,
+      env: { ...process.env, WEB_UPLIFT_LAUNCH_LOG: launchesFile },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  let childStderr = '';
+  child.stderr.on('data', (chunk) => { childStderr += chunk; });
+  const childGone = new Promise((r) => child.on('close', r));
+
+  const killTree = (pid) => {
+    // chrome leads its own process group (detached): signal the whole tree.
+    try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+  };
+
+  try {
+    // Wait for the LAUNCH-TIME record (bounded; chrome launch on a loaded box
+    // can take seconds). The marker must appear while the primitive is hung —
+    // if it only ever appeared at completion, this poll would time out.
+    let record = null;
+    const deadline = Date.now() + 90000;
+    while (Date.now() < deadline && !record) {
+      if (child.exitCode !== null) {
+        throw new Error(`the CLI exited before any launch marker landed: ${childStderr}`);
+      }
+      if (existsSync(launchesFile)) {
+        const line = readFileSync(launchesFile, 'utf8').trim().split('\n').filter(Boolean)[0];
+        if (line) record = JSON.parse(line);
+      }
+      if (!record) await new Promise((r) => setTimeout(r, 250));
+    }
+    assert(record, `no launch marker within 90s; launches.jsonl attribution is absent (child stderr: ${childStderr.slice(-400)})`);
+    assert(record.primitive === 'dom', `the marker must name the primitive: ${JSON.stringify(record)}`);
+    assert(record.url === hungUrl, `the marker must name the target: ${JSON.stringify(record)}`);
+    assert(Number.isInteger(record.pid) && record.pid > 0, `the marker must carry the browser pid (the reaper kills by tree): ${JSON.stringify(record)}`);
+    assert(
+      typeof record.profileDir === 'string' && record.profileDir.includes('web-uplift-cdp-'),
+      `the marker must carry the profile dir: ${JSON.stringify(record)}`,
+    );
+    assert(record.launcherPid === child.pid, `the marker must tie back to the invoking process: ${JSON.stringify(record)} vs child ${child.pid}`);
+    // THE POINT: attribution exists with NO completion artifact - the hung
+    // primitive never wrote its result.
+    assert(!existsSync(outFile), 'the hung primitive must have written no result artifact, or this test proves nothing about in-flight attribution');
+
+    // THE POST-MORTEM FLOW: the record alone is enough to find and reap the
+    // browser the dead job left behind.
+    killTree(record.pid);
+    child.kill('SIGKILL');
+    await childGone;
+    // A SIGKILLed pid can answer kill(pid, 0) until it is reaped, so wait
+    // (bounded) for it to actually vanish rather than racing the zombie.
+    let reaped = false;
+    for (let i = 0; i < 40 && !reaped; i++) {
+      try { process.kill(record.pid, 0); } catch { reaped = true; }
+      if (!reaped) await new Promise((r) => setTimeout(r, 250));
+    }
+    assert(reaped, `the browser named by the marker (${record.pid}) must be reaped via the marker's pid`);
+    rmSync(record.profileDir, { recursive: true, force: true });
+  } finally {
+    child.kill('SIGKILL');
+    hung.close();
+    rmSync(runTmp, { recursive: true, force: true });
   }
 }
 

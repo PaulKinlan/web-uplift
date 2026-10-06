@@ -13,7 +13,7 @@
 // page. The intelligence lives in the model (following SKILL.md), not here.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import CDP from 'chrome-remote-interface';
@@ -564,6 +564,40 @@ export async function launchChrome({
     }
   }
   throw new Error(describeLaunchFailure({ attempts: LAUNCH_ATTEMPTS, reasons, detail: lastDetail }));
+}
+
+// Run-level launch attribution (web-uplift-4wx). The launch-time fact — which
+// profile dir and pid a browser has — was already logged here at launch, but
+// only to the CALLER's stderr stream, which in a headless agent run persists
+// nowhere in the run tree: a primitive still in flight when the reaper (or a
+// kill) takes the job down left no artifact tying the surviving/orphaned
+// chrome to the invocation that launched it. When the operator (the batch
+// runner) sets WEB_UPLIFT_LAUNCH_LOG to a run-level launches.jsonl, every
+// caller of this helper appends one JSON line AT LAUNCH TIME — before any
+// gathering starts — so a hung primitive killed externally is attributable
+// post-mortem from that file alone: primitive, target url, browser pid (the
+// reaper kills by process tree) and profile dir.
+//
+// Best-effort by contract: attribution must never break evidence gathering,
+// so an unwritable file is silently skipped, and a missing env var simply
+// turns the record off (direct CLI use without the runner opts out).
+export function recordLaunch({ primitive, url, chrome, launchesFile = process.env.WEB_UPLIFT_LAUNCH_LOG } = {}) {
+  if (!launchesFile || !chrome) return;
+  try {
+    appendFileSync(
+      launchesFile,
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        primitive,
+        url,
+        pid: chrome.proc?.pid ?? null,
+        profileDir: chrome.userDataDir ?? null,
+        launcherPid: process.pid,
+      }) + '\n',
+    );
+  } catch {
+    // Observability is not evidence: never fail the primitive over a marker.
+  }
 }
 
 // Retry a flaky bootstrap step a bounded number of times. Chrome for Testing

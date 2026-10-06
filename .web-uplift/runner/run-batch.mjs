@@ -47,7 +47,7 @@ import { AGENTS } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor } from './write-scope.mjs';
-import { launchChrome, newSession } from '../evidence/cdp.mjs';
+import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
 
 const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -453,6 +453,9 @@ async function replayFlowIntoRun(url, siteDir) {
   await mkdir(flowDir, { recursive: true });
   const log = verbose ? (m) => console.error(m) : () => {};
   const chrome = await launchChrome({ log });
+  // The runner's own browser is attributed to the same run-level launches.jsonl
+  // the agent's CLI invocations write (web-uplift-4wx).
+  recordLaunch({ primitive: 'flow-replay', url, chrome, launchesFile: join(siteDir, 'launches.jsonl') });
   try {
     const session = await newSession(chrome.port, { log });
     try {
@@ -488,7 +491,14 @@ function runAgent(url, siteDir, extra = '') {
     // finds the vendored tool at .web-uplift/evidence/cli.mjs relative to this
     // directory, and it is the same directory the write-scope snapshot is anchored
     // to, so the boundary is a stated fact instead of an inherited default.
-    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'], cwd: projectRoot });
+    // WEB_UPLIFT_LAUNCH_LOG points every evidence-CLI chrome the agent launches
+    // at the run-level launches.jsonl, so an in-flight primitive is attributable
+    // post-mortem (web-uplift-4wx); the runner's own flow replay records there too.
+    const child = spawn(agent.bin, cliArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: projectRoot,
+      env: { ...process.env, WEB_UPLIFT_LAUNCH_LOG: join(siteDir, 'launches.jsonl') },
+    });
     let out = '';
     let err = '';
     const echoOut = verbose ? linePrinter(`[${slug}] `, process.stdout) : null;

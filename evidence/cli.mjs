@@ -79,7 +79,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { BlockList, isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
-import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs, getCdpCallDeadlineMs } from './cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs, getCdpCallDeadlineMs, recordLaunch } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
 
@@ -3860,6 +3860,10 @@ export async function gather(primitive, url, opts = {}) {
   if (!fn) throw new Error(`Unknown primitive "${primitive}". One of: ${Object.keys(PRIMITIVES).join(', ')}`);
   const log = opts.quiet ? () => {} : (m) => console.error(m);
   const chrome = await launchChrome({ log });
+  // Attribute the browser to this invocation AT LAUNCH (web-uplift-4wx): a
+  // primitive that never completes writes no result artifact, so without this
+  // marker nothing in the run tree ties a surviving chrome to its primitive.
+  recordLaunch({ primitive, url, chrome });
   try {
     const session = await newSession(chrome.port, { log });
     try {
