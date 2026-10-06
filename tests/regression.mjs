@@ -872,6 +872,25 @@ async function testScorecardArtifactContainment() {
       !cmpHtml.includes(relSecret.toString('base64')),
       'scorecard: a ../ before/after compare path must not be read and inlined',
     );
+    // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
+    //    readFileSync was missing from the runner's imports: the lookup threw, the catch
+    //    swallowed it, and no run could ever be resolved from latest.txt. This case would
+    //    have failed then, which is the point of adding it.
+    const txtHost = join(root, 'txt-out', 'txt_example');
+    const txtRun = join(txtHost, 'RUN1');
+    mkdirSync(txtRun, { recursive: true });
+    writeFileSync(join(txtRun, 'report.json'), readFileSync(findings));
+    writeFileSync(join(txtHost, 'latest.txt'), 'RUN1\n');
+    const txtResume = drive({ args: ['https://txt.example/'], extraArgs: ['--concurrency', '1', '--out', 'txt-out', '--resume'], body: writesReport(join(root, 'txt-out')) });
+    assert(/resume skip/.test(txtResume.stdout), `batch resume: a valid run named by latest.txt must count as done (the pointer-FILE path was silently dead):\n${txtResume.stdout}`);
+
+    // 10. And the symlink pointer path, positively: complete a URL, then resume skips it.
+    //     The refused-run cases above only ever asserted that a URL was NOT skipped.
+    const firstDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out'], body: writesReport(join(root, 'p-out')) });
+    assert(firstDone.status === 0, `batch resume: the first run must complete (${firstDone.status})`);
+    const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
+    assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
+
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -941,6 +960,25 @@ async function testCompareArtifactContainment() {
     // runB's dir, which is why the legitimate reference itself starts with ../).
     assert(md.includes('![before](../r0/shot.png)'), `compare.md: a contained before path must still be emitted:\n${md}`);
     assert(md.includes('![after](shot.png)'), 'compare.md: a contained after path must still be emitted');
+    // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
+    //    readFileSync was missing from the runner's imports: the lookup threw, the catch
+    //    swallowed it, and no run could ever be resolved from latest.txt. This case would
+    //    have failed then, which is the point of adding it.
+    const txtHost = join(root, 'txt-out', 'txt_example');
+    const txtRun = join(txtHost, 'RUN1');
+    mkdirSync(txtRun, { recursive: true });
+    writeFileSync(join(txtRun, 'report.json'), readFileSync(findings));
+    writeFileSync(join(txtHost, 'latest.txt'), 'RUN1\n');
+    const txtResume = drive({ args: ['https://txt.example/'], extraArgs: ['--concurrency', '1', '--out', 'txt-out', '--resume'], body: writesReport(join(root, 'txt-out')) });
+    assert(/resume skip/.test(txtResume.stdout), `batch resume: a valid run named by latest.txt must count as done (the pointer-FILE path was silently dead):\n${txtResume.stdout}`);
+
+    // 10. And the symlink pointer path, positively: complete a URL, then resume skips it.
+    //     The refused-run cases above only ever asserted that a URL was NOT skipped.
+    const firstDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out'], body: writesReport(join(root, 'p-out')) });
+    assert(firstDone.status === 0, `batch resume: the first run must complete (${firstDone.status})`);
+    const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
+    assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
+
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -3446,6 +3484,25 @@ async function testFixWriteScopeDiffing() {
     } finally {
       rmSync(outsideTarget, { recursive: true, force: true });
     }
+    // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
+    //    readFileSync was missing from the runner's imports: the lookup threw, the catch
+    //    swallowed it, and no run could ever be resolved from latest.txt. This case would
+    //    have failed then, which is the point of adding it.
+    const txtHost = join(root, 'txt-out', 'txt_example');
+    const txtRun = join(txtHost, 'RUN1');
+    mkdirSync(txtRun, { recursive: true });
+    writeFileSync(join(txtRun, 'report.json'), readFileSync(findings));
+    writeFileSync(join(txtHost, 'latest.txt'), 'RUN1\n');
+    const txtResume = drive({ args: ['https://txt.example/'], extraArgs: ['--concurrency', '1', '--out', 'txt-out', '--resume'], body: writesReport(join(root, 'txt-out')) });
+    assert(/resume skip/.test(txtResume.stdout), `batch resume: a valid run named by latest.txt must count as done (the pointer-FILE path was silently dead):\n${txtResume.stdout}`);
+
+    // 10. And the symlink pointer path, positively: complete a URL, then resume skips it.
+    //     The refused-run cases above only ever asserted that a URL was NOT skipped.
+    const firstDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out'], body: writesReport(join(root, 'p-out')) });
+    assert(firstDone.status === 0, `batch resume: the first run must complete (${firstDone.status})`);
+    const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
+    assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
+
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -3525,6 +3582,25 @@ function testFixModeRefusesOutOfScopeWrites() {
       'fix scope: an in-scope-only run must not write a confinement-escape artifact',
     );
     assert(existsSync(join(b.outDir, 'iter-1-diff.json')), 'fix scope: the per-iteration diff must be written on a clean run too');
+    // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
+    //    readFileSync was missing from the runner's imports: the lookup threw, the catch
+    //    swallowed it, and no run could ever be resolved from latest.txt. This case would
+    //    have failed then, which is the point of adding it.
+    const txtHost = join(root, 'txt-out', 'txt_example');
+    const txtRun = join(txtHost, 'RUN1');
+    mkdirSync(txtRun, { recursive: true });
+    writeFileSync(join(txtRun, 'report.json'), readFileSync(findings));
+    writeFileSync(join(txtHost, 'latest.txt'), 'RUN1\n');
+    const txtResume = drive({ args: ['https://txt.example/'], extraArgs: ['--concurrency', '1', '--out', 'txt-out', '--resume'], body: writesReport(join(root, 'txt-out')) });
+    assert(/resume skip/.test(txtResume.stdout), `batch resume: a valid run named by latest.txt must count as done (the pointer-FILE path was silently dead):\n${txtResume.stdout}`);
+
+    // 10. And the symlink pointer path, positively: complete a URL, then resume skips it.
+    //     The refused-run cases above only ever asserted that a URL was NOT skipped.
+    const firstDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out'], body: writesReport(join(root, 'p-out')) });
+    assert(firstDone.status === 0, `batch resume: the first run must complete (${firstDone.status})`);
+    const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
+    assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
+
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -3695,6 +3771,25 @@ function testFixModeScopeEdgeCases() {
       !escE.escapedOutsideScope.some((p) => p.endsWith(join('dist', 'bundle.js'))),
       'fix scope: an allowed root must not be reported as an escape',
     );
+    // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
+    //    readFileSync was missing from the runner's imports: the lookup threw, the catch
+    //    swallowed it, and no run could ever be resolved from latest.txt. This case would
+    //    have failed then, which is the point of adding it.
+    const txtHost = join(root, 'txt-out', 'txt_example');
+    const txtRun = join(txtHost, 'RUN1');
+    mkdirSync(txtRun, { recursive: true });
+    writeFileSync(join(txtRun, 'report.json'), readFileSync(findings));
+    writeFileSync(join(txtHost, 'latest.txt'), 'RUN1\n');
+    const txtResume = drive({ args: ['https://txt.example/'], extraArgs: ['--concurrency', '1', '--out', 'txt-out', '--resume'], body: writesReport(join(root, 'txt-out')) });
+    assert(/resume skip/.test(txtResume.stdout), `batch resume: a valid run named by latest.txt must count as done (the pointer-FILE path was silently dead):\n${txtResume.stdout}`);
+
+    // 10. And the symlink pointer path, positively: complete a URL, then resume skips it.
+    //     The refused-run cases above only ever asserted that a URL was NOT skipped.
+    const firstDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out'], body: writesReport(join(root, 'p-out')) });
+    assert(firstDone.status === 0, `batch resume: the first run must complete (${firstDone.status})`);
+    const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
+    assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
+
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -3743,6 +3838,25 @@ function testFixIsolationAssertion() {
     assert(record.isolation === 'operator-supplied:host-permission-model', `isolation: the record must name the asserted mechanism (${record.isolation})`);
     assert(record.unverified === true, 'isolation: the record must mark the assertion unverified');
     assert(!/verified by this tool|guaranteed/i.test(asserted.stderr), 'isolation: the warning must not claim the tool verified anything');
+    // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
+    //    readFileSync was missing from the runner's imports: the lookup threw, the catch
+    //    swallowed it, and no run could ever be resolved from latest.txt. This case would
+    //    have failed then, which is the point of adding it.
+    const txtHost = join(root, 'txt-out', 'txt_example');
+    const txtRun = join(txtHost, 'RUN1');
+    mkdirSync(txtRun, { recursive: true });
+    writeFileSync(join(txtRun, 'report.json'), readFileSync(findings));
+    writeFileSync(join(txtHost, 'latest.txt'), 'RUN1\n');
+    const txtResume = drive({ args: ['https://txt.example/'], extraArgs: ['--concurrency', '1', '--out', 'txt-out', '--resume'], body: writesReport(join(root, 'txt-out')) });
+    assert(/resume skip/.test(txtResume.stdout), `batch resume: a valid run named by latest.txt must count as done (the pointer-FILE path was silently dead):\n${txtResume.stdout}`);
+
+    // 10. And the symlink pointer path, positively: complete a URL, then resume skips it.
+    //     The refused-run cases above only ever asserted that a URL was NOT skipped.
+    const firstDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out'], body: writesReport(join(root, 'p-out')) });
+    assert(firstDone.status === 0, `batch resume: the first run must complete (${firstDone.status})`);
+    const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
+    assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
+
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -3784,6 +3898,25 @@ function testFixIsolatedRunPublishes() {
       existsSync(join(root, 'reports', host, readlinkSync(join(root, 'reports', host, 'latest')), 'run-security.json')),
       'isolation run: the isolation record must travel into the retained result',
     );
+    // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
+    //    readFileSync was missing from the runner's imports: the lookup threw, the catch
+    //    swallowed it, and no run could ever be resolved from latest.txt. This case would
+    //    have failed then, which is the point of adding it.
+    const txtHost = join(root, 'txt-out', 'txt_example');
+    const txtRun = join(txtHost, 'RUN1');
+    mkdirSync(txtRun, { recursive: true });
+    writeFileSync(join(txtRun, 'report.json'), readFileSync(findings));
+    writeFileSync(join(txtHost, 'latest.txt'), 'RUN1\n');
+    const txtResume = drive({ args: ['https://txt.example/'], extraArgs: ['--concurrency', '1', '--out', 'txt-out', '--resume'], body: writesReport(join(root, 'txt-out')) });
+    assert(/resume skip/.test(txtResume.stdout), `batch resume: a valid run named by latest.txt must count as done (the pointer-FILE path was silently dead):\n${txtResume.stdout}`);
+
+    // 10. And the symlink pointer path, positively: complete a URL, then resume skips it.
+    //     The refused-run cases above only ever asserted that a URL was NOT skipped.
+    const firstDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out'], body: writesReport(join(root, 'p-out')) });
+    assert(firstDone.status === 0, `batch resume: the first run must complete (${firstDone.status})`);
+    const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
+    assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
+
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -3922,7 +4055,7 @@ function testBatchWriteScope() {
     const swapped = drive({ args: ['https://swap.example/'], extraArgs: ['--concurrency', '1', '--out', 's-out'],
       body: `d=$(ls -dt ${JSON.stringify(join(root, 's-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\nrm -rf "$d"\nln -s ${JSON.stringify(innocent)} "$d" || exit 9\n[ -d "$d" ] || exit 9\nprintf 'pwned' > ${JSON.stringify(join(root, 's-escaped.txt'))}` });
     assert(swapped.status !== 0, `batch symlinked run: the escape must still refuse (${swapped.status})`);
-    assert(/not a real directory/.test(swapped.stderr), `batch symlinked run: the refusal must say it did not touch anything through the link:\n${swapped.stderr}`);
+    assert(/not a real path below the output root/.test(swapped.stderr), `batch symlinked run: the refusal must say it did not touch anything through the link:\n${swapped.stderr}`);
     assert(existsSync(join(innocent, 'report.json')), 'batch symlinked run: the innocent run report must be untouched');
     assert(!existsSync(join(innocent, 'report.refused.json')), 'batch symlinked run: nothing may be renamed through the agent-controlled link');
     // The reviewer's point: the scope record is written THROUGH the run directory, so a
@@ -3957,7 +4090,29 @@ function testBatchWriteScope() {
       body: `d=$(ls -dt ${JSON.stringify(join(root, 'del-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncase "$*" in *deleter.example*) rm -rf "$d";; *) cp ${JSON.stringify(findings)} "$d/report.json";; esac`,
     });
     assert(/done \(coverage complete\)\s+https:\/\/later\.example\//.test(deletes.stdout), `batch deleted run dir: a LATER url must still complete:\n${deletes.stdout}`);
-    assert(/failed\s+https:\/\/deleter\.example\//.test(deletes.stdout) || /\/deleter\.example\//.test(deletes.stdout), 'batch deleted run dir: the destructive URL must be reported as failed, not silently dropped');
+    assert(
+      /failed\s+https:\/\/deleter\.example\//.test(deletes.stdout),
+      `batch deleted run dir: the destructive URL must be reported on a FAILURE line, not merely appear somewhere:\n${deletes.stdout}`,
+    );
+    // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
+    //    readFileSync was missing from the runner's imports: the lookup threw, the catch
+    //    swallowed it, and no run could ever be resolved from latest.txt. This case would
+    //    have failed then, which is the point of adding it.
+    const txtHost = join(root, 'txt-out', 'txt_example');
+    const txtRun = join(txtHost, 'RUN1');
+    mkdirSync(txtRun, { recursive: true });
+    writeFileSync(join(txtRun, 'report.json'), readFileSync(findings));
+    writeFileSync(join(txtHost, 'latest.txt'), 'RUN1\n');
+    const txtResume = drive({ args: ['https://txt.example/'], extraArgs: ['--concurrency', '1', '--out', 'txt-out', '--resume'], body: writesReport(join(root, 'txt-out')) });
+    assert(/resume skip/.test(txtResume.stdout), `batch resume: a valid run named by latest.txt must count as done (the pointer-FILE path was silently dead):\n${txtResume.stdout}`);
+
+    // 10. And the symlink pointer path, positively: complete a URL, then resume skips it.
+    //     The refused-run cases above only ever asserted that a URL was NOT skipped.
+    const firstDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out'], body: writesReport(join(root, 'p-out')) });
+    assert(firstDone.status === 0, `batch resume: the first run must complete (${firstDone.status})`);
+    const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
+    assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
+
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

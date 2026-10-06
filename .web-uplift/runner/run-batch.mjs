@@ -40,8 +40,8 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile, access } from 'node:fs/promises';
-import { existsSync, lstatSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve as resolvePath } from 'node:path';
+import { existsSync, lstatSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
@@ -106,6 +106,8 @@ function snapshotScope() {
 // no guard, so the scope-accounted spawns are serialized: one snapshot -> spawn ->
 // diff at a time. The cost is stated in the batch banner and the README: a run with
 // --concurrency > 1 is effectively serial while auditing.
+// Completion for THIS process: no file can influence it.
+const completedThisBatch = new Set();
 let scopeWindow = Promise.resolve();
 function withScopeWindow(fn) {
   const run = scopeWindow.then(fn, fn);
@@ -195,6 +197,7 @@ async function worker() {
     // inside this window and refuse a clean URL. The diff is still computed when the
     // agent dies - an agent that writes out of scope and exits non-zero must not hide
     // the write.
+    let recordFailed = false;
     const { scope, result, agentError } = await withScopeWindow(async () => {
       const scopeBefore = snapshotScope();
       let scopedError = null;
@@ -219,12 +222,14 @@ async function worker() {
     // Writing the record must then fail THIS URL cleanly instead of rejecting out of the
     // worker and taking the whole batch down with an ENOENT stack.
     try {
-      if (!isRealDir(siteDir)) throw new Error('the run directory was replaced before the scope record could be written');
+      if (!isRealUnderOutput(siteDir)) throw new Error('the run directory (or an ancestor of it) was replaced before the scope record could be written');
       await writeFile(join(siteDir, 'write-scope.json'), JSON.stringify(scope, null, 2) + '\n');
     } catch (err) {
-      // Logged, but NOT a short-circuit: the refusal below is the security-relevant
-      // fact and must still be reported, even when the run directory cannot be
-      // written - which is precisely when it was deleted or replaced.
+      // FAIL CLOSED FOR THIS URL. The record is part of the accounting contract, so a
+      // URL whose record cannot be written is not completed, not published and not
+      // counted. The refusal below is still reported if there was one - that is the
+      // security-relevant fact and must not be hidden by a bookkeeping failure.
+      recordFailed = true;
       failures.push({ url, reason: `run directory unusable when the scope record was written: ${err.code || err.message}` });
       console.error(`record failed  ${url}: ${err.message}`);
     }
@@ -241,7 +246,8 @@ async function worker() {
       // "newest directory containing a report" fallback, and the batch deliberately no
       // longer calls it; the reporting consumers, such as the scorecard, still do, where
       // it is a presentation convenience rather than a completion decision.)
-      await quarantineRefusedRun(siteDir, { url, escapedOutsideScope: scope.escapedOutsideScope });
+      const quarantineProblem = await quarantineRefusedRun(siteDir, { url, escapedOutsideScope: scope.escapedOutsideScope });
+      if (quarantineProblem) failures.push({ url, reason: quarantineProblem });
       console.error(
         `CONFINEMENT FAILURE ${url}: this audit changed ${scope.escapedOutsideScope.length} path(s) outside ` +
         `${outRoot}:\n  ${scope.escapedOutsideScope.join('\n  ')}\n` +
@@ -255,6 +261,10 @@ async function worker() {
       console.error(`failed         ${url}: ${agentError}`);
       continue;
     }
+    if (recordFailed) {
+      // Already recorded as a failure above; do not publish or count this URL.
+      continue;
+    }
 
     try {
       await writeFile(join(siteDir, 'run.json'), result);
@@ -263,6 +273,7 @@ async function worker() {
         await annotateReport(siteDir, { agent: agentName, runId: planned.runId });
         const validation = validateAtomicReport(join(siteDir, 'report.json'));
         if (validation.ok) {
+          completedThisBatch.add(url);
           updateLatest(planned.hostRoot, planned.runId);
           console.log(`done (coverage complete)     ${url}`);
         } else {
@@ -301,11 +312,12 @@ function dryRunDir(url) {
 // agent shares this tree and could replace its run directory with a symlink to another
 // run, and anything following that path would act on the wrong run.
 async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
-  const realDir = isRealDir(siteDir);
+  const realDir = isRealUnderOutput(siteDir);
   if (!realDir) {
-    console.error(`Refused run at ${siteDir} is not a real directory (replaced by a link?): not touching anything through it.`);
-    return;
+    console.error(`Refused run at ${siteDir} is not a real path below the output root (a link in the chain?): not touching anything through it.`);
+    return `could not quarantine: ${siteDir} is not a real path below ${outRoot}`;
   }
+  return null;
   // Step 1, the one that actually matters. EVERY failure here is loud: the exclusion
   // itself no longer depends on this succeeding (resolution reads the tool's pointer),
   // but a run that cannot be quarantined must not pass silently either.
@@ -314,7 +326,8 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
   } catch (err) {
     // ENOENT means there was no report to quarantine, which is a fine outcome.
     if (err?.code !== 'ENOENT') {
-      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). The run is still not current - completion is decided by this tool's pointer - but the report is still on disk.`);
+      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). The refusal still stands for this batch, but the report is still on disk and a later resume reads its completion state FROM DISK.`);
+      return `could not quarantine the refused report (${err.code || err.message}): the report is still on disk`;
     }
   }
   // Step 2, diagnostic only: its failure must not affect step 1.
@@ -325,13 +338,23 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
   }
 }
 
-// AUTHORITATIVE COMPLETION CHECK. The decision comes from the pointer THIS TOOL wrote
-// on a successful run, and from nothing else. It deliberately does not fall back to
-// "the newest directory that contains a report": that fallback is decided by the
-// filesystem, which the agent can write, so a refused run could become what a later
-// --resume treats as done - which is exactly the hole this replaced. On-disk markers
-// (run-refused.json, a renamed report) remain as advisory records and defence in depth;
-// they are not load-bearing for the decision.
+// COMPLETION CHECK - WHAT THIS ACTUALLY GUARANTEES. Read this before trusting it:
+//
+//  * WITHIN one batch run, completion is decided by THIS PROCESS's own in-memory set,
+//    which no file can influence. That part is authoritative.
+//  * ACROSS a resume, the state can only come from disk (the pointer this tool wrote,
+//    or latest.txt), and that disk is writable by the agent being audited. A planted
+//    pointer naming a run whose report looks valid can therefore make a later --resume
+//    skip that URL. That is a REAL RESIDUAL, not a guarantee: the honest boundary for
+//    it is operator-supplied isolation (--isolation), the same conclusion we reached
+//    for fix mode, because a tool that shares a writable tree with its adversary cannot
+//    authenticate what it reads from that tree.
+//  * The refusal quarantine (a renamed report, a marker) is therefore ADVISORY EVIDENCE
+//    and defence in depth. It is worth having and it is never the thing that makes a
+//    decision correct.
+// What it deliberately does NOT do is fall back to "the newest directory containing a
+// report": that is a decision the adversary could make for us, and removing it was the
+// point of this change.
 function latestPointerTarget(hostRoot) {
   const link = join(hostRoot, 'latest');
   try {
@@ -349,6 +372,7 @@ function latestPointerTarget(hostRoot) {
 }
 
 function hasCompletedLatest(url) {
+  if (completedThisBatch.has(url)) return true; // our own state, this batch
   const hostRoot = join(outDir, hostSlug(url));
   const latestDir = latestPointerTarget(hostRoot);
   if (!latestDir) return false; // no pointer: nothing this tool published is current
@@ -366,6 +390,21 @@ function isRealDir(p) {
   } catch {
     return false;
   }
+}
+
+// Validate EVERY segment below the output root, not just the leaf: validating the leaf
+// alone misses an ancestor swapped for a symlink, through which the same writes land
+// somewhere else entirely. (outDir itself is the operator's choice and is not checked.)
+function isRealUnderOutput(p) {
+  const base = resolvePath(outDir);
+  const target = resolvePath(p);
+  if (target !== base && !target.startsWith(base + sep)) return false;
+  let cur = base;
+  for (const segment of relative(base, target).split(sep).filter(Boolean)) {
+    cur = join(cur, segment);
+    if (!isRealDir(cur)) return false;
+  }
+  return true;
 }
 
 function validateAtomicReport(reportPath) {
