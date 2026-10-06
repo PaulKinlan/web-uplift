@@ -224,6 +224,8 @@ for personal use.
 ```sh
 # Batch audit one or more URLs.
 web-uplift audit https://example.com
+# NOTE: agent runs inside a batch are scope-accounted one at a time, so --concurrency
+# applies to the queue but the spawned audits themselves run serially by design.
 web-uplift audit --urls ./urls.txt --concurrency 2 --agent claude
 
 # Audit a URL AND a user journey: the flow is replayed into each run first, then
