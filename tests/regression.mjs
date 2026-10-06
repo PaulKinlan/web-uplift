@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, safeFetch, waitForInteractEvidence } from '../evidence/cli.mjs';
+import { AGENTS } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -27,6 +28,7 @@ try {
   testAtomicCoverageValidator();
   testGuidanceUsage();
   testGuidanceVersionPinnedInDocs();
+  testHeadlessAllowlistIsScoped();
   testInstalledEvidenceCli();
   testUpdateDryRunReadsInstallManifest();
   testCachedUpdateWarning();
@@ -2489,6 +2491,44 @@ function testGuidanceVersionPinnedInDocs() {
       );
     }
   }
+}
+
+// The headless Claude allowlist must name the intended invocations, not the
+// interpreter prefixes that match arbitrary trailing arguments: `Bash(node:*)`
+// and `Bash(npx:*)` permitted `node -e '<code>'` and `npx -y <any-package>` in
+// the same process tree that ingests untrusted page text (threat model I4,
+// web-uplift-tia). The guidance entry must stay pinned to guidanceCatalogVersion,
+// which is what ties this allowlist to the 2op documentation pin.
+function testHeadlessAllowlistIsScoped() {
+  const args = AGENTS.claude.args('prompt', { maxTurns: 3 });
+  const index = args.indexOf('--allowedTools');
+  assert(
+    index >= 0 && index + 1 < args.length,
+    `claude headless args must carry --allowedTools: ${JSON.stringify(args)}`,
+  );
+  const allowed = args[index + 1];
+
+  for (const blanket of ['Bash(node:*)', 'Bash(npx:*)']) {
+    assert(
+      !allowed.includes(blanket),
+      `the headless allowlist must not grant ${blanket} (it matches arbitrary trailing arguments): ${allowed}`,
+    );
+  }
+
+  for (const entry of [
+    'Bash(node evidence/cli.mjs:*)',
+    'Bash(node .web-uplift/evidence/cli.mjs:*)',
+    'Bash(npx -y lighthouse:*)',
+    'Bash(ffmpeg:*)',
+  ]) {
+    assert(allowed.includes(entry), `the headless allowlist must keep the intended ${entry}: ${allowed}`);
+  }
+
+  const pinned = readJson('knowledge/principles.json').guidanceCatalogVersion;
+  assert(
+    allowed.includes(`Bash(npx -y --ignore-scripts ${pinned}:*)`),
+    `the guidance allowlist entry must name the pinned ${pinned}: ${allowed}`,
+  );
 }
 // A page controls the manifest href and the redirects the raw fetch follows, and
 // both are fetched by the privileged Node process. The guard must refuse every

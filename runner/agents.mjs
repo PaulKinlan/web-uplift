@@ -32,11 +32,26 @@ export const AGENTS = {
       '-p', prompt,
       '--output-format', 'json',
       '--max-turns', String(maxTurns),
-      // Scoped permissions instead of a blanket bypass. Bash(node:*) lets the
-      // agent run the evidence primitives (node evidence/cli.mjs ...); npx lets
-      // it query the Modern Web Guidance feed and run Lighthouse if it chooses.
+      // Scoped permissions instead of a blanket bypass. The old list granted
+      // Bash(node:*) and Bash(npx:*), which match ANY trailing arguments, so a
+      // page that talked the agent into `node -e '<code>'` or `npx -y <package>`
+      // got arbitrary execution in the same process tree that ingests untrusted
+      // page text (threat model I4, web-uplift-tia). Only the intended
+      // invocations are allowed now: the evidence CLI in the two forms the skill
+      // documents, and the guidance feed (pinned to guidanceCatalogVersion in
+      // knowledge/principles.json, asserted by tests/regression.mjs) plus
+      // Lighthouse by name. This narrows what injected text can reach; it does
+      // NOT replace the container requirement for untrusted sites below.
       '--allowedTools',
-      'Read,Write,Edit,Glob,Grep,Bash(node:*),Bash(npx:*),Bash(mkdir:*),Bash(ffmpeg:*)',
+      [
+        'Read,Write,Edit,Glob,Grep',
+        'Bash(node evidence/cli.mjs:*)',
+        'Bash(node .web-uplift/evidence/cli.mjs:*)',
+        'Bash(npx -y --ignore-scripts modern-web-guidance@0.0.172:*)',
+        'Bash(npx -y lighthouse:*)',
+        'Bash(mkdir:*)',
+        'Bash(ffmpeg:*)',
+      ].join(','),
     ],
   },
   codex: {

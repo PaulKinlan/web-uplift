@@ -157,7 +157,7 @@ to the repo.
 
 | Agent | Binary | Headless invocation | Tooling it needs |
 |---|---|---|---|
-| Claude Code | `claude` | `-p --output-format json --allowedTools …` | `Bash(node:*)`, `Bash(npx:*)`, `Bash(ffmpeg:*)`, file tools (set by the runner) |
+| Claude Code | `claude` | `-p --output-format json --allowedTools …` | the evidence CLI (`Bash(node evidence/cli.mjs:*)`, `Bash(node .web-uplift/evidence/cli.mjs:*)`), the pinned guidance feed (`Bash(npx -y --ignore-scripts modern-web-guidance@0.0.172:*)`), `Bash(npx -y lighthouse:*)`, `Bash(ffmpeg:*)`, file tools (set by the runner) |
 | Codex CLI | `codex` | `exec --json --sandbox workspace-write` | node + npx + ffmpeg on PATH |
 | Gemini CLI | `gemini` | `-p --yolo --output-format json` | node + npx + ffmpeg on PATH |
 | Antigravity CLI | `agy` | `-p --dangerously-skip-permissions` | node + npx + ffmpeg on PATH |
@@ -175,8 +175,9 @@ The agent also needs network access to query the Modern Web Guidance feed
 (`npx -y --ignore-scripts modern-web-guidance@0.0.172 …`, the version pinned as
 `guidanceCatalogVersion` in `knowledge/principles.json`) and, optionally, to run
 Lighthouse
-(`npx -y lighthouse …`). Claude's `--allowedTools` list includes `Bash(npx:*)`
-for this.
+(`npx -y lighthouse …`). Claude's `--allowedTools` list names those exact
+invocations rather than the blanket `Bash(node:*)` / `Bash(npx:*)` prefixes,
+which matched any trailing arguments (web-uplift-tia).
 
 ## Caveats
 
@@ -184,7 +185,12 @@ for this.
   (Antigravity), and `--allow-all-tools` (Copilot) auto-approve *every* tool
   call. Fine against the playground; for batch runs over arbitrary third-party
   sites, run inside a container or VM. Claude's invocation uses a scoped
-  `--allowedTools` list instead. Codex uses the `workspace-write` sandbox - if
+  `--allowedTools` list instead. That list names the evidence CLI, the pinned
+  guidance feed and Lighthouse, so `node -e '<code>'` and `npx -y <any-package>`
+  are no longer permitted by the allowlist. That narrows what a page can reach if
+  it talks the agent into running something, but it does not replace the
+  container/VM requirement above for batch runs over untrusted sites. Codex uses
+  the `workspace-write` sandbox - if
   Chrome can't reach the network from it, fall back to
   `--dangerously-bypass-approvals-and-sandbox` inside a container. opencode's
   `run` follows its own configured permissions.
