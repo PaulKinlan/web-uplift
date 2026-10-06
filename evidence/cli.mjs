@@ -2287,27 +2287,46 @@ async function discoverability(client, url, opts, log) {
     })()`,
   );
 
-  // 3. Compare rendered content against the raw HTML.
-  // A raw fetch that failed or TIMED OUT is not an empty document: comparing its absence
-  // against the rendered page would manufacture a JS-shell signal from a network condition
-  // (the rev4 regression). The comparison only means anything when the raw document was
-  // actually retrieved; when it was not, coverage and the shell verdict are null and the
-  // summary says why.
+  // 3. Compare rendered content against the raw HTML - as ONE block derived from the
+  // usability condition, so no sibling field can emit a false "absent" on the sole basis
+  // that the fetch failed. (rev5: coverage and the shell verdict were gated, but the
+  // presence comparisons still emitted false from an empty string - the same class one
+  // level down, and gating per-line is how a fourth sibling gets missed in a later
+  // revision.) When the raw document was never retrieved, EVERY comparison field is null
+  // and the summary says why. Fields that describe the RENDERED page (renderedEmpty,
+  // rendered.*, the screenshots) stay computed: the render exists regardless of the raw
+  // fetch, so they are not comparisons and they remain meaningful - that is the answer to
+  // "is any field legitimately meaningful without raw HTML".
   const rawComparisonUsable = fetchError === null && rawStatus !== null;
-  const rawText = stripHtmlToText(rawHtml);
   const renderedTokens = contentTokens(rendered.text);
-  const rawTokens = contentTokens(rawText);
-  let overlap = 0;
-  for (const t of renderedTokens) if (rawTokens.has(t)) overlap++;
   // If the rendered page produced essentially no content, coverage is undefined
   // (not 100%) - the render likely failed, redirected, or the page is genuinely
   // empty. Surface that honestly rather than manufacture a perfect score.
   const renderedEmpty = renderedTokens.size < 3;
-  const coveragePct = !rawComparisonUsable || renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100);
-  const emptyMounts = detectEmptyMounts(rawHtml);
-  const titleInRaw = rendered.title ? contentPresentInRaw(rendered.title, rawText) : null;
-  const h1InRaw = rendered.h1.length ? rendered.h1.some((h) => contentPresentInRaw(h, rawText)) : null;
-  const metaInRaw = rendered.metaDescription ? /name=["']description["']/i.test(rawHtml) : null;
+  const { coveragePct, emptyMounts, titleInRaw, h1InRaw, metaInRaw, rawStats } = rawComparisonUsable
+    ? (() => {
+        const rawText = stripHtmlToText(rawHtml);
+        const rawTokens = contentTokens(rawText);
+        let overlap = 0;
+        for (const t of renderedTokens) if (rawTokens.has(t)) overlap++;
+        return {
+          coveragePct: renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100),
+          emptyMounts: detectEmptyMounts(rawHtml),
+          titleInRaw: rendered.title ? contentPresentInRaw(rendered.title, rawText) : null,
+          h1InRaw: rendered.h1.length ? rendered.h1.some((h) => contentPresentInRaw(h, rawText)) : null,
+          metaInRaw: rendered.metaDescription ? /name=["']description["']/i.test(rawHtml) : null,
+          rawStats: { htmlBytes: byteLength(rawHtml), textChars: rawText.length, contentTokens: rawTokens.size },
+        };
+      })()
+    : {
+        coveragePct: null,
+        emptyMounts: null,
+        titleInRaw: null,
+        h1InRaw: null,
+        metaInRaw: null,
+        // "0 bytes / 0 tokens" would be a claim about a document that was never retrieved.
+        rawStats: { htmlBytes: null, textChars: null, contentTokens: null },
+      };
   // A JS shell: an empty SPA mount with almost no content in the raw HTML, or a
   // content-rich rendered page whose text is essentially absent from the raw.
   // Only assertable when we actually got rendered content to compare against.
@@ -2369,11 +2388,7 @@ async function discoverability(client, url, opts, log) {
       h1Count: rendered.h1.length,
       framework: rendered.framework,
     },
-    raw: {
-      htmlBytes: byteLength(rawHtml),
-      textChars: rawText.length,
-      contentTokens: rawTokens.size,
-    },
+    raw: rawStats,
     screenshots, // { rendered, crawler } - browser view (JS on) vs crawler view (JS off)
     signalsFor: ['be-discoverable', 'be-agent-ready'],
     note:

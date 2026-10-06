@@ -5358,9 +5358,12 @@ async function testFetchDeadlineAndRawComparison() {
       fastErr = e;
     }
     assert(fastErr, 'fetch deadline: a slow response under a small budget must fail rather than hang');
-    // 2. ...and the SAME fetch under a raised budget SUCCEEDS. This control only passes
-    //    because the budget was raised, which is what makes the bound configurable rather
-    //    than a fixed regression.
+    // 2. ...and the SAME fetch under a raised budget SUCCEEDS. WHAT THIS DEMONSTRATES,
+    //    stated narrowly: the budget override is APPLIED and effective at a small scale
+    //    (800ms server vs 200ms/5000ms budgets). What it does NOT demonstrate: a response
+    //    exceeding the PRODUCTION default (30s) remaining usable when an operator raises
+    //    the budget - exercising that literally would need a response slower than the
+    //    default, which does not belong in a suite. Say what was demonstrated.
     const raised = await safeFetch(slowUrl, { targetOrigin: slowOrigin, deadlineMs: 5000 });
     const raisedText = await raised.text();
     assert(
@@ -5409,9 +5412,22 @@ async function testFetchDeadlineAndRawComparison() {
     configureFetchDeadline(400); // the server answers at 800ms: the raw fetch times out
     const timed = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });
     assert(timed && timed.fetchError, `discoverability: the timed-out raw fetch must be recorded as an error (${JSON.stringify(timed && { fetchError: timed.fetchError })})`);
+    // EVERY derived raw-comparison field must be null, not just the shell verdict: a false
+    // here is a claim that the element is absent from the raw HTML, asserted on the sole
+    // basis that the fetch failed. Asserting the whole block is what catches a sibling that
+    // slips through a later revision (the rev5 partial-fix class).
     assert(
-      timed.coveragePct === null && timed.isJsShell !== true && timed.rawComparisonUsable === false,
-      `discoverability: a timed-out raw fetch must NOT produce a comparison or a shell verdict (${JSON.stringify({ coveragePct: timed.coveragePct, isJsShell: timed.isJsShell, rawComparisonUsable: timed.rawComparisonUsable })})`,
+      timed.coveragePct === null &&
+        timed.isJsShell !== true &&
+        timed.rawComparisonUsable === false &&
+        timed.titlePresentInRaw === null &&
+        timed.h1PresentInRaw === null &&
+        timed.metaDescriptionPresentInRaw === null &&
+        timed.emptyMounts === null &&
+        timed.raw.htmlBytes === null &&
+        timed.raw.textChars === null &&
+        timed.raw.contentTokens === null,
+      `discoverability: a timed-out raw fetch must null EVERY raw-comparison field (${JSON.stringify({ coveragePct: timed.coveragePct, isJsShell: timed.isJsShell, rawComparisonUsable: timed.rawComparisonUsable, titlePresentInRaw: timed.titlePresentInRaw, h1PresentInRaw: timed.h1PresentInRaw, metaDescriptionPresentInRaw: timed.metaDescriptionPresentInRaw, emptyMounts: timed.emptyMounts })})`,
     );
     assert(
       typeof timed.rawComparisonNote === 'string' && timed.rawComparisonNote.includes('network condition'),
@@ -5423,8 +5439,14 @@ async function testFetchDeadlineAndRawComparison() {
     configureFetchDeadline(5000);
     const ok = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });
     assert(
-      ok.rawComparisonUsable === true && ok.coveragePct !== null && ok.isJsShell === false,
-      `discoverability: with the budget raised, the slow-but-successful page must compare for real (${JSON.stringify({ coveragePct: ok.coveragePct, isJsShell: ok.isJsShell, rawComparisonUsable: ok.rawComparisonUsable })})`,
+      ok.rawComparisonUsable === true &&
+        ok.coveragePct !== null &&
+        ok.isJsShell === false &&
+        ok.titlePresentInRaw === true &&
+        ok.h1PresentInRaw === true &&
+        Array.isArray(ok.emptyMounts) &&
+        ok.raw.htmlBytes > 0,
+      `discoverability: with the budget raised, the slow-but-successful page must compare for real, siblings included (${JSON.stringify({ coveragePct: ok.coveragePct, isJsShell: ok.isJsShell, rawComparisonUsable: ok.rawComparisonUsable, titlePresentInRaw: ok.titlePresentInRaw, h1PresentInRaw: ok.h1PresentInRaw, emptyMounts: ok.emptyMounts, raw: ok.raw })})`,
     );
   } finally {
     configureFetchDeadline(30000); // restore the production default for the rest of the suite
