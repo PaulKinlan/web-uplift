@@ -3540,7 +3540,9 @@ async function testFixSandboxAdversarial() {
     writeFileSync(join(proj, 'reports', 'latest'), 'run-1\n');
     // The fixer creates --out before it plans; do the same here so these cases test
     // the overlap rule rather than a missing directory.
-    for (const d of ['reports/h/r1', 'reports/example.test/r1']) mkdirSync(join(proj, d), { recursive: true });
+    for (const d of ['reports/h/r1', 'reports/example.test/r1', 'reports/example.test', 'reports/fix-example.test']) mkdirSync(join(proj, d), { recursive: true });
+    writeFileSync(join(proj, 'reports', 'example.test', 'latest'), 'run-1');
+    writeFileSync(join(proj, 'reports', 'latest'), 'run-1');
     const base = { projectRoot: proj, agentName: 'claude', agentBin: process.execPath };
 
     // 1. OVERLAP VALIDATION: a writable --target or --out that IS, or sits inside, a
@@ -3550,6 +3552,9 @@ async function testFixSandboxAdversarial() {
       ['--target inside node_modules', { targetDir: join(proj, 'node_modules'), outDir: join(proj, 'reports', 'h', 'r1') }],
       ['--target inside the tool', { targetDir: join(proj, 'evidence'), outDir: join(proj, 'reports', 'h', 'r1') }],
       ['--out is the reports tree', { targetDir: join(proj, 'src'), outDir: join(proj, 'reports') }],
+      // A directory that ALREADY holds a published pointer is a retained host dir:
+      // binding it writable would let the run re-point what consumers read.
+      ['--out is a host dir holding latest', { targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'example.test') }],
       ['--out inside the tool', { targetDir: join(proj, 'src'), outDir: join(proj, 'evidence') }],
       ['--allow-write into .git', { targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'h', 'r1'), extraWritable: [join(proj, '.git', 'hooks')] }],
     ];
@@ -3560,6 +3565,9 @@ async function testFixSandboxAdversarial() {
     // ...while a genuine run leaf under reports/ is allowed (that is where fix mode writes).
     const leaf = buildPlan({ ...base, targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'example.test', 'r1') });
     assert(!leaf.refused, `sandbox adversarial: a run leaf under reports/ must be allowed (${leaf.notes.filter((n) => n.level === 'refuse').map((n) => n.reason).join('; ')})`);
+    // ...and so must the tool's own documented default shape, one level below reports/.
+    const defaultShape = buildPlan({ ...base, targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'fix-example.test') });
+    assert(!defaultShape.refused, `sandbox adversarial: the default --out shape (reports/fix-<host>) must be allowed (${defaultShape.notes.filter((n) => n.level === 'refuse').map((n) => n.reason).join('; ')})`);
 
     // 2. SYSCALL-LEVEL DENIALS with --target at the PROJECT ROOT: the canonical
     // tooling, the git directory and a dependency must all refuse a write, an

@@ -154,8 +154,16 @@ export function buildPlan({ projectRoot, targetDir, outDir, agentName, agentBin,
       if (!insideOrEqual(p, tree)) continue;
       if (p === tree) return `${name} itself`;
       const rest = segmentsUnder(p, tree);
-      if (name === 'reports' && rest.length >= 2 && !rest.some((s) => PROTECTED_TREES.includes(s))) {
-        continue; // a real run leaf under reports/
+      if (name === 'reports') {
+        // `reports/` itself is refused above (p === tree). Below it, the real danger
+        // is not depth but CONTENT: a directory that already holds a published
+        // `latest` pointer is a retained host directory, and binding it writable
+        // would let the run re-point what consumers read. The tool's own default
+        // (`reports/fix-<host>`, a working dir with no pointer in it) must keep
+        // working, so depth alone is not the test.
+        if (rest.some((seg) => PROTECTED_TREES.includes(seg))) return 'beneath a protected name';
+        if (holdsPointer(p)) return 'a directory that already holds a published run pointer';
+        continue;
       }
       return `beneath ${name}`;
     }
@@ -307,6 +315,26 @@ export function buildPlan({ projectRoot, targetDir, outDir, agentName, agentBin,
     notes,
     refused: notes.some((n) => n.level === 'refuse'),
   };
+}
+
+// Does this directory already hold (or directly contain) a published run pointer?
+// `reports/<host>/latest` is what a consumer reads, so a writable mount over it -
+// or over a parent of it - would let a fix run rewrite the published result.
+function holdsPointer(dir) {
+  for (const candidate of [join(dir, 'latest'), join(dir, 'latest.txt')]) {
+    if (existsSync(candidate)) return true;
+  }
+  let children;
+  try {
+    children = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const child of children) {
+    if (!child.isDirectory()) continue;
+    if (existsSync(join(dir, child.name, 'latest')) || existsSync(join(dir, child.name, 'latest.txt'))) return true;
+  }
+  return false;
 }
 
 // Count files with st_nlink > 1 under a tree, bounded so a big repo cannot stall a
