@@ -6,9 +6,9 @@ node_modules/
 # reused across runs.)
 reports/
 
-# Agent scratch space - ad-hoc helper scripts/screenshots written mid-audit
-# (the web-audit skill directs agents here)
-scratch/
+# Agent scratch lives INSIDE each run directory (under reports/, ignored above):
+# the skill directs `<report directory>/scratch/`, and tests/skill-write-contract.mjs
+# fails if a top-level scratch/ is instructed or reserved again (web-uplift-16f).
 
 # Local secrets / environment
 .env
