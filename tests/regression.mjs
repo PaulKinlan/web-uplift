@@ -1327,6 +1327,10 @@ async function testResilienceWaitsForLateServiceWorkerRegistration() {
       res.end(body);
     };
     if (path === '/sw.js') return send('text/javascript', swJs);
+    if (path === '/no-worker') {
+      return send('text/html', '<!doctype html><html><head><title>No worker</title></head>' +
+        '<body><h1>No worker</h1></body></html>');
+    }
     return send('text/html', '<!doctype html><html><head><title>Late worker</title>' +
       // 1200ms is well past the 400ms settle passed below, so the registration is
       // guaranteed to be unobserved when the settle window closes.
@@ -1349,6 +1353,38 @@ async function testResilienceWaitsForLateServiceWorkerRegistration() {
     assert(
       result.serviceWorker?.scriptTextHasFetchListener === true,
       `resilience: the late worker's script must still be read, got ${JSON.stringify(result.serviceWorker)}`,
+    );
+
+    // The report has to say which of the two claims it is making. A worker observed inside
+    // the window must not be recorded as an expired window (web-uplift-5jd).
+    const seen = result.serviceWorker?.observation;
+    assert(
+      seen?.registrationObserved === true && seen?.budgetExhausted === false,
+      `resilience: an observed registration must not be reported as an exhausted window, got ${JSON.stringify(seen)}`,
+    );
+    assert(
+      seen?.budgetMs > 0 && seen?.waitedMs <= seen.budgetMs,
+      `resilience: the observation window must be recorded with what was actually spent, got ${JSON.stringify(seen)}`,
+    );
+
+    // The other half of the distinction: a page with no worker at all. The primitive cannot
+    // prove absence - it can only say the window closed with nothing observed - so the
+    // artifact has to carry that caveat rather than leaving a reader to infer absence from
+    // an empty list.
+    const bare = await gather('resilience', `${base}/no-worker`, { quiet: true, wait: 400, screenshots: false });
+    const unseen = bare.serviceWorker?.observation;
+    assert(
+      unseen?.registrationObserved === false && unseen?.budgetExhausted === true,
+      `resilience: a page with no worker must be recorded as an expired window, not as an observation of one, got ${JSON.stringify(unseen)}`,
+    );
+    assert(
+      typeof unseen?.note === 'string' && unseen.note.includes('not evidence of absence'),
+      `resilience: an expired window must carry its caveat in the artifact itself, got ${JSON.stringify(unseen)}`,
+    );
+    assert(
+      (bare.serviceWorker?.page?.registrations?.length ?? -1) === 0 &&
+        bare.installabilitySignals?.serviceWorkerRegistered === false,
+      `resilience: a page with no worker should still report none in the page view, got ${JSON.stringify(bare.serviceWorker?.page)}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
