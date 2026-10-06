@@ -150,7 +150,22 @@ if (!dryRun && (!target || !auditUrl)) {
 const projectRoot = resolve(process.cwd());
 const scopeRoot = target ? resolve(target) : null;
 const outRoot = resolve(outDir);
+// Extra roots the operator explicitly allows a run to touch (build output, a
+// generated lockfile). Without this, a legitimate `npm run build` under a fix
+// iteration would refuse the run - fail-closed with no way forward. Repeatable,
+// and each value may itself be a comma-separated list.
+const allowWrite = [].concat(args['allow-write'] ?? [])
+  .flatMap((v) => String(v).split(','))
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((p) => resolve(p));
+const allowedRoots = [scopeRoot, outRoot, ...allowWrite];
 let escapedOutsideScope = false;
+let agentFailure = null;
+
+// The walk covers the invocation directory AND the target when the target sits
+// outside it, so an out-of-tree --target still gets a per-run diff.
+const snapshotScope = () => snapshotTree(projectRoot, { extraRoots: [scopeRoot] });
 
 function fixExtra(findingsPath, iteration) {
   return (
@@ -172,6 +187,7 @@ if (dryRun) {
   console.log(`audit url     : ${auditUrl ?? '<audit-url>'}`);
   console.log(`report out    : ${outDir}`);
   console.log(`write scope   : ${scopeRoot ?? '<target>'} (a change outside this refuses the run)`);
+  if (allowWrite.length) console.log(`also allowed  : ${allowWrite.join(', ')}`);
   console.log('');
   console.log('Per-iteration command the model is driven with:');
   for (let i = 1; i <= maxIterations; i++) {
@@ -191,11 +207,30 @@ if (dryRun) {
 
 await mkdir(outDir, { recursive: true });
 
-// 1. Findings: supplied, or run an audit + aggregate first.
+// 1. Findings: supplied, or run an audit + aggregate first. The baseline audit
+// spawns the same write-capable agent under the same untrusted context, so it is
+// scoped exactly like an iteration - otherwise an injection during iteration 0
+// would write unmonitored AND be baked into iteration 1's "clean" baseline.
 let findingsPath = args.findings;
 if (!findingsPath) {
   console.log(`No --findings supplied; running a baseline audit of ${auditUrl} first.`);
   findingsPath = await baselineAudit();
+}
+if (escapedOutsideScope) {
+  // Nothing below can be trusted: the tree the hill-climb would start from is
+  // already outside the declared scope, and the report may not exist at all.
+  console.error(
+    'CONFINEMENT: refusing to continue - the baseline audit wrote outside ' +
+      `${scopeRoot ?? '<target>'} (records: ${scopeRecordPaths()} in ${outDir}).`,
+  );
+  process.exit(1);
+}
+if (agentFailure) {
+  console.error(
+    `The baseline audit failed before it produced a report: ${agentFailure.message || agentFailure} ` +
+      `(records: ${scopeRecordPaths()} in ${outDir})`,
+  );
+  process.exit(1);
 }
 const baseline = await readReport(findingsPath);
 const startIssues = countOutstanding(baseline);
@@ -254,30 +289,48 @@ const history = [{ iteration: 0, ...baselineRemaining, score: scoreOf(baseline) 
 for (let i = 1; i <= maxIterations && !passed; i++) {
   console.log(`\n--- iteration ${i}/${maxIterations} ---`);
   const prompt = iterationPrompt(findingsPath, i);
-  const scopeBefore = snapshotTree(projectRoot);
-  await runAgent(prompt, i);
+  const scopeBefore = snapshotScope();
+  // An agent that writes out of scope and THEN exits non-zero must not hide the
+  // write: a rejected runAgent would otherwise abort the process before the diff
+  // and the escape diagnosis were ever computed.
+  let iterationError = null;
+  try {
+    await runAgent(prompt, i);
+  } catch (err) {
+    iterationError = err;
+  }
   // A fix iteration may edit --target and write its own report under --out, and
   // nothing else. Record the diff either way, so an operator can review what the
   // model changed instead of trusting the model's own summary.
-  const changes = diffTrees(scopeBefore, snapshotTree(projectRoot));
-  const escaped = escapedChanges(changes, projectRoot, [scopeRoot, outRoot]);
-  const iterationDiff = { iteration: i, projectRoot, target: scopeRoot, changed: changes, escapedOutsideScope: escaped };
+  const changes = diffTrees(scopeBefore, snapshotScope());
+  const escaped = escapedChanges(changes, projectRoot, allowedRoots);
+  const iterationDiff = { iteration: i, projectRoot, target: scopeRoot, allowedRoots, changed: changes, escapedOutsideScope: escaped, agentError: iterationError ? String(iterationError.message || iterationError) : null };
   await writeFile(join(outDir, `iter-${i}-diff.json`), JSON.stringify(iterationDiff, null, 2) + '\n');
   console.log(`  changed: ${summariseChanges(changes)}`);
   if (escaped.length) {
     escapedOutsideScope = true;
     await writeFile(join(outDir, 'confinement-escape.json'), JSON.stringify(iterationDiff, null, 2) + '\n');
-    console.error(
-      `\nCONFINEMENT FAILURE: iteration ${i} changed ${escaped.length} path(s) outside ` +
-      `${scopeRoot ?? '<target>'} and ${outRoot}:\n  ${escaped.join('\n  ')}\n` +
-      'The fix agent\'s context carries untrusted page content, so this is a refusal, not a warning: the climb ' +
-      'stops here and the run exits non-zero. The changes are NOT reverted automatically - review ' +
-      `${join(outDir, 'confinement-escape.json')} and the per-iteration diff, then decide.`,
-    );
+    console.error(confinementFailure(`iteration ${i}`, escaped));
+    break;
+  }
+  if (iterationError) {
+    agentFailure = iterationError;
+    await writeFile(join(outDir, `iter-${i}-error.json`), JSON.stringify(iterationDiff, null, 2) + '\n');
+    console.error(`\nThe fix agent failed in iteration ${i}: ${iterationError.message || iterationError}`);
     break;
   }
 
-  const report = await readReport(join(outDir, 'report.json'));
+  let report = null;
+  try {
+    report = await readReport(join(outDir, 'report.json'));
+  } catch (err) {
+    // A crash here would be a raw stack after the scope checks, and the report is
+    // the one thing this iteration was asked to produce. Name it and stop.
+    agentFailure = err;
+    await writeFile(join(outDir, `iter-${i}-error.json`), JSON.stringify({ ...iterationDiff, reportError: String(err.message || err) }, null, 2) + '\n');
+    console.error(`\nIteration ${i} produced no usable report: ${err.message || err}`);
+    break;
+  }
   const r = remaining(report);
   const score = scoreOf(report);
   history.push({ iteration: i, ...r, score });
@@ -323,7 +376,13 @@ console.log(
 if (escapedOutsideScope) {
   console.log(
     'CONFINEMENT: an iteration wrote outside --target; the run is refused and exits non-zero ' +
-      '(see confinement-escape.json and iter-<n>-diff.json for the exact paths).',
+      `(records: ${scopeRecordPaths()} in ${outDir}).`,
+  );
+}
+if (agentFailure) {
+  console.log(
+    `AGENT FAILURE: an iteration did not complete (${agentFailure.message || agentFailure}); ` +
+      `the run exits non-zero (records: ${scopeRecordPaths()} in ${outDir}).`,
   );
 }
 
@@ -367,16 +426,65 @@ try {
   console.error(`Could not emit before/after comparison: ${err.message}`);
 }
 
-process.exitCode = passed && !escapedOutsideScope ? 0 : 1;
+process.exitCode = passed && !escapedOutsideScope && !agentFailure ? 0 : 1;
 
 // --- helpers ---------------------------------------------------------------
 
 async function baselineAudit() {
   // Drive the model in REPORT mode once to produce report.json, then use it as
-  // the findings input. Reuses the same agent map.
+  // the findings input. Reuses the same agent map. Scoped exactly like an
+  // iteration: this spawn runs under the same untrusted page context and holds
+  // the same write tools, so an injection here would otherwise write unmonitored
+  // AND be baked into iteration 1's "clean" baseline snapshot.
   const prompt = agent.prompt(auditUrl, outDir, `--source ${target}`);
-  await runAgent(prompt, 0);
+  const scopeBefore = snapshotScope();
+  try {
+    await runAgent(prompt, 0);
+  } catch (err) {
+    agentFailure = err;
+  }
+  const changes = diffTrees(scopeBefore, snapshotScope());
+  const escaped = escapedChanges(changes, projectRoot, allowedRoots);
+  const record = {
+    iteration: 0,
+    phase: 'baseline-audit',
+    projectRoot,
+    target: scopeRoot,
+    allowedRoots,
+    changed: changes,
+    escapedOutsideScope: escaped,
+    agentError: agentFailure ? String(agentFailure.message || agentFailure) : null,
+  };
+  await writeFile(join(outDir, 'iter-0-diff.json'), JSON.stringify(record, null, 2) + '\n');
+  console.log(`  baseline audit changed: ${summariseChanges(changes)}`);
+  if (escaped.length) {
+    escapedOutsideScope = true;
+    await writeFile(join(outDir, 'confinement-escape.json'), JSON.stringify(record, null, 2) + '\n');
+    console.error(confinementFailure('the baseline audit', escaped));
+  }
   return join(outDir, 'report.json');
+}
+
+// Every write-scope record written so far, for a refusal message that says where
+// to look instead of leaving the operator to guess.
+function scopeRecordPaths() {
+  const names = [];
+  for (let n = 0; n <= Math.max(maxIterations, 0); n++) {
+    if (existsSync(join(outDir, `iter-${n}-diff.json`))) names.push(`iter-${n}-diff.json`);
+  }
+  if (existsSync(join(outDir, 'confinement-escape.json'))) names.push('confinement-escape.json');
+  return names.join(', ') || 'none';
+}
+
+function confinementFailure(where, escaped) {
+  return (
+    `\nCONFINEMENT FAILURE: ${where} changed ${escaped.length} path(s) outside ` +
+    `${scopeRoot ?? '<target>'} and ${outRoot}:\n  ${escaped.join('\n  ')}\n` +
+    'The fix agent\'s context carries untrusted page content, so this is a refusal, not a warning: the climb ' +
+    'stops here and the run exits non-zero. The changes are NOT reverted automatically - review ' +
+    `${join(outDir, 'confinement-escape.json')} and the per-iteration diff, then decide. ` +
+    'If the path is a legitimate build or scratch output, re-run with --allow-write <dir> to allow it.'
+  );
 }
 
 function runAgent(prompt, iteration) {
@@ -478,7 +586,7 @@ function parseArgs(argv) {
   const out = { _: [] };
   const valueFlags = new Set([
     'target', 'audit-url', 'agent', 'max-iterations', 'findings', 'out', 'reports-root',
-    'goal-overall', 'goal-min', 'goal-max-critical', 'goal-max-high',
+    'goal-overall', 'goal-min', 'goal-max-critical', 'goal-max-high', 'allow-write',
   ]);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
@@ -523,6 +631,9 @@ Options:
   --findings <path>       Pre-aggregated findings/report.json (skip baseline audit).
   --out <dir>             Report directory (default: reports/fix-<host>/).
   --reports-root <dir>    Root for retained before/after run dirs (default: reports).
+  --allow-write <dirs>    Extra roots a run may modify, on top of --target and
+                          --out (e.g. a build output dir). Repeatable, and each
+                          value may be comma-separated.
   --dry-run               Print the per-iteration command for each agent; do not run.
   --verbose               Stream agent stdout/stderr live.
   -h, --help              This help.

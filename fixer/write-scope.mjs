@@ -7,71 +7,98 @@
 // prompt injection can therefore redirect the agent's writes outside the site
 // source it was pointed at. The fixer can never un-write a file, so the
 // defensible behaviour is: make the boundary explicit, snapshot around every
-// iteration, hand the operator a per-iteration diff, and refuse to continue the
-// climb once a change lands outside the declared scope.
+// agent run (the baseline audit included), hand the operator a per-run diff, and
+// refuse to continue once a change lands outside the declared scope.
 //
-// DELIBERATELY NOT DONE HERE: rooting the child's working directory at --target.
-// The canonical skill tells the agent to run `node .web-uplift/evidence/cli.mjs`,
-// a path relative to the PROJECT ROOT, and `web-uplift install` vendors
-// .web-uplift/ into the project root (bin/web-uplift.mjs), while the documented
-// fix invocation points --target at a source SUBdirectory (`fix --target ./src`).
-// Rooting the child at --target would break that lookup, so the child keeps the
-// project-root cwd and the boundary is enforced by snapshot + refusal instead of
-// by the filesystem.
+// THIS IS DETECTION, NOT CONFINEMENT, and saying so is the point. A determined
+// agent can still reach outside the walked roots (see the gaps listed below), so
+// the walk is a tripwire on the realistic paths, not a sandbox; true confinement
+// needs an OS sandbox or a child cwd rooted at --target, which is not possible
+// while the skill resolves its tool at `.web-uplift/evidence/cli.mjs` relative to
+// the PROJECT root (see fixer/fix.mjs).
 //
-// Snapshot stamps are size+mtime, not content hashes: the question is "did this
-// iteration touch that path", and a same-size, same-mtime content rewrite is not
-// a realistic injection escape. Symlinks are recorded by target and never
-// followed, so a link cannot pull the walk out of the tree.
+// Covered: creates, edits, deletes and symlink changes anywhere under the walked
+// roots, including `.git/hooks` and `.git/config` (the persistence vectors for an
+// injected agent) and the `--target` tree when it sits outside the invocation
+// directory.
 //
-// This is deliberately fail-closed: a stray scratch file the model drops outside
-// --target also refuses the run. That is the intended trade (a named list of
-// paths and a stopped climb, not a silent write), and the noisy trees that would
-// make it unusable - the dependency tree, .git, the vendored tool and `reports/`
-// where the tool's own output lands - are excluded from the walk.
+// NOT covered, stated rather than implied: writes outside the walked roots
+// (`$HOME`, `/tmp`, another checkout); content rewrites that preserve size AND
+// mtime; hard links created into a walked root; and a file created and deleted
+// inside one iteration. Excluding the noisy trees (the dependency tree, vendored
+// tool, `reports/` and `.git/objects`) is what makes the walk cheap enough to run
+// every iteration, and it is also what leaves those trees uncovered.
 
 import { readdirSync, readlinkSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 
-// Trees never worth walking for a scope snapshot: version control, installed
-// dependencies, the vendored tool, and the tool's own report output.
-export const DEFAULT_EXCLUDE = new Set(['.git', 'node_modules', '.web-uplift', 'reports']);
+// Excluded wherever they appear: installed dependencies, the vendored tool, and
+// the tool's own report output (excluding reports/ is what stops the fixer
+// tripping its own detector when the agent writes report.json under --out).
+const EXCLUDE_SEGMENTS = new Set(['node_modules', '.web-uplift', 'reports']);
 
-// relPath -> `${size}:${mtimeMs}` for files, `link:${target}` for symlinks.
-export function snapshotTree(root, { exclude = DEFAULT_EXCLUDE } = {}) {
+// .git is walked ONLY where an injected agent could plant persistence. The
+// object store, logs and worktree metadata are large, noisy and not a
+// persistence vector.
+const GIT_KEEP = new Set(['hooks', 'config', 'HEAD', 'info', 'packed-refs']);
+
+export function isExcludedPath(relPath) {
+  const parts = relPath.split(sep);
+  if (parts.some((p) => EXCLUDE_SEGMENTS.has(p))) return true;
+  // `.git` itself must stay walkable (only its noisy children are skipped), or the
+  // hook/config tripwire never gets reached.
+  if (parts[0] === '.git' && parts.length > 1) return !GIT_KEEP.has(parts[1]);
+  return false;
+}
+
+// relPath (relative to `base`) -> `${size}:${mtimeMs}` for files, `link:${target}`
+// for symlinks. Symlinks are recorded by target and never followed, so a link
+// cannot pull the walk out of the tree.
+//
+// `extraRoots` are walked as well, with their entries keyed relative to `base` -
+// this is how a --target that lives outside the invocation directory still gets a
+// diff. A root already covered by another root is skipped, so overlapping roots
+// do not double-walk.
+export function snapshotTree(base, { extraRoots = [], exclude = isExcludedPath } = {}) {
   const entries = new Map();
-  const walk = (dir) => {
+  const baseAbs = resolve(base);
+  const wanted = [baseAbs, ...extraRoots.filter(Boolean).map((r) => resolve(r))];
+  const roots = wanted.filter((r, i) => !wanted.some((other, j) => j !== i && (r === other ? j < i : r.startsWith(other + sep))));
+
+  const walk = (rootAbs, dirAbs) => {
     let children;
     try {
-      children = readdirSync(dir, { withFileTypes: true });
+      children = readdirSync(dirAbs, { withFileTypes: true });
     } catch {
       return; // unreadable directory: nothing to record
     }
     for (const child of children) {
-      if (exclude.has(child.name)) continue;
-      const abs = join(dir, child.name);
+      const abs = join(dirAbs, child.name);
+      const key = relative(baseAbs, abs);
+      if (exclude(key)) continue;
       if (child.isSymbolicLink()) {
         try {
-          entries.set(relative(root, abs), `link:${readlinkSync(abs)}`);
+          entries.set(key, `link:${readlinkSync(abs)}`);
         } catch {
           /* raced away */
         }
         continue;
       }
       if (child.isDirectory()) {
-        walk(abs);
+        walk(rootAbs, abs);
         continue;
       }
       if (!child.isFile()) continue;
       try {
         const st = statSync(abs);
-        entries.set(relative(root, abs), `${st.size}:${st.mtimeMs}`);
+        entries.set(key, `${st.size}:${st.mtimeMs}`);
       } catch {
         /* raced away */
       }
     }
   };
-  walk(root);
+
+  for (const root of roots) walk(root, root);
   return entries;
 }
 
@@ -89,7 +116,8 @@ export function diffTrees(before, after) {
 
 // Of the changes in a diff (paths relative to `base`), the ones that resolve
 // outside every allowed root. This is the refusal test: a fix run may touch the
-// declared source tree and its own report directory, and nothing else.
+// declared source tree, its own report directory, and anything the operator
+// explicitly allowed, and nothing else.
 export function escapedChanges(changes, base, allowedRoots) {
   const roots = allowedRoots.filter(Boolean).map((r) => resolve(r));
   const inside = (abs) => roots.some((r) => abs === r || abs.startsWith(r + sep));
