@@ -3391,13 +3391,19 @@ async function testFixSandboxMountContract() {
         console.log(`SKIP (recorded reason) sandbox ${label}: bwrap probe failed - ${resolution.attempts.map((a) => `${a.provider}: ${a.detail}`).join('; ').slice(0, 300)}`);
         continue;
       }
+      // Paths are embedded literally, not taken from the environment: the launcher
+      // deliberately CLEARS the environment, so $T/$P/$O would be empty inside.
+      const qp = (x) => JSON.stringify(x);
+      const P = plan.projectRoot;
+      const T = plan.targetDir;
+      const O = plan.outDir;
       const intent = [
-        'printf ok > "$T/editable.txt" && echo ALLOW-target || echo DENY-target',
-        'printf ok > "$O/report.json" && echo ALLOW-out || echo DENY-out',
-        'printf x > "$P/.git/config-evil" 2>/dev/null && echo ALLOW-git || echo DENY-git',
-        'printf x > "$P/node_modules/evil.js" 2>/dev/null && echo ALLOW-nodemodules || echo DENY-nodemodules',
-        'printf x > "$P/reports/latest-evil" 2>/dev/null && echo ALLOW-latest || echo DENY-latest',
-        'cat "$P/evidence/cli.mjs" >/dev/null && echo ALLOW-read-tool || echo DENY-read-tool',
+        `printf ok > ${qp(join(T, 'editable.txt'))} && echo ALLOW-target || echo DENY-target`,
+        `printf ok > ${qp(join(O, 'report.json'))} && echo ALLOW-out || echo DENY-out`,
+        `printf x > ${qp(join(P, '.git', 'config-evil'))} 2>/dev/null && echo ALLOW-git || echo DENY-git`,
+        `printf x > ${qp(join(P, 'node_modules', 'evil.js'))} 2>/dev/null && echo ALLOW-nodemodules || echo DENY-nodemodules`,
+        `printf x > ${qp(join(P, 'reports', 'latest-evil'))} 2>/dev/null && echo ALLOW-latest || echo DENY-latest`,
+        `cat ${qp(join(P, 'evidence', 'cli.mjs'))} >/dev/null && echo ALLOW-read-tool || echo DENY-read-tool`,
         'printf x > /home/exedev/.ssh/uplift-probe 2>/dev/null && echo ALLOW-ssh || echo DENY-ssh',
         'printf x > /tmp/scratch.txt && echo ALLOW-tmp || echo DENY-tmp',
         'printf x > "$HOME/.cache-probe" && echo ALLOW-home || echo DENY-home',
@@ -3587,15 +3593,21 @@ async function testFixSandboxAdversarial() {
       console.log(`SKIP (recorded reason) sandbox adversarial denials: bwrap probe failed - ${resolution.attempts.map((a) => a.detail).join('; ').slice(0, 240)}`);
     } else {
       const canary = `canary-${Math.random().toString(36).slice(2)}`;
+      // Literal paths again: the environment is cleared inside the sandbox, so a
+      // $T/$P/$W reference would expand to nothing and the assertion would be about
+      // an empty string rather than about the mount.
+      const qp = (x) => JSON.stringify(x);
+      const P = plan.projectRoot;
+      const T = plan.targetDir;
       const intent = [
-        'printf ok > "$T/edit.txt" && echo ALLOW-target || echo DENY-target',
-        'printf x > "$P/evidence/cli.mjs" 2>/dev/null && echo ALLOW-tool || echo DENY-tool',
-        'printf x > "$P/runner/run-batch.mjs" 2>/dev/null && echo ALLOW-runner || echo DENY-runner',
-        'printf x > "$P/.git/hooks/pre-commit" 2>/dev/null && echo ALLOW-hook || echo DENY-hook',
-        'printf x > "$P/node_modules/evil.js" 2>/dev/null && echo ALLOW-dep || echo DENY-dep',
-        'printf x > "$P/reports/latest" 2>/dev/null && echo ALLOW-latest || echo DENY-latest',
+        `printf ok > ${qp(join(T, 'edit.txt'))} && echo ALLOW-target || echo DENY-target`,
+        `printf x > ${qp(join(P, 'evidence', 'cli.mjs'))} 2>/dev/null && echo ALLOW-tool || echo DENY-tool`,
+        `printf x > ${qp(join(P, 'runner', 'run-batch.mjs'))} 2>/dev/null && echo ALLOW-runner || echo DENY-runner`,
+        `printf x > ${qp(join(P, '.git', 'hooks', 'pre-commit'))} 2>/dev/null && echo ALLOW-hook || echo DENY-hook`,
+        `printf x > ${qp(join(P, 'node_modules', 'evil.js'))} 2>/dev/null && echo ALLOW-dep || echo DENY-dep`,
+        `printf x > ${qp(join(P, 'reports', 'latest'))} 2>/dev/null && echo ALLOW-latest || echo DENY-latest`,
         'printf x > /tmp/transient.txt && echo ALLOW-tmp || echo DENY-tmp',
-        'printf ok > "$W/bundle.js" && echo ALLOW-allowwrite || echo DENY-allowwrite',
+        `printf ok > ${qp(join(buildRoot, 'bundle.js'))} && echo ALLOW-allowwrite || echo DENY-allowwrite`,
         '[ -z "$UPLIFT_TEST_CANARY" ] && echo CANARY-ABSENT || echo CANARY-LEAKED',
       ].join('; ');
       const run1 = spawnSync('bwrap', bwrapArgs(plan, '/bin/sh', ['-c', intent]), {
