@@ -2650,8 +2650,18 @@ function attachServiceWorkerState(client, url) {
   };
 }
 
-function iconSatisfies(icons, size) {
-  const re = new RegExp(`(^|\\s)${size}x${size}(\\s|$)`);
+// The size matchers are built once per requested size and reused: the manifest
+// check asks for 192 and 512 on every run, and this used to rebuild the RegExp on
+// every call. The pattern carries no /g flag, so a shared instance keeps no
+// lastIndex state and is safe to reuse (web-uplift-33h).
+const ICON_SIZE_PATTERNS = new Map();
+
+export function iconSatisfies(icons, size) {
+  let re = ICON_SIZE_PATTERNS.get(size);
+  if (!re) {
+    re = new RegExp(`(^|\\s)${size}x${size}(\\s|$)`);
+    ICON_SIZE_PATTERNS.set(size, re);
+  }
   return (icons || []).some((i) => {
     const sizes = String(i?.sizes || '');
     return /any/i.test(sizes) || re.test(sizes);

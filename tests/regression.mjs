@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { gather, waitForInteractEvidence } from '../evidence/cli.mjs';
+import { gather, iconSatisfies, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -18,6 +18,7 @@ try {
   testSyntaxChecks();
   testPackageRootImportIsSideEffectFree();
   testChromeCandidateDiscovery();
+  testIconSatisfiesMatrix();
   await testLaunchRetryAndDiagnostics();
   testSchemaValidation();
   testAtomicCoverageValidator();
@@ -2325,4 +2326,42 @@ async function testConsoleInteractDeadlineValidation() {
     seen.observed === true && seen.pending === false,
     `an entry during the wait must be observed and not pending: ${JSON.stringify(seen)}`,
   );
+}
+
+// iconSatisfies memoises its size matcher; the cache must not change what it
+// classifies. This pins the cached path against the direct construction over a
+// matrix that includes 'any', multiple and padded sizes, a non-matching size,
+// the exact call-site sizes, and a string size argument (web-uplift-33h).
+function testIconSatisfiesMatrix() {
+  const direct = (icons, size) => {
+    const re = new RegExp(`(^|\\s)${size}x${size}(\\s|$)`);
+    return (icons || []).some((i) => {
+      const sizes = String(i?.sizes || '');
+      return /any/i.test(sizes) || re.test(sizes);
+    });
+  };
+  const iconSets = [
+    [{ sizes: '192x192' }, { sizes: '512x512' }],
+    [{ sizes: '512x512 192x192' }],
+    [{ sizes: 'any' }],
+    [{ sizes: 'ANY' }],
+    [{ sizes: '192x192 ' }],
+    [{ sizes: ' 512x512' }],
+    [{ sizes: '' }],
+    [{ sizes: null }],
+    [{}],
+    [],
+    null,
+    [{ sizes: '48x48' }],
+    [{ sizes: '192x192x192' }],
+    [{ sizes: '512x512' }, null, { sizes: '192x192' }],
+  ];
+  for (const icons of iconSets) {
+    for (const size of [192, 512, 96, '192']) {
+      assert(
+        iconSatisfies(icons, size) === direct(icons, size),
+        `iconSatisfies must classify like the direct construction for ${size}: ${JSON.stringify(icons)}`,
+      );
+    }
+  }
 }
