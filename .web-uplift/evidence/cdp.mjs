@@ -612,8 +612,8 @@ export async function navigate(
   const { Page } = client;
 
   const blanked = Page.loadEventFired();
-  await withDeadline(Page.navigate({ url: 'about:blank' }), navigationDeadlineMs, 'the about:blank navigation to be accepted');
-  await withDeadline(blanked, navigationDeadlineMs, 'the load event for about:blank');
+  await withDeadline(Page.navigate({ url: 'about:blank' }), navigationDeadlineMs, `the about:blank navigation to be accepted (en route to ${url})`);
+  await withDeadline(blanked, navigationDeadlineMs, `the load event for about:blank (en route to ${url})`);
 
   if (beforeTargetNavigate) await withDeadline(beforeTargetNavigate(), navigationDeadlineMs, 'the pre-navigation preparation');
 

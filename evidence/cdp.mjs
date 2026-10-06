@@ -260,6 +260,12 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // Bound a CDP wait. A rejection carries the bound, what was being awaited, and
 // how to raise the bound, so a starved host produces an actionable error
 // instead of an indefinite hang.
+// The current navigation bound, for callers that navigate directly (the trace
+// primitive) and must take the same bound navigate() uses, flag included.
+export function getNavigationDeadlineMs() {
+  return navigationDeadlineMsDefault;
+}
+
 export function withDeadline(promise, ms, description) {
   return new Promise((resolvePromise, rejectPromise) => {
     const timer = setTimeout(() => {
@@ -612,8 +618,8 @@ export async function navigate(
   const { Page } = client;
 
   const blanked = Page.loadEventFired();
-  await withDeadline(Page.navigate({ url: 'about:blank' }), navigationDeadlineMs, 'the about:blank navigation to be accepted');
-  await withDeadline(blanked, navigationDeadlineMs, 'the load event for about:blank');
+  await withDeadline(Page.navigate({ url: 'about:blank' }), navigationDeadlineMs, `the about:blank navigation to be accepted (en route to ${url})`);
+  await withDeadline(blanked, navigationDeadlineMs, `the load event for about:blank (en route to ${url})`);
 
   if (beforeTargetNavigate) await withDeadline(beforeTargetNavigate(), navigationDeadlineMs, 'the pre-navigation preparation');
 

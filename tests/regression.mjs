@@ -5096,13 +5096,18 @@ async function testCdpDeadline() {
       const t2 = Date.now();
       let navErr = null;
       try {
-        await navigate(session.client, starvedUrl, { settleMs: 0, navigationDeadlineMs: 400 });
+        // 1500ms, not a few hundred: under fleet load the about:blank pre-step alone can
+        // exceed a very small deadline (observed in the first gate run), and the bound must
+        // survive that while still firing promptly on the never-responding target. Every
+        // step's message names the ultimate target URL, so the assertion holds whichever
+        // step the bound fires on - and the run is bounded either way, which is the claim.
+        await navigate(session.client, starvedUrl, { settleMs: 0, navigationDeadlineMs: 1500 });
       } catch (e) {
         navErr = e;
       }
       const elapsed = Date.now() - t2;
       assert(
-        navErr && navErr.message.includes('timed out after 400ms') && navErr.message.includes(starvedUrl),
+        navErr && navErr.message.includes('timed out after 1500ms') && navErr.message.includes(starvedUrl),
         `17o: a starved navigation must fail loudly, naming the URL and the bound (${navErr && navErr.message})`,
       );
       assert(
