@@ -5260,17 +5260,48 @@ async function testCdpDeadline() {
   });
   const STUB_DEADLINE_MS = 300;
   const stubUrl = 'http://stub.invalid/';
+  // TEST-OWNED TIMEOUT, and why it is NOT redundant - do not remove it: the assertions
+  // below must be able to FAIL ON THEIR OWN. The stub promises behind the two failure
+  // cases never settle, so if the production bound were ever removed or broken, awaiting
+  // trace() directly would HANG the suite (the runner has no timeout of its own) - and a
+  // guard that cannot report the exact regression it exists to catch is not a control.
+  // Each failure-case call therefore races a test deadline set comfortably above the
+  // production bound, so the two cannot be confused: bound present -> the production
+  // rejection wins the race and the assertions check its text; bound absent -> the test
+  // deadline wins and the case fails BY ASSERTION within TEST_OWNED_TIMEOUT_MS, naming
+  // which bound never rejected.
+  const TEST_OWNED_TIMEOUT_MS = 5000;
+  const withTestTimeout = (call, boundName) => {
+    let timer = null;
+    return Promise.race([
+      call,
+      new Promise((_, rejectTest) => {
+        timer = setTimeout(
+          () =>
+            rejectTest(
+              new Error(
+                `4ux stub: TEST-OWNED TIMEOUT - the production bound (${boundName}) did not reject within ${TEST_OWNED_TIMEOUT_MS}ms; without it this call never settles and the suite would hang`,
+              ),
+            ),
+          TEST_OWNED_TIMEOUT_MS,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+  };
   try {
     configureCdpDeadlines({ navigationMs: STUB_DEADLINE_MS, callMs: STUB_DEADLINE_MS });
     // (a) the tracing-complete event never arrives -> that bound must fire.
     const t4 = Date.now();
     let completeErr = null;
     try {
-      await trace(
-        stubClient({ completeFires: false, endResolves: true }),
-        stubUrl,
-        { wait: 0, out: join(tmp, 'trace-stub-complete.json') },
-        () => {},
+      await withTestTimeout(
+        trace(
+          stubClient({ completeFires: false, endResolves: true }),
+          stubUrl,
+          { wait: 0, out: join(tmp, 'trace-stub-complete.json') },
+          () => {},
+        ),
+        'the trace-to-complete bound',
       );
     } catch (e) {
       completeErr = e;
@@ -5296,11 +5327,14 @@ async function testCdpDeadline() {
     // (b) Tracing.end is never acked -> the end bound must fire (the complete wait is never reached).
     let endErr = null;
     try {
-      await trace(
-        stubClient({ completeFires: false, endResolves: false }),
-        stubUrl,
-        { wait: 0, out: join(tmp, 'trace-stub-end.json') },
-        () => {},
+      await withTestTimeout(
+        trace(
+          stubClient({ completeFires: false, endResolves: false }),
+          stubUrl,
+          { wait: 0, out: join(tmp, 'trace-stub-end.json') },
+          () => {},
+        ),
+        'the browser-to-end-tracing bound',
       );
     } catch (e) {
       endErr = e;
