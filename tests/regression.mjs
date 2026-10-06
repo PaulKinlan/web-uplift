@@ -1336,7 +1336,11 @@ async function testResilienceWaitsForLateServiceWorkerRegistration() {
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
   try {
     const base = `http://127.0.0.1:${server.address().port}`;
-    const result = await gather('resilience', `${base}/`, { quiet: true, wait: 400 });
+    // screenshots: false, matching the other resilience fixtures that assert state rather
+    // than pixels: without it (or an `out` path) the primitive derives the offline
+    // screenshot name from the report path and writes it into the working directory, which
+    // leaves an untracked file in the checkout after every suite run.
+    const result = await gather('resilience', `${base}/`, { quiet: true, wait: 400, screenshots: false });
     const regs = result.serviceWorker?.cdp?.registrations ?? [];
     assert(
       regs.some((r) => r.pageOrigin && String(r.scopeURL).startsWith(base)),
