@@ -253,10 +253,13 @@ function imageSize(buf) {
         // The segment must end inside the buffer before any field of it is read.
         if (j + len + 1 > buf.length) return null;
         if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-          // A start-of-frame declares precision, height, width and at least one
-          // component, so its own declared length has to be long enough to hold them:
-          // a length of 2 leaves the bytes read as dimensions outside the segment.
-          if (len < 8) return null;
+          // A start-of-frame declares its own length, and that length has to cover the
+          // precision, the size AND every component entry it claims: eight bytes plus
+          // three per component. A flat minimum of eight let a segment with no
+          // component entries at all be given a size.
+          if (j + 8 > buf.length) return null;
+          const components = buf[j + 8];
+          if (components < 1 || len < 8 + 3 * components) return null;
           return usable(buf.readUInt16BE(j + 6), buf.readUInt16BE(j + 4));
         }
         i = j + 1 + len;
@@ -271,10 +274,17 @@ function imageSize(buf) {
       if (containerEnd > buf.length) return null; // declares more than the file holds
       const chunkSize = buf.readUInt32LE(16);
       const fourCc = buf.toString('latin1', 12, 16);
+      // The whole chunk extent, padding included, must fit inside BOTH the container
+      // the RIFF header declares and the buffer itself. A chunk with a minimum size but
+      // no upper bound let a chunk declared past the end of its own file yield
+      // dimensions.
+      const chunkDataStart = 20;
+      const chunkEnd = chunkDataStart + chunkSize + (chunkSize % 2);
+      if (chunkEnd > containerEnd || chunkEnd > buf.length) return null;
       // Both directions matter: a container or chunk declared too SMALL leaves the
       // fields outside the range the format claims just as much as one declared too
       // large leaves them outside the buffer.
-      const inside = (offset, length) => offset + length <= containerEnd && offset + length <= buf.length;
+      const inside = (offset, length) => offset + length <= chunkEnd && offset + length <= buf.length;
       if (fourCc === 'VP8X') {
         if (chunkSize < 10 || !inside(24, 6)) return null;
         return usable(buf.readUIntLE(24, 3) + 1, buf.readUIntLE(27, 3) + 1);

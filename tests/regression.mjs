@@ -2079,25 +2079,6 @@ async function testScorecardReservesImageBoxes() {
     Buffer.from([8, 6, 0, 0, 0]),
     Buffer.alloc(4),
   ]);
-  // A JPEG whose start-of-frame is preceded by marker FILL bytes (0xFF padding). This
-  // is the case that made a valid image lose its box: the walk read the fill byte as
-  // the marker, took a length from the following bytes and stepped over the frame.
-  const jpegWithFill = (w, h) => {
-    const sof = Buffer.alloc(11);
-    sof.writeUInt16BE(0xffc0, 0);
-    sof.writeUInt16BE(9, 2);
-    sof[4] = 8;
-    sof.writeUInt16BE(h, 5);
-    sof.writeUInt16BE(w, 7);
-    sof[9] = 1;
-    return Buffer.concat([
-      Buffer.from([0xff, 0xd8]),
-      Buffer.from([0xff, 0xfe, 0x00, 0x04, 0x00, 0x00]),
-      Buffer.from([0xff, 0xff, 0xff]),
-      sof,
-      Buffer.from([0xff, 0xd9]),
-    ]);
-  };
   const webpVp8l = (w, h) => {
     const b = Buffer.alloc(40);
     b.write('RIFF', 0, 'latin1');
@@ -2116,8 +2097,13 @@ async function testScorecardReservesImageBoxes() {
     g.writeUInt16LE(48, 8);
     return g;
   })();
+  // Which fixtures are real and which are not, since it matters: the PNG, JPEG and
+  // WebP below are produced by Chrome's own encoder, and the fill-byte JPEG is a real
+  // encoded JPEG with padding injected before its start-of-frame. The GIF is synthetic
+  // because this environment has no GIF encoder, and the VP8L, the two counterexamples
+  // and the malformed files are synthetic because the malformed ones cannot come from
+  // an encoder by definition.
   writeFileSync(join(dirs[0], 'plain.gif'), gif);
-  writeFileSync(join(dirs[0], 'fill.jpg'), jpegWithFill(222, 111));
   writeFileSync(join(dirs[1], 'vp8l.webp'), webpVp8l(130, 70));
   // Malformed or truncated: a PNG signature with no IHDR, a GIF too short to hold a
   // logical screen descriptor, a JPEG that ends inside its frame header, a WebP whose
@@ -2134,6 +2120,21 @@ async function testScorecardReservesImageBoxes() {
     b.writeUInt32LE(20, 16);
     return b;
   })());
+  // The reviewer's two counterexamples for this round: a chunk whose declared extent
+  // runs past its own container, and a start-of-frame whose declared length cannot hold
+  // the component entries it claims.
+  writeFileSync(join(dirs[0], 'oversized-chunk.webp'), (() => {
+    const b = Buffer.alloc(40);
+    b.write('RIFF', 0, 'latin1');
+    b.writeUInt32LE(32, 4);
+    b.write('WEBP', 8, 'latin1');
+    b.write('VP8X', 12, 'latin1');
+    b.writeUInt32LE(9999, 16);
+    b.writeUIntLE(5, 24, 3);
+    b.writeUIntLE(5, 27, 3);
+    return b;
+  })());
+  writeFileSync(join(dirs[0], 'short-sof-components.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 0x08, 0x00, 0x0b, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00]));
   writeFileSync(join(dirs[0], 'junk.png'), Buffer.from('not an image at all'));
   // The two counterexamples from the review: shapes the EARLIER parser sized from
   // bytes the file does not claim to contain, which is what makes these fixtures
@@ -2160,6 +2161,29 @@ async function testScorecardReservesImageBoxes() {
       return Buffer.from(String(url).split(',')[1], 'base64');
     };
     writeFileSync(join(dirs[0], 'before.png'), await encode('image/png', 400, 250));
+    // A real JPEG with marker FILL bytes injected before its start-of-frame: the fill
+    // path exercised on a structurally valid image rather than on hand-built arithmetic,
+    // and it stays decodable, which the browser is asked to confirm below.
+    const realJpeg = await encode('image/jpeg', 222, 111);
+    const sofAt = (() => {
+      for (let i = 2; i + 3 < realJpeg.length; i += 1) {
+        if (realJpeg[i] !== 0xff) continue;
+        const marker = realJpeg[i + 1];
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) return i;
+      }
+      return -1;
+    })();
+    assert(sofAt > 0, 'xq5: the encoded JPEG must contain a start-of-frame to pad before');
+    const fillJpeg = Buffer.concat([realJpeg.subarray(0, sofAt), Buffer.from([0xff, 0xff, 0xff]), realJpeg.subarray(sofAt)]);
+    writeFileSync(join(dirs[0], 'fill.jpg'), fillJpeg);
+    const decodedFill = await evaluate(
+      client,
+      `(async () => { const i = new Image(); i.src = ${JSON.stringify('data:image/jpeg;base64,' + fillJpeg.toString('base64'))}; await i.decode(); return { w: i.naturalWidth, h: i.naturalHeight }; })()`,
+    );
+    assert(
+      decodedFill.w === 222 && decodedFill.h === 111,
+      `xq5: the fill-byte fixture must be a real decodable JPEG of 222x111, got ${JSON.stringify(decodedFill)}`,
+    );
     writeFileSync(join(dirs[1], 'after.jpg'), await encode('image/jpeg', 300, 180));
     writeFileSync(join(dirs[1], 'extra.webp'), await encode('image/webp', 200, 120));
     // A screenshot attached to a finding: the third emission site, inside the finding
@@ -2200,6 +2224,8 @@ async function testScorecardReservesImageBoxes() {
         { before: 'junk.png', after: 'after.jpg', caption: 'not an image' },
         { before: 'short-sof.jpg', after: 'before.png', caption: 'segment too short for its fields' },
         { before: 'undersized-riff.webp', after: 'after.jpg', caption: 'container too small for its fields' },
+        { before: 'oversized-chunk.webp', after: 'after.jpg', caption: 'chunk extends past its container' },
+        { before: 'short-sof-components.jpg', after: 'before.png', caption: 'frame cannot hold its components' },
         { before: 'missing.png', after: 'after.jpg', caption: 'absent file' },
         // Neither side readable: the pair is dropped, which is the production rule and
         // was left uncovered when this test was rewritten.
@@ -2239,6 +2265,8 @@ async function testScorecardReservesImageBoxes() {
       ['junk.png', 'png', readFileSync(join(dirs[0], 'junk.png'))],
       ['short-sof.jpg', 'jpeg', readFileSync(join(dirs[0], 'short-sof.jpg'))],
       ['undersized-riff.webp', 'webp', readFileSync(join(dirs[0], 'undersized-riff.webp'))],
+      ['oversized-chunk.webp', 'webp', readFileSync(join(dirs[0], 'oversized-chunk.webp'))],
+      ['short-sof-components.jpg', 'jpeg', readFileSync(join(dirs[0], 'short-sof-components.jpg'))],
     ]) {
       const src = `src="data:image/${ext};base64,${bytes.toString('base64')}"`;
       const tag = html.match(new RegExp(`<img[^>]*${escRe(src)}[^>]*>`))?.[0];
