@@ -56,6 +56,7 @@ try {
   testFixModeScopeEdgeCases();
   await testFixSandboxMountContract();
   testFixSandboxProviderSeam();
+  await testFixSandboxAdversarial();
   testFixSandboxedRunPublishes();
   await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
@@ -3516,6 +3517,138 @@ function testFixSandboxedRunPublishes() {
       'sandboxed run: the isolation record must travel into the retained result',
     );
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// The adversarial half of the sandbox: the holes a review found in the first
+// profile. Each case is a way the boundary could be bypassed rather than a way it
+// could be used, so they assert refusals and syscall-level denials.
+async function testFixSandboxAdversarial() {
+  const { buildPlan, bwrapArgs, resolveIsolation, securityRecordPath, readSecurityRecord } = await import('../fixer/sandbox.mjs');
+  const proj = mkdtempSync(join(tmpdir(), 'web-uplift-adv-'));
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-advrun-'));
+  try {
+    for (const d of ['src', 'evidence', '.git/hooks', 'node_modules', 'reports', 'runner', '.claude/skills']) {
+      mkdirSync(join(proj, d), { recursive: true });
+    }
+    writeFileSync(join(proj, 'src', 'index.html'), '<h1>hi</h1>');
+    writeFileSync(join(proj, 'evidence', 'cli.mjs'), 'export const x = 1;\n');
+    writeFileSync(join(proj, 'runner', 'run-batch.mjs'), 'export const y = 1;\n');
+    writeFileSync(join(proj, '.git', 'config'), '[core]\n');
+    writeFileSync(join(proj, 'node_modules', 'dep.js'), 'dep\n');
+    writeFileSync(join(proj, 'reports', 'latest'), 'run-1\n');
+    // The fixer creates --out before it plans; do the same here so these cases test
+    // the overlap rule rather than a missing directory.
+    for (const d of ['reports/h/r1', 'reports/example.test/r1']) mkdirSync(join(proj, d), { recursive: true });
+    const base = { projectRoot: proj, agentName: 'claude', agentBin: process.execPath };
+
+    // 1. OVERLAP VALIDATION: a writable --target or --out that IS, or sits inside, a
+    // tree a later step executes or publishes must be refused before any mount.
+    const nested = [
+      ['--target inside .git', { targetDir: join(proj, '.git', 'hooks'), outDir: join(proj, 'reports', 'h', 'r1') }],
+      ['--target inside node_modules', { targetDir: join(proj, 'node_modules'), outDir: join(proj, 'reports', 'h', 'r1') }],
+      ['--target inside the tool', { targetDir: join(proj, 'evidence'), outDir: join(proj, 'reports', 'h', 'r1') }],
+      ['--out is the reports tree', { targetDir: join(proj, 'src'), outDir: join(proj, 'reports') }],
+      ['--out inside the tool', { targetDir: join(proj, 'src'), outDir: join(proj, 'evidence') }],
+      ['--allow-write into .git', { targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'h', 'r1'), extraWritable: [join(proj, '.git', 'hooks')] }],
+    ];
+    for (const [label, args] of nested) {
+      const plan = buildPlan({ ...base, ...args });
+      assert(plan.refused, `sandbox adversarial: ${label} must be refused, but the plan was accepted`);
+    }
+    // ...while a genuine run leaf under reports/ is allowed (that is where fix mode writes).
+    const leaf = buildPlan({ ...base, targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'example.test', 'r1') });
+    assert(!leaf.refused, `sandbox adversarial: a run leaf under reports/ must be allowed (${leaf.notes.filter((n) => n.level === 'refuse').map((n) => n.reason).join('; ')})`);
+
+    // 2. SYSCALL-LEVEL DENIALS with --target at the PROJECT ROOT: the canonical
+    // tooling, the git directory and a dependency must all refuse a write, an
+    // out-of-scope host path must be unreachable, and a canary variable planted in
+    // the parent environment must NOT be visible inside.
+    // An operator-declared extra writable root (--allow-write) must be a REAL mount
+    // under isolation, not a path only the tripwire tolerates: the flag promises a
+    // legitimate build output can be written, and a promise the sandbox denies is
+    // worse than no flag.
+    const buildRoot = join(root, 'build-out');
+    mkdirSync(buildRoot, { recursive: true });
+    const plan = buildPlan({ ...base, targetDir: proj, outDir: join(proj, 'reports', 'example.test', 'r1'), extraWritable: [buildRoot] });
+    assert(!plan.refused, 'sandbox adversarial: the project-root target plan must build');
+    assert(plan.writable.includes(buildRoot) && plan.rw.includes(buildRoot), 'sandbox adversarial: --allow-write must become a writable mount');
+    const resolution = resolveIsolation({ plan, force: 'bwrap' });
+    if (resolution.isolation !== 'bwrap') {
+      console.log(`SKIP (recorded reason) sandbox adversarial denials: bwrap probe failed - ${resolution.attempts.map((a) => a.detail).join('; ').slice(0, 240)}`);
+    } else {
+      const canary = `canary-${Math.random().toString(36).slice(2)}`;
+      const intent = [
+        'printf ok > "$T/edit.txt" && echo ALLOW-target || echo DENY-target',
+        'printf x > "$P/evidence/cli.mjs" 2>/dev/null && echo ALLOW-tool || echo DENY-tool',
+        'printf x > "$P/runner/run-batch.mjs" 2>/dev/null && echo ALLOW-runner || echo DENY-runner',
+        'printf x > "$P/.git/hooks/pre-commit" 2>/dev/null && echo ALLOW-hook || echo DENY-hook',
+        'printf x > "$P/node_modules/evil.js" 2>/dev/null && echo ALLOW-dep || echo DENY-dep',
+        'printf x > "$P/reports/latest" 2>/dev/null && echo ALLOW-latest || echo DENY-latest',
+        'printf x > /tmp/transient.txt && echo ALLOW-tmp || echo DENY-tmp',
+        'printf ok > "$W/bundle.js" && echo ALLOW-allowwrite || echo DENY-allowwrite',
+        '[ -z "$UPLIFT_TEST_CANARY" ] && echo CANARY-ABSENT || echo CANARY-LEAKED',
+      ].join('; ');
+      const run1 = spawnSync('bwrap', bwrapArgs(plan, '/bin/sh', ['-c', intent]), {
+        encoding: 'utf8',
+        timeout: 60000,
+        env: { ...process.env, ...plan.env, T: plan.targetDir, P: plan.projectRoot, W: buildRoot, UPLIFT_TEST_CANARY: canary },
+      });
+      const stdout = run1.stdout ?? '';
+      const verdict = (k) => (new RegExp(`^(ALLOW|DENY|CANARY)-${k}$`, 'm').exec(stdout) ?? [])[0] ?? `(missing: ${(run1.stderr ?? '').slice(-160)})`;
+      assert(verdict('target') === 'ALLOW-target', `sandbox adversarial: --target must be writable (${verdict('target')})`);
+      assert(verdict('tool') === 'DENY-tool', `sandbox adversarial: the evidence CLI must refuse a write (${verdict('tool')})`);
+      assert(verdict('runner') === 'DENY-runner', `sandbox adversarial: the runner tree must refuse a write (${verdict('runner')})`);
+      assert(verdict('hook') === 'DENY-hook', `sandbox adversarial: a git hook must refuse a write (${verdict('hook')})`);
+      assert(verdict('dep') === 'DENY-dep', `sandbox adversarial: a dependency must refuse a write (${verdict('dep')})`);
+      assert(verdict('latest') === 'DENY-latest', `sandbox adversarial: the report pointer must refuse a write (${verdict('latest')})`);
+      assert(verdict('tmp') === 'ALLOW-tmp', `sandbox adversarial: /tmp must stay privately writable (${verdict('tmp')})`);
+      assert(verdict('allowwrite') === 'ALLOW-allowwrite', `sandbox adversarial: an --allow-write root must be writable inside the sandbox (${verdict('allowwrite')})`);
+      assert(verdict('ABSENT') === 'CANARY-ABSENT', `sandbox adversarial: a host environment variable must NOT reach the child (${verdict('ABSENT')})`);
+    }
+
+    // 3. MARKER AUTHORITY: the agent has write access to --out, so it can rewrite the
+    // record there. The authority lives beside --out, the divergence is recorded, and
+    // the published record comes from the authority.
+    const binDir = join(root, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const fixture = join(root, 'site');
+    mkdirSync(fixture, { recursive: true });
+    writeFileSync(join(fixture, 'index.html'), '<h1>before</h1>');
+    const out = join(root, 'out');
+    const bin = join(binDir, 'claude');
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      `printf '{"isolation":"bwrap","forged":true}' > ${JSON.stringify(join(out, 'run-security.json'))}`,
+      `printf '<h1>after</h1>' > ${JSON.stringify(join(fixture, 'index.html'))}`,
+      `cp ${JSON.stringify(join(repoRoot, 'examples', 'playground-report-fixed.json'))} ${JSON.stringify(join(out, 'report.json'))}`,
+      'echo \'{"agent":"stub"}\'',
+    ].join('\n') + '\n');
+    chmodSync(bin, 0o755);
+    const res = run(process.execPath, [
+      join(repoRoot, 'fixer', 'fix.mjs'), '--target', fixture, '--audit-url', 'http://example.test/',
+      '--agent', 'claude', '--findings', join(repoRoot, 'examples', 'playground-report.json'),
+      '--out', out, '--reports-root', join(root, 'reports'), '--max-iterations', '1',
+    ], { cwd: repoRoot, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+    if (!/^agent isolation: bwrap/m.test(res.stdout ?? '')) {
+      console.log(`SKIP (recorded reason) sandbox adversarial marker: no sandbox on this host (${(res.stdout ?? '').split('\n').find((l) => /isolation/.test(l)) ?? 'no isolation line'})`);
+    } else {
+      const authority = readSecurityRecord(out);
+      assert(authority !== null, `sandbox adversarial: the authoritative record must exist at ${securityRecordPath(out)}`);
+      assert(authority.forged === undefined, `sandbox adversarial: the authority must not be the forged copy (${JSON.stringify(authority?.forged)})`);
+      assert(authority.tamperedInOutputDir === true, 'sandbox adversarial: the divergence inside --out must be recorded');
+      const inside = JSON.parse(readFileSync(join(out, 'run-security.json'), 'utf8'));
+      assert(inside.forged === undefined && inside.tamperedInOutputDir === true, 'sandbox adversarial: the copy inside --out must be restored from the authority');
+      const host = readdirSync(join(root, 'reports'))[0];
+      const after = readdirSync(join(root, 'reports', host)).find((e) => e.endsWith('-after'));
+      if (after) {
+        const published = JSON.parse(readFileSync(join(root, 'reports', host, after, 'run-security.json'), 'utf8'));
+        assert(published.forged === undefined, 'sandbox adversarial: the published record must come from the authority, not from --out');
+      }
+    }
+  } finally {
+    rmSync(proj, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
 }

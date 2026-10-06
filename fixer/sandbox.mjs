@@ -46,14 +46,18 @@
 //     network it is allowed to use.
 //   * Anything the child writes inside its read-write mounts is real: this is
 //     isolation FROM the rest of the host, not a scratch copy of the target.
+//   * HARD LINKS. A read-only bind stops a path being written, not an inode: a file
+//     that already has another link inside a writable root stays writable through
+//     that link. The plan scans the target and warns with a count (bounded), because
+//     some toolchains link legitimately, but this boundary cannot close that hole.
 //
 // OVERRIDE: --allow-unsandboxed-agent keeps a run possible on a host with no
 // provider. It is recorded as an explicit, section-7-style accepted risk - never as
 // I4 compliance - and it is loud: a warning on stderr and an atomic marker written
 // BEFORE the first spawn, which also travels into the retained result.
 
-import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { resolveChromePath } from '../evidence/cdp.mjs';
 
@@ -69,6 +73,17 @@ const SYSTEM_RO = [
 // writable: the vendored tool and dependency tree are executed by later steps, the
 // git directory carries hooks, and reports/ carries the published run pointers.
 const PROTECTED_NAMES = ['.git', 'node_modules', '.web-uplift', 'reports'];
+
+// Trees that ARE the tool, or that a later step EXECUTES. With --target at the
+// project root the writable target bind would otherwise make all of these editable,
+// and the skill prefers `node evidence/cli.mjs`, so an agent could swap the
+// executable a later iteration runs. They are re-bound read-only AFTER the target
+// bind, so the last bind wins, and they are part of the overlap validation so a
+// --target or --out that lands inside one is rejected outright.
+const CANONICAL_TOOLING = ['evidence', '.web-uplift', 'runner', 'fixer', 'aggregate', 'schema', 'knowledge', 'bin', '.claude', '.pi', '.codex'];
+
+// Every tree that must never be writable in a fix run.
+const PROTECTED_TREES = [...PROTECTED_NAMES, ...CANONICAL_TOOLING];
 
 // Credential locations per agent CLI. Bound read-only, at the host path and inside
 // the private HOME, so an agent that resolves either way still authenticates.
@@ -89,6 +104,9 @@ const ENV_ALLOW = ['PATH', 'LANG', 'LANGUAGE', 'LC_ALL', 'TZ', 'TERM'];
 
 export const SANDBOX_HOME = '/run/web-uplift-home';
 
+// Trees the hard-link scan skips (dependency stores, the vendored tool, report output).
+const EXCLUDE_SEGMENTS = new Set(['node_modules', '.web-uplift', 'reports']);
+
 function realOrNull(p) {
   try {
     return realpathSync(p);
@@ -107,7 +125,7 @@ function isDir(p) {
 
 // Everything the plan needs, with paths resolved and symlinks followed, so the
 // launch uses exactly what was validated.
-export function buildPlan({ projectRoot, targetDir, outDir, agentName, agentBin, extraReadOnly = [] }) {
+export function buildPlan({ projectRoot, targetDir, outDir, agentName, agentBin, extraReadOnly = [], extraWritable = [] }) {
   const notes = [];
   const refuse = (reason) => notes.push({ level: 'refuse', reason });
   const warn = (reason) => notes.push({ level: 'warn', reason });
@@ -121,8 +139,57 @@ export function buildPlan({ projectRoot, targetDir, outDir, agentName, agentBin,
   if (target && out && target === out) {
     refuse('--target and --out resolve to the same directory: a run that writes its report into its own editable source tree cannot be scoped');
   }
+
+  // OVERLAP VALIDATION, before any mount is built. A --target or --out that IS a
+  // protected tree, or sits inside one, would take a writable bind over something a
+  // later step executes or publishes - .git/hooks, a dependency, the vendored tool,
+  // or the report pointers. The one permitted shape under reports/ is a genuine run
+  // leaf (`reports/<host>/<run>`), which is where fix mode already writes.
+  const insideOrEqual = (p, base) => p === base || p.startsWith(base + sep);
+  const segmentsUnder = (p, base) => relative(base, p).split(sep).filter(Boolean);
+  const overlapsProtected = (p) => {
+    if (!p) return null;
+    for (const name of PROTECTED_TREES) {
+      const tree = join(root ?? dirname(p), name);
+      if (!insideOrEqual(p, tree)) continue;
+      if (p === tree) return `${name} itself`;
+      const rest = segmentsUnder(p, tree);
+      if (name === 'reports' && rest.length >= 2 && !rest.some((s) => PROTECTED_TREES.includes(s))) {
+        continue; // a real run leaf under reports/
+      }
+      return `beneath ${name}`;
+    }
+    return null;
+  };
+  for (const [label, p] of [['--target', target], ['--out', out]]) {
+    const hit = overlapsProtected(p);
+    if (hit) refuse(`${label} resolves to ${p}, which is ${hit}: a writable mount there would expose something a later step executes or publishes`);
+  }
+
+  // Operator-declared extra writable roots (--allow-write). Created if absent so the
+  // bind target exists, then validated like the other writable roots: an isolated
+  // run must actually be able to write them, or the option is a lie.
+  const writable = [];
+  for (const p of extraWritable.filter(Boolean)) {
+    const abs = resolve(p);
+    try {
+      mkdirSync(abs, { recursive: true });
+    } catch { /* validated below */ }
+    const real = realOrNull(abs);
+    if (!real) {
+      refuse(`--allow-write ${p} does not exist and could not be created`);
+      continue;
+    }
+    const hit = overlapsProtected(real);
+    if (hit) {
+      refuse(`--allow-write ${p} is ${hit}: refusing to make a protected tree writable`);
+      continue;
+    }
+    writable.push(real);
+  }
+
   if (root && target && !(target === root || target.startsWith(root + sep))) {
-    warn('--target is outside the project root: the tool tree and --out are mounted separately, so only those two are writable');
+    warn('--target is outside the project root: the tool tree and --out are mounted separately, so only those two (plus any --allow-write root) are writable');
   }
 
   const ro = [];
@@ -181,25 +248,42 @@ export function buildPlan({ projectRoot, targetDir, outDir, agentName, agentBin,
     warn(`no ${agentName} credential directory found: the provider may fail to authenticate inside the sandbox`);
   }
 
-  // Protected paths nested under the writable target.
+  // Protected paths nested under the writable target, plus the canonical tooling
+  // trees (which matter most when the target IS the project root).
   const protectedPaths = [];
+  const addProtected = (p, name) => {
+    const r = realOrNull(p);
+    if (!r || r === target) return;
+    if (r !== p && root && !(r === root || r.startsWith(root + sep))) {
+      refuse(`${name} is a symlink to ${r}, outside the project: it cannot be protected read-only`);
+      return;
+    }
+    protectedPaths.push({ path: p, real: r, name });
+  };
   if (target) {
     for (const name of PROTECTED_NAMES) {
       const p = join(target, name);
-      if (existsSync(p)) {
-        const r = realOrNull(p);
-        if (!r) continue;
-        if (r === target) continue;
-        // A symlinked protected dir pointing outside the project is exactly the
-        // defeat this layer must not accept: the read-only bind would land on the
-        // link, not the real tree.
-        if (r !== p && root && !(r === root || r.startsWith(root + sep))) {
-          refuse(`${name} under --target is a symlink to ${r}, outside the project: it cannot be protected read-only`);
-          continue;
-        }
-        protectedPaths.push({ path: p, real: r, name });
-      }
+      if (existsSync(p)) addProtected(p, name);
     }
+  }
+  if (root) {
+    for (const name of CANONICAL_TOOLING) {
+      const p = join(root, name);
+      if (existsSync(p)) addProtected(p, `${name} (tooling)`);
+    }
+  }
+
+  // Best-effort hard-link detection: a read-only bind does not make an inode
+  // immutable through a PRE-EXISTING hard link created inside the writable target,
+  // so a multiply-linked file is a real (if uncommon) way around this boundary.
+  // Warn with the count rather than refusing: some toolchains link legitimately, and
+  // the operator needs to know, not guess.
+  if (target) {
+    const linked = countHardLinked(target, { limit: 20000 });
+    if (linked.count > 0) {
+      warn(`${linked.count} file(s) under --target have more than one hard link (e.g. ${linked.sample}); a read-only mount cannot stop a write through a link that already exists inside the writable target`);
+    }
+    if (linked.truncated) warn('hard-link scan stopped at its file budget: the count above may be incomplete');
   }
 
   const env = {};
@@ -214,7 +298,8 @@ export function buildPlan({ projectRoot, targetDir, outDir, agentName, agentBin,
     targetDir: target ?? targetDir,
     outDir: out ?? outDir,
     ro: [...new Set(ro)],
-    rw: [target, out].filter(Boolean),
+    rw: [target, ...writable, out].filter(Boolean),
+    writable,
     protectedPaths,
     auth,
     chrome: chrome ? realOrNull(chrome) : null,
@@ -222,6 +307,48 @@ export function buildPlan({ projectRoot, targetDir, outDir, agentName, agentBin,
     notes,
     refused: notes.some((n) => n.level === 'refuse'),
   };
+}
+
+// Count files with st_nlink > 1 under a tree, bounded so a big repo cannot stall a
+// run. Returns a sample path for the warning text.
+function countHardLinked(dir, { limit } = {}) {
+  let count = 0;
+  let sample = null;
+  let seen = 0;
+  let truncated = false;
+  const stack = [dir];
+  while (stack.length) {
+    const cur = stack.pop();
+    let children;
+    try {
+      children = readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const child of children) {
+      if (EXCLUDE_SEGMENTS.has(child.name) || child.name === '.git') continue;
+      const abs = join(cur, child.name);
+      if (child.isDirectory()) {
+        stack.push(abs);
+        continue;
+      }
+      if (!child.isFile()) continue;
+      if (++seen > limit) {
+        truncated = true;
+        return { count, sample, truncated };
+      }
+      try {
+        const st = statSync(abs);
+        if (st.nlink > 1) {
+          count += 1;
+          if (!sample) sample = abs;
+        }
+      } catch {
+        /* raced away */
+      }
+    }
+  }
+  return { count, sample, truncated };
 }
 
 // The bwrap argv for a plan. Mount order matters: later binds win, so the writable
@@ -244,6 +371,10 @@ export function bwrapArgs(plan, command, argv = []) {
     '--tmpfs', '/dev/shm',
     '--tmpfs', '/run',
     '--dir', SANDBOX_HOME,
+    // Start from an EMPTY environment. Every variable the child gets is one this
+    // module chose to pass, so a provider token or proxy credential sitting in the
+    // operator's shell cannot reach a process that untrusted page content steers.
+    '--clearenv',
   ];
   for (const p of plan.ro) a.push('--ro-bind', p, p);
   if (plan.projectRoot) a.push('--ro-bind', plan.projectRoot, plan.projectRoot);
@@ -251,11 +382,11 @@ export function bwrapArgs(plan, command, argv = []) {
     a.push('--ro-bind', authPath, authPath);
     a.push('--ro-bind', authPath, join(SANDBOX_HOME, authPath.split(sep).pop()));
   }
-  // Order is load-bearing. Bind the writable --target tree, THEN re-bind the
-  // protected paths inside it read-only, THEN bind --out. If --out sits under a
-  // protected name (the default `reports/fix-<host>` case, with --target at the
-  // project root) it must win over that read-only re-bind, and it can only win by
-  // being bound after it.
+  // Order is load-bearing. Bind the writable --target tree, THEN re-bind read-only
+  // every protected path inside it AND every canonical tooling tree (so a target
+  // that IS the project root cannot be used to swap evidence/cli.mjs for a later
+  // iteration), THEN bind the remaining writable roots with --out last, because the
+  // default report dir sits under the protected name `reports/` and has to win.
   const [targetBind, ...otherRw] = plan.rw;
   if (targetBind) a.push('--bind', targetBind, targetBind);
   for (const p of plan.protectedPaths) a.push('--ro-bind', p.real, p.path);
@@ -300,14 +431,17 @@ export function unshareScript(plan, command, argv = []) {
 // the writable one by contract, and only the protected paths nested inside it must
 // refuse a write. Getting this wrong makes the probe demand the impossible.
 function probeEnv(plan) {
-  const target = plan.targetDir;
   const protectedPaths = new Set(plan.protectedPaths.map((p) => p.path));
-  const insideTarget = (p) => target && (p === target || p.startsWith(target + sep));
+  const insideWritable = (p) => plan.rw.some((w) => p === w || p.startsWith(w + sep));
   const ro = [plan.projectRoot, ...protectedPaths]
-    .filter((p) => p && (protectedPaths.has(p) || !insideTarget(p)));
+    .filter((p) => p && (protectedPaths.has(p) || !insideWritable(p)));
   return {
     UPLIFT_PROBE_RW: plan.rw.filter(Boolean).join(' '),
     UPLIFT_PROBE_RO: [...new Set(ro)].join(' '),
+    // A canary this module KNOWS about, so the probe can assert the launcher dropped
+    // it. The probe's own environment carries it; if it survives into the child, the
+    // launcher is passing host variables through and the profile fails.
+    UPLIFT_CANARY: `canary-${process.pid}-${Date.now()}`,
   };
 }
 
@@ -318,6 +452,9 @@ function probeCommand() {
     'set -e',
     'for d in $UPLIFT_PROBE_RW; do t="$d/.uplift-probe-$$"; printf x > "$t" || { echo "not writable: $d"; exit 3; }; rm -f "$t"; done',
     'for d in $UPLIFT_PROBE_RO; do [ -r "$d" ] || { echo "not readable: $d"; exit 4; }; t="$d/.uplift-probe-$$"; if printf x > "$t" 2>/dev/null; then rm -f "$t"; echo "writable but should be read-only: $d"; exit 5; fi; done',
+    // The env canary must NOT be visible inside: --clearenv (bwrap) or an explicit
+    // env object (unshare) is what makes this pass.
+    '[ -z "$UPLIFT_CANARY" ] || { echo "env leak: a host variable reached the child ($UPLIFT_CANARY)"; exit 6; }',
     'echo PROBE-OK',
   ].join('; ');
 }
@@ -358,15 +495,80 @@ export function resolveIsolation({ plan, force = process.env.WEB_UPLIFT_SANDBOX_
   return { isolation: 'refused', provider: null, attempts, plan, forcedNone: order.length === 0 };
 }
 
-// The marker the brief requires before the first spawn. Written atomically
-// (tmp + rename) so a reader never sees a half-written record.
+// The isolation record, written before the first spawn.
+//
+// AUTHORITY: the record the run is judged by lives NEXT TO --out, not inside it.
+// --out is writable by the agent, so a marker kept there could be replaced or
+// deleted by the very process it describes, and publishing from that copy would
+// make the record meaningless. The sibling path sits in a directory the child is
+// never given a writable bind for. A convenience copy is also written inside --out
+// for the operator, and re-synced from the authority after every spawn so a tamper
+// is visible rather than trusted.
+export function securityRecordPath(outDir) {
+  const abs = resolve(outDir);
+  return join(dirname(abs), `${basename(abs)}.run-security.json`);
+}
+
 export function writeRunSecurity(outDir, record) {
-  const dest = join(outDir, 'run-security.json');
-  const tmp = `${dest}.tmp-${process.pid}`;
-  mkdirSync(outDir, { recursive: true });
-  writeFileSync(tmp, JSON.stringify({ ...record, writtenAt: new Date().toISOString(), runId: record.runId ?? null }, null, 2) + '\n');
-  renameSync(tmp, dest);
-  return dest;
+  const full = { ...record, writtenAt: new Date().toISOString(), runId: record.runId ?? null };
+  const authority = securityRecordPath(outDir);
+  const tmp = `${authority}.tmp-${process.pid}`;
+  mkdirSync(dirname(authority), { recursive: true });
+  writeFileSync(tmp, JSON.stringify(full, null, 2) + '\n');
+  renameSync(tmp, authority);
+  // Convenience copy, best effort: never the source of truth.
+  try {
+    const copy = join(outDir, 'run-security.json');
+    const tmpCopy = `${copy}.tmp-${process.pid}`;
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(tmpCopy, JSON.stringify(full, null, 2) + '\n');
+    renameSync(tmpCopy, copy);
+  } catch {
+    /* the authority is what matters */
+  }
+  return authority;
+}
+
+export function readSecurityRecord(outDir) {
+  try {
+    return JSON.parse(readFileSync(securityRecordPath(outDir), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// Compare the copy inside --out with the authority and rewrite it if they differ.
+// `tampered` means the agent (or anything else with write access to --out) changed
+// the record: the authority wins, the divergence is recorded, and the caller is
+// told so it can refuse to publish.
+export function resyncSecurityRecord(outDir) {
+  const authority = readSecurityRecord(outDir);
+  if (!authority) return { ok: false, tampered: false, reason: `no isolation record at ${securityRecordPath(outDir)}` };
+  let inside = null;
+  try {
+    inside = readFileSync(join(outDir, 'run-security.json'), 'utf8');
+  } catch {
+    inside = null;
+  }
+  const expected = JSON.stringify(authority, null, 2) + '\n';
+  if (inside === expected) return { ok: true, tampered: false };
+  // The operator's copy is rewritten from the authority AND carries the divergence,
+  // so a reader of --out sees that the record was tampered with rather than a clean
+  // file with no trace of it.
+  const merged = { ...authority, tamperedInOutputDir: true, tamperDetectedAt: new Date().toISOString() };
+  const authoritative = JSON.stringify(merged, null, 2) + '\n';
+  const tmp = `${securityRecordPath(outDir)}.tmp-${process.pid}`;
+  writeFileSync(tmp, authoritative);
+  renameSync(tmp, securityRecordPath(outDir));
+  try {
+    const copy = join(outDir, 'run-security.json');
+    const tmpCopy = `${copy}.tmp-${process.pid}`;
+    writeFileSync(tmpCopy, authoritative);
+    renameSync(tmpCopy, copy);
+  } catch {
+    /* the authority is what matters */
+  }
+  return { ok: true, tampered: true, record: merged };
 }
 
 // Human-readable refusal/override text. Names what was found and what is required,

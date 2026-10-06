@@ -52,7 +52,7 @@ import { countOutstanding, completionState, remaining } from '../runner/remainin
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from './write-scope.mjs';
-import { buildPlan, bwrapArgs, unshareScript, resolveIsolation, writeRunSecurity, isolationMessage } from './sandbox.mjs';
+import { buildPlan, bwrapArgs, unshareScript, resolveIsolation, writeRunSecurity, isolationMessage, securityRecordPath, readSecurityRecord, resyncSecurityRecord } from './sandbox.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -163,6 +163,7 @@ const allowWrite = [].concat(args['allow-write'] ?? [])
 const allowedRoots = [scopeRoot, outRoot, ...allowWrite];
 let escapedOutsideScope = false;
 let agentFailure = null;
+let securityUntrusted = false;
 
 // The walk covers the invocation directory, the target when it sits outside it,
 // and any operator-allowed root, so an out-of-tree path still gets a per-run diff.
@@ -201,6 +202,9 @@ function launchAgent(cliArgs) {
     argv: ['--user', '--map-root-user', '--mount', '--pid', '--fork', '--', 'sh', '-c', unshareScript(isolation.plan, bin, cliArgs)],
     sandboxed: true,
     cwd: projectRoot,
+    // No inheritance on this path either: the child gets exactly the allowlisted
+    // environment, the same guarantee --clearenv gives the bwrap path.
+    env: { ...isolation.plan.env },
   };
 }
 
@@ -266,6 +270,9 @@ if (willSpawnAgent) {
     outDir: outRoot,
     agentName,
     agentBin: resolveBin(agent.bin) ?? agent.bin,
+    // --allow-write roots are real writable mounts under isolation, not just paths
+    // the tripwire tolerates: otherwise the flag promises something the sandbox denies.
+    extraWritable: allowWrite,
   });
   const resolution = resolveIsolation({ plan });
   const sandboxed = resolution.isolation === 'bwrap' || resolution.isolation === 'unshare';
@@ -295,6 +302,7 @@ if (willSpawnAgent) {
   };
   const marker = writeRunSecurity(outDir, security);
   security.marker = marker;
+  console.log(`isolation record: ${marker} (authoritative; a copy sits in ${outDir})`);
   // A refusal belongs on stderr: it is an error condition, and it is what a caller
   // or a wrapper greps for.
   if (isolation.state === 'refused') console.error(isolationMessage(resolution, { override: allowUnsandboxedAgent, outDir }));
@@ -546,11 +554,13 @@ if (escapedOutsideScope || agentFailure) {
     await snapshotRun(outDir, afterRun.dir, finalReport);
     // The isolation decision travels with the retained result, so a reader of the
     // run can see whether it was sandboxed, overridden or refused.
-    try {
-      await cp(join(outDir, 'run-security.json'), join(afterRun.dir, 'run-security.json'));
-    } catch {
-      /* the marker in outDir is authoritative */
+    const authority = readSecurityRecord(outDir);
+    if (!authority) {
+      securityUntrusted = true;
+      console.error(`Refusing to publish: no authoritative isolation record at ${securityRecordPath(outDir)}.`);
+      throw new Error('isolation record unavailable');
     }
+    await writeFile(join(afterRun.dir, 'run-security.json'), JSON.stringify(authority, null, 2) + '\n');
     updateLatest(afterRun.hostRoot, afterRun.runId);
 
     const cmp = compareReports(baseline, finalReport, { dirA: beforeRun.dir, dirB: afterRun.dir });
@@ -582,7 +592,19 @@ if (escapedOutsideScope || agentFailure) {
   }
 }
 
-process.exitCode = passed && !escapedOutsideScope && !agentFailure ? 0 : 1;
+if (!securityUntrusted && willSpawnAgent) {
+  // The agent had write access to --out for the whole run; if the copy of the
+  // isolation record inside it no longer matches the authority, the authority wins,
+  // the divergence is recorded, and the run does not publish.
+  const sync = resyncSecurityRecord(outDir);
+  if (!sync.ok) {
+    securityUntrusted = true;
+    console.error(`Isolation record missing: ${sync.reason}. Refusing to publish a result whose isolation cannot be stated.`);
+  } else if (sync.tampered) {
+    console.error('The isolation record inside --out was modified during the run; it has been restored from the authoritative copy and the divergence recorded.');
+  }
+}
+process.exitCode = passed && !escapedOutsideScope && !agentFailure && !securityUntrusted ? 0 : 1;
 
 // --- helpers ---------------------------------------------------------------
 
@@ -651,7 +673,11 @@ function runAgent(prompt, iteration) {
     // the raw CLI only under the explicit override).
     const launch = launchAgent(cliArgs);
     if (verbose) console.log(`[iter ${iteration}] isolation=${isolation?.state ?? 'unresolved'} $ ${launch.command} ${launch.argv.join(' ')}`);
-    const child = spawn(launch.command, launch.argv, { stdio: ['ignore', 'pipe', 'pipe'], cwd: launch.cwd });
+    const child = spawn(launch.command, launch.argv, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: launch.cwd,
+      ...(launch.env ? { env: launch.env } : {}),
+    });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; if (verbose) process.stdout.write(d); });

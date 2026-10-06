@@ -17,9 +17,10 @@
 // impossible because the skill resolves its tool at `.web-uplift/evidence/cli.mjs`
 // relative to the PROJECT root. That was wrong and is corrected here: the skill
 // documents an invocation that works from any cwd, and the tool path can simply be
-// passed absolute. Rooting the child is therefore available as an enforcement
-// boundary; choosing between that, an OS sandbox, and this detection layer is a
-// design decision, and until it is taken this module must be read as detection.
+// passed absolute. But do not repeat the opposite mistake either - rooting the
+// child's cwd at --target only scopes RELATIVE writes; an agent holding write tools
+// can still name an absolute path. It is not an enforcement boundary. The boundary
+// is the OS sandbox (see fixer/sandbox.mjs); this module is the second layer.
 //
 // Covered: creates, edits, deletes and symlink changes anywhere under the walked
 // roots, including `.git/hooks` and `.git/config` (the persistence vectors for an
