@@ -40,7 +40,8 @@ node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate> <url> [options
 ```
 
 You choose the conditions and tools at inspection time: `--emulate-media k=v,..`,
-`--viewport WxH`, `--selector`, `--interact`, `--expr`, `--source`, `--out`. You
+`--viewport WxH`, `--selector`, `--interact`, `--expr`, `--source`, `--out`,
+`--bodies`, `--cdp-deadline <ms>`, `--fetch-deadline <ms>`. You
 may also run `npx -y lighthouse ...`, inject axe-core via the `evaluate`
 primitive, or write your own probes. Query Modern Web Guidance with
 `npx -y --ignore-scripts modern-web-guidance@0.0.172 search "<query>"` /

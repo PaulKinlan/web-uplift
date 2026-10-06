@@ -431,7 +431,24 @@ Common options:
 --bodies
 --source <dir>
 --out <path>
+--cdp-deadline <ms>
+--fetch-deadline <ms>
 ```
+
+`--cdp-deadline` bounds every CDP attach/navigation wait (default 30000; env
+`WEB_UPLIFT_CDP_DEADLINE_MS`); `--fetch-deadline` bounds each raw-HTML fetch
+exchange, per hop (default 30000; env `WEB_UPLIFT_FETCH_DEADLINE_MS`). One
+behaviour matters when you shorten the fetch budget: when the raw fetch fails
+or times out - or the response is not a success (a 404 page is ABOUT the
+resource, not the document) - the discoverability comparison is reported as
+UNKNOWN: every raw-derived COMPARISON field is null (`coveragePct`, `isJsShell`,
+the presence comparisons, the empty-mount list, the raw size stats), not a
+finding about the page. The RUN FACTS survive by design - `fetchedStatus`
+records the status when one arrived, `fetchError` records the failure,
+`finalUrl` records the final URL once the exchange resolves (the requested URL only when it failed before a response) - precisely so an operator reads a 404 as
+a status rather than as an absence. A completed, empty 200 stays usable: observed emptiness is real
+evidence. A short budget therefore produces ABSENCE OF EVIDENCE, never evidence
+of absence.
 
 These primitives make no quality judgement. They only return evidence.
 
