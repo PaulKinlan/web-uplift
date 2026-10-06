@@ -47,6 +47,13 @@
   recorded as its own state (`empty`, with a `present but empty` issue) instead of
   reading as absent or as a clean pass, and the HAR path's request content-type and
   redirect location lookups now go through the same lower-casing.
+- **conditions**: an artifact now records the emulation profile it was measured
+  under, not only the dimensions: `conditions.viewport` carries `profile` (`mobile`
+  or `desktop`), `width`, `height`, `deviceScaleFactor` and `mobile`, built by the
+  same helper that applies the metrics, so the record cannot disagree with what the
+  run used. A reader of the JSON can now tell a mobile emulation from a narrow
+  desktop window. A run with no device-metrics override still records no viewport at
+  all, rather than an invented profile.
 
 ## [0.4.2] - 2026-10-05
 

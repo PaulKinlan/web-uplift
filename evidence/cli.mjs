@@ -104,6 +104,26 @@ const NETWORK_PROFILES = {
   },
 };
 
+// The device-metrics profile a run is measured under, built in ONE place so the
+// emulation and the recorded conditions cannot disagree about it. The profile NAME
+// matters as much as the size: mobile emulation changes the layout viewport, the
+// meta-viewport handling, touch and the device pixel ratio, so an artifact that
+// records only `width`/`height` leaves a reader unable to tell a mobile profile from
+// a narrow desktop window. Device metrics default to MOBILE (the long-standing
+// --viewport behaviour); a primitive that wants a desktop condition at a fixed size
+// passes viewportMobile: false (web-uplift-99i).
+function viewportEmulation(opts) {
+  const { w, h } = opts.viewport;
+  const mobile = opts.viewportMobile !== false;
+  return {
+    profile: mobile ? 'mobile' : 'desktop',
+    width: w,
+    height: h,
+    deviceScaleFactor: 1,
+    mobile,
+  };
+}
+
 async function applyConditions(client, opts, log) {
   if (opts.emulateMedia && opts.emulateMedia.length) {
     await client.Emulation.setEmulatedMedia({ features: opts.emulateMedia });
@@ -114,20 +134,16 @@ async function applyConditions(client, opts, log) {
     );
   }
   if (opts.viewport) {
-    const { w, h } = opts.viewport;
-    // Device metrics default to MOBILE emulation (the long-standing --viewport
-    // behaviour); a primitive that wants a desktop condition at a fixed size
-    // passes viewportMobile: false.
-    const mobile = opts.viewportMobile !== false;
+    const { width, height, deviceScaleFactor, mobile } = viewportEmulation(opts);
     await client.Emulation.setDeviceMetricsOverride({
-      width: w,
-      height: h,
-      deviceScaleFactor: 1,
+      width,
+      height,
+      deviceScaleFactor,
       mobile,
-      screenWidth: w,
-      screenHeight: h,
+      screenWidth: width,
+      screenHeight: height,
     });
-    log(`[evidence] viewport: ${w}x${h}${mobile ? ' (mobile)' : ''}`);
+    log(`[evidence] viewport: ${width}x${height}${mobile ? ' (mobile)' : ''}`);
   }
   if (opts.network) {
     const profile = NETWORK_PROFILES[opts.network];
@@ -186,7 +202,7 @@ function describeConditions(opts) {
   if (profile) conditions.network = { profile: opts.network, ...profile };
   const cpuRate = opts.cpuThrottle ?? profile?.cpuSlowdownMultiplier;
   if (cpuRate) conditions.cpuThrottleRate = cpuRate;
-  if (opts.viewport) conditions.viewport = { width: opts.viewport.w, height: opts.viewport.h };
+  if (opts.viewport) conditions.viewport = viewportEmulation(opts);
   if (opts.locale) conditions.locale = opts.locale;
   if (opts.timezone) conditions.timezone = opts.timezone;
   if (opts.emulateMedia && opts.emulateMedia.length) conditions.emulateMedia = opts.emulateMedia;
