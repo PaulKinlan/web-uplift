@@ -43,6 +43,7 @@ try {
   await testHarRedactsCredentialHeaders();
   await testAxeKeepsPagePolicyAndDisclosesInjectionBypass();
   await testHeadersPrimitiveFindsHeadersRegardlessOfNameCase();
+  await testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
   await testEvidenceTruncationReporting();
@@ -1805,6 +1806,16 @@ async function testHeadersPrimitiveFindsHeadersRegardlessOfNameCase() {
       res.end(page('lower'));
       return;
     }
+    if (path === '/empty') {
+      // Present but empty protects nothing: it must read as its own state, not as
+      // absent and not as a pass.
+      res.setHeader('Content-Security-Policy', '');
+      res.setHeader('Referrer-Policy', '');
+      res.setHeader('Strict-Transport-Security', 'max-age=63072000');
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(page('empty'));
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(page('bare'));
   });
@@ -1866,6 +1877,98 @@ async function testHeadersPrimitiveFindsHeadersRegardlessOfNameCase() {
       bare.securityHeaders['content-security-policy'].present === false &&
         bare.securityHeaders['strict-transport-security'].present === false,
       `a response that sends no security headers must report none: ${JSON.stringify(bare.securityHeaders)}`,
+    );
+
+    // Present-but-empty is a third state. Reading it as absent would be the false
+    // negative this bead fixed; reading it as a pass would be false assurance - an
+    // empty security header protects nothing.
+    const empty = await gather('headers', `${base}/empty`, { quiet: true, wait: 400 });
+    const emptyCsp = empty.securityHeaders['content-security-policy'];
+    assert(emptyCsp.present === true, `a header sent with an empty value is still present: ${JSON.stringify(emptyCsp)}`);
+    assert(
+      emptyCsp.empty === true && emptyCsp.value === '',
+      `an empty value must be recorded as its own state: ${JSON.stringify(emptyCsp)}`,
+    );
+    assert(
+      emptyCsp.issues.includes('present but empty'),
+      `an empty security header must not read as a pass: ${JSON.stringify(emptyCsp)}`,
+    );
+    assert(
+      empty.securityHeaders['referrer-policy'].empty === true,
+      `an empty referrer-policy is empty too: ${JSON.stringify(empty.securityHeaders['referrer-policy'])}`,
+    );
+    const controlHsts = empty.securityHeaders['strict-transport-security'];
+    assert(
+      controlHsts.present === true && controlHsts.empty === false && controlHsts.issues.length === 0,
+      `a header sent with a value must read as neither absent nor empty: ${JSON.stringify(controlHsts)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// The HAR path reads two header values out of the raw CDP objects: a request's
+// content-type and a redirect's location. Both were looked up by one exact casing
+// ('Content-Type', and only 'Location'/'location'), so any other casing was missed
+// - the fetch API sends a lower-case name, and a server may send LOCATION in any
+// case at all. Both now go through headerMap, the same lower-casing the rest of
+// the HAR path uses (web-uplift-0w6).
+async function testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase() {
+  const received = [];
+  const page = (title, script = '') =>
+    `<!doctype html><html lang="en"><head><title>${title}</title></head><body><main><h1>${title}</h1></main>${script}</body></html>`;
+  const postScript = `<script>fetch('/post',{method:'POST',headers:{'content-type':'application/json'},body:'{"a":1}'}).catch(()=>{})</script>`;
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/post') {
+      received.push(req.rawHeaders);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
+    if (path === '/redirect') {
+      res.writeHead(302, { 'LOCATION': '/final', 'Content-Type': 'text/html' });
+      res.end(page('redirect', postScript));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(page(path === '/final' ? 'final' : 'root'));
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    // Prove the fixtures: the redirect really leaves with an all-caps name, and the
+    // POST really arrives with a lower-case one.
+    const wire = await new Promise((resolve, reject) => {
+      const request = http.get(`${base}/redirect`, (res) => {
+        const names = res.rawHeaders.filter((_, index) => index % 2 === 0);
+        res.resume();
+        resolve(names);
+      });
+      request.on('error', reject);
+    });
+    assert(wire.includes('LOCATION'), `the redirect fixture must really send an all-caps header name: ${JSON.stringify(wire)}`);
+
+    const out = join(tmp, 'har-header-case.har');
+    await gather('har', `${base}/redirect`, { quiet: true, wait: 900, out });
+    const entries = JSON.parse(readFileSync(out, 'utf8')).log.entries;
+    const redirect = entries.find((entry) => entry.response.status === 302);
+    assert(redirect, `the redirect entry must be recorded: ${JSON.stringify(entries.map((entry) => entry.response.status))}`);
+    assert(
+      redirect.response.redirectURL === '/final',
+      `a redirect location must be read whatever case its name arrives in: ${JSON.stringify(redirect.response.redirectURL)}`,
+    );
+    assert(received.length > 0, 'the fixture must have received the POST');
+    assert(
+      received[0].includes('content-type'),
+      `the POST must really arrive with a lower-case header name: ${JSON.stringify(received[0])}`,
+    );
+    const post = entries.find((entry) => entry.request.method === 'POST');
+    assert(post, `the POST entry must be recorded: ${JSON.stringify(entries.map((entry) => entry.request.method))}`);
+    assert(
+      post.request.postData?.mimeType === 'application/json',
+      `a request content-type must be read whatever case its name arrives in: ${JSON.stringify(post.request.postData)}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));

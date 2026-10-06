@@ -1522,7 +1522,7 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
         headersSize: -1,
         bodySize: req.postData ? byteLength(req.postData) : 0,
         ...(req.postData
-          ? { postData: { mimeType: req.headers?.['Content-Type'] || '', text: req.postData } }
+          ? { postData: { mimeType: headerMap(reqHeaders)['content-type'] || '', text: req.postData } }
           : {}),
       },
       response: {
@@ -1532,7 +1532,7 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
         headers: resHeaders,
         cookies: [],
         content,
-        redirectURL: res?.headers?.Location || res?.headers?.location || '',
+        redirectURL: headerMap(resHeaders)['location'] || '',
         headersSize: -1,
         bodySize,
         _transferSize: bodySize < 0 ? 0 : bodySize,
@@ -2158,6 +2158,24 @@ async function secrets(client, url, opts, log) {
   return emit(opts, summary, client);
 }
 
+// A response header is one of three things, and the artifact has to show which:
+// absent (null), present with a value, or present but EMPTY. An empty security
+// header protects nothing, so it is not a pass, and it must not read as absent
+// either - the first would be false assurance and the second is the false negative
+// this primitive was just fixed for. `present` is therefore a null check rather
+// than a truthiness test, `empty` records the third state, and `issues` says what
+// is wrong with whichever state it is (web-uplift-0w6).
+function headerReport(value, valueIssues = [], missingIssue = 'missing') {
+  const present = value !== null;
+  const empty = present && String(value).trim() === '';
+  return {
+    present,
+    empty,
+    value,
+    issues: !present ? [missingIssue] : empty ? ['present but empty'] : valueIssues,
+  };
+}
+
 // --- headers primitive: security response headers -------------------------
 async function headers(client, url, opts, log) {
   log('[headers] inspecting ' + url);
@@ -2188,15 +2206,15 @@ async function headers(client, url, opts, log) {
     primitive: 'headers', url,
     scannedAt: new Date().toISOString(),
     securityHeaders: {
-      'content-security-policy': { present: !!csp, value: csp, issues: csp ? (csp.includes('unsafe-inline') || csp.includes('unsafe-eval') ? ['unsafe-inline/unsafe-eval'] : []) : ['missing'] },
-      'strict-transport-security': { present: !!hsts, value: hsts, issues: hsts ? [] : ['missing'] },
-      'x-content-type-options': { present: !!xcto && xcto.toLowerCase()==='nosniff', value: xcto, issues: xcto ? [] : ['missing or not nosniff'] },
-      'x-frame-options': { present: !!xfo, value: xfo, issues: xfo ? [] : ['missing (check CSP frame-ancestors)'] },
-      'referrer-policy': { present: !!rp, value: rp, issues: rp ? [] : ['missing'] },
-      'permissions-policy': { present: !!pp, value: pp, issues: pp ? [] : ['missing'] },
+      'content-security-policy': headerReport(csp, csp && (csp.includes('unsafe-inline') || csp.includes('unsafe-eval')) ? ['unsafe-inline/unsafe-eval'] : []),
+      'strict-transport-security': headerReport(hsts),
+      'x-content-type-options': headerReport(xcto, xcto && xcto.toLowerCase() === 'nosniff' ? [] : ['not nosniff'], 'missing or not nosniff'),
+      'x-frame-options': headerReport(xfo, [], 'missing (check CSP frame-ancestors)'),
+      'referrer-policy': headerReport(rp),
+      'permissions-policy': headerReport(pp),
     },
     https: url.startsWith('https://'),
-    note: 'Descriptive signal. Judge against be-private-and-secure. Missing CSP/HSTS/X-Content-Type-Options are security gaps. unsafe-inline/unsafe-eval weakens XSS protection.',
+    note: 'Descriptive signal. Judge against be-private-and-secure. A missing CSP/HSTS/X-Content-Type-Options is a security gap, and a header that is present but EMPTY is not a pass either: `present` says whether the response carried the header at all, `empty` says it carried no value, and `issues` names what is wrong with it. unsafe-inline/unsafe-eval weakens XSS protection.',
   };
   return emit(opts, summary, client);
 }
