@@ -1081,7 +1081,7 @@ async function har(client, url, opts, log) {
     });
   }
 
-  const har12 = buildHar(records, log);
+  const har12 = buildHar(records, log, { redactCredentials: opts.redactHeaders !== false });
   const out = opts.out || derivedOut(url, 'network', 'har');
   writeFileSync(out, JSON.stringify(har12, null, 2) + '\n');
 
@@ -1102,6 +1102,7 @@ async function har(client, url, opts, log) {
     statusBreakdown: tallyStatuses(har12.log.entries),
     note:
       'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).' +
+      ' Credential header values (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token) are replaced with [redacted] by default, keeping the names; pass --no-redact-headers to keep them raw and accept the publication risk.' +
       (settle.pending > 0
         ? ` WARNING: ${settle.pending} request(s) were still pending when the network was snapshotted (load waited ${loadWaitMs}ms, settle waited ${settle.ms}ms); their bodies and statuses are missing from this HAR, which is a harness/load artifact rather than absence.`
         : ''),
@@ -1217,6 +1218,10 @@ function summariseHar(har, mainUrl, log) {
       });
     }
 
+    // The redirect target is kept raw on purpose: it IS the diagnostic signal, and
+    // the credential-header redaction above does not apply to it. A Location can
+    // itself carry a credential in its query string, which is a recorded residual
+    // rather than an oversight (web-uplift-dxk).
     // Hygiene: cacheable responses missing cache-control AND expires. Skip
     // redirects/errors and non-200s where caching is not the relevant signal.
     const status = num(res.status) || 0;
@@ -1453,7 +1458,7 @@ function harInitiator(init) {
 // are monotonic seconds (Network timestamp); we use wallTime for startedDateTime
 // and the monotonic delta for the entry time. Timing detail comes from
 // response.timing where present.
-function buildHar(records, log) {
+function buildHar(records, log, { redactCredentials = true } = {}) {
   const entries = [];
   for (const rec of records) {
     if (!rec.request) continue;
@@ -1467,8 +1472,8 @@ function buildHar(records, log) {
         ? round((rec.endTs - rec.startTs) * 1000)
         : -1;
 
-    const reqHeaders = headerArray(req.headers);
-    const resHeaders = headerArray(res?.headers);
+    const reqHeaders = redactCredentials ? redactHeaderList(headerArray(req.headers)) : headerArray(req.headers);
+    const resHeaders = redactCredentials ? redactHeaderList(headerArray(res?.headers)) : headerArray(res?.headers);
     const mimeType = res?.mimeType || 'x-unknown';
     const bodySize = rec.encodedDataLength != null ? Math.round(rec.encodedDataLength) : -1;
 
@@ -1562,6 +1567,36 @@ function harTimings(t, totalMs) {
   const accounted = [dns, connect, send, wait].filter((x) => x > 0).reduce((a, b) => a + b, 0);
   const receive = totalMs > 0 ? Math.max(0, round(totalMs - accounted)) : 0;
   return { blocked: -1, dns: v(dns), connect: v(connect), ssl: v(ssl), send, wait: v(wait), receive };
+}
+
+// Header names whose VALUES are credentials. A HAR written by an audit can carry
+// a session cookie or bearer token lifted from the audited site, and this repo
+// commits evidence-out artifacts to a public remote, so those values would be
+// published irreversibly. The network primitive therefore redacts them BY DEFAULT
+// in every HAR it writes, not only under --bodies: buildHar writes header lists
+// unconditionally, so the exposure is broader than that flag suggests. The header
+// NAME is kept, so its presence and count stay diagnosable (web-uplift-dxk).
+const REDACTED_HEADER_NAMES = new Set([
+  'set-cookie',
+  'cookie',
+  'authorization',
+  'proxy-authorization',
+  'x-auth-token',
+  'x-api-key',
+  'x-amz-security-token',
+]);
+const REDACTED_HEADER_VALUE = '[redacted]';
+
+// Replace the value of every credential header in a HAR header list, keeping the
+// name and any other fields. Non-credential headers pass through untouched, so
+// the redaction stays diagnostic rather than wholesale.
+export function redactHeaderList(headers) {
+  if (!Array.isArray(headers)) return headers;
+  return headers.map((header) =>
+    REDACTED_HEADER_NAMES.has(String(header?.name || '').toLowerCase())
+      ? { ...header, value: REDACTED_HEADER_VALUE }
+      : header,
+  );
 }
 
 function headerArray(headers) {
@@ -3284,6 +3319,7 @@ function parseArgs(argv) {
     else if (a === '--full-page') args.fullPage = true;
     else if (a === '--no-screenshots') args.screenshots = false;
     else if (a === '--bodies') args.bodies = true;
+    else if (a === '--no-redact-headers') args.redactHeaders = false;
     else if (a === '--quiet') args.quiet = true;
     else args._.push(a);
   }
@@ -3358,7 +3394,8 @@ async function main() {
         '         --cpu-throttle n --network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse\n' +
         '         --locale de-DE --timezone Asia/Tokyo\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f --interact-deadline ms\n' +
-        '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies --quiet',
+        '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies\n' +
+        '         --no-redact-headers (keep raw credential header values; publication risk) --quiet',
     );
     process.exit(1);
   }
