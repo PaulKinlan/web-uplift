@@ -1931,8 +1931,10 @@ async function testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase
       res.end(page('redirect', postScript));
       return;
     }
+    // A redirect response body is never executed, so the POST belongs to the page
+    // the redirect lands on.
     res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(page(path === '/final' ? 'final' : 'root'));
+    res.end(page(path === '/final' ? 'final' : 'root', path === '/final' ? postScript : ''));
   });
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
   try {
@@ -1951,7 +1953,7 @@ async function testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase
     assert(wire.includes('LOCATION'), `the redirect fixture must really send an all-caps header name: ${JSON.stringify(wire)}`);
 
     const out = join(tmp, 'har-header-case.har');
-    await gather('har', `${base}/redirect`, { quiet: true, wait: 900, out });
+    await gather('har', `${base}/redirect`, { quiet: true, wait: 1200, out });
     const entries = JSON.parse(readFileSync(out, 'utf8')).log.entries;
     const redirect = entries.find((entry) => entry.response.status === 302);
     assert(redirect, `the redirect entry must be recorded: ${JSON.stringify(entries.map((entry) => entry.response.status))}`);
