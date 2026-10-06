@@ -251,19 +251,44 @@ page content, so it will not start without you saying which boundary is
 protecting that agent:
 
 ```sh
-# bwrap is the worked example (it is present on many Linux hosts). The mix below is
-# the shape that matters: the project tree READ-ONLY (so the agent cannot rewrite
-# the tooling or the report pointers), the source tree and the report directory
-# read-write, a private /tmp and HOME, and NOTHING else from the host mounted.
-web-uplift fix --target ./src --audit-url http://localhost:8080 --isolation bwrap
+# bwrap is the worked example (present on many Linux hosts). Run it from the
+# PROJECT ROOT, substituting your own node prefix, provider credential path and
+# Chrome cache if they differ. Every path below was run as written on the host this
+# repository is developed on; the COMMENTS explain why each line is there, because
+# two of them are the difference between a boundary and a false sense of one.
+REPO="$PWD"
+NODE_PREFIX="$(dirname "$(dirname "$(command -v node)")")"   # node + npx live here
+PROVIDER_AUTH="$HOME/.claude"                                 # your agent CLI's credential
+CHROME_CACHE="$HOME/.cache/chrome"                            # the evidence tool needs a browser
 
-# ...and the equivalent by hand, if you would rather wrap it yourself:
-bwrap --dev-bind /dev /dev --proc /proc --tmpfs /tmp --tmpfs "$HOME" \
-  --ro-bind "$PWD" "$PWD" --bind "$PWD/src" "$PWD/src" --bind "$PWD/reports" "$PWD/reports" \
-  --share-net --die-with-parent \
+bwrap \
+  --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /lib64 /lib64 \
+  --ro-bind /etc/ssl /etc/ssl --ro-bind /etc/resolv.conf /etc/resolv.conf \
+  --ro-bind /etc/hosts /etc/hosts --ro-bind /etc/passwd /etc/passwd \
+  --tmpfs "$HOME" \
+  --ro-bind "$NODE_PREFIX" "$NODE_PREFIX" \
+  --ro-bind "$PROVIDER_AUTH" "$PROVIDER_AUTH" \
+  --ro-bind "$CHROME_CACHE" "$CHROME_CACHE" \
+  --ro-bind "$REPO" "$REPO" \
+  --bind "$REPO/src" "$REPO/src" \
+  --bind "$REPO/reports" "$REPO/reports" \
+  --tmpfs /tmp --proc /proc --dev /dev --share-net --die-with-parent --chdir "$REPO" \
   npx web-uplift fix --target src --audit-url http://localhost:8080 \
     --isolation bwrap --out reports/fix-localhost --findings reports/localhost/report.json
 ```
+
+Three things about that command, each of which I got wrong on the first attempt:
+
+- **`--ro-bind` the system directories, or nothing can run.** A bare `bwrap` starts
+  from an EMPTY filesystem: `--tmpfs "$HOME"` plus a couple of binds and no `/usr`
+  gives you `execvp /bin/sh: No such file or directory`, not a sandbox.
+- **Mount order is load-bearing.** `--tmpfs "$HOME"` must come BEFORE the binds that
+  live underneath it (`$NODE_PREFIX`, `$PROVIDER_AUTH`, `$CHROME_CACHE`, `$REPO`); a
+  later tmpfs SHADOWS everything bound under it earlier, which looks like protection
+  and is actually an empty directory.
+- **Only the credential the agent needs is visible, and only read-only.** The
+  `--tmpfs "$HOME"` hides the rest of your home (SSH keys, cloud config, other
+  checkouts) while `--ro-bind "$PROVIDER_AUTH"` lets the agent authenticate.
 
 **What the tool guarantees, precisely.** It refuses to spawn the agent unless you
 assert a boundary; it records that assertion as *unverified* in
