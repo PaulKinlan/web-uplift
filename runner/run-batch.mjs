@@ -106,7 +106,11 @@ function snapshotScope() {
 // no guard, so the scope-accounted spawns are serialized: one snapshot -> spawn ->
 // diff at a time. The cost is stated in the batch banner and the README: a run with
 // --concurrency > 1 is effectively serial while auditing.
-// Completion for THIS process: no file can influence it.
+// URLs THIS PROCESS SUCCESSFULLY PUBLISHED take precedence from this set, and no file can
+// influence the set itself. That is a precedence rule about what this process already knows it
+// did - NOT a claim that completion is decided in memory for every URL, because a URL that is
+// not in the set is still looked up on disk. The completion check below states the rule and its
+// residual in one place.
 const completedThisBatch = new Set();
 let scopeWindow = Promise.resolve();
 function withScopeWindow(fn) {
@@ -330,7 +334,7 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
   } catch (err) {
     // ENOENT means there was no report to quarantine, which is a fine outcome.
     if (err?.code !== 'ENOENT') {
-      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). For THIS batch the refusal stands; across a resume the state comes from disk, which the agent can write, so the report being still present is a real residual.`);
+      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). For THIS batch the refusal stands; see the completion check for what a resumed lookup can still do.`);
       problem = `could not quarantine the refused report (${err.code || err.message}): the report is still on disk`;
     }
   }
