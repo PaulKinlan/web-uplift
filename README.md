@@ -227,12 +227,14 @@ web-uplift audit --urls ./urls.txt --concurrency 2 --agent claude
 web-uplift audit https://example.com --flow ./checkout.json
 
 # Model-driven fix hill climb against local source.
-web-uplift fix --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4
+# --isolation is REQUIRED: name the boundary you are providing (see below).
+web-uplift fix --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4 \
+  --isolation bwrap
 web-uplift fix --target ./src --audit-url http://localhost:8080 --dry-run
 
 # Hill-climb to a SCORE target instead of chasing every last issue.
 web-uplift fix --target ./src --audit-url http://localhost:8080 \
-  --goal-overall 80 --goal-min discoverable=70 --goal-max-critical 0
+  --isolation bwrap --goal-overall 80 --goal-min discoverable=70 --goal-max-critical 0
 
 # Aggregate findings across retained reports.
 web-uplift aggregate
@@ -241,6 +243,38 @@ web-uplift aggregate
 web-uplift compare localhost_8080
 web-uplift compare http://localhost:8080 <runId-before> <runId-after>
 ```
+
+### Running it safely: the isolation is YOURS, and this tool cannot check it
+
+Fix mode hands a write-capable agent a task while its context carries untrusted
+page content, so it will not start without you saying which boundary is
+protecting that agent:
+
+```sh
+# bwrap is the worked example (it is present on many Linux hosts). The mix below is
+# the shape that matters: the project tree READ-ONLY (so the agent cannot rewrite
+# the tooling or the report pointers), the source tree and the report directory
+# read-write, a private /tmp and HOME, and NOTHING else from the host mounted.
+web-uplift fix --target ./src --audit-url http://localhost:8080 --isolation bwrap
+
+# ...and the equivalent by hand, if you would rather wrap it yourself:
+bwrap --dev-bind /dev /dev --proc /proc --tmpfs /tmp --tmpfs "$HOME" \
+  --ro-bind "$PWD" "$PWD" --bind "$PWD/src" "$PWD/src" --bind "$PWD/reports" "$PWD/reports" \
+  --share-net --die-with-parent \
+  npx web-uplift fix --target src --audit-url http://localhost:8080 \
+    --isolation bwrap --out reports/fix-localhost --findings reports/localhost/report.json
+```
+
+**What the tool guarantees, precisely.** It refuses to spawn the agent unless you
+assert a boundary; it records that assertion as *unverified* in
+`<out>/run-security.json`; it warns on stderr that it did not check it; and it
+snapshots the tree around every agent run and refuses the run when a change lands
+outside `--target`/`--out`. That is detection of realistic escapes, not
+confinement: the agent still runs as you, with your network, and the snapshot walk
+has documented gaps (writes outside the walked roots, through pre-existing
+symlinks or hard links, and metadata-only changes are not seen). If you need a
+guarantee rather than a tripwire, the boundary has to be yours - docker, bwrap, a
+VM, or a permission model you control - and `--isolation` is where you say so.
 
 The headless runner orchestrates. It still does not contain checks. The spawned
 model follows the same [SKILL.md](.claude/skills/web-audit/SKILL.md).

@@ -54,10 +54,8 @@ try {
   await testFixWriteScopeDiffing();
   testFixModeRefusesOutOfScopeWrites();
   testFixModeScopeEdgeCases();
-  await testFixSandboxMountContract();
-  testFixSandboxProviderSeam();
-  await testFixSandboxAdversarial();
-  testFixSandboxedRunPublishes();
+  testFixIsolationAssertion();
+  testFixIsolatedRunPublishes();
   await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
   await testScorecardArtifactContainment();
@@ -3127,14 +3125,13 @@ function testFixModeRefusesOutOfScopeWrites() {
           '--agent', 'claude',
           '--max-iterations', '1',
           '--findings', findings,
-          // Override on purpose: this test is about the tripwire layer, and the OS
-          // sandbox (tested separately) denies such a write at the kernel before the
-          // tripwire could see it.
-          '--allow-unsandboxed-agent',
+          // The tool does not sandbox by itself: the operator asserts the boundary
+          // and the tripwire is what this test exercises.
+          '--isolation', 'host-permission-model',
           '--out', outName,
           '--reports-root', `reports-${outName}`,
         ],
-        { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, WEB_UPLIFT_SANDBOX_FORCE: 'none' } },
+        { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
       );
       return { res, outDir: join(root, outName) };
     };
@@ -3199,13 +3196,12 @@ function testFixModeScopeEdgeCases() {
         '--target', 'src', '--audit-url', 'http://example.test/', '--agent', 'claude',
         '--max-iterations', '1',
         ...(skipFindings ? [] : ['--findings', findings]),
-        // Override on purpose: this test is about the tripwire layer, and the OS
-        // sandbox (tested separately) denies such a write at the kernel first.
-        '--allow-unsandboxed-agent',
+        // See above: the tripwire is what is under test here, not a boundary.
+        '--isolation', 'host-permission-model',
         '--out', outName, '--reports-root', `reports-${outName}`,
         ...extraArgs,
       ];
-      const res = run(process.execPath, args, { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, WEB_UPLIFT_SANDBOX_FORCE: 'none' } });
+      const res = run(process.execPath, args, { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
       return { res, outDir: join(root, outName) };
     };
 
@@ -3349,91 +3345,12 @@ function testFixModeScopeEdgeCases() {
   }
 }
 
-// web-uplift-arp / P1#1: the OS-level boundary for headless fix mode. Three
-// separate concerns, tested separately:
-//   * the MOUNT CONTRACT, asserted at the syscall level (a write must FAIL, not be
-//     noticed afterwards) - needs bwrap, records a skip with a reason if absent;
-//   * the PROVIDER SEAM, which must never skip: with no sandbox available the run
-//     refuses before spawning anything, and the explicit override records itself;
-//   * an END-TO-END sandboxed fix that publishes its result.
-async function testFixSandboxMountContract() {
-  const { buildPlan, bwrapArgs, resolveIsolation } = await import('../fixer/sandbox.mjs');
-  const proj = mkdtempSync(join(tmpdir(), 'web-uplift-sbox-'));
-  try {
-    for (const d of ['src', 'evidence', '.git', 'node_modules', 'reports']) mkdirSync(join(proj, d), { recursive: true });
-    writeFileSync(join(proj, 'src', 'index.html'), '<h1>hi</h1>');
-    writeFileSync(join(proj, 'evidence', 'cli.mjs'), 'export const x = 1;\n');
-    writeFileSync(join(proj, '.git', 'config'), '[core]\n');
-    writeFileSync(join(proj, 'node_modules', 'dep.js'), 'dep\n');
-    writeFileSync(join(proj, 'reports', 'latest'), 'run-1\n');
-
-    for (const targetIsRoot of [true, false]) {
-      const label = targetIsRoot ? 'target=project root' : 'target=subdir';
-      const out = join(proj, 'reports', `out-${targetIsRoot ? 'root' : 'sub'}`);
-      mkdirSync(out, { recursive: true });
-      const plan = buildPlan({
-        projectRoot: proj,
-        targetDir: targetIsRoot ? proj : join(proj, 'src'),
-        outDir: out,
-        agentName: 'claude',
-        agentBin: process.execPath,
-      });
-      assert(!plan.refused, `sandbox ${label}: the plan must build (${plan.notes.filter((n) => n.level === 'refuse').map((n) => n.reason).join('; ')})`);
-      if (targetIsRoot) {
-        assert(
-          ['hooks', 'config'].length === 2 && plan.protectedPaths.length >= 3,
-          `sandbox ${label}: the nested persistent trees must be protected (${plan.protectedPaths.map((p) => p.name).join(',')})`,
-        );
-      }
-      const resolution = resolveIsolation({ plan, force: 'bwrap' });
-      if (resolution.isolation !== 'bwrap') {
-        // Recorded, not silent: a host without the primitive cannot run this half.
-        console.log(`SKIP (recorded reason) sandbox ${label}: bwrap probe failed - ${resolution.attempts.map((a) => `${a.provider}: ${a.detail}`).join('; ').slice(0, 300)}`);
-        continue;
-      }
-      // Paths are embedded literally, not taken from the environment: the launcher
-      // deliberately CLEARS the environment, so $T/$P/$O would be empty inside.
-      const qp = (x) => JSON.stringify(x);
-      const P = plan.projectRoot;
-      const T = plan.targetDir;
-      const O = plan.outDir;
-      const intent = [
-        `printf ok > ${qp(join(T, 'editable.txt'))} && echo ALLOW-target || echo DENY-target`,
-        `printf ok > ${qp(join(O, 'report.json'))} && echo ALLOW-out || echo DENY-out`,
-        `printf x > ${qp(join(P, '.git', 'config-evil'))} 2>/dev/null && echo ALLOW-git || echo DENY-git`,
-        `printf x > ${qp(join(P, 'node_modules', 'evil.js'))} 2>/dev/null && echo ALLOW-nodemodules || echo DENY-nodemodules`,
-        `printf x > ${qp(join(P, 'reports', 'latest-evil'))} 2>/dev/null && echo ALLOW-latest || echo DENY-latest`,
-        `cat ${qp(join(P, 'evidence', 'cli.mjs'))} >/dev/null && echo ALLOW-read-tool || echo DENY-read-tool`,
-        'printf x > /home/exedev/.ssh/uplift-probe 2>/dev/null && echo ALLOW-ssh || echo DENY-ssh',
-        'printf x > /tmp/scratch.txt && echo ALLOW-tmp || echo DENY-tmp',
-        'printf x > "$HOME/.cache-probe" && echo ALLOW-home || echo DENY-home',
-      ].join('; ');
-      const run = spawnSync('bwrap', bwrapArgs(plan, '/bin/sh', ['-c', intent]), {
-        encoding: 'utf8',
-        timeout: 60000,
-        env: { ...process.env, ...plan.env, T: plan.targetDir, P: plan.projectRoot, O: plan.outDir },
-      });
-      const stdout = run.stdout ?? '';
-      const verdict = (k) => (new RegExp(`^(ALLOW|DENY)-${k}$`, 'm').exec(stdout) ?? [])[0] ?? `(missing: ${run.stderr?.slice(-200)})`;
-      assert(verdict('target') === 'ALLOW-target', `sandbox ${label}: the target must be writable (${verdict('target')})`);
-      assert(verdict('out') === 'ALLOW-out', `sandbox ${label}: --out must be writable (${verdict('out')})`);
-      assert(verdict('git') === 'DENY-git', `sandbox ${label}: .git must refuse the write (${verdict('git')})`);
-      assert(verdict('nodemodules') === 'DENY-nodemodules', `sandbox ${label}: node_modules must refuse the write (${verdict('nodemodules')})`);
-      assert(verdict('latest') === 'DENY-latest', `sandbox ${label}: the report history must refuse the write (${verdict('latest')})`);
-      assert(verdict('read-tool') === 'ALLOW-read-tool', `sandbox ${label}: the vendored tool must stay readable (${verdict('read-tool')})`);
-      assert(verdict('ssh') === 'DENY-ssh', `sandbox ${label}: an unmounted host path must refuse the write (${verdict('ssh')})`);
-      assert(verdict('tmp') === 'ALLOW-tmp', `sandbox ${label}: /tmp must be a private writable tmpfs (${verdict('tmp')})`);
-      assert(verdict('home') === 'ALLOW-home', `sandbox ${label}: HOME must be private writable (${verdict('home')})`);
-    }
-  } finally {
-    rmSync(proj, { recursive: true, force: true });
-  }
-}
-
-// The provider seam. These must NEVER skip: they do not need a sandbox to exist,
-// they assert what happens when one does not.
-function testFixSandboxProviderSeam() {
-  const root = mkdtempSync(join(tmpdir(), 'web-uplift-seam-'));
+// web-uplift-arp, minimal design: this tool does NOT sandbox the agent. It refuses
+// to spawn a write-capable agent unless the operator asserts which boundary they are
+// providing, it says loudly that it cannot verify that assertion, it records the
+// assertion as unverified, and the snapshot/diff tripwire stays as defence in depth.
+function testFixIsolationAssertion() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-isolation-'));
   try {
     const binDir = join(root, 'bin');
     mkdirSync(join(root, 'src'), { recursive: true });
@@ -3443,7 +3360,7 @@ function testFixSandboxProviderSeam() {
     const bin = join(binDir, 'claude');
     writeFileSync(bin, `#!/bin/sh\nprintf ran > ${JSON.stringify(agentMarker)}\nprintf x > ${JSON.stringify(join(root, 'escape.txt'))}\n`);
     chmodSync(bin, 0o755);
-    const env = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, WEB_UPLIFT_SANDBOX_FORCE: 'none' };
+    const env = { ...process.env, PATH: `${binDir}:${process.env.PATH}` };
     const drive = (extra) => run(
       process.execPath,
       [join(repoRoot, 'fixer', 'fix.mjs'), '--target', 'src', '--audit-url', 'http://example.test/',
@@ -3452,38 +3369,34 @@ function testFixSandboxProviderSeam() {
       { cwd: root, env },
     );
 
-    // Default: refuse BEFORE any agent spawn.
+    // Default: refuse BEFORE any agent spawn, and record the refusal.
     const refused = drive({ out: 'out-refused', reports: 'reports-refused' });
-    assert(refused.status !== 0, `sandbox seam: no provider must refuse (exit ${refused.status})`);
-    assert(/REFUSED/.test(refused.stderr), `sandbox seam: the refusal must be reported:\n${refused.stderr}`);
-    assert(/NO AGENT WAS STARTED/.test(refused.stderr), 'sandbox seam: the refusal must say no agent was started');
-    assert(!existsSync(agentMarker), 'sandbox seam: the agent must NOT have been spawned');
+    assert(refused.status !== 0, `isolation: no assertion must refuse (exit ${refused.status})`);
+    assert(/REFUSED/.test(refused.stderr) && /NO AGENT WAS STARTED/.test(refused.stderr), `isolation: the refusal must say no agent was started:\n${refused.stderr}`);
+    assert(/--isolation/.test(refused.stderr), 'isolation: the refusal must name what is required');
+    assert(!existsSync(agentMarker), 'isolation: the agent must NOT have been spawned');
     const refusedRecord = JSON.parse(readFileSync(join(root, 'out-refused', 'run-security.json'), 'utf8'));
-    assert(refusedRecord.isolation === 'refused', `sandbox seam: the refusal must be recorded (${refusedRecord.isolation})`);
-    assert(
-      !existsSync(join(root, 'reports-refused')),
-      'sandbox seam: a refused run must leave the report history untouched',
-    );
+    assert(refusedRecord.isolation === 'refused', `isolation: the refusal must be recorded (${refusedRecord.isolation})`);
+    assert(!existsSync(join(root, 'reports-refused')), 'isolation: a refused run must leave the report history untouched');
+    assert(!existsSync(join(root, 'escape.txt')), 'isolation: a refused run must not have run anything that could write');
 
-    // Explicit override: loud, recorded before the spawn, and the record survives
-    // even though this run then fails on the tripwire.
-    rmSync(agentMarker, { force: true });
-    const overridden = drive({ out: 'out-override', reports: 'reports-override', args: ['--allow-unsandboxed-agent'] });
-    assert(/WARNING/.test(overridden.stderr) && /NOT isolated/.test(overridden.stderr), `sandbox seam: the override must be loud:\n${overridden.stderr}`);
-    assert(existsSync(agentMarker), 'sandbox seam: the override must still spawn the agent');
-    const overrideRecord = JSON.parse(readFileSync(join(root, 'out-override', 'run-security.json'), 'utf8'));
-    assert(overrideRecord.isolation === 'none', `sandbox seam: the override must record isolation none (${overrideRecord.isolation})`);
-    assert(/allow-unsandboxed-agent/.test(overrideRecord.override ?? ''), 'sandbox seam: the override must record its reason');
-    assert(overridden.status !== 0, 'sandbox seam: this run fails on the tripwire (the escape) and still exits non-zero');
-    assert(existsSync(join(root, 'out-override', 'run-security.json')), 'sandbox seam: the override record persists in a failed run');
+    // With the assertion: allowed, but loud and recorded as UNVERIFIED.
+    const asserted = drive({ out: 'out-asserted', reports: 'reports-asserted', args: ['--isolation', 'host-permission-model'] });
+    assert(existsSync(agentMarker), 'isolation: an explicit assertion must allow the run to spawn the agent');
+    assert(/WARNING/.test(asserted.stderr) && /UNVERIFIED/.test(asserted.stderr), `isolation: the warning must say the boundary is unverified:\n${asserted.stderr}`);
+    const record = JSON.parse(readFileSync(join(root, 'out-asserted', 'run-security.json'), 'utf8'));
+    assert(record.isolation === 'operator-supplied:host-permission-model', `isolation: the record must name the asserted mechanism (${record.isolation})`);
+    assert(record.unverified === true, 'isolation: the record must mark the assertion unverified');
+    assert(!/verified by this tool|guaranteed/i.test(asserted.stderr), 'isolation: the warning must not claim the tool verified anything');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 
-// End-to-end inside the sandbox: a legitimate fix must still complete and publish.
-function testFixSandboxedRunPublishes() {
-  const root = mkdtempSync(join(tmpdir(), 'web-uplift-sboxrun-'));
+// The positive path that matters now: with an assertion given, a legitimate fix runs,
+// edits --target, reaches zero outstanding issues and publishes its result.
+function testFixIsolatedRunPublishes() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-iso-run-'));
   try {
     const binDir = join(root, 'bin');
     const fixture = join(root, 'site');
@@ -3498,177 +3411,25 @@ function testFixSandboxedRunPublishes() {
       'echo \'{"agent":"stub"}\'',
     ].join('\n') + '\n');
     chmodSync(bin, 0o755);
-
     const res = run(
       process.execPath,
       [join(repoRoot, 'fixer', 'fix.mjs'), '--target', fixture, '--audit-url', 'http://example.test/',
         '--agent', 'claude', '--findings', join(repoRoot, 'examples', 'playground-report.json'),
-        '--out', join(root, 'out'), '--reports-root', join(root, 'reports'), '--max-iterations', '1'],
+        '--isolation', 'vm', '--out', join(root, 'out'), '--reports-root', join(root, 'reports'), '--max-iterations', '1'],
       { cwd: repoRoot, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
     );
-    const security = JSON.parse(readFileSync(join(root, 'out', 'run-security.json'), 'utf8'));
-    if (security.isolation !== 'bwrap' && security.isolation !== 'unshare') {
-      console.log(`SKIP (recorded reason) sandboxed run: no provider on this host (${security.isolation}; ${JSON.stringify(security.probe).slice(0, 240)})`);
-      return;
-    }
-    assert(/after/.test(readFileSync(join(fixture, 'index.html'), 'utf8')), 'sandboxed run: the agent edited --target inside the sandbox');
-    assert(res.status === 0, `sandboxed run: a legitimate fix must exit 0 (got ${res.status})\n${res.stdout}${res.stderr}`);
-    assert(/^PASS:/m.test(res.stdout ?? ''), `sandboxed run: the fix must report PASS:\n${res.stdout}`);
+    assert(/after/.test(readFileSync(join(fixture, 'index.html'), 'utf8')), 'isolation run: the agent edited --target');
+    assert(res.status === 0, `isolation run: a legitimate fix must exit 0 (got ${res.status})\n${res.stdout}${res.stderr}`);
+    assert(/^PASS:/m.test(res.stdout ?? ''), `isolation run: the fix must report PASS:\n${res.stdout}`);
     const host = readdirSync(join(root, 'reports'))[0];
     const entries = readdirSync(join(root, 'reports', host));
-    assert(entries.some((e) => e.endsWith('-after')), `sandboxed run: the after run must be published (${JSON.stringify(entries)})`);
-    assert(existsSync(join(root, 'reports', host, 'latest')), 'sandboxed run: latest must be published');
+    assert(entries.some((e) => e.endsWith('-after')), `isolation run: the after run must be published (${JSON.stringify(entries)})`);
+    assert(existsSync(join(root, 'reports', host, 'latest')), 'isolation run: latest must be published');
     assert(
       existsSync(join(root, 'reports', host, readlinkSync(join(root, 'reports', host, 'latest')), 'run-security.json')),
-      'sandboxed run: the isolation record must travel into the retained result',
+      'isolation run: the isolation record must travel into the retained result',
     );
   } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-}
-
-// The adversarial half of the sandbox: the holes a review found in the first
-// profile. Each case is a way the boundary could be bypassed rather than a way it
-// could be used, so they assert refusals and syscall-level denials.
-async function testFixSandboxAdversarial() {
-  const { buildPlan, bwrapArgs, resolveIsolation, securityRecordPath, readSecurityRecord } = await import('../fixer/sandbox.mjs');
-  const proj = mkdtempSync(join(tmpdir(), 'web-uplift-adv-'));
-  const root = mkdtempSync(join(tmpdir(), 'web-uplift-advrun-'));
-  try {
-    for (const d of ['src', 'evidence', '.git/hooks', 'node_modules', 'reports', 'runner', '.claude/skills']) {
-      mkdirSync(join(proj, d), { recursive: true });
-    }
-    writeFileSync(join(proj, 'src', 'index.html'), '<h1>hi</h1>');
-    writeFileSync(join(proj, 'evidence', 'cli.mjs'), 'export const x = 1;\n');
-    writeFileSync(join(proj, 'runner', 'run-batch.mjs'), 'export const y = 1;\n');
-    writeFileSync(join(proj, '.git', 'config'), '[core]\n');
-    writeFileSync(join(proj, 'node_modules', 'dep.js'), 'dep\n');
-    writeFileSync(join(proj, 'reports', 'latest'), 'run-1\n');
-    // The fixer creates --out before it plans; do the same here so these cases test
-    // the overlap rule rather than a missing directory.
-    for (const d of ['reports/h/r1', 'reports/example.test/r1', 'reports/example.test', 'reports/fix-example.test']) mkdirSync(join(proj, d), { recursive: true });
-    writeFileSync(join(proj, 'reports', 'example.test', 'latest'), 'run-1');
-    writeFileSync(join(proj, 'reports', 'latest'), 'run-1');
-    const base = { projectRoot: proj, agentName: 'claude', agentBin: process.execPath };
-
-    // 1. OVERLAP VALIDATION: a writable --target or --out that IS, or sits inside, a
-    // tree a later step executes or publishes must be refused before any mount.
-    const nested = [
-      ['--target inside .git', { targetDir: join(proj, '.git', 'hooks'), outDir: join(proj, 'reports', 'h', 'r1') }],
-      ['--target inside node_modules', { targetDir: join(proj, 'node_modules'), outDir: join(proj, 'reports', 'h', 'r1') }],
-      ['--target inside the tool', { targetDir: join(proj, 'evidence'), outDir: join(proj, 'reports', 'h', 'r1') }],
-      ['--out is the reports tree', { targetDir: join(proj, 'src'), outDir: join(proj, 'reports') }],
-      // A directory that ALREADY holds a published pointer is a retained host dir:
-      // binding it writable would let the run re-point what consumers read.
-      ['--out is a host dir holding latest', { targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'example.test') }],
-      ['--out inside the tool', { targetDir: join(proj, 'src'), outDir: join(proj, 'evidence') }],
-      ['--allow-write into .git', { targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'h', 'r1'), extraWritable: [join(proj, '.git', 'hooks')] }],
-    ];
-    for (const [label, args] of nested) {
-      const plan = buildPlan({ ...base, ...args });
-      assert(plan.refused, `sandbox adversarial: ${label} must be refused, but the plan was accepted`);
-    }
-    // ...while a genuine run leaf under reports/ is allowed (that is where fix mode writes).
-    const leaf = buildPlan({ ...base, targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'example.test', 'r1') });
-    assert(!leaf.refused, `sandbox adversarial: a run leaf under reports/ must be allowed (${leaf.notes.filter((n) => n.level === 'refuse').map((n) => n.reason).join('; ')})`);
-    // ...and so must the tool's own documented default shape, one level below reports/.
-    const defaultShape = buildPlan({ ...base, targetDir: join(proj, 'src'), outDir: join(proj, 'reports', 'fix-example.test') });
-    assert(!defaultShape.refused, `sandbox adversarial: the default --out shape (reports/fix-<host>) must be allowed (${defaultShape.notes.filter((n) => n.level === 'refuse').map((n) => n.reason).join('; ')})`);
-
-    // 2. SYSCALL-LEVEL DENIALS with --target at the PROJECT ROOT: the canonical
-    // tooling, the git directory and a dependency must all refuse a write, an
-    // out-of-scope host path must be unreachable, and a canary variable planted in
-    // the parent environment must NOT be visible inside.
-    // An operator-declared extra writable root (--allow-write) must be a REAL mount
-    // under isolation, not a path only the tripwire tolerates: the flag promises a
-    // legitimate build output can be written, and a promise the sandbox denies is
-    // worse than no flag.
-    const buildRoot = join(root, 'build-out');
-    mkdirSync(buildRoot, { recursive: true });
-    const plan = buildPlan({ ...base, targetDir: proj, outDir: join(proj, 'reports', 'example.test', 'r1'), extraWritable: [buildRoot] });
-    assert(!plan.refused, 'sandbox adversarial: the project-root target plan must build');
-    assert(plan.writable.includes(buildRoot) && plan.rw.includes(buildRoot), 'sandbox adversarial: --allow-write must become a writable mount');
-    const resolution = resolveIsolation({ plan, force: 'bwrap' });
-    if (resolution.isolation !== 'bwrap') {
-      console.log(`SKIP (recorded reason) sandbox adversarial denials: bwrap probe failed - ${resolution.attempts.map((a) => a.detail).join('; ').slice(0, 240)}`);
-    } else {
-      const canary = `canary-${Math.random().toString(36).slice(2)}`;
-      // Literal paths again: the environment is cleared inside the sandbox, so a
-      // $T/$P/$W reference would expand to nothing and the assertion would be about
-      // an empty string rather than about the mount.
-      const qp = (x) => JSON.stringify(x);
-      const P = plan.projectRoot;
-      const T = plan.targetDir;
-      const intent = [
-        `printf ok > ${qp(join(T, 'edit.txt'))} && echo ALLOW-target || echo DENY-target`,
-        `printf x > ${qp(join(P, 'evidence', 'cli.mjs'))} 2>/dev/null && echo ALLOW-tool || echo DENY-tool`,
-        `printf x > ${qp(join(P, 'runner', 'run-batch.mjs'))} 2>/dev/null && echo ALLOW-runner || echo DENY-runner`,
-        `printf x > ${qp(join(P, '.git', 'hooks', 'pre-commit'))} 2>/dev/null && echo ALLOW-hook || echo DENY-hook`,
-        `printf x > ${qp(join(P, 'node_modules', 'evil.js'))} 2>/dev/null && echo ALLOW-dep || echo DENY-dep`,
-        `printf x > ${qp(join(P, 'reports', 'latest'))} 2>/dev/null && echo ALLOW-latest || echo DENY-latest`,
-        'printf x > /tmp/transient.txt && echo ALLOW-tmp || echo DENY-tmp',
-        `printf ok > ${qp(join(buildRoot, 'bundle.js'))} && echo ALLOW-allowwrite || echo DENY-allowwrite`,
-        '[ -z "$UPLIFT_TEST_CANARY" ] && echo CANARY-ABSENT || echo CANARY-LEAKED',
-      ].join('; ');
-      const run1 = spawnSync('bwrap', bwrapArgs(plan, '/bin/sh', ['-c', intent]), {
-        encoding: 'utf8',
-        timeout: 60000,
-        env: { ...process.env, ...plan.env, T: plan.targetDir, P: plan.projectRoot, W: buildRoot, UPLIFT_TEST_CANARY: canary },
-      });
-      const stdout = run1.stdout ?? '';
-      const verdict = (k) => (new RegExp(`^(ALLOW|DENY|CANARY)-${k}$`, 'm').exec(stdout) ?? [])[0] ?? `(missing: ${(run1.stderr ?? '').slice(-160)})`;
-      assert(verdict('target') === 'ALLOW-target', `sandbox adversarial: --target must be writable (${verdict('target')})`);
-      assert(verdict('tool') === 'DENY-tool', `sandbox adversarial: the evidence CLI must refuse a write (${verdict('tool')})`);
-      assert(verdict('runner') === 'DENY-runner', `sandbox adversarial: the runner tree must refuse a write (${verdict('runner')})`);
-      assert(verdict('hook') === 'DENY-hook', `sandbox adversarial: a git hook must refuse a write (${verdict('hook')})`);
-      assert(verdict('dep') === 'DENY-dep', `sandbox adversarial: a dependency must refuse a write (${verdict('dep')})`);
-      assert(verdict('latest') === 'DENY-latest', `sandbox adversarial: the report pointer must refuse a write (${verdict('latest')})`);
-      assert(verdict('tmp') === 'ALLOW-tmp', `sandbox adversarial: /tmp must stay privately writable (${verdict('tmp')})`);
-      assert(verdict('allowwrite') === 'ALLOW-allowwrite', `sandbox adversarial: an --allow-write root must be writable inside the sandbox (${verdict('allowwrite')})`);
-      assert(verdict('ABSENT') === 'CANARY-ABSENT', `sandbox adversarial: a host environment variable must NOT reach the child (${verdict('ABSENT')})`);
-    }
-
-    // 3. MARKER AUTHORITY: the agent has write access to --out, so it can rewrite the
-    // record there. The authority lives beside --out, the divergence is recorded, and
-    // the published record comes from the authority.
-    const binDir = join(root, 'bin');
-    mkdirSync(binDir, { recursive: true });
-    const fixture = join(root, 'site');
-    mkdirSync(fixture, { recursive: true });
-    writeFileSync(join(fixture, 'index.html'), '<h1>before</h1>');
-    const out = join(root, 'out');
-    const bin = join(binDir, 'claude');
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      `printf '{"isolation":"bwrap","forged":true}' > ${JSON.stringify(join(out, 'run-security.json'))}`,
-      `printf '<h1>after</h1>' > ${JSON.stringify(join(fixture, 'index.html'))}`,
-      `cp ${JSON.stringify(join(repoRoot, 'examples', 'playground-report-fixed.json'))} ${JSON.stringify(join(out, 'report.json'))}`,
-      'echo \'{"agent":"stub"}\'',
-    ].join('\n') + '\n');
-    chmodSync(bin, 0o755);
-    const res = run(process.execPath, [
-      join(repoRoot, 'fixer', 'fix.mjs'), '--target', fixture, '--audit-url', 'http://example.test/',
-      '--agent', 'claude', '--findings', join(repoRoot, 'examples', 'playground-report.json'),
-      '--out', out, '--reports-root', join(root, 'reports'), '--max-iterations', '1',
-    ], { cwd: repoRoot, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
-    if (!/^agent isolation: bwrap/m.test(res.stdout ?? '')) {
-      console.log(`SKIP (recorded reason) sandbox adversarial marker: no sandbox on this host (${(res.stdout ?? '').split('\n').find((l) => /isolation/.test(l)) ?? 'no isolation line'})`);
-    } else {
-      const authority = readSecurityRecord(out);
-      assert(authority !== null, `sandbox adversarial: the authoritative record must exist at ${securityRecordPath(out)}`);
-      assert(authority.forged === undefined, `sandbox adversarial: the authority must not be the forged copy (${JSON.stringify(authority?.forged)})`);
-      assert(authority.tamperedInOutputDir === true, 'sandbox adversarial: the divergence inside --out must be recorded');
-      const inside = JSON.parse(readFileSync(join(out, 'run-security.json'), 'utf8'));
-      assert(inside.forged === undefined && inside.tamperedInOutputDir === true, 'sandbox adversarial: the copy inside --out must be restored from the authority');
-      const host = readdirSync(join(root, 'reports'))[0];
-      const after = readdirSync(join(root, 'reports', host)).find((e) => e.endsWith('-after'));
-      if (after) {
-        const published = JSON.parse(readFileSync(join(root, 'reports', host, after, 'run-security.json'), 'utf8'));
-        assert(published.forged === undefined, 'sandbox adversarial: the published record must come from the authority, not from --out');
-      }
-    }
-  } finally {
-    rmSync(proj, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
 }

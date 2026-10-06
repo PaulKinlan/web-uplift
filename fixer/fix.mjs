@@ -44,7 +44,7 @@
  */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, access, cp } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { AGENTS, AGENT_NAMES } from '../runner/agents.mjs';
 import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
@@ -52,7 +52,6 @@ import { countOutstanding, completionState, remaining } from '../runner/remainin
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from './write-scope.mjs';
-import { buildPlan, bwrapArgs, unshareScript, resolveIsolation, writeRunSecurity, isolationMessage, securityRecordPath, readSecurityRecord, resyncSecurityRecord } from './sandbox.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -163,50 +162,10 @@ const allowWrite = [].concat(args['allow-write'] ?? [])
 const allowedRoots = [scopeRoot, outRoot, ...allowWrite];
 let escapedOutsideScope = false;
 let agentFailure = null;
-let securityUntrusted = false;
 
 // The walk covers the invocation directory, the target when it sits outside it,
 // and any operator-allowed root, so an out-of-tree path still gets a per-run diff.
 const snapshotScope = () => snapshotTree(projectRoot, { extraRoots: [scopeRoot, ...allowWrite] });
-
-// OS isolation for every agent spawn in this run (see fixer/sandbox.mjs). Resolved
-// once, after --out exists so the probe can validate writability, and BEFORE the
-// first spawn so nothing runs unsandboxed by accident.
-const allowUnsandboxedAgent = Boolean(args['allow-unsandboxed-agent']);
-let isolation = null; // { state, provider, plan, severity }
-
-// The agent binary as an absolute path: the sandbox has to bind it explicitly.
-function resolveBin(name) {
-  if (name.includes('/')) return existsSync(name) ? resolve(name) : null;
-  for (const dir of (process.env.PATH ?? '').split(':')) {
-    if (!dir) continue;
-    const p = join(dir, name);
-    if (existsSync(p)) return resolve(p);
-  }
-  return null;
-}
-
-// Wraps one agent invocation in the resolved isolation. `unsandboxed` is only ever
-// reachable through the explicit override path.
-function launchAgent(cliArgs) {
-  const bin = resolveBin(agent.bin);
-  if (!bin) return { command: agent.bin, argv: cliArgs, sandboxed: false, cwd: projectRoot };
-  if (!isolation || isolation.state === 'none' || isolation.state === 'refused') {
-    return { command: bin, argv: cliArgs, sandboxed: false, cwd: projectRoot };
-  }
-  if (isolation.provider === 'bwrap') {
-    return { command: 'bwrap', argv: bwrapArgs(isolation.plan, bin, cliArgs), sandboxed: true, cwd: projectRoot };
-  }
-  return {
-    command: 'unshare',
-    argv: ['--user', '--map-root-user', '--mount', '--pid', '--fork', '--', 'sh', '-c', unshareScript(isolation.plan, bin, cliArgs)],
-    sandboxed: true,
-    cwd: projectRoot,
-    // No inheritance on this path either: the child gets exactly the allowlisted
-    // environment, the same guarantee --clearenv gives the bwrap path.
-    env: { ...isolation.plan.env },
-  };
-}
 
 function fixExtra(findingsPath, iteration) {
   return (
@@ -229,7 +188,7 @@ if (dryRun) {
   console.log(`report out    : ${outDir}`);
   console.log(`write scope   : ${scopeRoot ?? '<target>'} (a change outside this refuses the run)`);
   if (allowWrite.length) console.log(`also allowed  : ${allowWrite.join(', ')}`);
-  console.log(`agent isolation: ${allowUnsandboxedAgent ? 'none (--allow-unsandboxed-agent: recorded accepted risk)' : 'required - bwrap, else a probed unshare layout, else refuse'}`);
+  console.log(`agent isolation: ${args.isolation && args.isolation !== true ? `operator-supplied (${args.isolation}), unverified` : 'REQUIRED - refuses before any spawn without --isolation <mechanism>'}`);
   console.log('');
   console.log('Per-iteration command the model is driven with:');
   for (let i = 1; i <= maxIterations; i++) {
@@ -249,78 +208,67 @@ if (dryRun) {
 
 await mkdir(outDir, { recursive: true });
 
-// --- OS isolation, resolved BEFORE the first agent spawn ---------------------
-// Fail closed: with no usable sandbox and no explicit override, nothing is
-// started at all. The decision is recorded before the spawn either way.
-// Only required when this run will actually spawn an agent: a run with supplied
-// findings and --max-iterations 0 never does, and refusing it would be wrong.
+// --- Operator-supplied isolation, asserted BEFORE any agent spawn --------------
+// This tool does NOT provide a sandbox. Fix mode drives an agent that holds write
+// tools while its context carries untrusted page content, and the honest position is
+// that the operator must supply the boundary. So: no assertion, no spawn. With an
+// assertion the run proceeds, but the tool says loudly that it did NOT verify it and
+// records that in the run's security record. See the "running it safely" example in
+// README.md for the invocation this expects.
+const isolationAssertion = args.isolation && args.isolation !== true ? String(args.isolation).trim() : '';
 const willSpawnAgent = maxIterations > 0 || !args.findings;
+let isolationRecord;
+
+function writeRunSecurity(dir, record) {
+  // A RECORD, not an attestation: it lives in the directory the agent can write, so
+  // it states what the operator asserted and that the tool could not verify it. It
+  // is evidence for a human, never proof of a boundary.
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'run-security.json'), JSON.stringify({ ...record, recordedAt: new Date().toISOString(), tool: 'web-uplift fix' }, null, 2) + '\n');
+  } catch (err) {
+    console.error(`Could not record the isolation state: ${err.message}`);
+  }
+}
+
 if (!willSpawnAgent) {
-  isolation = { state: 'not-required', provider: null, plan: null };
-  writeRunSecurity(outDir, {
-    isolation: 'not-required',
-    reason: 'this run spawns no agent (--findings supplied and --max-iterations 0)',
-    network: 'n/a: no agent process',
-  });
-}
-if (willSpawnAgent) {
-  const plan = buildPlan({
-    projectRoot,
-    targetDir: scopeRoot ?? projectRoot,
-    outDir: outRoot,
-    agentName,
-    agentBin: resolveBin(agent.bin) ?? agent.bin,
-    // --allow-write roots are real writable mounts under isolation, not just paths
-    // the tripwire tolerates: otherwise the flag promises something the sandbox denies.
-    extraWritable: allowWrite,
-  });
-  const resolution = resolveIsolation({ plan });
-  const sandboxed = resolution.isolation === 'bwrap' || resolution.isolation === 'unshare';
-  if (sandboxed) {
-    isolation = { state: resolution.isolation, provider: resolution.provider, plan };
-  } else if (allowUnsandboxedAgent) {
-    isolation = { state: 'none', provider: null, plan };
-    console.error(
-      '\nWARNING: --allow-unsandboxed-agent - this fix run is NOT isolated. The agent holds write tools and a\n' +
-      'provider credential while it reads untrusted page content; the snapshot/diff tripwire still runs, but\n' +
-      'the OS-level boundary does not. This is a recorded, accepted risk, not I4 compliance.',
-    );
-  } else {
-    isolation = { state: 'refused', provider: null, plan };
-  }
-  const security = {
-    isolation: isolation.state,
-    provider: isolation.provider,
-    override: isolation.state === 'none' ? 'explicit --allow-unsandboxed-agent (section 7 accepted risk)' : null,
-    reason: isolation.state === 'refused' ? 'no usable OS sandbox on this host' : null,
-    probe: resolution.attempts,
-    writable: plan.rw.filter(Boolean),
-    readOnly: plan.ro.length,
-    protectedPaths: plan.protectedPaths.map((p) => p.path),
-    network: 'unrestricted: this sandbox does not block SSRF, metadata access or credential exfiltration',
-    notes: plan.notes,
+  isolationRecord = { isolation: 'not-required', reason: 'this run spawns no agent (--findings supplied and --max-iterations 0)' };
+  writeRunSecurity(outDir, isolationRecord);
+} else if (!isolationAssertion) {
+  isolationRecord = {
+    isolation: 'refused',
+    reason: 'no --isolation assertion was given, so the tool cannot know what boundary is protecting the agent',
+    required: '--isolation <mechanism> naming the boundary you are providing (docker, bwrap, vm, host-permission-model, ...)',
   };
-  const marker = writeRunSecurity(outDir, security);
-  security.marker = marker;
-  console.log(`isolation record: ${marker} (authoritative; a copy sits in ${outDir})`);
-  // A refusal belongs on stderr: it is an error condition, and it is what a caller
-  // or a wrapper greps for.
-  if (isolation.state === 'refused') console.error(isolationMessage(resolution, { override: allowUnsandboxedAgent, outDir }));
-  else console.log(isolationMessage(resolution, { override: allowUnsandboxedAgent, outDir }));
-  if (isolation.state === 'refused') {
-    console.error(
-      `Refusing before any agent spawn. Nothing was started and ${outDir}/run-security.json records why. ` +
-      'Install bubblewrap (or make an unshare layout pass the same probe), or pass --allow-unsandboxed-agent ' +
-      'to accept an unisolated run explicitly.',
-    );
-    process.exit(1);
-  }
+  writeRunSecurity(outDir, isolationRecord);
+  console.error(
+    [
+      'REFUSED: no isolation assertion, and NO AGENT WAS STARTED.',
+      'Fix mode drives a write-capable agent whose context carries untrusted page content, and this tool does NOT sandbox it.',
+      `Say which boundary you are providing: --isolation <mechanism> (docker, bwrap, vm, host-permission-model, ...).`,
+      `Recorded in ${join(outDir, 'run-security.json')}. The tool cannot verify the boundary - it records only what you assert.`,
+    ].join('\n'),
+  );
+  process.exit(1);
+} else {
+  isolationRecord = {
+    isolation: `operator-supplied:${isolationAssertion}`,
+    unverified: true,
+    reason: 'declared by the operator; the tool did not and cannot verify it',
+  };
+  writeRunSecurity(outDir, isolationRecord);
+  console.error(
+    `\nWARNING: proceeding on an UNVERIFIED isolation assertion: --isolation ${isolationAssertion}.\n` +
+    'This tool does not sandbox the agent and cannot check your boundary. If the agent escapes it, the snapshot/diff\n' +
+    'tripwire is the only remaining detection - and its documented gaps still apply. Recorded as unverified in ' +
+    `${join(outDir, 'run-security.json')}.\n`,
+  );
 }
 
-
-// 1. Validation FIRST, isolation second. A supplied report is validated before any
-// sandbox decision so a malformed or unscoreable report still fails with its named
-// error (that contract has its own beads and must not be masked by a refusal).
+// 1. Validation FIRST, isolation assertion second. A supplied report is validated
+// before the isolation check so a malformed or unscoreable report still fails with
+// its own named error (that contract has its own beads) instead of being masked by
+// a refusal.
 let suppliedBaseline = null;
 if (args.findings) {
   try {
@@ -513,9 +461,8 @@ if (escapedOutsideScope) {
   );
 }
 console.log(
-  `agent isolation: ${isolation?.state ?? 'unresolved'}${isolation?.provider ? ` via ${isolation.provider}` : ''}` +
-    (isolation?.state === 'none' ? ' (EXPLICIT OVERRIDE, accepted risk)' : '') +
-    ' - the sandbox does not restrict the network.',
+  `agent isolation: ${isolationRecord?.isolation ?? 'unresolved'}` +
+    (isolationRecord?.unverified ? ' - DECLARED BY THE OPERATOR, NOT VERIFIED BY THIS TOOL' : ''),
 );
 if (agentFailure) {
   console.log(
@@ -552,15 +499,9 @@ if (escapedOutsideScope || agentFailure) {
     console.log(`Preserved baseline run at ${beforeRun.dir}`);
     const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
     await snapshotRun(outDir, afterRun.dir, finalReport);
-    // The isolation decision travels with the retained result, so a reader of the
-    // run can see whether it was sandboxed, overridden or refused.
-    const authority = readSecurityRecord(outDir);
-    if (!authority) {
-      securityUntrusted = true;
-      console.error(`Refusing to publish: no authoritative isolation record at ${securityRecordPath(outDir)}.`);
-      throw new Error('isolation record unavailable');
-    }
-    await writeFile(join(afterRun.dir, 'run-security.json'), JSON.stringify(authority, null, 2) + '\n');
+    // The isolation record travels with the retained result, so a reader of the run
+    // can see exactly what was asserted (and that it was not verified).
+    await writeFile(join(afterRun.dir, 'run-security.json'), JSON.stringify(isolationRecord, null, 2) + '\n');
     updateLatest(afterRun.hostRoot, afterRun.runId);
 
     const cmp = compareReports(baseline, finalReport, { dirA: beforeRun.dir, dirB: afterRun.dir });
@@ -592,19 +533,7 @@ if (escapedOutsideScope || agentFailure) {
   }
 }
 
-if (!securityUntrusted && willSpawnAgent) {
-  // The agent had write access to --out for the whole run; if the copy of the
-  // isolation record inside it no longer matches the authority, the authority wins,
-  // the divergence is recorded, and the run does not publish.
-  const sync = resyncSecurityRecord(outDir);
-  if (!sync.ok) {
-    securityUntrusted = true;
-    console.error(`Isolation record missing: ${sync.reason}. Refusing to publish a result whose isolation cannot be stated.`);
-  } else if (sync.tampered) {
-    console.error('The isolation record inside --out was modified during the run; it has been restored from the authoritative copy and the divergence recorded.');
-  }
-}
-process.exitCode = passed && !escapedOutsideScope && !agentFailure && !securityUntrusted ? 0 : 1;
+process.exitCode = passed && !escapedOutsideScope && !agentFailure ? 0 : 1;
 
 // --- helpers ---------------------------------------------------------------
 
@@ -669,15 +598,9 @@ function runAgent(prompt, iteration) {
   const cliArgs = agent.args(prompt, { maxTurns: 120 });
   if (verbose) console.log(`[iter ${iteration}] $ ${agent.bin} ${cliArgs.join(' ')}`);
   return new Promise((resolve, reject) => {
-    // Launch through the resolved isolation (bwrap, or a probed unshare layout, or
-    // the raw CLI only under the explicit override).
-    const launch = launchAgent(cliArgs);
-    if (verbose) console.log(`[iter ${iteration}] isolation=${isolation?.state ?? 'unresolved'} $ ${launch.command} ${launch.argv.join(' ')}`);
-    const child = spawn(launch.command, launch.argv, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: launch.cwd,
-      ...(launch.env ? { env: launch.env } : {}),
-    });
+    // cwd is the project root, set explicitly rather than inherited: the skill finds
+    // the vendored tool at .web-uplift/evidence/cli.mjs relative to this directory.
+    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'], cwd: projectRoot });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; if (verbose) process.stdout.write(d); });
@@ -769,7 +692,7 @@ function parseArgs(argv) {
   const out = { _: [] };
   const valueFlags = new Set([
     'target', 'audit-url', 'agent', 'max-iterations', 'findings', 'out', 'reports-root',
-    'goal-overall', 'goal-min', 'goal-max-critical', 'goal-max-high', 'allow-write',
+    'goal-overall', 'goal-min', 'goal-max-critical', 'goal-max-high', 'allow-write', 'isolation',
   ]);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
@@ -817,17 +740,13 @@ Options:
   --allow-write <dirs>    Extra roots a run may modify, on top of --target and
                           --out (e.g. a build output dir). Repeatable, and each
                           value may be comma-separated.
-  --allow-unsandboxed-agent
-                          Run the agent without OS isolation when no sandbox is
-                          available. Recorded as an explicit accepted risk in
-                          <out>/run-security.json; loud on stderr. Default is to
-                          REFUSE before spawning anything.
-
-Environment:
-  WEB_UPLIFT_SANDBOX_FORCE  bwrap | unshare | none. Diagnostic/test seam that
-                          forces which launcher is probed. 'none' makes the host
-                          look like one with no sandbox at all, and still needs
-                          --allow-unsandboxed-agent to run anything.
+  --isolation <mechanism>
+                          REQUIRED before any agent spawn. Names the boundary YOU
+                          are providing (docker, bwrap, vm, host-permission-model,
+                          ...). The tool does not sandbox the agent and cannot
+                          verify your boundary; it records the assertion as
+                          unverified and warns. See "Running it safely" in
+                          README.md for a worked example.
   --dry-run               Print the per-iteration command for each agent; do not run.
   --verbose               Stream agent stdout/stderr live.
   -h, --help              This help.
