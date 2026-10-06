@@ -1,6 +1,12 @@
 ---
 name: web-audit
-description: "Audit a URL for modern web quality and (optionally) fix it. This is a FULLY AGENTIC audit. YOU (the model) gather multi-modal evidence about the page with the generic evidence primitives, decide for yourself which tools to run (Lighthouse, axe, your own ad-hoc static tests), reason over that evidence, and judge every principle, then emit a findings report. There are no hard-coded checks and no fast path. The principles are the spec, this skill is the method, and you supply all the intelligence. Use when asked to web-audit, UX-audit, uplift, modernise, or quality-audit a site."
+description: "Audit a URL for modern web quality and (optionally) fix it. This is a FULLY AGENTIC audit. YOU
+  (the model) gather multi-modal evidence about the page with the generic evidence primitives,
+  decide for yourself which tools to run (Lighthouse, axe, your own ad-hoc static tests), reason
+  over that evidence, and judge every principle, then emit a findings report. There are no
+  hard-coded checks and no fast path. The principles are the spec, this skill is the method, and
+  you supply all the intelligence. Use when asked to web-audit, UX-audit, uplift, modernise, or
+  quality-audit a site."
 ---
 
 # Web audit (fully agentic)
