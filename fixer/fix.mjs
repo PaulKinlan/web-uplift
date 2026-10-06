@@ -45,12 +45,13 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, access, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { AGENTS, AGENT_NAMES } from '../runner/agents.mjs';
 import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
 import { countOutstanding, completionState, remaining } from '../runner/remaining-work.mjs';
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from './write-scope.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -140,6 +141,17 @@ if (!dryRun && (!target || !auditUrl)) {
 // at the SAME canonical skill and passes the source + findings so the model has
 // the task list and applies guidance-backed edits itself. `extra` is appended
 // to the skill arguments by the shared prompt builders.
+// The write boundary for a fix run. The child's cwd is set EXPLICITLY to this
+// same directory (see runAgent) rather than inherited from whoever launched the
+// fixer, so "the agent's relative writes land here" and "the snapshot boundary is
+// here" are the same stated fact. The snapshot is anchored at the invocation
+// directory - the project root, which is also where `web-uplift install` vendors
+// .web-uplift/ - while the only scope a fix may legitimately edit is --target.
+const projectRoot = resolve(process.cwd());
+const scopeRoot = target ? resolve(target) : null;
+const outRoot = resolve(outDir);
+let escapedOutsideScope = false;
+
 function fixExtra(findingsPath, iteration) {
   return (
     `--source ${target} --fix --findings ${findingsPath} ` +
@@ -159,6 +171,7 @@ if (dryRun) {
   console.log(`target source : ${target ?? '<target>'}`);
   console.log(`audit url     : ${auditUrl ?? '<audit-url>'}`);
   console.log(`report out    : ${outDir}`);
+  console.log(`write scope   : ${scopeRoot ?? '<target>'} (a change outside this refuses the run)`);
   console.log('');
   console.log('Per-iteration command the model is driven with:');
   for (let i = 1; i <= maxIterations; i++) {
@@ -241,7 +254,28 @@ const history = [{ iteration: 0, ...baselineRemaining, score: scoreOf(baseline) 
 for (let i = 1; i <= maxIterations && !passed; i++) {
   console.log(`\n--- iteration ${i}/${maxIterations} ---`);
   const prompt = iterationPrompt(findingsPath, i);
+  const scopeBefore = snapshotTree(projectRoot);
   await runAgent(prompt, i);
+  // A fix iteration may edit --target and write its own report under --out, and
+  // nothing else. Record the diff either way, so an operator can review what the
+  // model changed instead of trusting the model's own summary.
+  const changes = diffTrees(scopeBefore, snapshotTree(projectRoot));
+  const escaped = escapedChanges(changes, projectRoot, [scopeRoot, outRoot]);
+  const iterationDiff = { iteration: i, projectRoot, target: scopeRoot, changed: changes, escapedOutsideScope: escaped };
+  await writeFile(join(outDir, `iter-${i}-diff.json`), JSON.stringify(iterationDiff, null, 2) + '\n');
+  console.log(`  changed: ${summariseChanges(changes)}`);
+  if (escaped.length) {
+    escapedOutsideScope = true;
+    await writeFile(join(outDir, 'confinement-escape.json'), JSON.stringify(iterationDiff, null, 2) + '\n');
+    console.error(
+      `\nCONFINEMENT FAILURE: iteration ${i} changed ${escaped.length} path(s) outside ` +
+      `${scopeRoot ?? '<target>'} and ${outRoot}:\n  ${escaped.join('\n  ')}\n` +
+      'The fix agent\'s context carries untrusted page content, so this is a refusal, not a warning: the climb ' +
+      'stops here and the run exits non-zero. The changes are NOT reverted automatically - review ' +
+      `${join(outDir, 'confinement-escape.json')} and the per-iteration diff, then decide.`,
+    );
+    break;
+  }
 
   const report = await readReport(join(outDir, 'report.json'));
   const r = remaining(report);
@@ -286,6 +320,12 @@ console.log(
         (lastRemaining.completion.complete ? '' : ` and INCOMPLETE coverage (${lastRemaining.completion.reasons.join(', ')})`) +
         `${goalActive ? ' (goal not met)' : ''}.`,
 );
+if (escapedOutsideScope) {
+  console.log(
+    'CONFINEMENT: an iteration wrote outside --target; the run is refused and exits non-zero ' +
+      '(see confinement-escape.json and iter-<n>-diff.json for the exact paths).',
+  );
+}
 
 // 3. Snapshot the final state into a RETAINED `after` run and emit the
 // before -> after comparison automatically (audit -> fix -> re-audit -> compare).
@@ -327,7 +367,7 @@ try {
   console.error(`Could not emit before/after comparison: ${err.message}`);
 }
 
-process.exitCode = passed ? 0 : 1;
+process.exitCode = passed && !escapedOutsideScope ? 0 : 1;
 
 // --- helpers ---------------------------------------------------------------
 
@@ -343,7 +383,10 @@ function runAgent(prompt, iteration) {
   const cliArgs = agent.args(prompt, { maxTurns: 120 });
   if (verbose) console.log(`[iter ${iteration}] $ ${agent.bin} ${cliArgs.join(' ')}`);
   return new Promise((resolve, reject) => {
-    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // cwd is the project root, set explicitly rather than inherited (see the
+    // projectRoot comment): the skill finds the vendored tool at
+    // .web-uplift/evidence/cli.mjs relative to this directory.
+    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'], cwd: projectRoot });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; if (verbose) process.stdout.write(d); });

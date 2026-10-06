@@ -51,6 +51,8 @@ try {
   testFixRefusesPassOnIncompleteCoverage();
   testFixRefusesContradictoryCoverageClaim();
   testFixRejectsMalformedReports();
+  await testFixWriteScopeDiffing();
+  testFixModeRefusesOutOfScopeWrites();
   await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
   await testScorecardArtifactContainment();
@@ -2992,5 +2994,128 @@ async function testHarRedactsCredentialHeaders() {
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+// web-uplift-arp: fix mode drives an agent whose prompt context carries untrusted
+// page content, so what it writes is scoped to --target by snapshot + refusal
+// rather than by the filesystem. See fixer/write-scope.mjs for why rooting the
+// child's cwd at --target is not an option (the skill's vendored tool path,
+// `.web-uplift/evidence/cli.mjs`, is relative to the PROJECT root).
+async function testFixWriteScopeDiffing() {
+  const { snapshotTree, diffTrees, escapedChanges, summariseChanges } = await import('../fixer/write-scope.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-scope-'));
+  try {
+    mkdirSync(join(root, 'sub'), { recursive: true });
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    writeFileSync(join(root, 'keep.txt'), 'one');
+    writeFileSync(join(root, 'sub', 'gone.txt'), 'bye');
+    writeFileSync(join(root, 'node_modules', 'dep.js'), 'dep');
+
+    const before = snapshotTree(root);
+    writeFileSync(join(root, 'keep.txt'), 'one changed');
+    writeFileSync(join(root, 'added.txt'), 'new');
+    rmSync(join(root, 'sub', 'gone.txt'));
+    // Excluded trees must not make the scope walk noisy (or slow).
+    writeFileSync(join(root, 'node_modules', 'dep.js'), 'dep changed');
+    const after = snapshotTree(root);
+
+    const diff = diffTrees(before, after);
+    assert(diff.added.includes('added.txt'), `scope: an added file must be reported, got ${diff.added}`);
+    assert(diff.modified.includes('keep.txt'), `scope: a rewritten file must be reported, got ${diff.modified}`);
+    assert(diff.deleted.includes(join('sub', 'gone.txt')), `scope: a deleted file must be reported, got ${diff.deleted}`);
+    assert(
+      !diff.modified.some((p) => p.startsWith('node_modules')),
+      'scope: the snapshot must ignore excluded trees, or every run reports the dependency tree',
+    );
+
+    // Only the declared source root (and the report dir) are legitimate scopes.
+    const escaped = escapedChanges(diff, root, [join(root, 'sub')]);
+    assert(escaped.some((p) => p.endsWith('added.txt')), `scope: an out-of-scope add must be escaped, got ${escaped}`);
+    assert(escaped.some((p) => p.endsWith('keep.txt')), `scope: an out-of-scope edit must be escaped, got ${escaped}`);
+    assert(
+      !escaped.some((p) => p.endsWith('gone.txt')),
+      'scope: a change INSIDE the allowed root must not be called an escape',
+    );
+    assert(
+      summariseChanges(diff).includes('modified 1'),
+      `scope: the summary must be bounded and truthful: ${summariseChanges(diff)}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// "The guard exists" is not evidence that an out-of-scope write is caught, so the
+// refusal is driven end-to-end with a stand-in agent CLI that takes the shape of a
+// prompt-injected iteration: one legitimate in-scope edit plus one write somewhere
+// it was never pointed at.
+function testFixModeRefusesOutOfScopeWrites() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-fixscope-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(root, 'src', 'index.html'), '<h1>hi</h1>');
+    const findings = join(repoRoot, 'examples', 'playground-report.json');
+
+    // One drive of fix mode from `root` as the project root, with a stand-in
+    // `claude` on PATH, so the only thing that differs between the two scenarios
+    // is the agent's out-of-scope write.
+    const drive = (outName, agentBody) => {
+      const bin = join(binDir, 'claude');
+      writeFileSync(bin, `#!/bin/sh\n${agentBody}\n`);
+      chmodSync(bin, 0o755);
+      const res = run(
+        process.execPath,
+        [
+          join(repoRoot, 'fixer', 'fix.mjs'),
+          '--target', 'src',
+          '--audit-url', 'http://example.test/',
+          '--agent', 'claude',
+          '--max-iterations', '1',
+          '--findings', findings,
+          '--out', outName,
+          '--reports-root', `reports-${outName}`,
+        ],
+        { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
+      );
+      return { res, outDir: join(root, outName) };
+    };
+
+    const edit = `printf 'fixed' > ${JSON.stringify(join(root, 'src', 'index.html'))}`;
+
+    // Scenario A: the escape. Non-zero exit, a loud refusal, and the exact path.
+    const a = drive('out-escape', `${edit}\nprintf 'pwned' > ${JSON.stringify(join(root, 'outside.txt'))}\necho '{}'`);
+    assert(a.res.status !== 0, `fix scope: an out-of-scope write must fail the run (exit ${a.res.status})\n${a.res.stdout}\n${a.res.stderr}`);
+    assert(/CONFINEMENT FAILURE/.test(a.res.stderr), `fix scope: the refusal must be reported, not silent:\n${a.res.stderr}`);
+    const esc = JSON.parse(readFileSync(join(a.outDir, 'confinement-escape.json'), 'utf8'));
+    assert(
+      esc.escapedOutsideScope.some((p) => p.endsWith('outside.txt')),
+      `fix scope: the escaped path must be recorded, got ${JSON.stringify(esc.escapedOutsideScope)}`,
+    );
+    assert(
+      !esc.escapedOutsideScope.some((p) => p.endsWith('index.html')),
+      'fix scope: the in-scope edit must not be mistaken for an escape',
+    );
+    const diff = JSON.parse(readFileSync(join(a.outDir, 'iter-1-diff.json'), 'utf8'));
+    assert(
+      diff.changed.modified.includes(join('src', 'index.html')),
+      `fix scope: the per-iteration diff must record the in-scope edit, got ${JSON.stringify(diff.changed)}`,
+    );
+
+    // Scenario B (positive control): the identical drive with ONLY the in-scope
+    // edit must not refuse at all, so scenario A's failure is attributable to the
+    // out-of-scope write rather than to the harness. Exit stays 1 here for the
+    // ordinary reason - the climb did not reach zero outstanding issues - which is
+    // why this asserts on the refusal artifacts instead of the exit code.
+    const b = drive('out-clean', `${edit}\necho '{}'`);
+    assert(!/CONFINEMENT FAILURE/.test(b.res.stderr), `fix scope: an in-scope-only run must not refuse:\n${b.res.stderr}`);
+    assert(
+      !existsSync(join(b.outDir, 'confinement-escape.json')),
+      'fix scope: an in-scope-only run must not write a confinement-escape artifact',
+    );
+    assert(existsSync(join(b.outDir, 'iter-1-diff.json')), 'fix scope: the per-iteration diff must be written on a clean run too');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 }
