@@ -2201,8 +2201,35 @@ async function testThrottlingConditions() {
       `throttle: fast-3g must carry the exact DevTools preset numbers: ${JSON.stringify(shaped.conditions.network)}`);
     assert(shaped.conditions.cpuThrottleRate === 4,
       `throttle: layout output must record the CPU rate: ${JSON.stringify(shaped.conditions)}`);
-    assert(shaped.conditions.viewport?.width === 360,
-      `throttle: layout output must record the viewport: ${JSON.stringify(shaped.conditions)}`);
+    assert(
+      shaped.conditions.viewport?.width === 360 && shaped.conditions.viewport?.height === 800 &&
+        shaped.conditions.viewport?.mobile === true && shaped.conditions.viewport?.deviceScaleFactor === 1 &&
+        shaped.conditions.viewport?.profile === 'mobile',
+      `conditions: the artifact must record the whole emulated profile, not only its size: ${JSON.stringify(shaped.conditions.viewport)}`,
+    );
+
+    // The same fixed size with the mobile profile switched off must record the
+    // desktop profile, so the recorded value cannot be a constant.
+    const desktopProfile = await gather('layout', base, {
+      quiet: true,
+      wait: 100,
+      viewport: { w: 360, h: 800 },
+      viewportMobile: false,
+    });
+    assert(
+      desktopProfile.conditions.viewport?.mobile === false &&
+        desktopProfile.conditions.viewport?.profile === 'desktop' &&
+        desktopProfile.conditions.viewport?.width === 360,
+      `conditions: an opted-out run must record the desktop profile: ${JSON.stringify(desktopProfile.conditions.viewport)}`,
+    );
+
+    // ...and a run with no device-metrics override must not claim one: an unemulated
+    // run carries no viewport record rather than an invented profile.
+    const noViewport = await gather('layout', base, { quiet: true, wait: 100 });
+    assert(
+      !noViewport.conditions || noViewport.conditions.viewport === undefined,
+      `conditions: a run with no device-metrics override must not report an emulated profile: ${JSON.stringify(noViewport.conditions)}`,
+    );
 
     // mobile-lighthouse applies its 4x CPU slowdown without a separate flag.
     const mobile = await gather('layout', base, { quiet: true, wait: 100, network: 'mobile-lighthouse' });
