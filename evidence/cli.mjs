@@ -1507,6 +1507,15 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
         : -1;
 
     const reqHeaders = redactCredentials ? redactHeaderList(headerArray(req.headers)) : headerArray(req.headers);
+    // The residual dkx recorded: the URL, its query string, the request body, the
+    // redirect target and response body text were all still verbatim. Redacted with
+    // the same flag and the same names-based test, BEFORE anything downstream (the
+    // entry, the summary) can copy them.
+    const reqUrl = redactCredentials ? redactUrlCredentialValues(req.url) : req.url;
+    const reqQuery = redactCredentials ? redactQueryList(queryString(req.url)) : queryString(req.url);
+    const reqPostText = req.postData
+      ? (redactCredentials ? redactBodyText(req.postData) : req.postData)
+      : null;
     const resHeaders = redactCredentials ? redactHeaderList(headerArray(res?.headers)) : headerArray(res?.headers);
     const mimeType = res?.mimeType || 'x-unknown';
     const bodySize = rec.encodedDataLength != null ? Math.round(rec.encodedDataLength) : -1;
@@ -1523,6 +1532,13 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
       }
     }
 
+    if (redactCredentials && typeof content.text === 'string' && content.text) {
+      const redactedText = redactBodyText(content.text);
+      if (redactedText !== content.text) {
+        content = { ...content, text: redactedText, size: byteLength(redactedText) };
+      }
+    }
+
     const timings = harTimings(res?.timing, totalMs);
 
     entries.push({
@@ -1530,15 +1546,17 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
       time: totalMs < 0 ? 0 : totalMs,
       request: {
         method: req.method,
-        url: req.url,
+        url: reqUrl,
         httpVersion: res?.protocol || 'HTTP/1.1',
         headers: reqHeaders,
-        queryString: queryString(req.url),
+        queryString: reqQuery,
         cookies: [],
         headersSize: -1,
-        bodySize: req.postData ? byteLength(req.postData) : 0,
-        ...(req.postData
-          ? { postData: { mimeType: headerMap(reqHeaders)['content-type'] || '', text: req.postData } }
+        // The size is taken from the REDACTED text, so it describes what the artifact
+        // actually carries instead of leaking the original secret's length.
+        bodySize: reqPostText ? byteLength(reqPostText) : 0,
+        ...(reqPostText
+          ? { postData: { mimeType: headerMap(reqHeaders)['content-type'] || '', text: reqPostText } }
           : {}),
       },
       response: {
@@ -1548,7 +1566,7 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
         headers: resHeaders,
         cookies: [],
         content,
-        redirectURL: headerMap(resHeaders)['location'] || '',
+        redirectURL: redactCredentials ? redactUrlCredentialValues(headerMap(resHeaders)['location'] || '') : (headerMap(resHeaders)['location'] || ''),
         headersSize: -1,
         bodySize,
         _transferSize: bodySize < 0 ? 0 : bodySize,
@@ -1624,6 +1642,58 @@ const REDACTED_HEADER_VALUE = '[redacted]';
 // Replace the value of every credential header in a HAR header list, keeping the
 // name and any other fields. Non-credential headers pass through untouched, so
 // the redaction stays diagnostic rather than wholesale.
+// The same names-based test the header redaction uses, applied to the OTHER places a
+// credential can land in a network artifact: the request URL and its query string,
+// the request body and its size, the redirect target, and response body text when
+// bodies are recorded. Named-based is the honest choice - the tool cannot know which
+// value in an arbitrary URL or body is a secret, so it redacts the VALUES of fields
+// whose NAME says credential and leaves everything else untouched (a redaction that
+// blanked whole fields would destroy the evidence the artifact exists to carry).
+const CREDENTIAL_NAME_RE =
+  /(^|[-_.])(pass|passwd|password|pwd|secret|token|api[-_]?key|apikey|auth|authorization|session|sessionid|sid|signature|sig|credential|bearer|jwt|otp|access[-_]?key|private[-_]?key|client[-_]?secret|refresh[-_]?token|id[-_]?token|code)([-_.]|$)/i;
+
+export function isCredentialName(name) {
+  return typeof name === 'string' && CREDENTIAL_NAME_RE.test(name);
+}
+
+// Redact the VALUES of credential-named query parameters in a URL; keep the names and
+// every other parameter exactly as they were.
+export function redactUrlCredentialValues(raw) {
+  if (typeof raw !== 'string' || !raw) return raw;
+  try {
+    const u = new URL(raw);
+    let hit = false;
+    for (const [k, v] of [...u.searchParams.entries()]) {
+      if (v && isCredentialName(k)) {
+        u.searchParams.set(k, REDACTED_HEADER_VALUE);
+        hit = true;
+      }
+    }
+    return hit ? u.toString() : raw;
+  } catch {
+    return raw; // not a URL we can parse: leave it alone rather than guess
+  }
+}
+
+export function redactQueryList(list) {
+  if (!Array.isArray(list)) return list;
+  return list.map((p) =>
+    p && typeof p === 'object' && p.value && isCredentialName(p.name)
+      ? { ...p, value: REDACTED_HEADER_VALUE }
+      : p,
+  );
+}
+
+// Redact credential-named fields inside body text (form-encoded or JSON-ish). The
+// name and every other field survive; only the value becomes [redacted].
+export function redactBodyText(text) {
+  if (typeof text !== 'string' || !text) return text;
+  return text.replace(
+    /(["']?)([A-Za-z0-9_.\-]+)\1(\s*[:=]\s*)("([^"]*)"|'([^']*)'|[^&;,\s}]+)/g,
+    (match, q, name, sep) => (isCredentialName(name) ? `${q}${name}${q}${sep}"${REDACTED_HEADER_VALUE}"` : match),
+  );
+}
+
 export function redactHeaderList(headers) {
   if (!Array.isArray(headers)) return headers;
   return headers.map((header) =>
