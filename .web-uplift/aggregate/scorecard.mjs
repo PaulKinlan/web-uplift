@@ -188,44 +188,83 @@ function gradeClass(score) {
 // screenshots as data URIs, so the browser has no network hop to learn the size
 // from: without width/height on the element its height is 0 until the bitmap
 // decodes, and everything below it jumps when it does. Reading the size here lets
-// the markup reserve the same box the image will occupy (web-uplift-xq5). Returns
-// null for anything it cannot read, and the caller then emits no size rather than a
-// guess.
+// the markup reserve the same box the image will occupy (web-uplift-xq5).
+//
+// Every branch validates the header it depends on and the bounds it reads within, and
+// returns null when it cannot: a malformed, truncated or unreadable file must get NO
+// size rather than a made-up box, and the caller then emits no attributes.
+//
+// Residuals, stated rather than implied: a JPEG whose EXIF orientation rotates it can
+// display with a different ratio from its start-of-frame dimensions, and this reads
+// the start-of-frame only (browser-produced screenshots do not carry EXIF rotation);
+// and an image in a format this does not handle gets no attributes, so its box stays
+// unreserved until the bitmap arrives - the fail-safe direction, since nothing is
+// invented and only the movement below it is unbounded.
 function imageSize(buf) {
+  const usable = (width, height) => (width > 0 && height > 0 ? { width, height } : null);
   try {
-    // PNG: 8-byte signature, then the IHDR chunk's width and height.
-    if (buf.length >= 24 && buf.readUInt32BE(0) === 0x89504e47 && buf.readUInt32BE(4) === 0x0d0a1a0a) {
-      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    // PNG: 8-byte signature, then an IHDR chunk that declares its own length and type
+    // ahead of the dimensions.
+    if (
+      buf.length >= 24 &&
+      buf.readUInt32BE(0) === 0x89504e47 &&
+      buf.readUInt32BE(4) === 0x0d0a1a0a &&
+      buf.readUInt32BE(8) === 13 &&
+      buf.toString('latin1', 12, 16) === 'IHDR'
+    ) {
+      return usable(buf.readUInt32BE(16), buf.readUInt32BE(20));
     }
-    // GIF: logical screen descriptor, little-endian.
-    if (buf.length >= 10 && buf.toString('latin1', 0, 3) === 'GIF') {
-      return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
+    // GIF: signature AND version, then the logical screen descriptor.
+    if (buf.length >= 13 && /^GIF8[79]a$/.test(buf.toString('latin1', 0, 6))) {
+      return usable(buf.readUInt16LE(6), buf.readUInt16LE(8));
     }
-    // JPEG: walk the markers to the start-of-frame, which carries the size.
+    // JPEG: walk the marker segments to the start-of-frame, which carries the size.
     if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
       let i = 2;
-      while (i + 9 < buf.length) {
+      while (i < buf.length) {
         if (buf[i] !== 0xff) {
           i++;
           continue;
         }
-        const marker = buf[i + 1];
-        const len = buf.readUInt16BE(i + 2);
-        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-          return { width: buf.readUInt16BE(i + 7), height: buf.readUInt16BE(i + 5) };
+        // Marker fill: any number of 0xFF bytes may pad the space before a marker.
+        // Reading the byte after the first 0xFF as the marker instead treats that
+        // padding as a segment header, reads a length out of the next bytes, and can
+        // step straight over the start-of-frame - so a valid image lost its box.
+        let j = i;
+        while (j < buf.length && buf[j] === 0xff) j++;
+        if (j >= buf.length) return null;
+        const marker = buf[j];
+        // A stuffed 0xFF00 byte and the stand-alone markers carry no length field.
+        if (marker === 0x00 || marker === 0x01 || marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd9)) {
+          i = j + 1;
+          continue;
         }
-        i += 2 + len;
+        if (j + 4 > buf.length) return null;
+        const len = buf.readUInt16BE(j + 1);
+        if (len < 2) return null;
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          if (j + 8 > buf.length) return null;
+          return usable(buf.readUInt16BE(j + 6), buf.readUInt16BE(j + 4));
+        }
+        i = j + 1 + len;
       }
       return null;
     }
-    // WebP: three container shapes carry the size differently.
+    // WebP: a RIFF container whose declared size covers what is read, then one of the
+    // three chunk shapes, each with the bytes that identify it.
     if (buf.length >= 30 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') {
+      if (buf.readUInt32LE(4) + 8 > buf.length) return null;
       const fourCc = buf.toString('latin1', 12, 16);
-      if (fourCc === 'VP8X') return { width: buf.readUIntLE(24, 3) + 1, height: buf.readUIntLE(27, 3) + 1 };
-      if (fourCc === 'VP8 ') return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+      if (fourCc === 'VP8X') return usable(buf.readUIntLE(24, 3) + 1, buf.readUIntLE(27, 3) + 1);
+      if (fourCc === 'VP8 ') {
+        // The lossy frame header carries a sync code before its dimensions.
+        if (buf[23] !== 0x9d || buf[24] !== 0x01 || buf[25] !== 0x2a) return null;
+        return usable(buf.readUInt16LE(26) & 0x3fff, buf.readUInt16LE(28) & 0x3fff);
+      }
       if (fourCc === 'VP8L') {
+        if (buf[20] !== 0x2f) return null;
         const bits = buf.readUInt32LE(21);
-        return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+        return usable((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1);
       }
     }
   } catch {
