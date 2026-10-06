@@ -43,7 +43,10 @@ You choose the conditions and tools at inspection time: `--emulate-media k=v,..`
 `--viewport WxH`, `--selector`, `--interact`, `--expr`, `--source`, `--out`. You
 may also run `npx -y lighthouse ...`, inject axe-core via the `evaluate`
 primitive, or write your own probes. Query Modern Web Guidance with
-`npx -y modern-web-guidance@latest search "<query>"` / `retrieve "<id>"`.
+`npx -y --ignore-scripts modern-web-guidance@0.0.172 search "<query>"` /
+`retrieve "<id>"` (the pinned version is `guidanceCatalogVersion` in
+[`knowledge/principles.json`](knowledge/principles.json); tests/regression.mjs
+fails if any doc names a different one or `@latest`).
 
 The only host requirements: Node, `google-chrome-stable` (override `CHROME_BIN`),
 `ffmpeg` (for the video primitive), and network access for `npx`.

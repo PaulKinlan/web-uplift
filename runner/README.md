@@ -172,7 +172,9 @@ and the audit works fine with it disabled. The host machine needs
 primitive.
 
 The agent also needs network access to query the Modern Web Guidance feed
-(`npx -y modern-web-guidance@latest …`) and, optionally, to run Lighthouse
+(`npx -y --ignore-scripts modern-web-guidance@0.0.172 …`, the version pinned as
+`guidanceCatalogVersion` in `knowledge/principles.json`) and, optionally, to run
+Lighthouse
 (`npx -y lighthouse …`). Claude's `--allowedTools` list includes `Bash(npx:*)`
 for this.
 

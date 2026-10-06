@@ -12,15 +12,22 @@ for satisfying those outcomes.
 Modern Web Guidance ships as the `modern-web-guidance` npm package. The audit
 skill queries it with `npx`; there is no local feed to build or bundle.
 
+The commands below name the version pinned in [principles.json](principles.json)
+as `guidanceCatalogVersion` (see [Version Pinning](#version-pinning)), never
+`@latest`: an unpinned resolution has no lockfile entry and no integrity check,
+so it would make audits irreproducible and let a compromised publish run on the
+audit host. `--ignore-scripts` keeps the fetched package's install scripts from
+running, which is the part of the exposure that needs no luck at all.
+
 ```sh
 # List every guide.
-npx -y modern-web-guidance@latest list
+npx -y --ignore-scripts modern-web-guidance@0.0.172 list
 
 # Semantic search.
-npx -y modern-web-guidance@latest search "dark mode prefers-color-scheme"
+npx -y --ignore-scripts modern-web-guidance@0.0.172 search "dark mode prefers-color-scheme"
 
 # Retrieve a full guide by id.
-npx -y modern-web-guidance@latest retrieve "dark-mode"
+npx -y --ignore-scripts modern-web-guidance@0.0.172 retrieve "dark-mode"
 ```
 
 `search` returns entries shaped like:
@@ -50,8 +57,8 @@ The model consults them up front, before judging, so the bar comes from the
 current recommended approach rather than memory:
 
 ```sh
-npx -y modern-web-guidance@0.0.172 retrieve "dark-mode"
-npx -y modern-web-guidance@0.0.172 search "high contrast prefers-contrast forced colors"
+npx -y --ignore-scripts modern-web-guidance@0.0.172 retrieve "dark-mode"
+npx -y --ignore-scripts modern-web-guidance@0.0.172 search "high contrast prefers-contrast forced colors"
 ```
 
 Use the result to:
@@ -76,7 +83,7 @@ snapshot workflow, memlab analysis, and common leak patterns; the repo-native
 For each task in `taskList`, retrieve the full guide:
 
 ```sh
-npx -y modern-web-guidance@0.0.172 retrieve "<guidanceId>"
+npx -y --ignore-scripts modern-web-guidance@0.0.172 retrieve "<guidanceId>"
 ```
 
 Apply the guide's technique to the local source, respecting browser-support and
