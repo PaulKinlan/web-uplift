@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import http from 'node:http';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -3223,17 +3223,35 @@ function testFixModeScopeEdgeCases() {
     // A refused run must not be published as a result: no retained after-run and
     // no scorecard, or a tampered tree becomes the newest run for that host.
     assert(/Not recording a retained run/.test(a.res.stdout), `fix scope: a refused run must record no result:\n${a.res.stdout}`);
-    const hostDirs = readdirSync(join(root, 'reports-edge-crash'));
-    assert(hostDirs.length === 1, `fix scope: expected one host dir, got ${JSON.stringify(hostDirs)}`);
-    const hostEntries = readdirSync(join(root, 'reports-edge-crash', hostDirs[0]));
+    // Nothing at all is published by a refused run: no run dirs and no `latest`,
+    // so a consumer reading the host's newest result cannot see the refused tree.
+    const crashRoot = join(root, 'reports-edge-crash');
+    const crashHosts = existsSync(crashRoot) ? readdirSync(crashRoot) : [];
+    assert(crashHosts.length === 0, `fix scope: a refused run must publish nothing, got ${JSON.stringify(crashHosts)}`);
+    assert(!existsSync(join(crashRoot, 'example_test', 'latest')), 'fix scope: a refused run must not move latest');
+
+    // H (the missing half): a climb that reaches zero outstanding issues must
+    // still publish - exit 0, a retained after run, a `latest` pointing at it, and
+    // a scorecard. Without this, a guard that broke every successful run would
+    // pass the assertions above.
+    const h = drive({
+      outName: 'edge-pass',
+      body: `${inScope}\ncp ${JSON.stringify(join(repoRoot, 'examples', 'playground-report-fixed.json'))} ${JSON.stringify(join(root, 'edge-pass', 'report.json'))}`,
+    });
+    assert(h.res.status === 0, `fix scope: a successful climb must exit 0 (got ${h.res.status})\n${h.res.stdout}${h.res.stderr}`);
+    assert(/^PASS:/m.test(h.res.stdout), `fix scope: a successful climb must say PASS:\n${h.res.stdout}`);
+    assert(!/CONFINEMENT FAILURE/.test(h.res.stderr), 'fix scope: a successful climb must not refuse');
+    const passHosts = readdirSync(join(root, 'reports-edge-pass'));
+    assert(passHosts.length === 1, `fix scope: a successful climb publishes one host dir, got ${JSON.stringify(passHosts)}`);
+    const passHostRoot = join(root, 'reports-edge-pass', passHosts[0]);
+    const passEntries = readdirSync(passHostRoot);
+    assert(passEntries.some((e) => e.endsWith('-after')), `fix scope: a successful climb records an after run, got ${JSON.stringify(passEntries)}`);
+    assert(existsSync(join(passHostRoot, 'latest')), 'fix scope: a successful climb must move latest');
     assert(
-      !hostEntries.some((e) => e.endsWith('-after')),
-      `fix scope: a refused run must not record an after-run, got ${JSON.stringify(hostEntries)}`,
+      readlinkSync(join(passHostRoot, 'latest')).endsWith('-after'),
+      'fix scope: latest must point at the after run',
     );
-    assert(
-      !existsSync(join(root, 'reports-edge-crash', hostDirs[0], 'scorecard.html')),
-      'fix scope: a refused run must not publish a scorecard',
-    );
+    assert(existsSync(join(passHostRoot, 'scorecard.html')), 'fix scope: a successful climb must publish a scorecard');
 
     // B: the baseline audit (no --findings) spawns the same write-capable agent
     // under the same untrusted context, so it must be scoped too - otherwise the

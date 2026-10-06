@@ -10,24 +10,41 @@
 // agent run (the baseline audit included), hand the operator a per-run diff, and
 // refuse to continue once a change lands outside the declared scope.
 //
-// THIS IS DETECTION, NOT CONFINEMENT, and saying so is the point. A determined
-// agent can still reach outside the walked roots (see the gaps listed below), so
-// the walk is a tripwire on the realistic paths, not a sandbox; true confinement
-// needs an OS sandbox or a child cwd rooted at --target, which is not possible
-// while the skill resolves its tool at `.web-uplift/evidence/cli.mjs` relative to
-// the PROJECT root (see fixer/fix.mjs).
+// THIS IS DETECTION, NOT CONFINEMENT, and saying so is the point. The child still
+// holds its agent CLI's write tools, and a determined agent can reach outside the
+// walked roots, so the walk is a tripwire on the realistic paths, not a sandbox.
+// An earlier version of this comment claimed a child cwd rooted at --target was
+// impossible because the skill resolves its tool at `.web-uplift/evidence/cli.mjs`
+// relative to the PROJECT root. That was wrong and is corrected here: the skill
+// documents an invocation that works from any cwd, and the tool path can simply be
+// passed absolute. Rooting the child is therefore available as an enforcement
+// boundary; choosing between that, an OS sandbox, and this detection layer is a
+// design decision, and until it is taken this module must be read as detection.
 //
 // Covered: creates, edits, deletes and symlink changes anywhere under the walked
 // roots, including `.git/hooks` and `.git/config` (the persistence vectors for an
 // injected agent) and the `--target` tree when it sits outside the invocation
 // directory.
 //
-// NOT covered, stated rather than implied: writes outside the walked roots
-// (`$HOME`, `/tmp`, another checkout); content rewrites that preserve size AND
-// mtime; hard links created into a walked root; and a file created and deleted
-// inside one iteration. Excluding the noisy trees (the dependency tree, vendored
-// tool, `reports/` and `.git/objects`) is what makes the walk cheap enough to run
-// every iteration, and it is also what leaves those trees uncovered.
+// NOT covered, stated rather than implied. First, the excluded trees: any path
+// with a `node_modules`, `.web-uplift` or `reports` segment is skipped, as is
+// `.git/objects` and the rest of `.git` outside the keep set. Those exclusions are
+// what make the walk cheap enough to run every iteration, and they are also the
+// places where an unobserved change matters most, because the tool EXECUTES code
+// from some of them and PUBLISHES from others: the vendored evidence CLI and the
+// dependency tree are both run by later steps, and `reports/<host>/latest` is the
+// pointer a consumer reads. A change there is recorded nowhere by this module.
+// Because the segment test runs first, a target that lives beneath one of those
+// names is skipped wholesale, keep set included.
+//
+// Second, the gaps that do not depend on exclusions: writes outside the walked
+// roots (`$HOME`, `/tmp`, another checkout); writes THROUGH a symlink that already
+// points outside the roots (the link itself is unchanged, so nothing is
+// recorded); writes to an external inode through a hard link that already exists
+// inside a walked root; metadata-only changes, since the stamp is size plus mtime
+// (so making an existing file executable is invisible); empty-directory creation
+// and removal; content rewrites that preserve both size and mtime; and a file
+// created and deleted inside one run.
 
 import { readdirSync, readlinkSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';

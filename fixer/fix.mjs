@@ -278,10 +278,11 @@ if (goalActive) {
 // the final compare has the pre-fix state with its artifacts. The live working
 // report stays at outDir/report.json for the iterations; we just preserve a copy.
 const reportsRoot = args['reports-root'] ?? 'reports';
-const beforeRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-before`);
-await snapshotRun(dirOf(findingsPath), beforeRun.dir, baseline);
-updateLatest(beforeRun.hostRoot, beforeRun.runId);
-console.log(`Preserved baseline run at ${beforeRun.dir}`);
+// NOTE: the baseline run dir is NOT created and `latest` is NOT moved here. Both
+// are deferred to the publish step at the end of this file, which is skipped when
+// the climb is refused or an agent failed. Publishing earlier meant a REFUSED run
+// still replaced that host's previous newest result (and left a run dir nothing
+// referred to). Until a run completes, a caller must see no change at all.
 
 // 2. Hill-climb. Stop condition is zero outstanding issues OR, when --goal is
 // set, the score goal being met (so you can climb to "overall>=80, no critical"
@@ -412,6 +413,14 @@ if (escapedOutsideScope || agentFailure) {
     const finalReport = existsSync(join(outDir, 'report.json'))
       ? await readReport(join(outDir, 'report.json'))
       : baseline;
+    // Only now, with a completed and in-scope climb, is anything published: the
+    // preserved baseline, the retained after run, and the `latest` pointer. Both
+    // run dirs are created here rather than before the climb, so a refused run
+    // leaves no run dir and no moved pointer behind.
+    const beforeRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-before`);
+    await snapshotRun(dirOf(findingsPath), beforeRun.dir, baseline);
+    updateLatest(beforeRun.hostRoot, beforeRun.runId);
+    console.log(`Preserved baseline run at ${beforeRun.dir}`);
     const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
     await snapshotRun(outDir, afterRun.dir, finalReport);
     updateLatest(afterRun.hostRoot, afterRun.runId);
