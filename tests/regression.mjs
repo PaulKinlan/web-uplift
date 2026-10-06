@@ -2484,10 +2484,15 @@ function testGuidanceVersionPinnedInDocs() {
     const text = readFileSync(join(repoRoot, rel), 'utf8');
     const refs = [...text.matchAll(/modern-web-guidance@([^\s"'`]+)/g)].map((m) => m[1]);
     assert(refs.length > 0, `${rel} must name the pinned guidance version (${pinned})`);
-    for (const ref of refs) {
+    for (const raw of refs) {
+      // A permission rule can follow the version directly, e.g.
+      // `modern-web-guidance@0.0.172:*` in the headless allowlist docs, so strip
+      // a trailing rule suffix before comparing. A genuinely different version
+      // (or an @latest) still fails.
+      const ref = raw.replace(/[:*)]+$/, '');
       assert(
         `modern-web-guidance@${ref}` === pinned,
-        `${rel} names modern-web-guidance@${ref}, but guidanceCatalogVersion is ${pinned}`,
+        `${rel} names modern-web-guidance@${raw}, but guidanceCatalogVersion is ${pinned}`,
       );
     }
   }
@@ -2518,11 +2523,18 @@ function testHeadlessAllowlistIsScoped() {
   for (const entry of [
     'Bash(node evidence/cli.mjs:*)',
     'Bash(node .web-uplift/evidence/cli.mjs:*)',
-    'Bash(npx -y lighthouse:*)',
     'Bash(ffmpeg:*)',
   ]) {
     assert(allowed.includes(entry), `the headless allowlist must keep the intended ${entry}: ${allowed}`);
   }
+
+  // A bare tool name is a PREFIX, so `Bash(npx -y lighthouse:*)` would also match
+  // `npx -y lighthouse-evil`: Lighthouse is deliberately absent, and if it is ever
+  // added it must carry an exact version right after the package name.
+  assert(
+    !/Bash\(npx [^)]*lighthouse[^@:)]*:\*\)/.test(allowed),
+    `the headless allowlist must not grant a bare tool prefix such as lighthouse: ${allowed}`,
+  );
 
   const pinned = readJson('knowledge/principles.json').guidanceCatalogVersion;
   assert(
