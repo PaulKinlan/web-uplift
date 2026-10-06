@@ -44,13 +44,14 @@
  */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, access, cp } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { AGENTS, AGENT_NAMES } from '../runner/agents.mjs';
 import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
 import { countOutstanding, completionState, remaining } from '../runner/remaining-work.mjs';
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from './write-scope.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -140,6 +141,32 @@ if (!dryRun && (!target || !auditUrl)) {
 // at the SAME canonical skill and passes the source + findings so the model has
 // the task list and applies guidance-backed edits itself. `extra` is appended
 // to the skill arguments by the shared prompt builders.
+// The write boundary for a fix run. The child's cwd is set EXPLICITLY to this
+// same directory (see runAgent) rather than inherited from whoever launched the
+// fixer, so "the agent's relative writes land here" and "the snapshot boundary is
+// here" are the same stated fact. The snapshot is anchored at the invocation
+// directory - the project root, which is also where `web-uplift install` vendors
+// .web-uplift/ - while the only scope a fix may legitimately edit is --target.
+const projectRoot = resolve(process.cwd());
+const scopeRoot = target ? resolve(target) : null;
+const outRoot = resolve(outDir);
+// Extra roots the operator explicitly allows a run to touch (build output, a
+// generated lockfile). Without this, a legitimate `npm run build` under a fix
+// iteration would refuse the run - fail-closed with no way forward. Repeatable,
+// and each value may itself be a comma-separated list.
+const allowWrite = [].concat(args['allow-write'] ?? [])
+  .flatMap((v) => String(v).split(','))
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((p) => resolve(p));
+const allowedRoots = [scopeRoot, outRoot, ...allowWrite];
+let escapedOutsideScope = false;
+let agentFailure = null;
+
+// The walk covers the invocation directory, the target when it sits outside it,
+// and any operator-allowed root, so an out-of-tree path still gets a per-run diff.
+const snapshotScope = () => snapshotTree(projectRoot, { extraRoots: [scopeRoot, ...allowWrite] });
+
 function fixExtra(findingsPath, iteration) {
   return (
     `--source ${target} --fix --findings ${findingsPath} ` +
@@ -159,6 +186,9 @@ if (dryRun) {
   console.log(`target source : ${target ?? '<target>'}`);
   console.log(`audit url     : ${auditUrl ?? '<audit-url>'}`);
   console.log(`report out    : ${outDir}`);
+  console.log(`write scope   : ${scopeRoot ?? '<target>'} (a change outside this refuses the run)`);
+  if (allowWrite.length) console.log(`also allowed  : ${allowWrite.join(', ')}`);
+  console.log(`agent isolation: ${args.isolation && args.isolation !== true ? `operator-supplied (${args.isolation}), unverified` : 'REQUIRED - refuses before any spawn without --isolation <mechanism>'}`);
   console.log('');
   console.log('Per-iteration command the model is driven with:');
   for (let i = 1; i <= maxIterations; i++) {
@@ -178,13 +208,124 @@ if (dryRun) {
 
 await mkdir(outDir, { recursive: true });
 
-// 1. Findings: supplied, or run an audit + aggregate first.
+// --- Operator-supplied isolation, asserted BEFORE any agent spawn --------------
+// This tool does NOT provide a sandbox. Fix mode drives an agent that holds write
+// tools while its context carries untrusted page content, and the honest position is
+// that the operator must supply the boundary. So: no assertion, no spawn. With an
+// assertion the run proceeds, but the tool says loudly that it did NOT verify it and
+// records that in the run's security record. See the "running it safely" example in
+// README.md for the invocation this expects.
+const isolationAssertion = args.isolation && args.isolation !== true ? String(args.isolation).trim() : '';
+const willSpawnAgent = maxIterations > 0 || !args.findings;
+let isolationRecord;
+
+function writeRunSecurity(dir, record) {
+  // A RECORD, not an attestation: it lives in the directory the agent can write, so
+  // it states what the operator asserted and that the tool could not verify it. It
+  // is evidence for a human, never proof of a boundary. Returns false when it could
+  // not be written - the caller REFUSES to spawn in that case, because a run that
+  // proceeds without the record defeats the point of demanding the assertion.
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'run-security.json'), JSON.stringify({ ...record, recordedAt: new Date().toISOString(), tool: 'web-uplift fix' }, null, 2) + '\n');
+    return true;
+  } catch (err) {
+    console.error(`Could not record the isolation state: ${err.message}`);
+    return false;
+  }
+}
+
+if (!willSpawnAgent) {
+  isolationRecord = { isolation: 'not-required', reason: 'this run spawns no agent (--findings supplied and --max-iterations 0)' };
+  writeRunSecurity(outDir, isolationRecord);
+} else if (!isolationAssertion) {
+  isolationRecord = {
+    isolation: 'refused',
+    reason: 'no --isolation assertion was given, so the tool cannot know what boundary is protecting the agent',
+    required: '--isolation <mechanism> naming the boundary you are providing (docker, bwrap, vm, host-permission-model, ...)',
+  };
+  writeRunSecurity(outDir, isolationRecord);
+  console.error(
+    [
+      'REFUSED: no isolation assertion, and NO AGENT WAS STARTED.',
+      'Fix mode drives a write-capable agent whose context carries untrusted page content, and this tool does NOT sandbox it.',
+      `Say which boundary you are providing: --isolation <mechanism> (docker, bwrap, vm, host-permission-model, ...).`,
+      `Recorded in ${join(outDir, 'run-security.json')}. The tool cannot verify the boundary - it records only what you assert.`,
+    ].join('\n'),
+  );
+  process.exit(1);
+} else {
+  isolationRecord = {
+    isolation: `operator-supplied:${isolationAssertion}`,
+    unverified: true,
+    reason: 'declared by the operator; the tool did not and cannot verify it',
+  };
+  if (!writeRunSecurity(outDir, isolationRecord)) {
+    console.error(
+      `REFUSED: the isolation assertion could not be recorded in ${outDir}, and NO AGENT WAS STARTED.\n` +
+      'Recording what was asserted is the point of requiring the assertion, so a run that cannot be recorded does not proceed.',
+    );
+    process.exit(1);
+  }
+  console.error(
+    `\nWARNING: proceeding on an UNVERIFIED isolation assertion: --isolation ${isolationAssertion}.\n` +
+    'This tool does not sandbox the agent and cannot check your boundary. If the agent escapes it, the snapshot/diff\n' +
+    'tripwire is the only remaining detection - and its documented gaps still apply. Recorded as unverified in ' +
+    `${join(outDir, 'run-security.json')}.\n`,
+  );
+}
+
+// 1. Validation of a supplied report. NOTE ON ORDER: the isolation assertion is
+// resolved ABOVE this point, so a run with no assertion refuses before a malformed
+// report is even read. That is deliberate - the assertion gates whether the tool will
+// run at all, while report shape is about the input - but it does mean an operator
+// with both problems hears about the isolation first. A run carrying --findings with
+// --max-iterations 0 never spawns, needs no assertion, and reaches this validation
+// (which is what the malformed/unscoreable report tests exercise).
+let suppliedBaseline = null;
+if (args.findings) {
+  try {
+    suppliedBaseline = await readReport(args.findings);
+  } catch (err) {
+    console.error(`Cannot start the climb: ${err.message || err} (write-scope records: ${scopeRecordPaths()} in ${outDir})`);
+    process.exit(1);
+  }
+}
+
+// 1. Findings: supplied, or run an audit + aggregate first. The baseline audit
+// spawns the same write-capable agent under the same untrusted context, so it is
+// scoped exactly like an iteration - otherwise an injection during iteration 0
+// would write unmonitored AND be baked into iteration 1's "clean" baseline.
 let findingsPath = args.findings;
 if (!findingsPath) {
   console.log(`No --findings supplied; running a baseline audit of ${auditUrl} first.`);
   findingsPath = await baselineAudit();
 }
-const baseline = await readReport(findingsPath);
+if (escapedOutsideScope) {
+  // Nothing below can be trusted: the tree the hill-climb would start from is
+  // already outside the declared scope, and the report may not exist at all.
+  console.error(
+    'CONFINEMENT: refusing to continue - the baseline audit wrote outside ' +
+      `${scopeRoot ?? '<target>'} (records: ${scopeRecordPaths()} in ${outDir}).`,
+  );
+  process.exit(1);
+}
+if (agentFailure) {
+  console.error(
+    `The baseline audit failed before it produced a report: ${agentFailure.message || agentFailure} ` +
+      `(records: ${scopeRecordPaths()} in ${outDir})`,
+  );
+  process.exit(1);
+}
+let baseline = suppliedBaseline;
+try {
+  baseline = baseline ?? (await readReport(findingsPath));
+} catch (err) {
+  // The same named failure the iteration loop reports: a baseline the fixer cannot
+  // read is a run it cannot score, not a stack trace.
+  console.error(`Cannot start the climb: ${err.message || err} (write-scope records: ${scopeRecordPaths()} in ${outDir})`);
+  process.exit(1);
+}
 const startIssues = countOutstanding(baseline);
 const baselineRemaining = remaining(baseline);
 const goalOf = (report) => {
@@ -222,10 +363,11 @@ if (goalActive) {
 // the final compare has the pre-fix state with its artifacts. The live working
 // report stays at outDir/report.json for the iterations; we just preserve a copy.
 const reportsRoot = args['reports-root'] ?? 'reports';
-const beforeRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-before`);
-await snapshotRun(dirOf(findingsPath), beforeRun.dir, baseline);
-updateLatest(beforeRun.hostRoot, beforeRun.runId);
-console.log(`Preserved baseline run at ${beforeRun.dir}`);
+// NOTE: the baseline run dir is NOT created and `latest` is NOT moved here. Both
+// are deferred to the publish step at the end of this file, which is skipped when
+// the climb is refused or an agent failed. Publishing earlier meant a REFUSED run
+// still replaced that host's previous newest result (and left a run dir nothing
+// referred to). Until a run completes, a caller must see no change at all.
 
 // 2. Hill-climb. Stop condition is zero outstanding issues OR, when --goal is
 // set, the score goal being met (so you can climb to "overall>=80, no critical"
@@ -241,9 +383,48 @@ const history = [{ iteration: 0, ...baselineRemaining, score: scoreOf(baseline) 
 for (let i = 1; i <= maxIterations && !passed; i++) {
   console.log(`\n--- iteration ${i}/${maxIterations} ---`);
   const prompt = iterationPrompt(findingsPath, i);
-  await runAgent(prompt, i);
+  const scopeBefore = snapshotScope();
+  // An agent that writes out of scope and THEN exits non-zero must not hide the
+  // write: a rejected runAgent would otherwise abort the process before the diff
+  // and the escape diagnosis were ever computed.
+  let iterationError = null;
+  try {
+    await runAgent(prompt, i);
+  } catch (err) {
+    iterationError = err;
+  }
+  // A fix iteration may edit --target and write its own report under --out, and
+  // nothing else. Record the diff either way, so an operator can review what the
+  // model changed instead of trusting the model's own summary.
+  const changes = diffTrees(scopeBefore, snapshotScope());
+  const escaped = escapedChanges(changes, projectRoot, allowedRoots);
+  const iterationDiff = { iteration: i, projectRoot, target: scopeRoot, allowedRoots, changed: changes, escapedOutsideScope: escaped, agentError: iterationError ? String(iterationError.message || iterationError) : null };
+  await writeFile(join(outDir, `iter-${i}-diff.json`), JSON.stringify(iterationDiff, null, 2) + '\n');
+  console.log(`  changed: ${summariseChanges(changes)}`);
+  if (escaped.length) {
+    escapedOutsideScope = true;
+    await writeFile(join(outDir, 'confinement-escape.json'), JSON.stringify(iterationDiff, null, 2) + '\n');
+    console.error(confinementFailure(`iteration ${i}`, escaped));
+    break;
+  }
+  if (iterationError) {
+    agentFailure = iterationError;
+    await writeFile(join(outDir, `iter-${i}-error.json`), JSON.stringify(iterationDiff, null, 2) + '\n');
+    console.error(`\nThe fix agent failed in iteration ${i}: ${iterationError.message || iterationError}`);
+    break;
+  }
 
-  const report = await readReport(join(outDir, 'report.json'));
+  let report = null;
+  try {
+    report = await readReport(join(outDir, 'report.json'));
+  } catch (err) {
+    // A crash here would be a raw stack after the scope checks, and the report is
+    // the one thing this iteration was asked to produce. Name it and stop.
+    agentFailure = err;
+    await writeFile(join(outDir, `iter-${i}-error.json`), JSON.stringify({ ...iterationDiff, reportError: String(err.message || err) }, null, 2) + '\n');
+    console.error(`\nIteration ${i} produced no usable report: ${err.message || err}`);
+    break;
+  }
   const r = remaining(report);
   const score = scoreOf(report);
   history.push({ iteration: i, ...r, score });
@@ -286,64 +467,153 @@ console.log(
         (lastRemaining.completion.complete ? '' : ` and INCOMPLETE coverage (${lastRemaining.completion.reasons.join(', ')})`) +
         `${goalActive ? ' (goal not met)' : ''}.`,
 );
+if (escapedOutsideScope) {
+  console.log(
+    'CONFINEMENT: an iteration wrote outside --target; the run is refused and exits non-zero ' +
+      `(records: ${scopeRecordPaths()} in ${outDir}).`,
+  );
+}
+console.log(
+  `agent isolation: ${isolationRecord?.isolation ?? 'unresolved'}` +
+    (isolationRecord?.unverified ? ' - DECLARED BY THE OPERATOR, NOT VERIFIED BY THIS TOOL' : ''),
+);
+if (agentFailure) {
+  console.log(
+    `AGENT FAILURE: an iteration did not complete (${agentFailure.message || agentFailure}); ` +
+      `the run exits non-zero (records: ${scopeRecordPaths()} in ${outDir}).`,
+  );
+}
 
 // 3. Snapshot the final state into a RETAINED `after` run and emit the
 // before -> after comparison automatically (audit -> fix -> re-audit -> compare).
 // If no iteration ran (e.g. the goal was already met at baseline), the working
 // report was never written; fall back to the baseline as the final state.
-try {
-  const finalReport = existsSync(join(outDir, 'report.json'))
-    ? await readReport(join(outDir, 'report.json'))
-    : baseline;
-  const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
-  await snapshotRun(outDir, afterRun.dir, finalReport);
-  updateLatest(afterRun.hostRoot, afterRun.runId);
-
-  const cmp = compareReports(baseline, finalReport, { dirA: beforeRun.dir, dirB: afterRun.dir });
-  const md = renderCompareMd(cmp, {
-    hostName: beforeRun.host,
-    runAId: beforeRun.runId,
-    runBId: afterRun.runId,
-    dirA: beforeRun.dir,
-    dirB: afterRun.dir,
-  });
-  await writeFile(join(afterRun.dir, 'compare.json'), JSON.stringify({ host: beforeRun.host, runA: beforeRun.runId, runB: afterRun.runId, ...cmp }, null, 2) + '\n');
-  await writeFile(join(afterRun.dir, 'compare.md'), md);
-  // A copy at the working outDir too, for convenience.
-  await writeFile(join(outDir, 'compare.md'), md);
-  console.log(`\nBefore -> after comparison written to ${join(afterRun.dir, 'compare.md')}`);
-  console.log(`  outstanding ${cmp.summary.outstandingBefore} -> ${cmp.summary.outstandingAfter}, ` +
-    `resolved ${cmp.summary.resolved}, new ${cmp.summary.newlyIntroduced}, persisting ${cmp.summary.persisting}`);
-  // Roll the retained runs into the interactive scorecard.html (gauges, top-3,
-  // deep-dive, history, before/after) so a fix run leaves a shareable summary.
+//
+// SKIPPED when the run was refused or an agent failed: recording a retained run,
+// moving the host's `latest` pointer and rebuilding the scorecard would publish a
+// tampered (or half-finished) tree as the newest result for that host.
+if (escapedOutsideScope || agentFailure) {
+  console.log(
+    '\nNot recording a retained run or scorecard: the climb was refused, so there is no valid result ' +
+      `to publish (records: ${scopeRecordPaths()} in ${outDir}).`,
+  );
+} else {
   try {
-    const data = buildScorecardData(beforeRun.hostRoot, beforeRun.host, new Date().toISOString().slice(0, 16).replace('T', ' '));
-    await writeFile(join(beforeRun.hostRoot, 'scorecard.html'), renderScorecard(data));
-    console.log(`Scorecard written to ${join(beforeRun.hostRoot, 'scorecard.html')}`);
+    const finalReport = existsSync(join(outDir, 'report.json'))
+      ? await readReport(join(outDir, 'report.json'))
+      : baseline;
+    // Only now, with a completed and in-scope climb, is anything published: the
+    // preserved baseline, the retained after run, and the `latest` pointer. Both
+    // run dirs are created here rather than before the climb, so a refused run
+    // leaves no run dir and no moved pointer behind.
+    const beforeRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-before`);
+    await snapshotRun(dirOf(findingsPath), beforeRun.dir, baseline);
+    updateLatest(beforeRun.hostRoot, beforeRun.runId);
+    console.log(`Preserved baseline run at ${beforeRun.dir}`);
+    const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
+    await snapshotRun(outDir, afterRun.dir, finalReport);
+    // The isolation record travels with the retained result, so a reader of the run
+    // can see exactly what was asserted (and that it was not verified).
+    await writeFile(join(afterRun.dir, 'run-security.json'), JSON.stringify(isolationRecord, null, 2) + '\n');
+    updateLatest(afterRun.hostRoot, afterRun.runId);
+
+    const cmp = compareReports(baseline, finalReport, { dirA: beforeRun.dir, dirB: afterRun.dir });
+    const md = renderCompareMd(cmp, {
+      hostName: beforeRun.host,
+      runAId: beforeRun.runId,
+      runBId: afterRun.runId,
+      dirA: beforeRun.dir,
+      dirB: afterRun.dir,
+    });
+    await writeFile(join(afterRun.dir, 'compare.json'), JSON.stringify({ host: beforeRun.host, runA: beforeRun.runId, runB: afterRun.runId, ...cmp }, null, 2) + '\n');
+    await writeFile(join(afterRun.dir, 'compare.md'), md);
+    // A copy at the working outDir too, for convenience.
+    await writeFile(join(outDir, 'compare.md'), md);
+    console.log(`\nBefore -> after comparison written to ${join(afterRun.dir, 'compare.md')}`);
+    console.log(`  outstanding ${cmp.summary.outstandingBefore} -> ${cmp.summary.outstandingAfter}, ` +
+      `resolved ${cmp.summary.resolved}, new ${cmp.summary.newlyIntroduced}, persisting ${cmp.summary.persisting}`);
+    // Roll the retained runs into the interactive scorecard.html (gauges, top-3,
+    // deep-dive, history, before/after) so a fix run leaves a shareable summary.
+    try {
+      const data = buildScorecardData(beforeRun.hostRoot, beforeRun.host, new Date().toISOString().slice(0, 16).replace('T', ' '));
+      await writeFile(join(beforeRun.hostRoot, 'scorecard.html'), renderScorecard(data));
+      console.log(`Scorecard written to ${join(beforeRun.hostRoot, 'scorecard.html')}`);
+    } catch (err) {
+      console.error(`Could not emit scorecard: ${err.message}`);
+    }
   } catch (err) {
-    console.error(`Could not emit scorecard: ${err.message}`);
+    console.error(`Could not emit before/after comparison: ${err.message}`);
   }
-} catch (err) {
-  console.error(`Could not emit before/after comparison: ${err.message}`);
 }
 
-process.exitCode = passed ? 0 : 1;
+process.exitCode = passed && !escapedOutsideScope && !agentFailure ? 0 : 1;
 
 // --- helpers ---------------------------------------------------------------
 
 async function baselineAudit() {
   // Drive the model in REPORT mode once to produce report.json, then use it as
-  // the findings input. Reuses the same agent map.
+  // the findings input. Reuses the same agent map. Scoped exactly like an
+  // iteration: this spawn runs under the same untrusted page context and holds
+  // the same write tools, so an injection here would otherwise write unmonitored
+  // AND be baked into iteration 1's "clean" baseline snapshot.
   const prompt = agent.prompt(auditUrl, outDir, `--source ${target}`);
-  await runAgent(prompt, 0);
+  const scopeBefore = snapshotScope();
+  try {
+    await runAgent(prompt, 0);
+  } catch (err) {
+    agentFailure = err;
+  }
+  const changes = diffTrees(scopeBefore, snapshotScope());
+  const escaped = escapedChanges(changes, projectRoot, allowedRoots);
+  const record = {
+    iteration: 0,
+    phase: 'baseline-audit',
+    projectRoot,
+    target: scopeRoot,
+    allowedRoots,
+    changed: changes,
+    escapedOutsideScope: escaped,
+    agentError: agentFailure ? String(agentFailure.message || agentFailure) : null,
+  };
+  await writeFile(join(outDir, 'iter-0-diff.json'), JSON.stringify(record, null, 2) + '\n');
+  console.log(`  baseline audit changed: ${summariseChanges(changes)}`);
+  if (escaped.length) {
+    escapedOutsideScope = true;
+    await writeFile(join(outDir, 'confinement-escape.json'), JSON.stringify(record, null, 2) + '\n');
+    console.error(confinementFailure('the baseline audit', escaped));
+  }
   return join(outDir, 'report.json');
+}
+
+// Every write-scope record written so far, for a refusal message that says where
+// to look instead of leaving the operator to guess.
+function scopeRecordPaths() {
+  const names = [];
+  for (let n = 0; n <= Math.max(maxIterations, 0); n++) {
+    if (existsSync(join(outDir, `iter-${n}-diff.json`))) names.push(`iter-${n}-diff.json`);
+  }
+  if (existsSync(join(outDir, 'confinement-escape.json'))) names.push('confinement-escape.json');
+  return names.join(', ') || 'none';
+}
+
+function confinementFailure(where, escaped) {
+  return (
+    `\nCONFINEMENT FAILURE: ${where} changed ${escaped.length} path(s) outside ` +
+    `${scopeRoot ?? '<target>'} and ${outRoot}:\n  ${escaped.join('\n  ')}\n` +
+    'The fix agent\'s context carries untrusted page content, so this is a refusal, not a warning: the climb ' +
+    'stops here and the run exits non-zero. The changes are NOT reverted automatically - review ' +
+    `${join(outDir, 'confinement-escape.json')} and the per-iteration diff, then decide. ` +
+    'If the path is a legitimate build or scratch output, re-run with --allow-write <dir> to allow it.'
+  );
 }
 
 function runAgent(prompt, iteration) {
   const cliArgs = agent.args(prompt, { maxTurns: 120 });
   if (verbose) console.log(`[iter ${iteration}] $ ${agent.bin} ${cliArgs.join(' ')}`);
   return new Promise((resolve, reject) => {
-    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // cwd is the project root, set explicitly rather than inherited: the skill finds
+    // the vendored tool at .web-uplift/evidence/cli.mjs relative to this directory.
+    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'], cwd: projectRoot });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; if (verbose) process.stdout.write(d); });
@@ -435,7 +705,7 @@ function parseArgs(argv) {
   const out = { _: [] };
   const valueFlags = new Set([
     'target', 'audit-url', 'agent', 'max-iterations', 'findings', 'out', 'reports-root',
-    'goal-overall', 'goal-min', 'goal-max-critical', 'goal-max-high',
+    'goal-overall', 'goal-min', 'goal-max-critical', 'goal-max-high', 'allow-write', 'isolation',
   ]);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
@@ -480,6 +750,16 @@ Options:
   --findings <path>       Pre-aggregated findings/report.json (skip baseline audit).
   --out <dir>             Report directory (default: reports/fix-<host>/).
   --reports-root <dir>    Root for retained before/after run dirs (default: reports).
+  --allow-write <dirs>    Extra roots a run may modify, on top of --target and
+                          --out (e.g. a build output dir). Repeatable, and each
+                          value may be comma-separated.
+  --isolation <mechanism>
+                          REQUIRED before any agent spawn. Names the boundary YOU
+                          are providing (docker, bwrap, vm, host-permission-model,
+                          ...). The tool does not sandbox the agent and cannot
+                          verify your boundary; it records the assertion as
+                          unverified and warns. See "Running it safely" in
+                          README.md for a worked example.
   --dry-run               Print the per-iteration command for each agent; do not run.
   --verbose               Stream agent stdout/stderr live.
   -h, --help              This help.

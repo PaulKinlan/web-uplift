@@ -556,6 +556,16 @@ not enter score aggregation.
 
 ### 7. Fix mode (`--fix --source <dir>`, the model-driven hill-climb)
 
+**The headless fixer requires an isolation assertion.** It drives a write-capable
+agent whose context carries untrusted page content and does not sandbox it, so
+`web-uplift fix` refuses to spawn anything unless you name the boundary you are
+providing (`--isolation docker|bwrap|vm|host-permission-model|...`) and it records
+that assertion as UNVERIFIED in `<out>/run-security.json`. It then snapshots the
+tree around each agent run and refuses the run when a change lands outside
+`--target`/`--out` - detection, not confinement; the gaps are documented in
+README.md ("Running it safely"), which lists what the operator boundary must guarantee (the tool and dependency trees, credentials and other checkouts not agent-writable, no agent write access to the report history or publication pointer, the source tree as the only writable area, network egress out of scope). Running
+the loop INSIDE your own session (below) is unaffected: you are the model there.
+
 Only with local source. This is a MODEL-DRIVEN hill-climb: YOU write every edit
 based on Modern Web Guidance. There are no canned transforms anywhere. You can
 run this loop entirely INSIDE your own session (the default, subscription path)

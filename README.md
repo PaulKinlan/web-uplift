@@ -231,12 +231,16 @@ web-uplift audit --urls ./urls.txt --concurrency 2 --agent claude
 web-uplift audit https://example.com --flow ./checkout.json
 
 # Model-driven fix hill climb against local source.
-web-uplift fix --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4
+# --isolation is REQUIRED and it RECORDS an assertion - it does NOT isolate anything
+# itself. Run the tool from INSIDE a boundary you have already built, and name it here.
+# See "Running it safely" below for what that boundary has to guarantee.
+web-uplift fix --target ./src --audit-url http://localhost:8080 --agent claude --max-iterations 4 \
+  --isolation <your-boundary>
 web-uplift fix --target ./src --audit-url http://localhost:8080 --dry-run
 
 # Hill-climb to a SCORE target instead of chasing every last issue.
 web-uplift fix --target ./src --audit-url http://localhost:8080 \
-  --goal-overall 80 --goal-min discoverable=70 --goal-max-critical 0
+  --isolation <your-boundary> --goal-overall 80 --goal-min discoverable=70 --goal-max-critical 0
 
 # Aggregate findings across retained reports.
 web-uplift aggregate
@@ -245,6 +249,47 @@ web-uplift aggregate
 web-uplift compare localhost_8080
 web-uplift compare http://localhost:8080 <runId-before> <runId-after>
 ```
+
+### Running it safely: the isolation is YOURS, and this tool cannot check it
+
+Fix mode hands a write-capable agent a task while its context carries untrusted
+page content, so it will not start without you saying which boundary is
+protecting that agent:
+
+**There is no command here to copy, deliberately.** A single outer `bwrap` cannot
+be presented as protecting the report history: the fixer parent and its agent child
+share one namespace, and therefore the same write access to the reports tree and the
+publication pointer. A copy-pasteable command that is wrong for some operator layouts
+is worse than no command, so here is what your boundary MUST guarantee instead:
+
+- **The tool tree is not writable by the agent.** It contains the skill and the
+  vendored evidence CLI, which later iterations execute; if the agent can rewrite it,
+  the next iteration runs the agent's code.
+- **The dependency tree is not writable by the agent**, for the same reason.
+- **Your provider credentials, SSH keys, cloud config and other checkouts are not
+  writable by the agent** - and ideally not readable either, except for the single
+  credential the agent CLI needs to authenticate.
+- **The agent's boundary does NOT include write access to the report history or the
+  publication pointer.** This is the one a naive outer wrapper gets wrong: if the
+  agent shares the fixer's mount, it can rewrite the reports it is being judged by.
+- **The source tree is the only writable area**, plus whatever directory the run
+  writes its own report into.
+- **Network egress is explicitly out of scope.** The agent must reach the audited
+  page, the guidance feed and its provider, so whatever boundary you build almost
+  certainly leaves it with network access - which means it can exfiltrate any
+  credential it can read. A filesystem boundary does not address that; if you need it
+  addressed, use a VM or an egress policy you control.
+
+**What the tool guarantees, precisely.** It refuses to spawn the agent unless you
+assert a boundary; it records that assertion as *unverified* in
+`<out>/run-security.json`; it warns on stderr that it did not check it; and it
+snapshots the tree around every agent run and refuses the run when a change lands
+outside `--target`/`--out`. That is detection of realistic escapes, not
+confinement: the agent still runs as you, with your network, and the snapshot walk
+has documented gaps (writes outside the walked roots, through pre-existing
+symlinks or hard links, and metadata-only changes are not seen). If you need a
+guarantee rather than a tripwire, the boundary has to be yours - docker, bwrap, a
+VM, or a permission model you control - and `--isolation` is where you say so.
 
 The headless runner orchestrates. It still does not contain checks. The spawned
 model follows the same [SKILL.md](.claude/skills/web-audit/SKILL.md).
