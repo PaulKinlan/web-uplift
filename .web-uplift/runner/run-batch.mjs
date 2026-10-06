@@ -231,11 +231,16 @@ async function worker() {
     console.log(`  changed: ${summariseChanges(scope.changed)}`);
     if (scope.escapedOutsideScope.length) {
       failures.push({ url, reason: `wrote outside --out: ${scope.escapedOutsideScope.join(', ')}` });
-      // Mark the run AND remove its report: latest resolution falls back to the newest
-      // run directory that CONTAINS a report when there is no pointer, so leaving one
-      // behind would let a refused run become what a later --resume treats as current
-      // for this URL - and that URL would then be skipped. The refusal record
-      // (write-scope.json + this marker) is what survives, not the agent's claim.
+      // Quarantine the run: rename its report out of the way and leave a record.
+      //
+      // This is DEFENCE IN DEPTH AND EVIDENCE, not the thing that makes the refusal
+      // stick. Completion is decided by hasCompletedLatest() below, which reads only the
+      // pointer this tool writes on a successful run - so a refused run cannot resolve
+      // as current for a later --resume no matter what it leaves on disk, and no planted
+      // file can change that decision. (resolveLatest() in run-history.mjs still has a
+      // "newest directory containing a report" fallback, and the batch deliberately no
+      // longer calls it; the reporting consumers, such as the scorecard, still do, where
+      // it is a presentation convenience rather than a completion decision.)
       await quarantineRefusedRun(siteDir, { url, escapedOutsideScope: scope.escapedOutsideScope });
       console.error(
         `CONFINEMENT FAILURE ${url}: this audit changed ${scope.escapedOutsideScope.length} path(s) outside ` +
