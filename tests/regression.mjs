@@ -4207,9 +4207,10 @@ async function testCredentialRedactionHelpers() {
   // a base64-encoded body is not text-searchable, and a credential whose name does not
   // look like one is not detected. Both are stated in the artifact's own note.
   const b64 = Buffer.from(`password=${SECRET}`).toString('base64');
+  assert(redactBodyText(b64) === b64, 'redaction: a base64-encoded body is left untouched - a KNOWN GAP, since base64 is not text-searchable');
   assert(
-    redactBodyText(b64).includes(SECRET),
-    'redaction: a base64-encoded body is a KNOWN GAP (not text-searchable) - this asserts the gap is REAL rather than pretending it is covered',
+    Buffer.from(redactBodyText(b64), 'base64').toString('utf8').includes(SECRET),
+    'redaction: and the credential is still RECOVERABLE from that body by decoding it - asserted so the artifact note states the gap instead of claiming coverage',
   );
   assert(redactBodyText('page=2&q=hello') === 'page=2&q=hello', 'redaction: text with no credential-named field must be untouched');
   assert(isCredentialName('api_key') && isCredentialName('Set-Cookie') === false && isCredentialName('page') === false, 'redaction: the names-based test itself');
@@ -4276,6 +4277,22 @@ async function testHarCredentialRedaction() {
     const bodyEntry = entries.find((e) => (e.response?.content?.text || '').includes('[redacted]'));
     assert(bodyEntry, 'dsj har: a recorded response body carrying a credential-named field must be redacted (--bodies path)');
     assert(!entries.some((e) => (e.response?.content?.text || '').includes(SECRET)), 'dsj har: no recorded response body may still carry the credential');
+
+    // THE TWO VECTORS THIS TEST FOUND ITSELF, one call site further out than the bead's
+    // list: URL-valued headers (Referer carries the audited page URL verbatim) and the
+    // initiator fields (the inserting document and the JS call-frame URL, which is the page
+    // URL when a script started the request).
+    const refererEntry = entries.find((e) =>
+      (e.request.headers || []).some((h) => String(h.name).toLowerCase() === 'referer' && String(h.value).includes('token=')));
+    assert(refererEntry, 'dsj har: an entry whose Referer carries the token URL must be present (otherwise this vector is untested)');
+    assert(
+      !JSON.stringify(refererEntry.request.headers).includes(SECRET),
+      'dsj har: the Referer header must not carry the credential',
+    );
+    assert(
+      !entries.some((e) => String(e._initiator?.url || '').includes(SECRET) || String(e._initiator?.callFrame?.url || '').includes(SECRET)),
+      'dsj har: neither initiator field may carry the credential',
+    );
 
     const summary = JSON.parse(readFileSync(join(base, 'network-summary.json'), 'utf8'));
     const summaryRaw = JSON.stringify(summary);

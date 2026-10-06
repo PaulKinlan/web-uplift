@@ -1136,7 +1136,7 @@ async function har(client, url, opts, log) {
     statusBreakdown: tallyStatuses(har12.log.entries),
     note:
       'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).' +
-      ' Credential redaction, by default and controlled by ONE flag (--no-redact-headers keeps everything raw and accepts the publication risk): the values of credential-named HEADERS (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token); credential-named QUERY PARAMETERS in request URLs and in each entry\'s queryString, keeping the names; credential-named FIELDS in request bodies, with the entry\'s bodySize recomputed from the redacted text so the size cannot leak the original length; the REDIRECT TARGET (a Location can carry a credential in its query string); and credential-named fields in RESPONSE BODY TEXT when bodies are recorded.' +
+      ' Credential redaction, by default and controlled by ONE flag (--no-redact-headers keeps everything raw and accepts the publication risk): the values of credential-named HEADERS (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token); credential-named QUERY PARAMETERS in request URLs and in each entry\'s queryString, keeping the names; credential-named FIELDS in request bodies, with the entry\'s bodySize recomputed from the redacted text so the size cannot leak the original length; the REDIRECT TARGET (a Location can carry a credential in its query string); credential-named fields in RESPONSE BODY TEXT when bodies are recorded; URL-VALUED HEADERS, including the Referer that carries the audited page URL verbatim; and the INITIATOR fields, which record the inserting document and the JS call-frame URL.' +
       ' NOT covered, stated so nobody assumes blanket protection: base64-encoded bodies (not text-searchable), and any credential whose field, parameter or header NAME does not look like one - the test is names-based because the tool cannot know which value in an arbitrary URL or body is a secret. Treat a HAR as sensitive whenever the audited site handled credentials.' +
       (settle.pending > 0
         ? ` WARNING: ${settle.pending} request(s) were still pending when the network was snapshotted (load waited ${loadWaitMs}ms, settle waited ${settle.ms}ms); their bodies and statuses are missing from this HAR, which is a harness/load artifact rather than absence.`
@@ -1474,17 +1474,22 @@ function num(x) {
 // parser-inserted requests, the document url + line that wrote the tag; for
 // script-initiated requests, the top call frame (url + functionName). This is
 // the real CDP signal render-blocking judgement is built on.
-function harInitiator(init) {
+function harInitiator(init, { redactCredentials = false } = {}) {
   if (!init) return { type: 'other' };
+  // The initiator records URLS: the inserting document, and the top JS call frame - which
+  // is the page URL itself when a script on the page started the request. A credential in
+  // that query string reached the artifact through this field, which the request-URL and
+  // header redaction never touched.
+  const rurl = (u) => (redactCredentials ? redactUrlCredentialValues(u) : u);
   const out = { type: init.type || 'other' };
   // Parser-inserted (and preload): the inserting document and source position.
-  if (init.url) out.url = init.url;
+  if (init.url) out.url = rurl(init.url);
   if (typeof init.lineNumber === 'number') out.lineNumber = init.lineNumber;
   // Script-initiated: surface the top call frame of the JS stack, if present.
   const top = init.stack?.callFrames?.[0];
   if (top) {
     out.callFrame = {
-      url: top.url || '',
+      url: rurl(top.url || ''),
       functionName: top.functionName || '',
       ...(typeof top.lineNumber === 'number' ? { lineNumber: top.lineNumber } : {}),
     };
@@ -1582,7 +1587,7 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
       // Rich initiator (not just the bare type) so render-blocking can be judged
       // from the real CDP signal: parser-inserted requests carry the inserting
       // document url + line; script-initiated requests carry the top call frame.
-      _initiator: harInitiator(rec.initiator),
+      _initiator: harInitiator(rec.initiator, { redactCredentials }),
       // Priority: initial (from request.initialPriority) and final (after any
       // Network.resourceChangedPriority). VeryLow|Low|Medium|High|VeryHigh.
       _priority: {
@@ -1714,11 +1719,19 @@ export function redactBodyText(text) {
 
 export function redactHeaderList(headers) {
   if (!Array.isArray(headers)) return headers;
-  return headers.map((header) =>
-    REDACTED_HEADER_NAMES.has(String(header?.name || '').toLowerCase())
-      ? { ...header, value: REDACTED_HEADER_VALUE }
-      : header,
-  );
+  return headers.map((header) => {
+    if (REDACTED_HEADER_NAMES.has(String(header?.name || '').toLowerCase())) {
+      return { ...header, value: REDACTED_HEADER_VALUE };
+    }
+    // URL-VALUED headers carry the audited page URL verbatim - Referer above all - so a
+    // credential in its query string would survive the name-based pass entirely. This is
+    // the same root cause one call site further out; found by the integration test, not
+    // by inspection. No name list is needed here: redactUrlCredentialValues only rewrites
+    // a value that actually carries a credential-named parameter, so every other value
+    // (content types, sizes, plain words) passes through unchanged.
+    const value = typeof header?.value === 'string' ? redactUrlCredentialValues(header.value) : header?.value;
+    return value === header?.value ? header : { ...header, value };
+  });
 }
 
 function headerArray(headers) {
