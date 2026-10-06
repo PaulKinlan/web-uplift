@@ -79,7 +79,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { BlockList, isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
-import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs } from './cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs, getCdpCallDeadlineMs } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
 
@@ -826,13 +826,17 @@ async function trace(client, url, opts, log) {
   // trace first so navigationStart is captured.
   await withDeadline(client.Page.navigate({ url: 'about:blank' }), navDeadline, `the about:blank navigation to be accepted (en route to ${url})`);
   await sleep(150);
-  await applyConditions(client, opts, log);
+  await withDeadline(applyConditions(client, opts, log), navDeadline, `the pre-trace condition setup (en route to ${url})`);
 
-  await client.Tracing.start({
-    categories: categories.join(','),
-    transferMode: 'ReportEvents',
-    options: 'sampling-frequency=10000',
-  });
+  await withDeadline(
+    client.Tracing.start({
+      categories: categories.join(','),
+      transferMode: 'ReportEvents',
+      options: 'sampling-frequency=10000',
+    }),
+    navDeadline,
+    `the browser to start tracing (en route to ${url})`,
+  );
   log('[evidence] tracing started; navigating');
 
   const loaded = client.Page.loadEventFired();
@@ -842,7 +846,7 @@ async function trace(client, url, opts, log) {
 
   if (opts.interact) {
     try {
-      await evaluate(client, opts.interact);
+      await withDeadline(evaluate(client, opts.interact), navDeadline, `the interact script on ${url}`);
     } catch (err) {
       log(`[evidence] interact script error: ${err.message.split('\n')[0]}`);
     }
@@ -850,8 +854,8 @@ async function trace(client, url, opts, log) {
   await sleep(opts.wait);
 
   const done = new Promise((resolve) => client.Tracing.tracingComplete(resolve));
-  await client.Tracing.end();
-  await done;
+  await withDeadline(client.Tracing.end(), navDeadline, `the browser to end tracing for ${url}`);
+  await withDeadline(done, navDeadline, `the trace to complete for ${url}`);
   log(`[evidence] tracing complete: ${events.length} events`);
 
   // The devtools-loadable artifact is the raw event array under { traceEvents }.
@@ -3233,7 +3237,7 @@ export function iconSatisfies(icons, size) {
 
 async function resilience(client, url, opts, log) {
   const sw = attachServiceWorkerState(client, url);
-  await sw.enable();
+  await withDeadline(sw.enable(), getCdpCallDeadlineMs(), 'the browser to enable the ServiceWorker domain');
 
   // Online first, so a service worker can install, activate and cache.
   await navigate(client, url, {
@@ -3352,7 +3356,11 @@ async function resilience(client, url, opts, log) {
 
   // Go offline for real and reload: does a fallback render, or does the
   // navigation fail? Page.navigate reports the net error directly.
-  await client.Network.emulateNetworkConditions({ offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await withDeadline(
+    client.Network.emulateNetworkConditions({ offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }),
+    getCdpCallDeadlineMs(),
+    'the browser to switch the network offline',
+  );
   const offlineBudget = Math.max(opts.wait ?? 1500, 1500) + 3000;
   let navigationFailed = false;
   let errorText = null;

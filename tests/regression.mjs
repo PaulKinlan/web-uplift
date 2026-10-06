@@ -5076,20 +5076,30 @@ async function testCdpDeadline() {
     `17o --out: the error must name the path (${badOut.stderr})`,
   );
   assert(
-    Date.now() - t1 < 20000,
-    `17o --out: the rejection must precede any browser launch (${Date.now() - t1}ms)`,
+    !(badOut.stderr || '').includes('[browser] launching'),
+    `17o --out: the rejection must precede any browser launch, asserted by the ABSENCE of the launch diagnostic, not inferred from elapsed time (${badOut.stderr})`,
   );
   const missingParent = run(process.execPath, ['evidence/cli.mjs', 'dom', page, '--out', join(tmp, 'no-such-dir', 'x.json')]);
   assert(
     missingParent.status !== 0 && (missingParent.stderr || '').includes('does not exist'),
     `17o --out: a missing parent directory must be rejected loudly (${missingParent.stderr})`,
   );
+  assert(
+    !(missingParent.stderr || '').includes('[browser] launching'),
+    '17o --out: the missing-parent rejection must also precede any browser launch (absence of the launch diagnostic)',
+  );
 
   // THE REAL PATH: a server that accepts connections and never answers. The first
   // navigation (about:blank) completes; the second load event never fires, and the
   // deadline must turn an indefinite hang into a loud, bounded failure.
   const sockets = new Set();
+  // The handler firing IS the proof the target was contacted: a deadline that fires BEFORE
+  // the target navigation (e.g. on the about:blank pre-step under load) leaves this at zero,
+  // and the starved assertions below REQUIRE it to have increased - otherwise the test would
+  // pass without ever reproducing the starvation it claims to reproduce.
+  let blackholeHits = 0;
   const blackhole = http.createServer(() => {
+    blackholeHits += 1;
     /* accept and never answer */
   });
   blackhole.on('connection', (sock) => {
@@ -5102,6 +5112,7 @@ async function testCdpDeadline() {
     const session = await newSession(chrome.port, { log: () => {} });
     try {
       const starvedUrl = `http://127.0.0.1:${blackhole.address().port}/`;
+      const hitsBeforeNav = blackholeHits;
       const t2 = Date.now();
       let navErr = null;
       try {
@@ -5116,8 +5127,18 @@ async function testCdpDeadline() {
       }
       const elapsed = Date.now() - t2;
       assert(
-        navErr && navErr.message.includes('timed out after 1500ms') && navErr.message.includes(starvedUrl),
-        `17o: a starved navigation must fail loudly, naming the URL and the bound (${navErr && navErr.message})`,
+        navErr && navErr.message.includes('timed out after 1500ms'),
+        `17o: a starved navigation must fail loudly with the bound (${navErr && navErr.message})`,
+      );
+      assert(
+        navErr &&
+          (navErr.message.includes(`the load event for ${starvedUrl}`) ||
+            navErr.message.includes(`the navigation to ${starvedUrl}`)),
+        `17o: the failure must identify the TARGET wait, not the about:blank pre-step (${navErr && navErr.message})`,
+      );
+      assert(
+        blackholeHits > hitsBeforeNav,
+        `17o: the black-hole server must have been CONTACTED (hits ${hitsBeforeNav} -> ${blackholeHits}) - otherwise the starvation was never reached and this test proves nothing`,
       );
       assert(
         elapsed < 15000,
@@ -5153,6 +5174,7 @@ async function testCdpDeadline() {
   const { gather } = await import(pathToFileURL(join(repoRoot, 'evidence/cli.mjs')).href);
   const { configureCdpDeadlines } = await import(pathToFileURL(join(repoRoot, 'evidence/cdp.mjs')).href);
   const bhUrl = `http://127.0.0.1:${blackhole.address().port}/`;
+  const hitsBeforeTrace = blackholeHits;
   try {
     configureCdpDeadlines({ navigationMs: 4000, callMs: 4000 });
     const t3 = Date.now();
@@ -5164,8 +5186,18 @@ async function testCdpDeadline() {
     }
     const traceElapsed = Date.now() - t3;
     assert(
-      traceErr && traceErr.message.includes('timed out after 4000ms') && traceErr.message.includes(bhUrl),
-      `17o trace: a starved trace must fail loudly, naming the URL and the bound (${traceErr && traceErr.message})`,
+      traceErr && traceErr.message.includes('timed out after 4000ms'),
+      `17o trace: a starved trace must fail loudly with the bound (${traceErr && traceErr.message})`,
+    );
+    assert(
+      traceErr &&
+        (traceErr.message.includes(`the load event for ${bhUrl}`) ||
+          traceErr.message.includes(`the navigation to ${bhUrl}`)),
+      `17o trace: the failure must identify the TARGET wait, not the about:blank pre-step (${traceErr && traceErr.message})`,
+    );
+    assert(
+      blackholeHits > hitsBeforeTrace,
+      `17o trace: the black-hole server must have been CONTACTED (hits ${hitsBeforeTrace} -> ${blackholeHits}) - otherwise the starvation was never reached`,
     );
     assert(
       traceElapsed < 30000,

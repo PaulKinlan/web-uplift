@@ -261,25 +261,52 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // how to raise the bound, so a starved host produces an actionable error
 // instead of an indefinite hang.
 //
-// WHAT IS BOUNDED AND BY WHAT (17o), and the warning for the next direct caller.
-// By this mechanism: session creation (target create, attach, domain enables)
-// and every navigation - navigate() itself, plus the two primitives that
-// navigate DIRECTLY: trace (via getNavigationDeadlineMs, because it must start
-// tracing before navigationStart) and resilience's offline reload (via its own
-// offlineBudget, because an offline failure response is the normal path). The
-// launch endpoint poll was already bounded (devtoolsTimeoutMs). Bounds that
-// stay with their owners: resilience's load wait (a Promise.race with the
-// offline budget), har's network-idle wait (its own deadline), --interact
-// (--interact-deadline). ENUMERATED EXCEPTION: the trace primitive's
-// Tracing.tracingComplete await is NOT bounded - post-navigation, on the
-// tracing path, out of this bead's scope. AND THE WARNING: a NEW primitive
-// that calls client.Page.navigate directly does NOT inherit any of this - the
-// trace primitive was exactly that hole, and it was found only when this note
-// was written. Wrap it, or route through navigate().
+// MECHANICAL ENUMERATION (walked from the code, not from memory of what was wrapped -
+// the hand sweep this replaced was wrong twice, so the completeness claim is now CHECKABLE:
+// every await in this list is bounded). Scope: the attach, navigation, console-collector
+// and tracing paths.
+//
+//   launchChromeOnce   endpoint poll                          devtoolsTimeoutMs (pre-existing)
+//   launchChromeOnce   teardown (waitForProcExit/GroupDrain)  grace-bounded (pre-existing)
+//   newSession         CDP.New (target create)                withDeadline, call bound
+//   newSession         CDP() attach                           withDeadline, call bound
+//   newSession         CDP.Close after attach failure         withDeadline, call bound -
+//                                                             cleanup AFTER a deadline fired is
+//                                                             how a bounded op still hangs
+//   newSession         domain enables (Promise.all)           withDeadline, call bound
+//   session.close()    client.close() + CDP.Close             withDeadline, call bound (same reason)
+//   navigate           about:blank navigate + load event      withDeadline, navigation bound
+//   navigate           pre-navigation preparation             withDeadline, navigation bound
+//   navigate           target navigate + load event           withDeadline, navigation bound
+//   attachConsoleColl. Runtime.enable + Log.enable            withDeadline, call bound
+//   trace              about:blank + target navigate + load   withDeadline, navigation bound
+//                      (DIRECT Page.navigate calls - see the warning below)
+//   trace              applyConditions / Tracing.start /      withDeadline, navigation bound
+//                      Tracing.end / tracingComplete / the
+//                      interact evaluate
+//   resilience         ServiceWorker.enable                   withDeadline, call bound (getter)
+//   resilience         Network.emulateNetworkConditions        withDeadline, call bound (getter)
+//                      (going offline)
+//   resilience         offline-reload navigate response       withDeadline, its own offlineBudget
+//                      (its load wait stays a Promise.race with the same budget - already bounded)
+//
+// OUTSIDE THIS ENUMERATION: the per-primitive content probes AFTER load (evaluate() calls,
+// the har network-idle wait, --interact's polling) are the primitives' own domain, and
+// several carry their own bounds (har's network-idle deadline, --interact-deadline).
+// THE WARNING: a NEW primitive that awaits client.* directly inherits NOTHING from this
+// list - wrap it or route through navigate(). The trace primitive was exactly that hole,
+// and it was found by writing this enumeration, not by the sweep that preceded it.
 // The current navigation bound, for callers that navigate directly (the trace
 // primitive) and must take the same bound navigate() uses, flag included.
 export function getNavigationDeadlineMs() {
   return navigationDeadlineMsDefault;
+}
+
+// The current CDP-call bound, for primitives that enable domains directly
+// (resilience's ServiceWorker.enable) and must take the same bound newSession()
+// uses, flag included.
+export function getCdpCallDeadlineMs() {
+  return cdpCallDeadlineMsDefault;
 }
 
 export function withDeadline(promise, ms, description) {
@@ -586,8 +613,11 @@ export async function newSession(port, { log = () => {}, cdpDeadlineMs = cdpCall
       { label: 'attach to CDP target' },
     );
   } catch (err) {
-    // Best-effort cleanup if the attach retries are exhausted.
-    await CDP.Close({ port, id: target.id }).catch(() => {});
+    // Best-effort cleanup if the attach retries are exhausted - and BOUNDED, because the
+    // browser that just exhausted the attach deadline is exactly the browser that may never
+    // answer this Close either: an unbounded cleanup await after a deadline has fired is how
+    // a bounded operation still hangs.
+    await withDeadline(CDP.Close({ port, id: target.id }), cdpDeadlineMs, 'the browser to close the unattached target').catch(() => {});
     throw err;
   }
 
@@ -602,13 +632,15 @@ export async function newSession(port, { log = () => {}, cdpDeadlineMs = cdpCall
   log('[browser] session ready');
 
   async function close() {
+    // Teardown is bounded for the same reason: by the time close() runs, the browser may
+    // already have proven itself unresponsive.
     try {
-      await client.close();
+      await withDeadline(client.close(), cdpDeadlineMs, 'the CDP client to close');
     } catch {
       // ignore
     }
     try {
-      await CDP.Close({ port, id: targetId });
+      await withDeadline(CDP.Close({ port, id: targetId }), cdpDeadlineMs, 'the browser to close the target');
     } catch {
       // ignore
     }
@@ -688,7 +720,7 @@ const collectors = new WeakMap();
 const CONSOLE_ENTRY_CAP = 100;
 const CONSOLE_BUFFER_CAP = 500;
 
-export async function attachConsoleCollector(client, { log = () => {} } = {}) {
+export async function attachConsoleCollector(client, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault } = {}) {
   const entries = [];
   const byKey = new Map(); // dedupe key -> recorded entry (with a repeat count)
   let ignoredCount = 0; // info/log/debug/verbose, counted but not itemised
@@ -764,10 +796,14 @@ export async function attachConsoleCollector(client, { log = () => {} } = {}) {
     }
   });
 
-  await Promise.all([
-    client.Runtime.enable().catch(() => {}),
-    client.Log.enable().catch((err) => log(`[evidence] console collector: Log.enable failed: ${err.message}`)),
-  ]);
+  await withDeadline(
+    Promise.all([
+      client.Runtime.enable().catch(() => {}),
+      client.Log.enable().catch((err) => log(`[evidence] console collector: Log.enable failed: ${err.message}`)),
+    ]),
+    cdpDeadlineMs,
+    'the browser to enable the console collector domains',
+  );
 
   function summary() {
     const consoleErrorCount = entries.filter((e) => e.kind === 'console' && e.level === 'error').length;
