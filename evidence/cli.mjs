@@ -1613,11 +1613,11 @@ const CRAWLER_UA =
 // private-range services (threat model I2 / F-003, web-uplift-2kh). Every
 // Node-side fetch of a page-derived URL goes through safeFetch below.
 //
-// The audited target's own HOST is exempt from the private-address rule: auditing
-// 127.0.0.1 on purpose (which this repo's whole test suite does) is the operator's
-// explicit choice, not something the page controls, and the page cannot widen that
-// exemption to any other host. Everything else is validated per hop, fails
-// closed, and reads a bounded body.
+// The audited target's own ORIGIN is exempt from the private-address rule:
+// auditing 127.0.0.1 on purpose (which this repo's whole test suite does) is the
+// operator's explicit choice, not something the page controls, and the page cannot
+// widen that exemption to another origin (host, port or scheme). Everything else
+// is validated per hop, fails closed, and reads a bounded body.
 const FETCH_SCHEMES = new Set(['http:', 'https:']);
 const FETCH_MAX_BYTES = 2 * 1024 * 1024;
 const FETCH_MAX_REDIRECTS = 5;
@@ -1655,9 +1655,14 @@ function normalizedHost(hostname) {
   return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
 }
 
-function targetHostOf(url) {
+// The audited target's ORIGIN (scheme + host + port, with URL#origin's default-port
+// normalisation) is the operator's explicit choice and is exempt from the
+// private-address rule. Exempting the whole HOSTNAME would let a page on
+// 127.0.0.1:8080 point its manifest at 127.0.0.1:2375, a different local service,
+// and have that service's body persisted (adversarial review P1a, web-uplift-2kh).
+function targetOriginOf(url) {
   try {
-    return normalizedHost(new URL(url).hostname);
+    return new URL(url).origin;
   } catch {
     return '';
   }
@@ -1671,8 +1676,8 @@ function isBlockedAddress(address) {
 }
 
 // Resolve a page-derived URL to one this process may fetch, or throw a reason.
-// `targetHost` is the audited target's hostname (see the note above).
-export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetHost } = {}) {
+// `targetOrigin` is the audited target's origin (see the note above).
+export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin } = {}) {
   let parsed;
   try {
     parsed = new URL(rawUrl, base);
@@ -1683,7 +1688,9 @@ export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetHost }
     throw new Error(`refused: scheme "${parsed.protocol}" is not http(s)`);
   }
   const host = normalizedHost(parsed.hostname);
-  if (targetHost && host === targetHost) return parsed;
+  // Only the operator-selected ORIGIN is exempt: the same host on a different
+  // port (another local service) is a different origin and must not inherit it.
+  if (targetOrigin && parsed.origin === targetOrigin) return parsed;
   if (isIP(host)) {
     if (isBlockedAddress(host)) {
       throw new Error(`refused: ${parsed.hostname} is a loopback, link-local or private address`);
@@ -1740,16 +1747,19 @@ async function readBodyCapped(res, maxBytes) {
 // are validated as resolved, but global fetch gives no way to pin the address the
 // connection actually uses, so a name that re-resolves between this check and the
 // connect is not fully covered (DNS rebinding).
-export async function safeFetch(rawUrl, { base, targetHost, headers, maxBytes = FETCH_MAX_BYTES } = {}) {
-  let current = await assertPageDerivedFetchAllowed(rawUrl, { base, targetHost });
+export async function safeFetch(rawUrl, { base, targetOrigin, headers, maxBytes = FETCH_MAX_BYTES } = {}) {
+  let current = await assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin });
   for (let hop = 0; hop <= FETCH_MAX_REDIRECTS; hop++) {
     const res = await fetch(current.href, { redirect: 'manual', headers });
     const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
     if (location === null) {
       return { res, url: current.href, text: () => readBodyCapped(res, maxBytes) };
     }
+    // Drain and drop a redirect body: it is not evidence, and an uncancelled
+    // stream can pin a socket.
+    await res.body?.cancel().catch(() => {});
     if (hop === FETCH_MAX_REDIRECTS) throw new Error(`refused: more than ${FETCH_MAX_REDIRECTS} redirects`);
-    current = await assertPageDerivedFetchAllowed(location, { base: current.href, targetHost });
+    current = await assertPageDerivedFetchAllowed(location, { base: current.href, targetOrigin });
   }
   throw new Error('refused: redirect loop');
 }
@@ -1848,10 +1858,10 @@ async function discoverability(client, url, opts, log) {
   let finalUrl = url;
   try {
     const fetched = await safeFetch(url, {
-      // The audited target is the operator's explicit choice, so its own host is
+      // The audited target is the operator's explicit choice, so its own ORIGIN is
       // exempt from the private-address rule (this suite audits 127.0.0.1); every
       // redirect hop is still validated before it is requested.
-      targetHost: targetHostOf(url),
+      targetOrigin: targetOriginOf(url),
       headers: { 'user-agent': CRAWLER_UA, accept: 'text/html' },
     });
     rawStatus = fetched.res.status;
@@ -2900,7 +2910,7 @@ async function resilience(client, url, opts, log) {
     try {
       const fetched = await safeFetch(manifestHref, {
         base: url,
-        targetHost: targetHostOf(url),
+        targetOrigin: targetOriginOf(url),
         headers: { 'user-agent': CRAWLER_UA, accept: 'application/manifest+json,application/json,*/*' },
       });
       if (!fetched.res.ok) throw new Error(`HTTP ${fetched.res.status}`);
@@ -2920,14 +2930,19 @@ async function resilience(client, url, opts, log) {
   let swScriptHasFetchListener = null;
   if (swScriptUrl) {
     try {
-      // Deliberately NOT routed through safeFetch: a service worker's script URL
-      // is same-origin with its registration by web-platform rule, so this path is
-      // not a cross-origin SSRF and the F-003 finding text lumps it in wrongly
-      // (web-uplift-2kh). It also persists nothing: only a regex result is kept.
-      const res = await fetch(swScriptUrl, { headers: { 'user-agent': CRAWLER_UA } });
-      const text = await res.text();
+      // A worker's script URL starts same-origin with its registration, but the
+      // privileged GET still has to be guarded: the server can answer THIS request
+      // (different user agent) with a redirect to a private address, so it goes
+      // through the same per-hop guarded, capped fetch as the other call sites
+      // (adversarial review P1b, web-uplift-2kh). Only a regex boolean is kept.
+      const fetched = await safeFetch(swScriptUrl, {
+        targetOrigin: targetOriginOf(url),
+        headers: { 'user-agent': CRAWLER_UA },
+      });
+      const text = await fetched.text();
       swScriptHasFetchListener = /addEventListener\(\s*['"]fetch['"]|\.onfetch\s*=/.test(text);
-    } catch {
+    } catch (e) {
+      log(`[evidence] resilience: service worker script fetch refused: ${String(e?.message || e)}`);
       swScriptHasFetchListener = null;
     }
   }
