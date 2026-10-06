@@ -248,7 +248,18 @@ await mkdir(outDir, { recursive: true });
 // --- OS isolation, resolved BEFORE the first agent spawn ---------------------
 // Fail closed: with no usable sandbox and no explicit override, nothing is
 // started at all. The decision is recorded before the spawn either way.
-{
+// Only required when this run will actually spawn an agent: a run with supplied
+// findings and --max-iterations 0 never does, and refusing it would be wrong.
+const willSpawnAgent = maxIterations > 0 || !args.findings;
+if (!willSpawnAgent) {
+  isolation = { state: 'not-required', provider: null, plan: null };
+  writeRunSecurity(outDir, {
+    isolation: 'not-required',
+    reason: 'this run spawns no agent (--findings supplied and --max-iterations 0)',
+    network: 'n/a: no agent process',
+  });
+}
+if (willSpawnAgent) {
   const plan = buildPlan({
     projectRoot,
     targetDir: scopeRoot ?? projectRoot,
@@ -298,6 +309,20 @@ await mkdir(outDir, { recursive: true });
   }
 }
 
+
+// 1. Validation FIRST, isolation second. A supplied report is validated before any
+// sandbox decision so a malformed or unscoreable report still fails with its named
+// error (that contract has its own beads and must not be masked by a refusal).
+let suppliedBaseline = null;
+if (args.findings) {
+  try {
+    suppliedBaseline = await readReport(args.findings);
+  } catch (err) {
+    console.error(`Cannot start the climb: ${err.message || err} (write-scope records: ${scopeRecordPaths()} in ${outDir})`);
+    process.exit(1);
+  }
+}
+
 // 1. Findings: supplied, or run an audit + aggregate first. The baseline audit
 // spawns the same write-capable agent under the same untrusted context, so it is
 // scoped exactly like an iteration - otherwise an injection during iteration 0
@@ -323,9 +348,9 @@ if (agentFailure) {
   );
   process.exit(1);
 }
-let baseline;
+let baseline = suppliedBaseline;
 try {
-  baseline = await readReport(findingsPath);
+  baseline = baseline ?? (await readReport(findingsPath));
 } catch (err) {
   // The same named failure the iteration loop reports: a baseline the fixer cannot
   // read is a run it cannot score, not a stack trace.
