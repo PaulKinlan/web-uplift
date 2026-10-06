@@ -25,10 +25,10 @@
 // opens from file:// and is safe to publish as a CI artifact.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
 import { hostSlug, listRuns, resolveLatest } from '../runner/run-history.mjs';
+import { containedArtifactPath, isSafeArtifactPath } from './artifact-path.mjs';
 
 // --- Outcome model ----------------------------------------------------------
 // The 17 quality principles, grouped into the outcomes a site owner recognises.
@@ -181,12 +181,15 @@ function gradeClass(score) {
   return 'poor';
 }
 
+// Artifact paths are report-supplied, so containment lives in
+// ./artifact-path.mjs and is shared with aggregate/compare.mjs.
+
 // Inline a screenshot as a data URI so the imagery travels in the HTML. Video is
 // referenced by relative path (too big to inline). Returns null if unreadable.
 function dataUri(dir, relPath) {
   try {
-    const abs = join(dir, relPath);
-    if (!existsSync(abs)) return null;
+    const abs = containedArtifactPath(dir, relPath);
+    if (!abs || !existsSync(abs)) return null;
     const ext = relPath.split('.').pop().toLowerCase();
     const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[ext];
     if (!mime) return null;
@@ -282,6 +285,9 @@ const METRIC_META = {
 function findingDialog(report, dir, f) {
   const arts = (report.artifacts ?? []).filter((a) => (a.findingIds ?? []).includes(f.id));
   const media = arts
+    // An escaping path is dropped entirely, not just blocked from the read: the
+    // `rel` fallback below becomes a src the browser resolves on its own.
+    .filter((a) => isSafeArtifactPath(a.path))
     .map((a) => {
       const rel = `${encodeURI(report.__runId)}/${a.path}`;
       if (a.type === 'screenshot') {
