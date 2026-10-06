@@ -41,6 +41,7 @@ try {
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
+  await testAxeKeepsPagePolicyAndDisclosesInjectionBypass();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
   await testConsoleInteractDeadlineValidation();
@@ -2990,6 +2991,54 @@ async function testHarRedactsCredentialHeaders() {
       rawText.includes(token) && rawText.includes(apiKey),
       '--no-redact-headers must keep the raw credential values for an operator who accepts the risk',
     );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// The axe primitive audits the page under the page's own policy. A strict
+// script-src must still block the page's own inline script - the audit used to
+// lift the policy before navigation, so the page's blocked scripts ran - the
+// vendored engine must still be injected and produce results, and the result
+// must say the policy was lifted for the injection, so a reader can tell this
+// run from one where no bypass happened (web-uplift-8np).
+async function testAxeKeepsPagePolicyAndDisclosesInjectionBypass() {
+  let pageScriptRan = false;
+  const html =
+    '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="script-src \'none\'">' +
+    '<title>strict csp</title></head><body><img src="data:," id="noalt">' +
+    "<script>new Image().src = '/ran';</script></body></html>";
+  const server = http.createServer((req, res) => {
+    if ((req.url || '').startsWith('/ran')) {
+      pageScriptRan = true;
+      res.writeHead(200, { 'Content-Type': 'image/gif' });
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(html);
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const out = join(tmp, 'axe-csp.json');
+    const result = await gather('axe', `http://127.0.0.1:${port}/`, { quiet: true, wait: 500, out });
+    assert(
+      pageScriptRan === false,
+      "a page script blocked by the page's own policy must not run during an axe audit",
+    );
+    assert(result.violationCount > 0, `the vendored axe-core must still report violations: ${JSON.stringify(result.counts)}`);
+    assert(
+      JSON.stringify(result.violations).includes('image-alt'),
+      `the missing-alt image must still be reported: ${JSON.stringify(result.violations)}`,
+    );
+    assert(result.cspBypassedForInjection === true, 'the result must disclose that the policy was lifted for the injection');
+    assert(
+      typeof result.cspBypassNote === 'string' && result.cspBypassNote.length > 0,
+      'the disclosure must explain what was lifted and for how long',
+    );
+    const artifact = readFileSync(out, 'utf8');
+    assert(artifact.includes('cspBypassNote'), 'the artifact must carry the disclosure');
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }

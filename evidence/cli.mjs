@@ -671,12 +671,18 @@ async function evaluateCmd(client, url, opts, log) {
 // site with a strict script-src - which is to say on exactly the
 // well-configured sites. Here the script is read from node_modules at audit
 // time (no CDN dependency, no network requirement) and Page.setBypassCSP is
-// enabled so the injection cannot be refused.
+// enabled for the INJECTION, so the injection cannot be refused.
 //
-// The CSP bypass is SCOPED to this primitive: enabled just before navigation,
-// disabled in a finally, and gather() gives every primitive a fresh Chrome
-// session, so the headers/secrets primitives can never inherit it - the
-// security evidence stays valid.
+// The page is navigated with its own policy ENFORCED. The bypass used to be
+// enabled before navigation, so the page's own blocked inline scripts ran during
+// the audit; a page's policy decides what a real visitor gets, so the audit sees
+// that too now and the page's scripts stay blocked. What remains is the
+// injection: a strict script-src refuses an injected script, so the policy is
+// lifted for that one call and restored in the same breath, and the result
+// records it (`cspBypassedForInjection`, `cspBypassNote`) so a reader can tell
+// this run from one where no bypass happened. gather() gives every primitive a
+// fresh Chrome session, so the headers/secrets primitives can never inherit the
+// bypass - the security evidence stays valid.
 //
 // The result is DESCRIPTIVE, not a verdict: violations grouped by impact with
 // node targets + failure summaries, plus counts. The model judges them against
@@ -687,8 +693,6 @@ async function axe(client, url, opts, log) {
   const { Page } = client;
   let bypassOn = false;
   try {
-    await Page.setBypassCSP({ enabled: true });
-    bypassOn = true;
     await navigate(client, url, {
       settleMs: opts.wait,
       log,
@@ -697,10 +701,18 @@ async function axe(client, url, opts, log) {
     await sleep(150);
     if (opts.interact) await evaluate(client, opts.interact);
 
+    // The one step that needs the page's policy lifted: injecting the vendored
+    // engine. Restored immediately, so the analysis below runs with the page's
+    // policy in force and the page's own blocked scripts never ran.
+    await Page.setBypassCSP({ enabled: true });
+    bypassOn = true;
     await evaluate(client, axeSource);
+    await Page.setBypassCSP({ enabled: false });
+    bypassOn = false;
+
     const version = await evaluate(client, 'window.axe && window.axe.version');
     if (!version) throw new Error('axe-core injected but window.axe is undefined');
-    log(`[evidence] axe-core ${version} injected (vendored, CSP bypassed for this primitive only)`);
+    log(`[evidence] axe-core ${version} injected (vendored; the page's CSP was lifted for the injection only)`);
 
     // Run axe in the page and return a compact, model-readable shape: full
     // results carry every passing node and are far too large to read. Nodes
@@ -746,7 +758,13 @@ async function axe(client, url, opts, log) {
     for (const list of [Object.values(raw.violations).flat(), raw.incomplete]) {
       for (const v of list) announceCap(`${v.id} nodes`, v.nodes.length, v.nodeCount, log);
     }
-    const result = { url, ...raw };
+    const result = {
+      url,
+      cspBypassedForInjection: true,
+      cspBypassNote:
+        "The vendored axe-core source is injected with the page's Content-Security-Policy lifted (Page.setBypassCSP), because a strict script-src refuses an injected script. The page is navigated and analysed with its policy enforced, so the page's own blocked scripts never ran, and the bypass covers the injection call only. Read this with the rest of the run's evidence: what is reported here describes the page as its own policy allows it to behave.",
+      ...raw,
+    };
     return emit(opts, result, client);
   } finally {
     if (bypassOn) await Page.setBypassCSP({ enabled: false });
