@@ -52,6 +52,7 @@ import { countOutstanding, completionState, remaining } from '../runner/remainin
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from './write-scope.mjs';
+import { buildPlan, bwrapArgs, unshareScript, resolveIsolation, writeRunSecurity, isolationMessage } from './sandbox.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -167,6 +168,42 @@ let agentFailure = null;
 // and any operator-allowed root, so an out-of-tree path still gets a per-run diff.
 const snapshotScope = () => snapshotTree(projectRoot, { extraRoots: [scopeRoot, ...allowWrite] });
 
+// OS isolation for every agent spawn in this run (see fixer/sandbox.mjs). Resolved
+// once, after --out exists so the probe can validate writability, and BEFORE the
+// first spawn so nothing runs unsandboxed by accident.
+const allowUnsandboxedAgent = Boolean(args['allow-unsandboxed-agent']);
+let isolation = null; // { state, provider, plan, severity }
+
+// The agent binary as an absolute path: the sandbox has to bind it explicitly.
+function resolveBin(name) {
+  if (name.includes('/')) return existsSync(name) ? resolve(name) : null;
+  for (const dir of (process.env.PATH ?? '').split(':')) {
+    if (!dir) continue;
+    const p = join(dir, name);
+    if (existsSync(p)) return resolve(p);
+  }
+  return null;
+}
+
+// Wraps one agent invocation in the resolved isolation. `unsandboxed` is only ever
+// reachable through the explicit override path.
+function launchAgent(cliArgs) {
+  const bin = resolveBin(agent.bin);
+  if (!bin) return { command: agent.bin, argv: cliArgs, sandboxed: false, cwd: projectRoot };
+  if (!isolation || isolation.state === 'none' || isolation.state === 'refused') {
+    return { command: bin, argv: cliArgs, sandboxed: false, cwd: projectRoot };
+  }
+  if (isolation.provider === 'bwrap') {
+    return { command: 'bwrap', argv: bwrapArgs(isolation.plan, bin, cliArgs), sandboxed: true, cwd: projectRoot };
+  }
+  return {
+    command: 'unshare',
+    argv: ['--user', '--map-root-user', '--mount', '--pid', '--fork', '--', 'sh', '-c', unshareScript(isolation.plan, bin, cliArgs)],
+    sandboxed: true,
+    cwd: projectRoot,
+  };
+}
+
 function fixExtra(findingsPath, iteration) {
   return (
     `--source ${target} --fix --findings ${findingsPath} ` +
@@ -188,6 +225,7 @@ if (dryRun) {
   console.log(`report out    : ${outDir}`);
   console.log(`write scope   : ${scopeRoot ?? '<target>'} (a change outside this refuses the run)`);
   if (allowWrite.length) console.log(`also allowed  : ${allowWrite.join(', ')}`);
+  console.log(`agent isolation: ${allowUnsandboxedAgent ? 'none (--allow-unsandboxed-agent: recorded accepted risk)' : 'required - bwrap, else a probed unshare layout, else refuse'}`);
   console.log('');
   console.log('Per-iteration command the model is driven with:');
   for (let i = 1; i <= maxIterations; i++) {
@@ -206,6 +244,59 @@ if (dryRun) {
 }
 
 await mkdir(outDir, { recursive: true });
+
+// --- OS isolation, resolved BEFORE the first agent spawn ---------------------
+// Fail closed: with no usable sandbox and no explicit override, nothing is
+// started at all. The decision is recorded before the spawn either way.
+{
+  const plan = buildPlan({
+    projectRoot,
+    targetDir: scopeRoot ?? projectRoot,
+    outDir: outRoot,
+    agentName,
+    agentBin: resolveBin(agent.bin) ?? agent.bin,
+  });
+  const resolution = resolveIsolation({ plan });
+  const sandboxed = resolution.isolation === 'bwrap' || resolution.isolation === 'unshare';
+  if (sandboxed) {
+    isolation = { state: resolution.isolation, provider: resolution.provider, plan };
+  } else if (allowUnsandboxedAgent) {
+    isolation = { state: 'none', provider: null, plan };
+    console.error(
+      '\nWARNING: --allow-unsandboxed-agent - this fix run is NOT isolated. The agent holds write tools and a\n' +
+      'provider credential while it reads untrusted page content; the snapshot/diff tripwire still runs, but\n' +
+      'the OS-level boundary does not. This is a recorded, accepted risk, not I4 compliance.',
+    );
+  } else {
+    isolation = { state: 'refused', provider: null, plan };
+  }
+  const security = {
+    isolation: isolation.state,
+    provider: isolation.provider,
+    override: isolation.state === 'none' ? 'explicit --allow-unsandboxed-agent (section 7 accepted risk)' : null,
+    reason: isolation.state === 'refused' ? 'no usable OS sandbox on this host' : null,
+    probe: resolution.attempts,
+    writable: plan.rw.filter(Boolean),
+    readOnly: plan.ro.length,
+    protectedPaths: plan.protectedPaths.map((p) => p.path),
+    network: 'unrestricted: this sandbox does not block SSRF, metadata access or credential exfiltration',
+    notes: plan.notes,
+  };
+  const marker = writeRunSecurity(outDir, security);
+  security.marker = marker;
+  // A refusal belongs on stderr: it is an error condition, and it is what a caller
+  // or a wrapper greps for.
+  if (isolation.state === 'refused') console.error(isolationMessage(resolution, { override: allowUnsandboxedAgent, outDir }));
+  else console.log(isolationMessage(resolution, { override: allowUnsandboxedAgent, outDir }));
+  if (isolation.state === 'refused') {
+    console.error(
+      `Refusing before any agent spawn. Nothing was started and ${outDir}/run-security.json records why. ` +
+      'Install bubblewrap (or make an unshare layout pass the same probe), or pass --allow-unsandboxed-agent ' +
+      'to accept an unisolated run explicitly.',
+    );
+    process.exit(1);
+  }
+}
 
 // 1. Findings: supplied, or run an audit + aggregate first. The baseline audit
 // spawns the same write-capable agent under the same untrusted context, so it is
@@ -388,6 +479,11 @@ if (escapedOutsideScope) {
       `(records: ${scopeRecordPaths()} in ${outDir}).`,
   );
 }
+console.log(
+  `agent isolation: ${isolation?.state ?? 'unresolved'}${isolation?.provider ? ` via ${isolation.provider}` : ''}` +
+    (isolation?.state === 'none' ? ' (EXPLICIT OVERRIDE, accepted risk)' : '') +
+    ' - the sandbox does not restrict the network.',
+);
 if (agentFailure) {
   console.log(
     `AGENT FAILURE: an iteration did not complete (${agentFailure.message || agentFailure}); ` +
@@ -423,6 +519,13 @@ if (escapedOutsideScope || agentFailure) {
     console.log(`Preserved baseline run at ${beforeRun.dir}`);
     const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
     await snapshotRun(outDir, afterRun.dir, finalReport);
+    // The isolation decision travels with the retained result, so a reader of the
+    // run can see whether it was sandboxed, overridden or refused.
+    try {
+      await cp(join(outDir, 'run-security.json'), join(afterRun.dir, 'run-security.json'));
+    } catch {
+      /* the marker in outDir is authoritative */
+    }
     updateLatest(afterRun.hostRoot, afterRun.runId);
 
     const cmp = compareReports(baseline, finalReport, { dirA: beforeRun.dir, dirB: afterRun.dir });
@@ -519,10 +622,11 @@ function runAgent(prompt, iteration) {
   const cliArgs = agent.args(prompt, { maxTurns: 120 });
   if (verbose) console.log(`[iter ${iteration}] $ ${agent.bin} ${cliArgs.join(' ')}`);
   return new Promise((resolve, reject) => {
-    // cwd is the project root, set explicitly rather than inherited (see the
-    // projectRoot comment): the skill finds the vendored tool at
-    // .web-uplift/evidence/cli.mjs relative to this directory.
-    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'], cwd: projectRoot });
+    // Launch through the resolved isolation (bwrap, or a probed unshare layout, or
+    // the raw CLI only under the explicit override).
+    const launch = launchAgent(cliArgs);
+    if (verbose) console.log(`[iter ${iteration}] isolation=${isolation?.state ?? 'unresolved'} $ ${launch.command} ${launch.argv.join(' ')}`);
+    const child = spawn(launch.command, launch.argv, { stdio: ['ignore', 'pipe', 'pipe'], cwd: launch.cwd });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; if (verbose) process.stdout.write(d); });
@@ -662,6 +766,17 @@ Options:
   --allow-write <dirs>    Extra roots a run may modify, on top of --target and
                           --out (e.g. a build output dir). Repeatable, and each
                           value may be comma-separated.
+  --allow-unsandboxed-agent
+                          Run the agent without OS isolation when no sandbox is
+                          available. Recorded as an explicit accepted risk in
+                          <out>/run-security.json; loud on stderr. Default is to
+                          REFUSE before spawning anything.
+
+Environment:
+  WEB_UPLIFT_SANDBOX_FORCE  bwrap | unshare | none. Diagnostic/test seam that
+                          forces which launcher is probed. 'none' makes the host
+                          look like one with no sandbox at all, and still needs
+                          --allow-unsandboxed-agent to run anything.
   --dry-run               Print the per-iteration command for each agent; do not run.
   --verbose               Stream agent stdout/stderr live.
   -h, --help              This help.
