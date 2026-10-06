@@ -261,41 +261,53 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // how to raise the bound, so a starved host produces an actionable error
 // instead of an indefinite hang.
 //
-// MECHANICAL ENUMERATION (walked from the code, not from memory of what was wrapped -
-// the hand sweep this replaced was wrong twice, so the completeness claim is now CHECKABLE:
-// every await in this list is bounded). Scope: the attach, navigation, console-collector
-// and tracing paths.
+// THE COMPLETE AWAIT CENSUS (this replaces a judgement-based sweep that was wrong three
+// times, so membership is now ARITHMETIC, not judgement: a missing site makes the counts
+// disagree, and a reader can check by subtraction rather than by re-reading the reasoning).
+// Recipe: `grep -n 'await ' evidence/{cdp,cli}.mjs` reports 172 lines; three are comments
+// containing the word, leaving 169 CODE SITES, accounted for in full below.
 //
-//   launchChromeOnce   endpoint poll                          devtoolsTimeoutMs (pre-existing)
-//   launchChromeOnce   teardown (waitForProcExit/GroupDrain)  grace-bounded (pre-existing)
-//   newSession         CDP.New (target create)                withDeadline, call bound
-//   newSession         CDP() attach                           withDeadline, call bound
-//   newSession         CDP.Close after attach failure         withDeadline, call bound -
-//                                                             cleanup AFTER a deadline fired is
-//                                                             how a bounded op still hangs
-//   newSession         domain enables (Promise.all)           withDeadline, call bound
-//   session.close()    client.close() + CDP.Close             withDeadline, call bound (same reason)
-//   navigate           about:blank navigate + load event      withDeadline, navigation bound
-//   navigate           pre-navigation preparation             withDeadline, navigation bound
-//   navigate           target navigate + load event           withDeadline, navigation bound
-//   attachConsoleColl. Runtime.enable + Log.enable            withDeadline, call bound
-//   trace              about:blank + target navigate + load   withDeadline, navigation bound
-//                      (DIRECT Page.navigate calls - see the warning below)
-//   trace              applyConditions / Tracing.start /      withDeadline, navigation bound
-//                      Tracing.end / tracingComplete / the
-//                      interact evaluate
-//   resilience         ServiceWorker.enable                   withDeadline, call bound (getter)
-//   resilience         Network.emulateNetworkConditions        withDeadline, call bound (getter)
-//                      (going offline)
-//   resilience         offline-reload navigate response       withDeadline, its own offlineBudget
-//                      (its load wait stays a Promise.race with the same budget - already bounded)
+//   cdp.mjs (29):
+//     10 bounded by withDeadline   - newSession's target create / attach / cleanup-Close /
+//                                    domain enables, session.close()'s two teardown awaits,
+//                                    navigate()'s two navigations + two load events +
+//                                    pre-navigation preparation, the console collector's
+//                                    Runtime/Log enables
+//     18 bounded by pre-existing mechanisms - the grace-bounded launch teardown, the
+//                                    devtools-endpoint poll (devtoolsTimeoutMs), sleeps,
+//                                    withRetry around the bounded calls, withSession over
+//                                    bounded parts
+//      1 excluded: evaluate()'s own Runtime.evaluate - a post-navigation content probe, the
+//                                    primitives' domain (see the exclusion below)
+//   cli.mjs (140):
+//     12 bounded by withDeadline   - trace's two navigations, load wait, applyConditions,
+//                                    Tracing.start / Tracing.end / tracingComplete / the
+//                                    interact evaluate; resilience's ServiceWorker.enable,
+//                                    offline switch, offline-reload navigate, online restore
+//     20 routed through the bounded navigate() helper
+//      7 bounded transitively     - applyConditions' six internals (every caller wraps the
+//                                    call) and sw.enable()'s internal enable (the call site
+//                                    wraps it)
+//     21 sleeps (a sleep IS its bound)
+//      3 pre-existing own bounds   - har's network-idle deadline, --interact-deadline,
+//                                    resilience's offline load race (offlineBudget)
+//      6 the gather spine          - launchChrome, newSession, attachConsoleCollector,
+//                                    session.close, chrome.close (all bounded internally),
+//                                    plus main's gather call
+//     71 EXCLUDED WITH REASON      - per-primitive content probes and setup: evaluate()
+//                                    probes, captureScreenshot, getResponseBody, safeFetch's
+//                                    internals, screencast, heap, axe, a11y, the primitive
+//                                    dispatch. Reason: they run AFTER or OUTSIDE the shared
+//                                    attach/navigation spine, so a wedge there hangs one
+//                                    primitive's evidence, not the CLI's ability to reach or
+//                                    leave a page; several carry their own bounds already.
+//   TOTALS: cdp 10+18+1 = 29; cli 12+20+7+21+3+6+71 = 140; 29+140 = 169 = every code site.
 //
-// OUTSIDE THIS ENUMERATION: the per-primitive content probes AFTER load (evaluate() calls,
-// the har network-idle wait, --interact's polling) are the primitives' own domain, and
-// several carry their own bounds (har's network-idle deadline, --interact-deadline).
-// THE WARNING: a NEW primitive that awaits client.* directly inherits NOTHING from this
-// list - wrap it or route through navigate(). The trace primitive was exactly that hole,
-// and it was found by writing this enumeration, not by the sweep that preceded it.
+// THE WARNING for the next primitive: an await added to either file changes the census, so
+// the totals above will disagree with the recipe - that disagreement is the signal to bound
+// the new site or to record its exclusion with its reason here. A NEW primitive that awaits
+// client.* directly inherits NOTHING from this census: the trace primitive was exactly that
+// hole, found by enumeration, not by the sweeps that preceded it.
 // The current navigation bound, for callers that navigate directly (the trace
 // primitive) and must take the same bound navigate() uses, flag included.
 export function getNavigationDeadlineMs() {

@@ -5171,6 +5171,14 @@ async function testCdpDeadline() {
   // own servers - observed directly: SERVER HITS 0 and a 30s timeout on a healthy page.
   // The deadline is set through the same module state the CLI flag writes, and RESTORED in
   // the finally so the rest of the suite keeps the production defaults.
+  // COVERAGE, STATED PRECISELY SO IT DOES NOT OVERCLAIM: this case reproduces a PAGE-side
+  // stall (the server never answers, so the navigation and load waits must fire their
+  // bounds). The mechanism itself is unit-tested (a never-settling promise rejects within
+  // the bound; a settling one passes through), and the tracing call sites are enumerated and
+  // code-covered - but a WEDGED-BROWSER firing of the tracingComplete / Tracing.end bounds
+  // is NOT reproduced here: those events are fired by the browser, not the page, so the
+  // never-responding server cannot stall them. That firing reproduction (SIGSTOP mid-trace)
+  // is tracked on another bead.
   const { gather } = await import(pathToFileURL(join(repoRoot, 'evidence/cli.mjs')).href);
   const { configureCdpDeadlines } = await import(pathToFileURL(join(repoRoot, 'evidence/cdp.mjs')).href);
   const bhUrl = `http://127.0.0.1:${blackhole.address().port}/`;

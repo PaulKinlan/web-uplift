@@ -3404,7 +3404,11 @@ async function resilience(client, url, opts, log) {
       log(`[evidence] resilience: offline screenshot failed: ${String(e?.message || e)}`);
     }
   }
-  await client.Network.emulateNetworkConditions({ offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await withDeadline(
+    client.Network.emulateNetworkConditions({ offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }),
+    getCdpCallDeadlineMs(),
+    'the browser to switch the network back online',
+  );
   log(
     navigationFailed
       ? `[evidence] resilience: offline navigation FAILED (${errorText})`
