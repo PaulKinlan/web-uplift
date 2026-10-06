@@ -608,7 +608,9 @@ function confinementFailure(where, escaped) {
 }
 
 function runAgent(prompt, iteration) {
-  const cliArgs = agent.args(prompt, { maxTurns: 120 });
+  // `root` is passed so the derived absolute-path Bash rules name the SAME
+  // directory the child is spawned with as cwd (the write-scope anchor).
+  const cliArgs = agent.args(prompt, { maxTurns: 120, root: projectRoot });
   if (verbose) console.log(`[iter ${iteration}] $ ${agent.bin} ${cliArgs.join(' ')}`);
   return new Promise((resolve, reject) => {
     // cwd is the project root, set explicitly rather than inherited: the skill finds

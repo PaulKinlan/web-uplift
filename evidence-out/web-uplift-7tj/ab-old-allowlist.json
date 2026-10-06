@@ -1,0 +1,59 @@
+{
+  "label": "OLD allowlist (5a04a88^)",
+  "argv": "-p You are verifying Bash tool permissions. Attempt each of the following six commands with the Bash tool, exactly as written, one Bash call per command, in order. Do not run anything else, do not retry a command, do not use any other tool. A usage message, a missing-file error or a nonzero exit code still counts as EXECUTED; ONLY a permission/approval error (the tool was not allowed to run the command) counts as DENIED. After the sixth attempt, reply with exactly six lines, one per command in order, each of the form `N: ALLOWED` or `N: DENIED`, and nothing else.\n\n1. node schema/validate-report.mjs knowledge/principles.json\n2. node aggregate/compare.mjs example.invalid\n3. node aggregate/scorecard.mjs example.invalid\n4. node knowledge/baseline.mjs --json\n5. node runner/flow.mjs --help\n6. node /home/exedev/worktrees/web-uplift-7tj/evidence/cli.mjs --help --output-format json --max-turns 30 --allowedTools Read,Write,Edit,Glob,Grep,Bash(node evidence/cli.mjs:*),Bash(node .web-uplift/evidence/cli.mjs:*),Bash(npx -y --ignore-scripts modern-web-guidance@0.0.172:*),Bash(mkdir:*),Bash(ffmpeg:*)",
+  "exitCode": 0,
+  "seconds": 20,
+  "numTurns": 7,
+  "result": "1: DENIED\n2: DENIED\n3: DENIED\n4: DENIED\n5: DENIED\n6: DENIED",
+  "permissionDenials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_012UD1vfXbpD3mezo7FKgGM3",
+      "tool_input": {
+        "command": "node schema/validate-report.mjs knowledge/principles.json",
+        "description": "Validate principles.json report"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01NnthFWCBChQgdnXRjfooya",
+      "tool_input": {
+        "command": "node aggregate/compare.mjs example.invalid",
+        "description": "Run compare aggregator on test host"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_015QnZp9nHSXxd6yWtBkjqGd",
+      "tool_input": {
+        "command": "node aggregate/scorecard.mjs example.invalid",
+        "description": "Run scorecard aggregator on test host"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_017gMiWiAfQmwUdgLNk8djhU",
+      "tool_input": {
+        "command": "node knowledge/baseline.mjs --json",
+        "description": "Print baseline knowledge as JSON"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_0129Hu1vVMTdPMbPaxHm323m",
+      "tool_input": {
+        "command": "node runner/flow.mjs --help",
+        "description": "Show runner flow help"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_01SV7w8spai4miLi8YMCzvSR",
+      "tool_input": {
+        "command": "node /home/exedev/worktrees/web-uplift-7tj/evidence/cli.mjs --help",
+        "description": "Show evidence CLI help"
+      }
+    }
+  ],
+  "isError": false
+}
