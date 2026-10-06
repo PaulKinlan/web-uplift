@@ -64,6 +64,7 @@ try {
   testFixModeScopeEdgeCases();
   testFixIsolationAssertion();
   testFixIsolatedRunPublishes();
+  testBatchWriteScope();
   await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
   await testScorecardArtifactContainment();
@@ -3685,11 +3686,11 @@ async function testAxeKeepsPagePolicyAndDisclosesInjectionBypass() {
 
 // web-uplift-arp: fix mode drives an agent whose prompt context carries untrusted
 // page content, so what it writes is scoped to --target by snapshot + refusal
-// rather than by the filesystem. See fixer/write-scope.mjs for why rooting the
+// rather than by the filesystem. See runner/write-scope.mjs for why rooting the
 // child's cwd at --target is not an option (the skill's vendored tool path,
 // `.web-uplift/evidence/cli.mjs`, is relative to the PROJECT root).
 async function testFixWriteScopeDiffing() {
-  const { snapshotTree, diffTrees, escapedChanges, summariseChanges } = await import('../fixer/write-scope.mjs');
+  const { snapshotTree, diffTrees, escapedChanges, summariseChanges } = await import('../runner/write-scope.mjs');
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-scope-'));
   try {
     mkdirSync(join(root, 'sub'), { recursive: true });
@@ -4159,5 +4160,237 @@ async function testInstallSurfaceMatchesWhatInstallVendors() {
   // declaration pointing at nothing has to fail just as loudly.
   for (const copy of TRACKED_COPY_FILES) {
     assert(existsSync(join(repoRoot, copy.dest)), `surface: tracked copy ${copy.dest} is declared but missing from the tree`);
+  }
+}
+
+// web-uplift-wy6: the batch audit path gets the same write-scope accounting as fix
+// mode, with FOUR things a review found missing: the DEFAULT output must be walked
+// (the generic exclusion skips a directory named reports/), a refused run must not be
+// usable as the current result for its URL, concurrent runs must not refuse each
+// other's clean work, and the escape path must be exercised with a FAILING agent.
+function testBatchWriteScope() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-batchscope-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const findings = join(repoRoot, 'examples', 'playground-report.json');
+
+    const drive = ({ args = [], body, extraArgs = [], cwd = root }) => {
+      const bin = join(binDir, 'claude');
+      if (body) {
+        writeFileSync(bin, `#!/bin/sh\n${body}\n`);
+        chmodSync(bin, 0o755);
+      }
+      const res = run(process.execPath, [join(repoRoot, 'runner', 'run-batch.mjs'), ...args, '--agent', 'claude', ...extraArgs],
+        { cwd, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+      return res;
+    };
+    const writesReport = (outAbs) => [
+      `d=$(ls -dt ${JSON.stringify(outAbs)}/*/*/ 2>/dev/null | head -1)`,
+      `cp ${JSON.stringify(findings)} "$d/report.json"`,
+    ].join('\n');
+    const hostDir = (outName) => {
+      const abs = join(root, outName);
+      const host = readdirSync(abs)[0];
+      return { root: join(abs, host), run: readdirSync(join(abs, host)).find((e) => !e.startsWith('latest')) };
+    };
+
+    // 1. THE DEFAULT OUTPUT (no --out at all, i.e. `reports/`) must be walked and
+    //    recorded as an allowed change. A positive control on a convenient custom
+    //    output name hid exactly this: the default tree is dropped by the generic
+    //    exclusion, so it was unwatched in both directions.
+    const dflt = drive({ args: ['https://example.com/'], extraArgs: ['--concurrency', '1'], body: writesReport(join(root, 'reports')) });
+    assert(dflt.status === 0, `batch default output: a normal audit must exit 0 (got ${dflt.status})\n${dflt.stdout}${dflt.stderr}`);
+    assert(/done \(coverage complete\)/.test(dflt.stdout), `batch default output: the audit must complete:\n${dflt.stdout}`);
+    const dfltRun = hostDir('reports');
+    const dfltScope = JSON.parse(readFileSync(join(dfltRun.root, dfltRun.run, 'write-scope.json'), 'utf8'));
+    assert(dfltScope.escapedOutsideScope.length === 0, `batch default output: nothing refused (${JSON.stringify(dfltScope.escapedOutsideScope)})`);
+    assert(
+      dfltScope.changed.added.some((p) => p.includes(join('reports', 'example_com'))),
+      `batch default output: the DEFAULT output tree must be recorded as an allowed change, got ${JSON.stringify(dfltScope.changed.added)}`,
+    );
+
+    // 2. A REFUSED RUN MUST NOT BE THE CURRENT RESULT. The refusal skips the pointer,
+    //    but latest resolution falls back to the newest run CONTAINING a report, so a
+    //    refused run could become what --resume treats as done and skip the URL.
+    const refused = drive({ args: ['https://refused.example/'], extraArgs: ['--concurrency', '1', '--out', 'r-out'],
+      body: `${writesReport(join(root, 'r-out'))}\nprintf 'pwned' > ${JSON.stringify(join(root, 'escaped.txt'))}` });
+    assert(refused.status !== 0, `batch refusal: an escaping audit must exit non-zero (${refused.status})`);
+    const refusedHost = join(root, 'r-out', readdirSync(join(root, 'r-out'))[0]);
+    const refusedRun = readdirSync(refusedHost).find((e) => !e.startsWith('latest'));
+    assert(existsSync(join(refusedHost, refusedRun, 'run-refused.json')), 'batch refusal: the run must be marked as refused');
+    assert(!existsSync(join(refusedHost, refusedRun, 'report.json')), 'batch refusal: a refused run must not leave a report where resolution looks');
+    assert(existsSync(join(refusedHost, refusedRun, 'report.refused.json')), 'batch refusal: the report must be RENAMED out of the way, so the exclusion does not depend on a deletion succeeding');
+    // NOTE ON WHAT THIS CONTROL COVERS: it exercises the REAL runner end to end -
+    // orchestration, the scope accounting, the refusal path and the report schema
+    // validation - with a stand-in agent. It is NOT a real skill/browser/evidence
+    // audit (that needs an external agent CLI and token spend, which is a deliberate
+    // acceptance step rather than a unit gate), so it must not be read as end-to-end
+    // coverage of the audit itself.
+    const resume = drive({ args: ['https://refused.example/'], extraArgs: ['--concurrency', '1', '--out', 'r-out', '--resume'], body: writesReport(join(root, 'r-out')) });
+    assert(!/resume skip/.test(resume.stdout), `batch refusal: --resume must NOT skip a URL whose only run was refused:\n${resume.stdout}`);
+    assert(/done \(coverage complete\)\s+https:\/\/refused\.example\//.test(resume.stdout), `batch refusal: --resume must RE-AUDIT and COMPLETE that URL, not merely "not skip" it:\n${resume.stdout}`);
+
+    // 3. CONCURRENCY MUST NOT REFUSE CLEAN WORK. Two URLs, one escaping agent: the
+    //    clean URL shares the project tree, so an overlapping snapshot window would
+    //    catch the other agent's write and refuse it too. The scope windows are
+    //    serialized; the clean URL must complete.
+    const twoUp = drive({
+      args: ['https://clean.example/', 'https://dirty.example/'],
+      extraArgs: ['--concurrency', '2', '--out', 'c-out'],
+      // The stub locates its own run dir by pure shell parameter expansion on the
+      // prompt it is given (`--out <dir>`), with no external commands, no regex and no
+      // nested quoting: an earlier version of this used grep/sed inside $( ) and the
+      // generated script failed to parse, which is what a gate is for.
+      body: [
+        'd=""',
+        'for a in "$@"; do',
+        '  case "$a" in',
+        '    *c-out/*) rest=${a#*c-out/}; d="' + join(root, 'c-out') + '/${rest%% *}";;',
+        '  esac',
+        'done',
+        `cp ${JSON.stringify(findings)} "$d/report.json"`,
+        `case "$*" in *dirty.example*) printf 'pwned' > ${JSON.stringify(join(root, 'c-escaped.txt'))};; esac`,
+      ].join('\n'),
+    });
+    assert(twoUp.status !== 0, 'batch concurrency: the dirty URL must still fail the batch');
+    assert(
+      /done \(coverage complete\)\s+https:\/\/clean\.example\//.test(twoUp.stdout),
+      `batch concurrency: the CLEAN url must still complete when a neighbour escapes:\n${twoUp.stdout}`,
+    );
+
+    // 4. THE ESCAPE PATH WITH A FAILING AGENT: the diff must still be computed and the
+    //    refusal still recorded when the agent exits non-zero (the earlier stub always
+    //    exited 0, so this path was untested).
+    const failing = drive({ args: ['https://failing.example/'], extraArgs: ['--concurrency', '1', '--out', 'f-out'],
+      body: `printf 'pwned' > ${JSON.stringify(join(root, 'f-escaped.txt'))}\nexit 7` });
+    assert(failing.status !== 0, `batch failing agent: must exit non-zero (${failing.status})`);
+    assert(/CONFINEMENT FAILURE/.test(failing.stderr), `batch failing agent: the escape must still be diagnosed:\n${failing.stderr}`);
+    const failingHost = join(root, 'f-out', readdirSync(join(root, 'f-out'))[0]);
+    const failingRun = readdirSync(failingHost).find((e) => !e.startsWith('latest'));
+    const failingScope = JSON.parse(readFileSync(join(failingHost, failingRun, 'write-scope.json'), 'utf8'));
+    assert(
+      failingScope.escapedOutsideScope.some((p) => p.endsWith('f-escaped.txt')),
+      `batch failing agent: the escaped path must be recorded even though the agent died (${JSON.stringify(failingScope.escapedOutsideScope)})`,
+    );
+    // 5. THE CLEANUP-FAILURE PATH (the P1): the agent plants a DANGLING symlink where the
+    //    refusal marker goes, so writing the marker fails. With the old single try block
+    //    that failure suppressed the report removal and left a resumable report. The
+    //    report must still be renamed out of the way.
+    const marker = drive({ args: ['https://marker.example/'], extraArgs: ['--concurrency', '1', '--out', 'm-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 'm-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncp ${JSON.stringify(findings)} "$d/report.json"\nln -s /nonexistent/target "$d/run-refused.json"\nprintf 'pwned' > ${JSON.stringify(join(root, 'm-escaped.txt'))}` });
+    assert(marker.status !== 0, `batch cleanup: the escape must still refuse (${marker.status})`);
+    const markerHost = join(root, 'm-out', readdirSync(join(root, 'm-out'))[0]);
+    const markerRun = readdirSync(markerHost).find((e) => !e.startsWith('latest'));
+    assert(
+      existsSync(join(markerHost, markerRun, 'report.refused.json')) && !existsSync(join(markerHost, markerRun, 'report.json')),
+      `batch cleanup: a failing marker write must NOT suppress quarantining the report (${JSON.stringify(readdirSync(join(markerHost, markerRun)))})`,
+    );
+
+    // 6. A SYMLINKED RUN DIRECTORY (the P2a): the agent replaces its run dir with a link
+    //    to another run under the output root. Nothing may be renamed or deleted through
+    //    that link - the innocent run must be untouched.
+    const innocent = join(root, 'innocent', 'RUN');
+    mkdirSync(innocent, { recursive: true });
+    writeFileSync(join(innocent, 'report.json'), '{"innocent":true}\n');
+    const swapped = drive({ args: ['https://swap.example/'], extraArgs: ['--concurrency', '1', '--out', 's-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 's-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\nrm -rf "$d"\nln -s ${JSON.stringify(innocent)} "$d" || exit 9\n[ -d "$d" ] || exit 9\nprintf 'pwned' > ${JSON.stringify(join(root, 's-escaped.txt'))}` });
+    assert(swapped.status !== 0, `batch symlinked run: the escape must still refuse (${swapped.status})`);
+    assert(/not a real path below the output root/.test(swapped.stderr), `batch symlinked run: the refusal must say it did not touch anything through the link:\n${swapped.stderr}`);
+    assert(existsSync(join(innocent, 'report.json')), 'batch symlinked run: the innocent run report must be untouched');
+    assert(!existsSync(join(innocent, 'report.refused.json')), 'batch symlinked run: nothing may be renamed through the agent-controlled link');
+    // The reviewer's point: the scope record is written THROUGH the run directory, so a
+    // swapped link would have overwritten the innocent run's record too.
+    writeFileSync(join(innocent, 'write-scope.json'), '{"innocent":"scope-record"}\n');
+    const swapped2 = drive({ args: ['https://swap2.example/'], extraArgs: ['--concurrency', '1', '--out', 's2-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 's2-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\nrm -rf "$d"\nln -s ${JSON.stringify(innocent)} "$d" || exit 9\nprintf 'pwned' > ${JSON.stringify(join(root, 's2-escaped.txt'))}` });
+    assert(swapped2.status !== 0, `batch symlinked run: the escape must still refuse (${swapped2.status})`);
+    assert(
+      readFileSync(join(innocent, 'write-scope.json'), 'utf8').includes('innocent'),
+      'batch symlinked run: the innocent run\'s SCOPE RECORD must not be overwritten through the link',
+    );
+
+    // 7. A REFUSED RUN MUST NEVER RESOLVE AS CURRENT, whatever the agent plants: with a
+    //    DIRECTORY sitting where the quarantined report would go, the rename cannot
+    //    happen, so completion must still not resolve - the decision comes from the
+    //    pointer this tool writes, not from what is on disk.
+    mkdirSync(join(root, 'd-out'), { recursive: true });
+    const blocked = drive({ args: ['https://blocked.example/'], extraArgs: ['--concurrency', '1', '--out', 'd-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 'd-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncp ${JSON.stringify(findings)} "$d/report.json"\nmkdir -p "$d/report.refused.json"\nprintf 'pwned' > ${JSON.stringify(join(root, 'd-escaped.txt'))}` });
+    assert(blocked.status !== 0, `batch blocked quarantine: the escape must still refuse (${blocked.status})`);
+    assert(/NOT QUARANTINED/.test(blocked.stderr), `batch blocked quarantine: a quarantine that cannot happen must be LOUD:\n${blocked.stderr}`);
+    const blockedResume = drive({ args: ['https://blocked.example/'], extraArgs: ['--concurrency', '1', '--out', 'd-out', '--resume'], body: writesReport(join(root, 'd-out')) });
+    assert(!/resume skip/.test(blockedResume.stdout), `batch blocked quarantine: --resume must not treat a refused run as done, however it is blocked:\n${blockedResume.stdout}`);
+    assert(/done \(coverage complete\)\s+https:\/\/blocked\.example\//.test(blockedResume.stdout), `batch blocked quarantine: the URL must be RE-AUDITED and complete:\n${blockedResume.stdout}`);
+
+    // 8. A URL THAT DESTROYS ITS OWN RUN DIRECTORY MUST NOT TAKE THE BATCH DOWN: a LATER
+    //    URL still has to complete.
+    const deletes = drive({
+      args: ['https://deleter.example/', 'https://later.example/'],
+      extraArgs: ['--concurrency', '1', '--out', 'del-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 'del-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncase "$*" in *deleter.example*) rm -rf "$d";; *) cp ${JSON.stringify(findings)} "$d/report.json";; esac`,
+    });
+    assert(/done \(coverage complete\)\s+https:\/\/later\.example\//.test(deletes.stdout), `batch deleted run dir: a LATER url must still complete:\n${deletes.stdout}`);
+    assert(
+      /https:\/\/deleter\.example\/: run directory unusable/.test(deletes.stdout),
+      `batch deleted run dir: the destructive URL must carry its own failure REASON in the summary, not merely appear somewhere:\n${deletes.stdout}`,
+    );
+    // 9. THE RESUME POINTER-FILE PATH MUST ACTUALLY WORK. It was silently dead because
+    //    readFileSync was missing from the runner's imports: the lookup threw, the catch
+    //    swallowed it, and no run could ever be resolved from latest.txt. This case would
+    //    have failed then, which is the point of adding it.
+    const txtHost = join(root, 'txt-out', 'txt_example');
+    const txtRun = join(txtHost, 'RUN1');
+    mkdirSync(txtRun, { recursive: true });
+    writeFileSync(join(txtRun, 'report.json'), readFileSync(findings));
+    writeFileSync(join(txtHost, 'latest.txt'), 'RUN1\n');
+    const txtResume = drive({ args: ['https://txt.example/'], extraArgs: ['--concurrency', '1', '--out', 'txt-out', '--resume'], body: writesReport(join(root, 'txt-out')) });
+    assert(/resume skip/.test(txtResume.stdout), `batch resume: a valid run named by latest.txt must count as done (the pointer-FILE path was silently dead):\n${txtResume.stdout}`);
+
+    // 10. And the symlink pointer path, positively: complete a URL, then resume skips it.
+    //     The refused-run cases above only ever asserted that a URL was NOT skipped.
+    const firstDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out'], body: writesReport(join(root, 'p-out')) });
+    assert(firstDone.status === 0, `batch resume: the first run must complete (${firstDone.status})`);
+    const secondDone = drive({ args: ['https://done.example/'], extraArgs: ['--concurrency', '1', '--out', 'p-out', '--resume'], body: writesReport(join(root, 'p-out')) });
+    assert(/resume skip/.test(secondDone.stdout), `batch resume: a completed URL must be SKIPPED on resume:\n${secondDone.stdout}`);
+
+
+    // 11. A PUBLICATION FAILURE MUST NOT MARK THE URL COMPLETE. The in-memory set used to be
+    //     updated BEFORE the publication call, so when publication threw (here: the output
+    //     root is made unwritable, so both the symlink and its pointer-file fallback fail)
+    //     a DUPLICATE url later in the same resume batch was skipped even though nothing had
+    //     been published for it.
+    const dupOut = join(root, 'dup-out');
+    mkdirSync(dupOut, { recursive: true });
+    try {
+      const dup = drive({
+        args: ['https://dup.example/', 'https://dup.example/'],
+        extraArgs: ['--concurrency', '1', '--out', 'dup-out', '--resume'],
+        // Make the HOST directory unwritable (that is where the pointer is published), so
+        // the symlink AND its pointer-file fallback both fail - and so the duplicate's own
+        // run directory cannot be created either, which is itself proof it was attempted
+        // rather than skipped by the in-memory set.
+        body: `d=$(ls -dt ${JSON.stringify(dupOut)}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncp ${JSON.stringify(findings)} "$d/report.json"\nchmod 0500 "$(dirname \"$d\")"`,
+      });
+      assert(/could not publish completion/.test(dup.stderr), `batch publication failure: the failure must be reported:\n${dup.stderr}`);
+      const dupFailures = (dup.stdout.match(/https:\/\/dup\.example\//g) || []).length;
+      assert(
+        dupFailures >= 2,
+        `batch publication failure: the URL whose publication FAILED must not count as complete, so the duplicate must still be ATTEMPTED (saw ${dupFailures} mentions):\n${dup.stdout}`,
+      );
+    } finally {
+      // Restore what the fixture made read-only, or the suite's own cleanup cannot
+      // descend into it (this cost one run to learn).
+      try {
+        for (const entry of readdirSync(dupOut)) {
+          try {
+            chmodSync(join(dupOut, entry), 0o755);
+          } catch { /* best effort */ }
+        }
+        chmodSync(dupOut, 0o755);
+      } catch { /* best effort */ }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 }

@@ -51,7 +51,7 @@ import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
 import { countOutstanding, completionState, remaining } from '../runner/remaining-work.mjs';
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
-import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from './write-scope.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from '../runner/write-scope.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 
