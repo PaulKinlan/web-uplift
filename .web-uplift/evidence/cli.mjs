@@ -791,7 +791,12 @@ async function axe(client, url, opts, log) {
 // load (and an optional --interact window), write a devtools-loadable trace.json
 // AND a compact, model-readable summary (key timings, long tasks, blocking).
 // The model reads the summary, never the multi-MB raw trace.
-async function trace(client, url, opts, log) {
+// EXPORTED FOR TESTS ONLY (web-uplift-4ux), following this file's existing test-support
+// exports (safeFetch, waitForInteractEvidence): the tracing bounds guard BROWSER-fired
+// events, which no stub can reach through gather() because gather launches a real
+// Chrome - the regression suite drives trace() directly with a fake client to show the
+// bounds fire; the only consumer of this export in this repo is that suite.
+export async function trace(client, url, opts, log) {
   // The navigation below calls Page.navigate DIRECTLY rather than through navigate() because
   // the trace must start before navigationStart is captured; the bound is the same one
   // navigate() uses, read through the getter so the --cdp-deadline flag applies here too.

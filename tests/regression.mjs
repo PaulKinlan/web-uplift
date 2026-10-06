@@ -5177,11 +5177,15 @@ async function testCdpDeadline() {
   // stall (the server never answers, so the navigation and load waits must fire their
   // bounds). The mechanism itself is unit-tested (a never-settling promise rejects within
   // the bound; a settling one passes through), and the tracing call sites are enumerated and
-  // code-covered - but a WEDGED-BROWSER firing of the tracingComplete / Tracing.end bounds
-  // is NOT reproduced here: those events are fired by the browser, not the page, so the
-  // never-responding server cannot stall them. That firing reproduction (SIGSTOP mid-trace)
-  // is tracked on another bead.
-  const { gather } = await import(pathToFileURL(join(repoRoot, 'evidence/cli.mjs')).href);
+  // code-covered. This case CANNOT fire the tracingComplete / Tracing.end bounds - those
+  // are answered by the BROWSER, not the page, so a never-responding server never reaches
+  // them; their firing is demonstrated by the STUB-CLIENT cases below (web-uplift-4ux).
+  // What remains unreproduced is a REAL wedged browser mid-trace (a frozen Chrome on a
+  // live socket): wedging a real browser takes an OS-level freeze or a stalling proxy on
+  // the CDP port, and the stubs below already reproduce its observable failure - the
+  // event never arrives, the command is never acked - in-process, with no browser to
+  // wedge and no flake, so the real wedge stays out of the suite.
+  const { gather, trace } = await import(pathToFileURL(join(repoRoot, 'evidence/cli.mjs')).href);
   const { configureCdpDeadlines } = await import(pathToFileURL(join(repoRoot, 'evidence/cdp.mjs')).href);
   const bhUrl = `http://127.0.0.1:${blackhole.address().port}/`;
   const hitsBeforeTrace = blackholeHits;
@@ -5229,6 +5233,140 @@ async function testCdpDeadline() {
     !healthyTraceErr && existsSync(join(tmp, 'trace-ok.json')),
     `17o trace control: a healthy trace under the default deadline must complete and write its artifact (${healthyTraceErr && healthyTraceErr.message})`,
   );
+  // web-uplift-4ux: STUB FIRING REPRO for the two tracing bounds of the trace path. The
+  // starved case above stalls the PAGE side, which fires the load-event bound before the
+  // browser is ever asked to answer the two tracing waits. These cases drive the exported
+  // trace() directly with a fake client: no browser exists in these cases, and every
+  // await on the path is either withDeadline-wrapped or a fixed sleep(), so no stub-side
+  // wait can be unbounded - the bound-firing cases EXPECT the deadline rejection (the
+  // healthy control would fail loudly instead). What the stubs demonstrate: the
+  // tracing-COMPLETE bound fires with the actionable error when the event never arrives,
+  // the tracing-END bound fires when the command is never acked, and the healthy control
+  // writes both artifacts when the event does arrive. What they do NOT demonstrate: a real
+  // wedged browser mid-trace (see the coverage note above - deliberately out of the suite).
+  const stubClient = ({ completeFires, endResolves }) => ({
+    Page: {
+      navigate: async () => ({}),
+      loadEventFired: () => Promise.resolve({ timestamp: 0 }),
+    },
+    Tracing: {
+      dataCollected: () => {},
+      start: async () => ({}),
+      end: endResolves ? async () => ({}) : () => new Promise(() => {}),
+      tracingComplete: (cb) => {
+        if (completeFires) setTimeout(() => cb({ dataLossInfo: [] }), 0);
+      },
+    },
+  });
+  const STUB_DEADLINE_MS = 300;
+  const stubUrl = 'http://stub.invalid/';
+  // TEST-OWNED TIMEOUT, and why it is NOT redundant - do not remove it: the assertions
+  // below must be able to FAIL ON THEIR OWN. The stub promises behind the two failure
+  // cases never settle, so if the production bound were ever removed or broken, awaiting
+  // trace() directly would HANG the suite (the runner has no timeout of its own) - and a
+  // guard that cannot report the exact regression it exists to catch is not a control.
+  // Each failure-case call therefore races a test deadline set comfortably above the
+  // production bound, so the two cannot be confused: bound present -> the production
+  // rejection wins the race and the assertions check its text; bound absent -> the test
+  // deadline wins and the case fails BY ASSERTION within TEST_OWNED_TIMEOUT_MS, naming
+  // which bound never rejected.
+  const TEST_OWNED_TIMEOUT_MS = 5000;
+  const withTestTimeout = (call, boundName) => {
+    let timer = null;
+    return Promise.race([
+      call,
+      new Promise((_, rejectTest) => {
+        timer = setTimeout(
+          () =>
+            rejectTest(
+              new Error(
+                `4ux stub: TEST-OWNED TIMEOUT - the production bound (${boundName}) did not reject within ${TEST_OWNED_TIMEOUT_MS}ms; without it this call never settles and the suite would hang`,
+              ),
+            ),
+          TEST_OWNED_TIMEOUT_MS,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+  };
+  try {
+    configureCdpDeadlines({ navigationMs: STUB_DEADLINE_MS, callMs: STUB_DEADLINE_MS });
+    // (a) the tracing-complete event never arrives -> that bound must fire.
+    const t4 = Date.now();
+    let completeErr = null;
+    try {
+      await withTestTimeout(
+        trace(
+          stubClient({ completeFires: false, endResolves: true }),
+          stubUrl,
+          { wait: 0, out: join(tmp, 'trace-stub-complete.json') },
+          () => {},
+        ),
+        'the trace-to-complete bound',
+      );
+    } catch (e) {
+      completeErr = e;
+    }
+    const completeElapsed = Date.now() - t4;
+    assert(
+      completeErr &&
+        completeErr.message.includes(`timed out after ${STUB_DEADLINE_MS}ms waiting for the trace to complete for ${stubUrl}`),
+      `4ux stub: a tracing-complete event that never arrives must fire the bound with the actionable text (${completeErr && completeErr.message})`,
+    );
+    assert(
+      completeErr && completeErr.message.includes('--cdp-deadline'),
+      '4ux stub: the rejection must say how to raise the bound',
+    );
+    assert(
+      !existsSync(join(tmp, 'trace-stub-complete.json')),
+      '4ux stub: a starved stub trace must not write an artifact',
+    );
+    assert(
+      completeElapsed < 10000,
+      `4ux stub: the rejection must arrive at the order of the bound, not the suite timeout (${completeElapsed}ms)`,
+    );
+    // (b) Tracing.end is never acked -> the end bound must fire (the complete wait is never reached).
+    let endErr = null;
+    try {
+      await withTestTimeout(
+        trace(
+          stubClient({ completeFires: false, endResolves: false }),
+          stubUrl,
+          { wait: 0, out: join(tmp, 'trace-stub-end.json') },
+          () => {},
+        ),
+        'the browser-to-end-tracing bound',
+      );
+    } catch (e) {
+      endErr = e;
+    }
+    assert(
+      endErr &&
+        endErr.message.includes(`timed out after ${STUB_DEADLINE_MS}ms waiting for the browser to end tracing for ${stubUrl}`),
+      `4ux stub: an unacked Tracing.end must fire its own bound (${endErr && endErr.message})`,
+    );
+    // (c) HEALTHY CONTROL: same stub, event fires -> trace completes and writes both
+    // artifacts. The control races a setTimeout(0) against the bound, so it gets a
+    // GENEROUS deadline: the small bound above is for the firing cases only, and a tiny
+    // deadline under fleet load is a known flake shape in this suite.
+    configureCdpDeadlines({ navigationMs: 10000, callMs: 10000 });
+    const stubOkOut = join(tmp, 'trace-stub-ok.json');
+    const stubOk = await trace(
+      stubClient({ completeFires: true, endResolves: true }),
+      stubUrl,
+      { wait: 0, out: stubOkOut },
+      () => {},
+    );
+    assert(
+      existsSync(stubOkOut) && existsSync(join(tmp, 'trace-stub-ok-summary.json')),
+      '4ux stub control: a healthy stub trace must write the raw trace and the summary artifacts',
+    );
+    assert(
+      stubOk && stubOk.eventCount === 0 && stubOk.mainThread && stubOk.summaryArtifact,
+      `4ux stub control: the summary must be returned even with zero events (${JSON.stringify(stubOk).slice(0, 200)})`,
+    );
+  } finally {
+    configureCdpDeadlines({ navigationMs: 30000, callMs: 30000 });
+  }
   // RESILIENCE: its initial load goes through navigate() (bounded above), and its offline
   // reload is wrapped with its own offlineBudget; the suite's existing resilience tests
   // drive the primitive healthy against a local server, including that reload - so the
