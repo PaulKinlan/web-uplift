@@ -689,12 +689,28 @@ async function testScorecardScoringAndRender() {
   assert(!html.includes('role="button"'), 'scorecard: fake-button roles must be gone (real buttons instead)');
   assert(html.includes("('commandForElement' in HTMLButtonElement.prototype)"), 'scorecard: fallback must be gated on commandForElement support');
 
-  // The history chart's axis labels must not scale below the legibility floor, and the
-  // chart keeps its natural width inside a scroll wrapper so a narrow viewport cannot
-  // shrink the label rendering (viewBox arithmetic: the CSS size is in user units).
+  // The history chart's axis labels must not scale below the legibility floor. The CSS
+  // rule is always in the page, but the CHART only renders with two or more runs, so the
+  // markup assertions run against an explicit two-run render rather than against a page
+  // where the chart is absent: an assertion that silently cannot apply is the vacuity
+  // this guards against (the single-run fixture here is why the wrapper assertion failed
+  // on its first gate run).
   assert(html.includes('.history .axis{fill:var(--muted);font-size:12px}'), 'scorecard: axis labels must use the 12px floor, not the old 10px');
-  assert(html.includes('class="history-scroll"'), 'scorecard: the chart needs its scroll wrapper');
-  assert(html.includes('style="min-width:640px"'), 'scorecard: the chart must keep its natural width inside the scroll wrapper');
+  const chartHtml = renderScorecard({
+    host: 'example',
+    generatedAt: '2026-01-01 00:00',
+    runs: [
+      { runId: 'r1', dir: join(repoRoot, 'examples'), report, compare: null, ...scored, overall: 71 },
+      { runId: 'r2', dir: join(repoRoot, 'examples'), report, compare: null, ...scored },
+    ],
+    latest: { runId: 'r2', dir: join(repoRoot, 'examples'), report, compare: null, ...scored },
+  });
+  assert(chartHtml.includes('class="history-scroll"'), 'scorecard: the chart needs its scroll wrapper');
+  assert(chartHtml.includes('style="min-width:640px"'), 'scorecard: the chart must keep its natural width inside the scroll wrapper');
+  assert(
+    chartHtml.includes('role="region"') && chartHtml.includes('aria-label="Score history trend"') && chartHtml.includes('tabindex="0"'),
+    'scorecard: the scroll wrapper must be keyboard focusable and named',
+  );
 
   // Light dismiss is native via closedby="any" on each dialog, with a
   // support-gated imperative fallback for browsers without the attribute.

@@ -216,7 +216,7 @@ function gauge(score, { size = 128, stroke = 10 } = {}) {
 }
 
 // Small inline SVG line chart of overall score across runs (0-100). No deps.
-function historyChart(runs, { w = 640, h = 180, pad = 28 } = {}) {
+function historyChart(runs, { w = 640, h = 180, pad = 36 } = {}) {
   const pts = runs.map((r, i) => ({ i, score: r.overall })).filter((p) => typeof p.score === 'number');
   if (pts.length < 2) return '<p class="muted">Run at least two audits to see the trend.</p>';
   const n = runs.length;
@@ -235,7 +235,7 @@ function historyChart(runs, { w = 640, h = 180, pad = 28 } = {}) {
   // still under the legibility floor. The min-width in user units keeps the chart at
   // its natural size and the wrapper scrolls horizontally instead, so the labels keep
   // their rendered size at every viewport width.
-  return `<div class="history-scroll"><svg class="history" viewBox="0 0 ${w} ${h}" width="100%" style="min-width:${w}px" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Overall score across ${n} runs">
+  return `<div class="history-scroll" role="region" aria-label="Score history trend" tabindex="0"><svg class="history" viewBox="0 0 ${w} ${h}" width="100%" style="min-width:${w}px" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Overall score across ${n} runs">
   ${grid}
   <path class="area" d="${area}"></path>
   <path class="spark" d="${line}"></path>
@@ -687,6 +687,7 @@ main{max-width:1000px;margin:0 auto;padding:22px}
 .sev.critical{background:#4a1512;color:#ffb4a8}.sev.high{background:#4a2a12;color:#ffd0a8}.sev.medium{background:#3a3212;color:#ffe9a8}.sev.low{background:#1d3320;color:#b6f0c4}
 .effort{font-size:.72rem;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:1px 7px}
 .history-scroll{overflow-x:auto;margin-bottom:16px}
+.history-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .history{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
 .history .grid{stroke:var(--line)}.history .axis{fill:var(--muted);font-size:12px}
 .history .area{fill:rgba(91,141,239,.12)}

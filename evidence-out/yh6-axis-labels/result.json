@@ -40,7 +40,7 @@
       "renderedWidth": 33.41,
       "fontSizeComputed": "12px",
       "labelRight": 212.24,
-      "plotLeft": 213.86,
+      "plotLeft": 225.54,
       "svgWidth": 956,
       "holderScrollWidth": 956,
       "holderClientWidth": 956,
@@ -55,7 +55,7 @@
       "renderedWidth": 22.11,
       "fontSizeComputed": "12px",
       "labelRight": 58.97,
-      "plotLeft": 60.04,
+      "plotLeft": 67.76,
       "svgWidth": 640,
       "holderScrollWidth": 640,
       "holderClientWidth": 356,
@@ -72,6 +72,9 @@
     "after/wide: the chart is actually laid out (non-zero geometry)": {
       "pass": true
     },
+    "wide: the chart is inside the viewport at capture time, so the picture is not empty": {
+      "pass": true
+    },
     "wide: the widest axis label renders at least 12px high (measured, not nominal)": {
       "pass": true
     },
@@ -79,6 +82,9 @@
       "pass": true
     },
     "after/narrow: the chart is actually laid out (non-zero geometry)": {
+      "pass": true
+    },
+    "narrow: the chart is inside the viewport at capture time, so the picture is not empty": {
       "pass": true
     },
     "narrow: the widest axis label renders at least 12px high (measured, not nominal)": {
@@ -94,6 +100,6 @@
       "pass": true
     }
   },
-  "passed": 10,
+  "passed": 12,
   "failed": 0
 }

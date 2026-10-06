@@ -74,7 +74,21 @@ try {
       const row = { state, viewport: vp.label, vpWidth: vp.width, ...m };
       results.measurements.push(row);
       console.log(`[measure] ${state}/${vp.label}: ${JSON.stringify(m)}`);
-      if (state === 'after') await shot(session, `yh6-${vp.label}-after.png`);
+      if (state === 'after') {
+        // The chart sits in a tab panel far down a narrow page, so a viewport capture
+        // without scrolling produced an EMPTY picture once (the numbers were right, the
+        // evidence showed nothing). Scroll it in and ASSERT it is on screen first.
+        const onScreen = await evaluate(client, `(() => {
+          const el = document.querySelector('svg.history');
+          if (!el) return null;
+          el.scrollIntoView({ block: 'center' });
+          const r = el.getBoundingClientRect();
+          return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: window.innerHeight, visible: r.bottom > 0 && r.top < window.innerHeight };
+        })()`);
+        check(`${vp.label}: the chart is inside the viewport at capture time, so the picture is not empty`, !!onScreen?.visible, onScreen);
+        await sleep(150);
+        await shot(session, `yh6-${vp.label}-after.png`);
+      }
       if (state === 'after') {
         check(`${vp.label}: the widest axis label renders at least ${FLOOR_PX}px high (measured, not nominal)`, m.renderedHeight >= FLOOR_PX, m);
         check(`${vp.label}: the label does not overlap the plot area`, m.plotLeft == null || m.labelRight <= m.plotLeft, m);
