@@ -1136,9 +1136,11 @@ async function har(client, url, opts, log) {
     statusBreakdown: tallyStatuses(har12.log.entries),
     note:
       'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).' +
-      ' Credential redaction, by default and controlled by ONE flag (--no-redact-headers keeps everything raw and accepts the publication risk): the values of credential-named HEADERS (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token); credential-named QUERY PARAMETERS in request URLs and in each entry\'s queryString, keeping the names; credential-named FIELDS in request bodies, with the entry\'s bodySize recomputed from the redacted text so the size cannot leak the original length; the REDIRECT TARGET (a Location can carry a credential in its query string); credential-named fields in RESPONSE BODY TEXT when bodies are recorded; URL-VALUED HEADERS, including the Referer that carries the audited page URL verbatim; and the INITIATOR fields, which record the inserting document and the JS call-frame URL.' +
+      ' Credential redaction, by default, controlled by ONE flag (--no-redact-headers keeps everything raw and accepts the publication risk). There are TWO paths, and they are not equally strong:' +
+      ' STRUCTURED INPUTS - parsed, so this part holds BY CONSTRUCTION: credential-named HEADERS (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token) by name; request URLs and each entry\'s queryString, parsed as URLs; JSON bodies, parsed and redacted by DECODED KEY, which is what covers array values, nested values and unicode-escaped keys such as "tok\\u0065n" (a redacted JSON body is re-emitted canonically, since the guarantee comes from parsing); the REDIRECT TARGET, absolute or relative, parsed as a URL; URL-VALUED HEADERS including the Referer; and the INITIATOR fields (the inserting document and the JS call-frame URL).' +
       ' Names are matched as whole words after splitting on separators AND camelCase, so accessToken, refreshToken, apiKey and clientSecret are recognised along with the separator-delimited spellings.' +
-      ' STILL NOT covered, stated so nobody assumes blanket protection: (1) base64-encoded bodies, which are not text-searchable, and the credential in one remains recoverable by decoding it; (2) a credential whose field, parameter or header NAME does not look like one - the test is names-based because the tool cannot know which value in an arbitrary URL or body is a secret, and it deliberately errs towards over-redacting ambiguous names such as `code` or `key`; (3) WIRE LENGTHS - the request body size is recomputed from the redacted text, but response bodySize and _transferSize are measurements of the ORIGINAL bytes, so for an uncompressed response the length of a redacted value can still be inferred. Treat a HAR as sensitive whenever the audited site handled credentials.' +
+      ' UNSTRUCTURED TEXT - a Heuristic, NOT a guarantee: recorded bodies that are not parseable JSON (an inline script, an HTML document) go through a text scanner that covers `name=value`, `name: value`, quoted keys, and quoted values including escapes and line continuations. It cannot enumerate every syntax an arbitrary script can use, so treat a non-JSON recorded body as sensitive and read the structured fields above for the claims that hold by construction.' +
+      ' STILL NOT covered, stated so nobody assumes blanket protection: (1) base64-encoded bodies, which are not text-searchable and whose credential remains recoverable by decoding; (2) a credential whose field, parameter or header NAME does not look like one - the test is names-based because the tool cannot know which value in an arbitrary body is a secret, and it deliberately errs towards over-redacting ambiguous names (`code`, `key`, or a sort-key name all redact); (3) WIRE LENGTHS - request body size is recomputed from the redacted text, but response bodySize and _transferSize are measurements of the ORIGINAL bytes, so for an uncompressed response the length of a redacted value can still be inferred. Treat a HAR as sensitive whenever the audited site handled credentials.' +
       (settle.pending > 0
         ? ` WARNING: ${settle.pending} request(s) were still pending when the network was snapshotted (load waited ${loadWaitMs}ms, settle waited ${settle.ms}ms); their bodies and statuses are missing from this HAR, which is a harness/load artifact rather than absence.`
         : ''),
@@ -1730,15 +1732,50 @@ export function redactQueryList(list) {
 
 // Redact credential-named fields inside body text (form-encoded or JSON-ish). The
 // name and every other field survive; only the value becomes [redacted].
+// STRUCTURED redaction: parse, walk, redact by DECODED key name, re-emit. This is the path
+// with a by-construction guarantee - an array value, a nested object, a unicode-escaped key
+// (`tok\u0065n`) and any other JSON shape is covered because the KEY is what we test, not the
+// text around it. The text scanner below cannot enumerate those shapes and no longer claims to.
+function redactJsonValue(value) {
+  if (Array.isArray(value)) return value.map(redactJsonValue);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = isCredentialName(k) ? REDACTED_HEADER_VALUE : redactJsonValue(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+// Returns the redacted JSON text, or null when the input is not JSON (so the caller falls
+// back to the heuristic text scanner). Re-serialising is the cost of the guarantee and is
+// stated in the artifact note: a redacted JSON body is re-emitted canonically.
+function redactJsonText(text) {
+  const trimmed = text.trim();
+  if (!/^[[{]/.test(trimmed)) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  return JSON.stringify(redactJsonValue(parsed));
+}
+
 export function redactBodyText(text) {
   if (typeof text !== 'string' || !text) return text;
+  // Structured first, by construction; the scanner below is the heuristic fallback for text
+  // that has no parseable structure (an inline script, an HTML body, a partial fragment).
+  const structured = redactJsonText(text);
+  if (structured !== null) return structured;
   return text
     // Quoted values, with ESCAPES handled: a naive `"[^"]*"` ends at the first quote even
     // when it is backslash-escaped, so a value containing \" was replaced only up to the
     // backslash and the credential after it stayed in the recorded body. The alternative
     // below consumes escaped characters properly, so the WHOLE string value is replaced.
     .replace(
-      /(["'])([A-Za-z0-9_.\-]+)\1(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^&;,\s}]+)/g,
+      /(["'])([A-Za-z0-9_.\-]+)\1(\s*[:=]\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
       (match, q, name, sep) => (isCredentialName(name) ? `${q}${name}${q}${sep}"${REDACTED_HEADER_VALUE}"` : match),
     )
     // Unquoted keys with either `=` (form-encoded, query) or `:` (JS/JSON-ish object
@@ -1746,7 +1783,7 @@ export function redactBodyText(text) {
     // script uses - `{ password: 'SECRET' }` - and it was reaching the artifact because the
     // earlier scanner only understood `name=value`.
     .replace(
-      /(^|[?&;,\s{([])([A-Za-z0-9_.\-]+)(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^&;,\s}]+)/g,
+      /(^|[?&;,\s{([])([A-Za-z0-9_.\-]+)(\s*[:=]\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
       (match, pre, name, sep) => (isCredentialName(name) ? `${pre}${name}${sep}"${REDACTED_HEADER_VALUE}"` : match),
     );
 }

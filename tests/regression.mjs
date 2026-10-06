@@ -4198,7 +4198,12 @@ async function testCredentialRedactionHelpers() {
   // 'sortKeyName' splits into words that include 'key', so it is redacted. The names-based
   // test errs towards redacting an innocent value rather than leaving a credential, and the
   // artifact note says exactly that.
-  assert(isCredentialName('sortKeyName'), 'redaction: the names test errs towards over-redaction on ambiguous names (documented)');
+  for (const ambiguous of ['sortKeyName', 'code', 'key', 'redirectUriCode']) {
+    assert(
+      isCredentialName(ambiguous),
+      `redaction: the names test errs towards over-redaction on ambiguous names, asserted for '${ambiguous}' (documented)`,
+    );
+  }
 
   // 3. Request bodies, form-encoded and JSON.
   const form = redactBodyText(`user=bob&password=${SECRET}&remember=1`);
@@ -4224,6 +4229,19 @@ async function testCredentialRedactionHelpers() {
   // The header redaction is NOT regressed by any of this.
   const header = redactHeaderList([{ name: 'Set-Cookie', value: SECRET }, { name: 'Content-Type', value: 'text/html' }]);
   assert(header[0].value === '[redacted]' && header[1].value === 'text/html', `redaction: headers must still behave (${JSON.stringify(header)})`);
+
+  // STRUCTURED JSON IS REDACTED BY DECODED KEY, BY CONSTRUCTION. Each of these leaked on the
+  // previous revision: an ARRAY value (the scanner stopped at the bracket), a UNICODE-ESCAPED
+  // key (the pattern could not see the decoded name), and a JS LINE CONTINUATION inside a
+  // quoted value (the escape class did not consume a backslash-newline).
+  const arr = redactBodyText(`{"token":["${SECRET}","other"]}`);
+  assert(!arr.includes(SECRET), `redaction: a credential field holding an ARRAY must be redacted whole (${arr})`);
+  assert(!arr.includes('other'), `redaction: the whole array goes with the field, so no element survives (${arr})`);
+  const uni = redactBodyText(`{"tok\\u0065n":"${SECRET}","page":2}`);
+  assert(!uni.includes(SECRET), `redaction: a UNICODE-ESCAPED credential key must be decoded and matched (${uni})`);
+  assert(uni.includes('"page":2'), `redaction: a non-credential field beside it must survive (${uni})`);
+  const cont = redactBodyText("var x = { password: 'head\\\n" + SECRET + "tail', page: 2 };");
+  assert(!cont.includes(SECRET), `redaction: a JS LINE CONTINUATION inside the value must not end the match (${cont})`);
 
   // THE DOCUMENTED GAPS, asserted so they cannot be mistaken for coverage later:
   // a base64-encoded body is not text-searchable, and a credential whose name does not
@@ -4301,6 +4319,20 @@ async function testHarCredentialRedaction() {
     const bodyEntry = entries.find((e) => (e.response?.content?.text || '').includes('[redacted]'));
     assert(bodyEntry, 'dsj har: a recorded response body carrying a credential-named field must be redacted (--bodies path)');
     assert(!entries.some((e) => (e.response?.content?.text || '').includes(SECRET)), 'dsj har: no recorded response body may still carry the credential');
+    // The note claims the WIRE sizes still measure the ORIGINAL bytes, so assert exactly that:
+    // had either been recomputed from the redacted text it would be SHORTER, and this fails.
+    // Compare WITHIN the same entry: bodySize is the wire measurement of the ORIGINAL body,
+    // the recorded text is the redacted one, and for an uncompressed response the former is
+    // longer. An implementation that recomputed bodySize from the redacted text fails here.
+    const redactedLen = Buffer.byteLength(postEntry.response?.content?.text || '');
+    assert(
+      typeof postEntry.response?.bodySize === 'number' && postEntry.response.bodySize > redactedLen,
+      `dsj har: response bodySize must remain the ORIGINAL wire measurement, not a recomputed one (wire ${postEntry.response?.bodySize}, redacted ${redactedLen})`,
+    );
+    assert(
+      typeof postEntry.response?._transferSize === 'number' && postEntry.response._transferSize > redactedLen,
+      `dsj har: _transferSize must remain the ORIGINAL wire measurement too (transfer ${postEntry.response?._transferSize}, redacted ${redactedLen})`,
+    );
 
     // THE TWO VECTORS THIS TEST FOUND ITSELF, one call site further out than the bead's
     // list: URL-valued headers (Referer carries the audited page URL verbatim) and the
