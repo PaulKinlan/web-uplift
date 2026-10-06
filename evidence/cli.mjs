@@ -1122,7 +1122,7 @@ async function har(client, url, opts, log) {
   // Mirror trace: write a compact, model-readable summary next to the raw .har
   // (network-summary.json). The model reads the summary; the raw .har stays on
   // disk for the report, the compare command, and DevTools/HAR viewers.
-  const summary = summariseHar(har12, url, log);
+  const summary = summariseHar(har12, url, log, { redactCredentials: opts.redactHeaders !== false });
   const summaryOut = out.replace(/\.har$/, '') + '-summary.json';
   writeFileSync(summaryOut, JSON.stringify(summary, null, 2) + '\n');
 
@@ -1136,7 +1136,8 @@ async function har(client, url, opts, log) {
     statusBreakdown: tallyStatuses(har12.log.entries),
     note:
       'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).' +
-      ' Credential header values (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token) are replaced with [redacted] by default, keeping the names; pass --no-redact-headers to keep them raw and accept the publication risk.' +
+      ' Credential redaction, by default and controlled by ONE flag (--no-redact-headers keeps everything raw and accepts the publication risk): the values of credential-named HEADERS (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token); credential-named QUERY PARAMETERS in request URLs and in each entry\'s queryString, keeping the names; credential-named FIELDS in request bodies, with the entry\'s bodySize recomputed from the redacted text so the size cannot leak the original length; the REDIRECT TARGET (a Location can carry a credential in its query string); and credential-named fields in RESPONSE BODY TEXT when bodies are recorded.' +
+      ' NOT covered, stated so nobody assumes blanket protection: base64-encoded bodies (not text-searchable), and any credential whose field, parameter or header NAME does not look like one - the test is names-based because the tool cannot know which value in an arbitrary URL or body is a secret. Treat a HAR as sensitive whenever the audited site handled credentials.' +
       (settle.pending > 0
         ? ` WARNING: ${settle.pending} request(s) were still pending when the network was snapshotted (load waited ${loadWaitMs}ms, settle waited ${settle.ms}ms); their bodies and statuses are missing from this HAR, which is a harness/load artifact rather than absence.`
         : ''),
@@ -1157,7 +1158,10 @@ function tallyStatuses(entries) {
 // analogue of memlab: it surfaces descriptive signals, NOT pass/fail verdicts; the
 // model judges them against the principles). Every list is capped (~10) so the
 // summary stays small and the model never has to load the raw multi-MB HAR.
-function summariseHar(har, mainUrl, log) {
+function summariseHar(har, mainUrl, log, { redactCredentials = true } = {}) {
+  // Same flag, same names-based test as buildHar: the model-readable summary repeats
+  // request URLs and the redirect target, so it must not re-leak what the HAR redacted.
+  const rurl = (u) => (redactCredentials ? redactUrlCredentialValues(u) : u);
   const entries = (har?.log?.entries ?? []).filter((e) => e && e.request);
 
   // The main document is the first 'document' entry (or the first entry, or the
@@ -1228,9 +1232,9 @@ function summariseHar(har, mainUrl, log) {
     o.transferredBytes += transferred;
     byOrigin.set(origin, o);
 
-    bySize.push({ url: e.request.url, type: bucket, transferredBytes: transferred });
+    bySize.push({ url: rurl(e.request.url), type: bucket, transferredBytes: transferred });
     if (typeof e.time === 'number' && e.time >= 0) {
-      bySlow.push({ url: e.request.url, type: bucket, timeMs: round(e.time) });
+      bySlow.push({ url: rurl(e.request.url), type: bucket, timeMs: round(e.time) });
     }
 
     // Hygiene: text resources served without compression over a size threshold.
@@ -1245,7 +1249,7 @@ function summariseHar(har, mainUrl, log) {
       /\b(text|json|javascript|xml|svg)\b/i.test(res.content?.mimeType || '');
     if (isText && !compressed && transferred >= 2048) {
       uncompressed.push({
-        url: e.request.url,
+        url: rurl(e.request.url),
         type: bucket,
         transferredBytes: transferred,
         contentEncoding: enc || 'none',
@@ -1263,22 +1267,22 @@ function summariseHar(har, mainUrl, log) {
       const cc = headers['cache-control'];
       const exp = headers['expires'];
       if (!cc && !exp && (bucket === 'script' || bucket === 'stylesheet' || bucket === 'image' || bucket === 'font')) {
-        missingCache.push({ url: e.request.url, type: bucket, transferredBytes: transferred });
+        missingCache.push({ url: rurl(e.request.url), type: bucket, transferredBytes: transferred });
       }
     }
 
     // Hygiene: redirect chains (3xx) and HTTP errors (4xx/5xx).
     if (status >= 300 && status < 400) {
       redirects.push({
-        url: e.request.url,
+        url: rurl(e.request.url),
         status,
-        location: headers['location'] || res.redirectURL || '',
+        location: rurl(headers['location'] || res.redirectURL || ''),
       });
     } else if (status >= 400) {
-      httpErrors.push({ url: e.request.url, status, type: bucket });
+      httpErrors.push({ url: rurl(e.request.url), status, type: bucket });
     }
     if (res._error) {
-      httpErrors.push({ url: e.request.url, status: 0, type: bucket, error: res._error });
+      httpErrors.push({ url: rurl(e.request.url), status: 0, type: bucket, error: res._error });
     }
   }
 
@@ -1660,8 +1664,7 @@ export function isCredentialName(name) {
 // every other parameter exactly as they were.
 export function redactUrlCredentialValues(raw) {
   if (typeof raw !== 'string' || !raw) return raw;
-  try {
-    const u = new URL(raw);
+  const apply = (u) => {
     let hit = false;
     for (const [k, v] of [...u.searchParams.entries()]) {
       if (v && isCredentialName(k)) {
@@ -1669,9 +1672,24 @@ export function redactUrlCredentialValues(raw) {
         hit = true;
       }
     }
-    return hit ? u.toString() : raw;
+    return hit;
+  };
+  try {
+    const u = new URL(raw);
+    return apply(u) ? u.toString() : raw;
   } catch {
-    return raw; // not a URL we can parse: leave it alone rather than guess
+    /* not absolute: a redirect Location is very often a relative path */
+  }
+  try {
+    // Parse against a throwaway base and re-emit relative, so a relative redirect target
+    // ('/final?session=...') is redacted too - it used to pass through untouched because
+    // new URL() rejects a relative string. The path is normalised (a bare '?a=b' gains a
+    // leading '/'), which is the only shape change and is noted rather than silent.
+    const u = new URL(raw, 'http://relative.invalid');
+    if (!apply(u)) return raw;
+    return `${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    return raw; // genuinely unparseable: leave it alone rather than guess
   }
 }
 
