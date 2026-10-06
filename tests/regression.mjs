@@ -2141,6 +2141,22 @@ async function testScorecardReservesImageBoxes() {
   // data and its checksum are missing. The earlier check accepted this on length alone
   // and read dimensions out of a chunk the file does not contain.
   writeFileSync(join(dirs[0], 'short-ihdr.png'), pngHeader(400, 250).subarray(0, 24));
+  // A WebP whose container declares four bytes, so the chunk header sits outside the
+  // range the container claims. This is a BEHAVIOUR PIN and not a regression test for the
+  // guard added alongside it: the chunk-extent check further down already rejects this
+  // input, so the outcome is the same with and without that guard. It is here because the
+  // invariant should hold independently of which guard enforces it.
+  writeFileSync(join(dirs[0], 'malformed-container.webp'), (() => {
+    const b = Buffer.alloc(34);
+    b.write('RIFF', 0, 'latin1');
+    b.writeUInt32LE(4, 4);
+    b.write('WEBP', 8, 'latin1');
+    b.write('VP8X', 12, 'latin1');
+    b.writeUInt32LE(10, 16);
+    b.writeUIntLE(5, 24, 3);
+    b.writeUIntLE(5, 27, 3);
+    return b;
+  })());
   writeFileSync(join(dirs[0], 'junk.png'), Buffer.from('not an image at all'));
   // The two counterexamples from the review: shapes the EARLIER parser sized from
   // bytes the file does not claim to contain, which is what makes these fixtures
@@ -2228,6 +2244,7 @@ async function testScorecardReservesImageBoxes() {
         { before: 'bad.jpg', after: 'vp8l.webp', caption: 'truncated JPEG' },
         { before: 'bad.webp', after: 'after.jpg', caption: 'bad WebP sync' },
         { before: 'short-ihdr.png', after: 'after.jpg', caption: 'chunk not fully present' },
+        { before: 'malformed-container.webp', after: 'after.jpg', caption: 'container smaller than its chunk header' },
         { before: 'junk.png', after: 'after.jpg', caption: 'not an image' },
         { before: 'short-sof.jpg', after: 'before.png', caption: 'segment too short for its fields' },
         { before: 'undersized-riff.webp', after: 'after.jpg', caption: 'container too small for its fields' },
@@ -2271,6 +2288,7 @@ async function testScorecardReservesImageBoxes() {
       ['bad.webp', 'webp', readFileSync(join(dirs[1], 'bad.webp'))],
       ['junk.png', 'png', readFileSync(join(dirs[0], 'junk.png'))],
       ['short-ihdr.png', 'png', readFileSync(join(dirs[0], 'short-ihdr.png'))],
+      ['malformed-container.webp', 'webp', readFileSync(join(dirs[0], 'malformed-container.webp'))],
       ['short-sof.jpg', 'jpeg', readFileSync(join(dirs[0], 'short-sof.jpg'))],
       ['undersized-riff.webp', 'webp', readFileSync(join(dirs[0], 'undersized-riff.webp'))],
       ['oversized-chunk.webp', 'webp', readFileSync(join(dirs[0], 'oversized-chunk.webp'))],

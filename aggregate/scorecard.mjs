@@ -276,6 +276,11 @@ function imageSize(buf) {
     if (buf.length >= 30 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') {
       const containerEnd = 8 + buf.readUInt32LE(4);
       if (containerEnd > buf.length) return null; // declares more than the file holds
+      // The chunk header - its four-character code and its size - has to be inside the
+      // range the container declares before EITHER field is read. A container declaring
+      // four bytes otherwise has those fields read from outside the range it claims,
+      // which is the same defect as an unguarded dimension read, one line earlier.
+      if (containerEnd < 20) return null;
       const chunkSize = buf.readUInt32LE(16);
       const fourCc = buf.toString('latin1', 12, 16);
       // The whole chunk extent, padding included, must fit inside BOTH the container
