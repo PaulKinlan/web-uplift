@@ -11,5 +11,23 @@
     "opencode",
     "pi"
   ],
+  "vendoredDependencies": [
+    {
+      "name": "chrome-remote-interface",
+      "version": "0.33.3"
+    },
+    {
+      "name": "commander",
+      "version": "2.11.0"
+    },
+    {
+      "name": "web-features",
+      "version": "3.40.0"
+    },
+    {
+      "name": "ws",
+      "version": "7.5.11"
+    }
+  ],
   "updateCommand": "npx -y web-uplift@latest update --agent all"
 }

@@ -141,7 +141,11 @@ Every install also vendors the evidence CLI, the scorecard/compare scripts, the
 user-flow record/replay scripts, principles, schemas, and guidance lookup notes
 under `.web-uplift/` so the in-session model can call them directly (generate the
 scorecard, diff runs, replay a journey). It also writes `.web-uplift/manifest.json`
-with the package version that produced the installed copy.
+with the package version that produced the installed copy, plus `vendoredDependencies`:
+the name and version of every package the install vendored into
+`.web-uplift/node_modules`. Those packages are in no consumer lockfile, so that list
+is the only record of what is on disk, and it is what makes the vendored tree
+auditable from the project itself.
 
 ### pi: per-project or global package
 
