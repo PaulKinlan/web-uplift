@@ -1122,7 +1122,7 @@ async function har(client, url, opts, log) {
   // Mirror trace: write a compact, model-readable summary next to the raw .har
   // (network-summary.json). The model reads the summary; the raw .har stays on
   // disk for the report, the compare command, and DevTools/HAR viewers.
-  const summary = summariseHar(har12, url, log);
+  const summary = summariseHar(har12, url, log, { redactCredentials: opts.redactHeaders !== false });
   const summaryOut = out.replace(/\.har$/, '') + '-summary.json';
   writeFileSync(summaryOut, JSON.stringify(summary, null, 2) + '\n');
 
@@ -1136,7 +1136,11 @@ async function har(client, url, opts, log) {
     statusBreakdown: tallyStatuses(har12.log.entries),
     note:
       'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).' +
-      ' Credential header values (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token) are replaced with [redacted] by default, keeping the names; pass --no-redact-headers to keep them raw and accept the publication risk.' +
+      ' Credential redaction, by default, controlled by ONE flag (--no-redact-headers keeps everything raw and accepts the publication risk). There are TWO paths, and they are not equally strong:' +
+      ' STRUCTURED INPUTS - parsed, so this part holds BY CONSTRUCTION: credential-named HEADERS (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token) by name; request URLs and each entry\'s queryString, parsed as URLs; JSON bodies, parsed and redacted by DECODED KEY, which is what covers array values, nested values and unicode-escaped keys such as "tok\\u0065n" (a redacted JSON body keeps every byte of the original EXCEPT the replaced value spans, so its formatting is preserved exactly); the REDIRECT TARGET, absolute or relative, parsed as a URL; URL-VALUED HEADERS including the Referer; and the INITIATOR fields (the inserting document and the JS call-frame URL).' +
+      ' Names are matched as whole words after splitting on separators AND camelCase, so accessToken, refreshToken, apiKey and clientSecret are recognised along with the separator-delimited spellings.' +
+      ' UNSTRUCTURED TEXT - a Heuristic, NOT a guarantee: recorded bodies that are not parseable JSON (an inline script, an HTML document) go through a text scanner that covers `name=value`, `name: value`, quoted keys, and quoted values including escapes and line continuations. It cannot enumerate every syntax an arbitrary script can use, so treat a non-JSON recorded body as sensitive and read the structured fields above for the claims that hold by construction.' +
+      ' STILL NOT covered, stated so nobody assumes blanket protection: (1) base64-encoded bodies, which are not text-searchable and whose credential remains recoverable by decoding; (2) a credential whose field, parameter or header NAME does not look like one - the test is names-based because the tool cannot know which value in an arbitrary body is a secret, and it deliberately errs towards over-redacting ambiguous names (`code`, `key`, or a sort-key name all redact); (3) WIRE LENGTHS - request body size is recomputed from the redacted text, but response bodySize and _transferSize are measurements of the ORIGINAL bytes, so for an uncompressed response the length of a redacted value can still be inferred. Treat a HAR as sensitive whenever the audited site handled credentials.' +
       (settle.pending > 0
         ? ` WARNING: ${settle.pending} request(s) were still pending when the network was snapshotted (load waited ${loadWaitMs}ms, settle waited ${settle.ms}ms); their bodies and statuses are missing from this HAR, which is a harness/load artifact rather than absence.`
         : ''),
@@ -1157,7 +1161,10 @@ function tallyStatuses(entries) {
 // analogue of memlab: it surfaces descriptive signals, NOT pass/fail verdicts; the
 // model judges them against the principles). Every list is capped (~10) so the
 // summary stays small and the model never has to load the raw multi-MB HAR.
-function summariseHar(har, mainUrl, log) {
+function summariseHar(har, mainUrl, log, { redactCredentials = true } = {}) {
+  // Same flag, same names-based test as buildHar: the model-readable summary repeats
+  // request URLs and the redirect target, so it must not re-leak what the HAR redacted.
+  const rurl = (u) => (redactCredentials ? redactUrlCredentialValues(u) : u);
   const entries = (har?.log?.entries ?? []).filter((e) => e && e.request);
 
   // The main document is the first 'document' entry (or the first entry, or the
@@ -1228,9 +1235,9 @@ function summariseHar(har, mainUrl, log) {
     o.transferredBytes += transferred;
     byOrigin.set(origin, o);
 
-    bySize.push({ url: e.request.url, type: bucket, transferredBytes: transferred });
+    bySize.push({ url: rurl(e.request.url), type: bucket, transferredBytes: transferred });
     if (typeof e.time === 'number' && e.time >= 0) {
-      bySlow.push({ url: e.request.url, type: bucket, timeMs: round(e.time) });
+      bySlow.push({ url: rurl(e.request.url), type: bucket, timeMs: round(e.time) });
     }
 
     // Hygiene: text resources served without compression over a size threshold.
@@ -1245,17 +1252,17 @@ function summariseHar(har, mainUrl, log) {
       /\b(text|json|javascript|xml|svg)\b/i.test(res.content?.mimeType || '');
     if (isText && !compressed && transferred >= 2048) {
       uncompressed.push({
-        url: e.request.url,
+        url: rurl(e.request.url),
         type: bucket,
         transferredBytes: transferred,
         contentEncoding: enc || 'none',
       });
     }
 
-    // The redirect target is kept raw on purpose: it IS the diagnostic signal, and
-    // the credential-header redaction above does not apply to it. A Location can
-    // itself carry a credential in its query string, which is a recorded residual
-    // rather than an oversight (web-uplift-dxk).
+    // The redirect target IS a diagnostic signal, and a Location can carry a credential
+    // in its query string - which is exactly why it now goes through the URL redaction
+    // (web-uplift-dsj). The residual, stated where it belongs, is that a credential whose
+    // NAME does not look like one is not detected.
     // Hygiene: cacheable responses missing cache-control AND expires. Skip
     // redirects/errors and non-200s where caching is not the relevant signal.
     const status = num(res.status) || 0;
@@ -1263,22 +1270,22 @@ function summariseHar(har, mainUrl, log) {
       const cc = headers['cache-control'];
       const exp = headers['expires'];
       if (!cc && !exp && (bucket === 'script' || bucket === 'stylesheet' || bucket === 'image' || bucket === 'font')) {
-        missingCache.push({ url: e.request.url, type: bucket, transferredBytes: transferred });
+        missingCache.push({ url: rurl(e.request.url), type: bucket, transferredBytes: transferred });
       }
     }
 
     // Hygiene: redirect chains (3xx) and HTTP errors (4xx/5xx).
     if (status >= 300 && status < 400) {
       redirects.push({
-        url: e.request.url,
+        url: rurl(e.request.url),
         status,
-        location: headers['location'] || res.redirectURL || '',
+        location: rurl(headers['location'] || res.redirectURL || ''),
       });
     } else if (status >= 400) {
-      httpErrors.push({ url: e.request.url, status, type: bucket });
+      httpErrors.push({ url: rurl(e.request.url), status, type: bucket });
     }
     if (res._error) {
-      httpErrors.push({ url: e.request.url, status: 0, type: bucket, error: res._error });
+      httpErrors.push({ url: rurl(e.request.url), status: 0, type: bucket, error: res._error });
     }
   }
 
@@ -1470,17 +1477,22 @@ function num(x) {
 // parser-inserted requests, the document url + line that wrote the tag; for
 // script-initiated requests, the top call frame (url + functionName). This is
 // the real CDP signal render-blocking judgement is built on.
-function harInitiator(init) {
+function harInitiator(init, { redactCredentials = false } = {}) {
   if (!init) return { type: 'other' };
+  // The initiator records URLS: the inserting document, and the top JS call frame - which
+  // is the page URL itself when a script on the page started the request. A credential in
+  // that query string reached the artifact through this field, which the request-URL and
+  // header redaction never touched.
+  const rurl = (u) => (redactCredentials ? redactUrlCredentialValues(u) : u);
   const out = { type: init.type || 'other' };
   // Parser-inserted (and preload): the inserting document and source position.
-  if (init.url) out.url = init.url;
+  if (init.url) out.url = rurl(init.url);
   if (typeof init.lineNumber === 'number') out.lineNumber = init.lineNumber;
   // Script-initiated: surface the top call frame of the JS stack, if present.
   const top = init.stack?.callFrames?.[0];
   if (top) {
     out.callFrame = {
-      url: top.url || '',
+      url: rurl(top.url || ''),
       functionName: top.functionName || '',
       ...(typeof top.lineNumber === 'number' ? { lineNumber: top.lineNumber } : {}),
     };
@@ -1507,6 +1519,15 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
         : -1;
 
     const reqHeaders = redactCredentials ? redactHeaderList(headerArray(req.headers)) : headerArray(req.headers);
+    // The residual dkx recorded: the URL, its query string, the request body, the
+    // redirect target and response body text were all still verbatim. Redacted with
+    // the same flag and the same names-based test, BEFORE anything downstream (the
+    // entry, the summary) can copy them.
+    const reqUrl = redactCredentials ? redactUrlCredentialValues(req.url) : req.url;
+    const reqQuery = redactCredentials ? redactQueryList(queryString(req.url)) : queryString(req.url);
+    const reqPostText = req.postData
+      ? (redactCredentials ? redactBodyText(req.postData) : req.postData)
+      : null;
     const resHeaders = redactCredentials ? redactHeaderList(headerArray(res?.headers)) : headerArray(res?.headers);
     const mimeType = res?.mimeType || 'x-unknown';
     const bodySize = rec.encodedDataLength != null ? Math.round(rec.encodedDataLength) : -1;
@@ -1523,6 +1544,13 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
       }
     }
 
+    if (redactCredentials && typeof content.text === 'string' && content.text) {
+      const redactedText = redactBodyText(content.text);
+      if (redactedText !== content.text) {
+        content = { ...content, text: redactedText, size: byteLength(redactedText) };
+      }
+    }
+
     const timings = harTimings(res?.timing, totalMs);
 
     entries.push({
@@ -1530,15 +1558,17 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
       time: totalMs < 0 ? 0 : totalMs,
       request: {
         method: req.method,
-        url: req.url,
+        url: reqUrl,
         httpVersion: res?.protocol || 'HTTP/1.1',
         headers: reqHeaders,
-        queryString: queryString(req.url),
+        queryString: reqQuery,
         cookies: [],
         headersSize: -1,
-        bodySize: req.postData ? byteLength(req.postData) : 0,
-        ...(req.postData
-          ? { postData: { mimeType: headerMap(reqHeaders)['content-type'] || '', text: req.postData } }
+        // The size is taken from the REDACTED text, so it describes what the artifact
+        // actually carries instead of leaking the original secret's length.
+        bodySize: reqPostText ? byteLength(reqPostText) : 0,
+        ...(reqPostText
+          ? { postData: { mimeType: headerMap(reqHeaders)['content-type'] || '', text: reqPostText } }
           : {}),
       },
       response: {
@@ -1548,7 +1578,7 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
         headers: resHeaders,
         cookies: [],
         content,
-        redirectURL: headerMap(resHeaders)['location'] || '',
+        redirectURL: redactCredentials ? redactUrlCredentialValues(headerMap(resHeaders)['location'] || '') : (headerMap(resHeaders)['location'] || ''),
         headersSize: -1,
         bodySize,
         _transferSize: bodySize < 0 ? 0 : bodySize,
@@ -1560,7 +1590,7 @@ function buildHar(records, log, { redactCredentials = true } = {}) {
       // Rich initiator (not just the bare type) so render-blocking can be judged
       // from the real CDP signal: parser-inserted requests carry the inserting
       // document url + line; script-initiated requests carry the top call frame.
-      _initiator: harInitiator(rec.initiator),
+      _initiator: harInitiator(rec.initiator, { redactCredentials }),
       // Priority: initial (from request.initialPriority) and final (after any
       // Network.resourceChangedPriority). VeryLow|Low|Medium|High|VeryHigh.
       _priority: {
@@ -1624,13 +1654,241 @@ const REDACTED_HEADER_VALUE = '[redacted]';
 // Replace the value of every credential header in a HAR header list, keeping the
 // name and any other fields. Non-credential headers pass through untouched, so
 // the redaction stays diagnostic rather than wholesale.
+// The same names-based test the header redaction uses, applied to the OTHER places a
+// credential can land in a network artifact: the request URL and its query string,
+// the request body and its size, the redirect target, and response body text when
+// bodies are recorded. Named-based is the honest choice - the tool cannot know which
+// value in an arbitrary URL or body is a secret, so it redacts the VALUES of fields
+// whose NAME says credential and leaves everything else untouched (a redaction that
+// blanked whole fields would destroy the evidence the artifact exists to carry).
+// Words that mark a value as credential-shaped. Matched as WHOLE WORDS after splitting
+// the name on separators AND camelCase boundaries, because a regex anchored on separators
+// missed the common spellings `accessToken`, `refreshToken`, `apiKey` and `clientSecret`
+// entirely - a hole the review found by asking what a plausible credential parameter
+// actually looks like, rather than by testing the spellings we happened to think of.
+const CREDENTIAL_WORDS = new Set([
+  'passwd', 'password', 'pwd', 'secret', 'token', 'apikey', 'auth', 'authorization',
+  'session', 'sessionid', 'sig', 'signature', 'credential', 'credentials', 'bearer',
+  'jwt', 'otp', 'key', 'accesstoken', 'refreshtoken', 'clientsecret', 'privatekey',
+  'accesskey', 'secretkey', 'idtoken', 'code',
+]);
+
+// Deliberately fail-closed on ambiguity: `code` and `key` can be innocent (`countryCode`,
+// `sortKey`), and redacting an innocent value costs evidence, but leaving a credential
+// costs a disclosure. The artifact note says the test is names-based and can over-redact.
+export function isCredentialName(name) {
+  if (typeof name !== 'string' || !name) return false;
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // camelCase / PascalCase boundary
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (!words.length) return false;
+  if (CREDENTIAL_WORDS.has(words.join(''))) return true;
+  return words.some((w) => CREDENTIAL_WORDS.has(w));
+}
+
+// Redact the VALUES of credential-named query parameters in a URL; keep the names and
+// every other parameter exactly as they were.
+export function redactUrlCredentialValues(raw) {
+  if (typeof raw !== 'string' || !raw) return raw;
+  const apply = (u) => {
+    let hit = false;
+    for (const [k, v] of [...u.searchParams.entries()]) {
+      if (v && isCredentialName(k)) {
+        u.searchParams.set(k, REDACTED_HEADER_VALUE);
+        hit = true;
+      }
+    }
+    return hit;
+  };
+  try {
+    const u = new URL(raw);
+    return apply(u) ? u.toString() : raw;
+  } catch {
+    /* not absolute: a redirect Location is very often a relative path */
+  }
+  try {
+    // Parse against a throwaway base and re-emit relative, so a relative redirect target
+    // ('/final?session=...') is redacted too - it used to pass through untouched because
+    // new URL() rejects a relative string. The path is normalised (a bare '?a=b' gains a
+    // leading '/'), which is the only shape change and is noted rather than silent.
+    const u = new URL(raw, 'http://relative.invalid');
+    if (!apply(u)) return raw;
+    return `${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    return raw; // genuinely unparseable: leave it alone rather than guess
+  }
+}
+
+export function redactQueryList(list) {
+  if (!Array.isArray(list)) return list;
+  return list.map((p) =>
+    p && typeof p === 'object' && p.value && isCredentialName(p.name)
+      ? { ...p, value: REDACTED_HEADER_VALUE }
+      : p,
+  );
+}
+
+// Redact credential-named fields inside body text (form-encoded or JSON-ish). The
+// name and every other field survive; only the value becomes [redacted].
+// STRUCTURED redaction: PARSE TO LOCATE, SPLICE TO REDACT, NEVER RE-SERIALIZE.
+//
+// An earlier version parsed the body and re-stringified a fresh object. That corrupts evidence:
+// a `__proto__` key was assigned through the ordinary object's prototype setter and VANISHED
+// from the output, and integers beyond JavaScript's safe range were silently rounded. Both are
+// the same defect - the recorded body no longer matched the bytes received.
+//
+// So the parse is used ONLY to decide whether the text is valid JSON; the redaction itself walks
+// the ORIGINAL text, finds each credential-named key's value span, and replaces just that span.
+// Every other byte is copied through untouched: no prototype setter, no numeric rounding, no
+// formatting drift, no field that can disappear.
+
+// End offset of the JSON value starting at `i` (string, container, or bare primitive).
+function jsonValueEnd(text, i) {
+  const c = text[i];
+  if (c === '"') {
+    let k = i + 1;
+    while (k < text.length) {
+      if (text[k] === '\\') { k += 2; continue; }
+      if (text[k] === '"') return k + 1;
+      k += 1;
+    }
+    return text.length;
+  }
+  if (c === '{' || c === '[') {
+    let depth = 0;
+    let k = i;
+    while (k < text.length) {
+      const ch = text[k];
+      if (ch === '"') {
+        k += 1;
+        while (k < text.length) {
+          if (text[k] === '\\') { k += 2; continue; }
+          if (text[k] === '"') { k += 1; break; }
+          k += 1;
+        }
+        continue;
+      }
+      if (ch === '{' || ch === '[') depth += 1;
+      else if (ch === '}' || ch === ']') {
+        depth -= 1;
+        if (depth === 0) return k + 1;
+      }
+      k += 1;
+    }
+    return text.length;
+  }
+  let k = i;
+  while (k < text.length && !/[,\]}\s]/.test(text[k])) k += 1;
+  return k;
+}
+
+// [start, end) spans of the VALUES belonging to credential-named keys. A string token is a key
+// when the next non-space character is ':'; the key token is decoded with JSON.parse so a
+// unicode-escaped name is compared as its real name.
+function credentialValueSpans(text) {
+  const spans = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== '"') { i += 1; continue; }
+    const keyStart = i;
+    i += 1;
+    while (i < text.length) {
+      if (text[i] === '\\') { i += 2; continue; }
+      if (text[i] === '"') { i += 1; break; }
+      i += 1;
+    }
+    const keyToken = text.slice(keyStart, i);
+    let j = i;
+    while (j < text.length && /\s/.test(text[j])) j += 1;
+    if (text[j] !== ':') continue;
+    let v = j + 1;
+    while (v < text.length && /\s/.test(text[v])) v += 1;
+    const vEnd = jsonValueEnd(text, v);
+    let name = null;
+    try {
+      name = JSON.parse(keyToken);
+    } catch {
+      name = null;
+    }
+    if (typeof name === 'string' && isCredentialName(name)) {
+      spans.push([v, vEnd]);
+      i = vEnd; // the whole value is being replaced, so nothing inside it needs examining
+    } else {
+      // DESCEND into container values for a NON-credential key. The walker used to jump to the
+      // end of the value unconditionally, which skipped every nested object and array, so a
+      // credential one level down was never examined (and the valid-JSON path returned its
+      // result, so the heuristic scanner never got a second chance at that body). A scalar
+      // contains no keys, so only containers descend.
+      const vc = text[v];
+      i = vc === '{' || vc === '[' ? v + 1 : vEnd;
+    }
+  }
+  return spans;
+}
+
+// Returns the redacted text, or null when the input is not valid JSON (the caller then falls
+// back to the heuristic text scanner).
+function redactJsonText(text) {
+  const trimmed = text.trim();
+  if (!/^[[{]/.test(trimmed)) return null;
+  try {
+    JSON.parse(text); // validity only: the redaction below never re-serialises
+  } catch {
+    return null;
+  }
+  const spans = credentialValueSpans(text);
+  if (!spans.length) return text;
+  let out = '';
+  let last = 0;
+  for (const [s0, e0] of spans) {
+    out += text.slice(last, s0) + `"${REDACTED_HEADER_VALUE}"`;
+    last = e0;
+  }
+  return out + text.slice(last);
+}
+
+export function redactBodyText(text) {
+  if (typeof text !== 'string' || !text) return text;
+  // Structured first, by construction; the scanner below is the heuristic fallback for text
+  // that has no parseable structure (an inline script, an HTML body, a partial fragment).
+  const structured = redactJsonText(text);
+  if (structured !== null) return structured;
+  return text
+    // Quoted values, with ESCAPES handled: a naive `"[^"]*"` ends at the first quote even
+    // when it is backslash-escaped, so a value containing \" was replaced only up to the
+    // backslash and the credential after it stayed in the recorded body. The alternative
+    // below consumes escaped characters properly, so the WHOLE string value is replaced.
+    .replace(
+      /(["'])([A-Za-z0-9_.\-]+)\1(\s*[:=]\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
+      (match, q, name, sep) => (isCredentialName(name) ? `${q}${name}${q}${sep}"${REDACTED_HEADER_VALUE}"` : match),
+    )
+    // Unquoted keys with either `=` (form-encoded, query) or `:` (JS/JSON-ish object
+    // literals in a recorded document body). The colon form is what a page's own inline
+    // script uses - `{ password: 'SECRET' }` - and it was reaching the artifact because the
+    // earlier scanner only understood `name=value`.
+    .replace(
+      /(^|[?&;,\s{([])([A-Za-z0-9_.\-]+)(\s*[:=]\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
+      (match, pre, name, sep) => (isCredentialName(name) ? `${pre}${name}${sep}"${REDACTED_HEADER_VALUE}"` : match),
+    );
+}
+
 export function redactHeaderList(headers) {
   if (!Array.isArray(headers)) return headers;
-  return headers.map((header) =>
-    REDACTED_HEADER_NAMES.has(String(header?.name || '').toLowerCase())
-      ? { ...header, value: REDACTED_HEADER_VALUE }
-      : header,
-  );
+  return headers.map((header) => {
+    if (REDACTED_HEADER_NAMES.has(String(header?.name || '').toLowerCase())) {
+      return { ...header, value: REDACTED_HEADER_VALUE };
+    }
+    // URL-VALUED headers carry the audited page URL verbatim - Referer above all - so a
+    // credential in its query string would survive the name-based pass entirely. This is
+    // the same root cause one call site further out; found by the integration test, not
+    // by inspection. No name list is needed here: redactUrlCredentialValues only rewrites
+    // a value that actually carries a credential-named parameter, so every other value
+    // (content types, sizes, plain words) passes through unchanged.
+    const value = typeof header?.value === 'string' ? redactUrlCredentialValues(header.value) : header?.value;
+    return value === header?.value ? header : { ...header, value };
+  });
 }
 
 function headerArray(headers) {

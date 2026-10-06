@@ -39,6 +39,8 @@ try {
   await testThrottlingConditions();
   await testLocaleTimezoneConditions();
   await testHarRedirects();
+  await testCredentialRedactionHelpers();
+  await testHarCredentialRedaction();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -4677,5 +4679,250 @@ function testBatchWriteScope() {
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+// web-uplift-dsj: the credential redaction landed for HEADER VALUES only, and the rest of
+// the artifact was still verbatim. These are the per-vector tests: for each vector, the
+// credential value must be ABSENT and a non-credential value in the SAME field must
+// SURVIVE, so the redaction cannot pass by being over-broad.
+async function testCredentialRedactionHelpers() {
+  const { redactUrlCredentialValues, redactQueryList, redactBodyText, isCredentialName, redactHeaderList } =
+    await import('../evidence/cli.mjs');
+  const SECRET = 'SECRET-CANARY-123';
+
+  // 1. The request URL and its query string: credential-named parameters are redacted,
+  //    the names and every other parameter are untouched.
+  const url = redactUrlCredentialValues(`https://x.test/page?token=${SECRET}&page=2`);
+  assert(!url.includes(SECRET), `redaction: the token value must be gone from the URL (${url})`);
+  assert(url.includes('token=') && url.includes('page=2'), `redaction: the parameter NAME and a non-credential parameter must survive (${url})`);
+
+  // 2. The HAR entry's parsed queryString list.
+  const qs = redactQueryList([{ name: 'api_key', value: SECRET }, { name: 'page', value: '2' }]);
+  assert(qs[0].value === '[redacted]' && qs[0].name === 'api_key', `redaction: query list credential value (${JSON.stringify(qs[0])})`);
+  assert(qs[1].value === '2', `redaction: query list non-credential value must survive (${JSON.stringify(qs[1])})`);
+
+  // 6. CAMEL-CASE AND OTHER PLAUSIBLE SPELLINGS. A separator-anchored matcher missed these
+  //    entirely, which the review found by asking what a credential parameter plausibly
+  //    looks like rather than by testing only the spellings we had thought of.
+  for (const name of ['accessToken', 'refreshToken', 'apiKey', 'clientSecret', 'userIdToken', 'x-api-key']) {
+    assert(isCredentialName(name), `redaction: '${name}' must be recognised as credential-shaped`);
+    const u2 = redactUrlCredentialValues(`https://x.test/cb?${name}=${SECRET}&page=2`);
+    assert(!u2.includes(SECRET) && u2.includes('page=2'), `redaction: camel/separator spelling in a URL (${name}: ${u2})`);
+  }
+  for (const name of ['country', 'page', 'monkey']) {
+    assert(!isCredentialName(name), `redaction: '${name}' must NOT be treated as a credential (over-redaction costs evidence)`);
+  }
+  // ACCEPTED OVER-REDACTION, asserted so the direction is deliberate rather than accidental:
+  // 'sortKeyName' splits into words that include 'key', so it is redacted. The names-based
+  // test errs towards redacting an innocent value rather than leaving a credential, and the
+  // artifact note says exactly that.
+  for (const ambiguous of ['sortKeyName', 'code', 'key', 'redirectUriCode']) {
+    assert(
+      isCredentialName(ambiguous),
+      `redaction: the names test errs towards over-redaction on ambiguous names, asserted for '${ambiguous}' (documented)`,
+    );
+  }
+
+  // 3. Request bodies, form-encoded and JSON.
+  const form = redactBodyText(`user=bob&password=${SECRET}&remember=1`);
+  assert(!form.includes(SECRET) && form.includes('user=bob') && form.includes('remember=1'), `redaction: form body (${form})`);
+  const json = redactBodyText(`{"api_key":"${SECRET}","page":2}`);
+  assert(!json.includes(SECRET) && json.includes('"page":2'), `redaction: json body (${json})`);
+  // An ESCAPED QUOTE inside the value used to end the match at the backslash, leaving the
+  // rest of the credential in the recorded body. The whole string value must be replaced.
+  const escaped = redactBodyText(`{"password":"head\\"${SECRET}tail","page":2}`);
+  assert(!escaped.includes(SECRET), `redaction: a value containing an escaped quote must be redacted WHOLE (${escaped})`);
+  assert(escaped.includes('"page":2'), `redaction: the field after an escaped-quote value must survive (${escaped})`);
+
+  // 4. The redirect target: a Location can carry a credential in its query string.
+  const loc = redactUrlCredentialValues(`/final?session=${SECRET}&ref=home`);
+  assert(!loc.includes(SECRET) && loc.includes('ref=home'), `redaction: redirect target, RELATIVE form (${loc})`);
+  const locAbs = redactUrlCredentialValues(`https://x.test/final?session=${SECRET}&ref=home`);
+  assert(!locAbs.includes(SECRET) && locAbs.includes('ref=home'), `redaction: redirect target, ABSOLUTE form (${locAbs})`);
+
+  // 5. Response body text when bodies are recorded.
+  const resp = redactBodyText(`{"refresh_token":"${SECRET}","ok":true}`);
+  assert(!resp.includes(SECRET) && resp.includes('"ok":true'), `redaction: response body text (${resp})`);
+
+  // The header redaction is NOT regressed by any of this.
+  const header = redactHeaderList([{ name: 'Set-Cookie', value: SECRET }, { name: 'Content-Type', value: 'text/html' }]);
+  assert(header[0].value === '[redacted]' && header[1].value === 'text/html', `redaction: headers must still behave (${JSON.stringify(header)})`);
+
+  // STRUCTURED JSON IS REDACTED BY DECODED KEY, BY CONSTRUCTION. Each of these leaked on the
+  // previous revision: an ARRAY value (the scanner stopped at the bracket), a UNICODE-ESCAPED
+  // key (the pattern could not see the decoded name), and a JS LINE CONTINUATION inside a
+  // quoted value (the escape class did not consume a backslash-newline).
+  const arr = redactBodyText(`{"token":["${SECRET}","other"]}`);
+  assert(!arr.includes(SECRET), `redaction: a credential field holding an ARRAY must be redacted whole (${arr})`);
+  assert(!arr.includes('other'), `redaction: the whole array goes with the field, so no element survives (${arr})`);
+  const uni = redactBodyText(`{"tok\\u0065n":"${SECRET}","page":2}`);
+  assert(!uni.includes(SECRET), `redaction: a UNICODE-ESCAPED credential key must be decoded and matched (${uni})`);
+  assert(uni.includes('"page":2'), `redaction: a non-credential field beside it must survive (${uni})`);
+  const cont = redactBodyText("var x = { password: 'head\\\n" + SECRET + "tail', page: 2 };");
+  assert(!cont.includes(SECRET), `redaction: a JS LINE CONTINUATION inside the value must not end the match (${cont})`);
+
+  // FIDELITY: the assertion that catches BOTH classes of corruption. The redacted body must be
+  // byte-identical to the input EXCEPT at the redacted spans - so a body that still round-trips
+  // with a credential in it fails, and so does a body that lost a field or changed a number.
+  // Re-serialising used to drop a __proto__ field through the prototype setter and round a large
+  // integer; the splice path must not.
+  const proto = `{"__proto__":{"x":1},"token":"${SECRET}","big":9007199254740993,"page":2}`;
+  const protoOut = redactBodyText(proto);
+  assert(
+    protoOut === `{"__proto__":{"x":1},"token":"[redacted]","big":9007199254740993,"page":2}`,
+    `redaction: the body must differ from the input ONLY at the redacted span\n  in : ${proto}\n  out: ${protoOut}`,
+  );
+  assert(protoOut.includes('__proto__'), 'redaction: a __proto__ field must survive (re-serialising dropped it through the prototype setter)');
+  assert(protoOut.includes('9007199254740993'), 'redaction: an integer beyond the safe range must survive unchanged (re-serialising rounded it)');
+  const cleanBody = '{"page":2,"big":9007199254740993}';
+  assert(redactBodyText(cleanBody) === cleanBody, 'redaction: a body with no credential-named field must be recorded byte-identical');
+  const arrIn = `{"token":["${SECRET}","other"],"page":2}`;
+  assert(
+    redactBodyText(arrIn) === '{"token":"[redacted]","page":2}',
+    `redaction: an array value is replaced at its own span and nothing else moves (${redactBodyText(arrIn)})`,
+  );
+
+  // NESTING IS COVERED BY CONSTRUCTION - and this is the exact-string assertion that proves it.
+  // The walker used to jump to the end of a NON-credential key's value unconditionally, which
+  // skipped an entire container instead of descending into it, so a nested credential survived
+  // unchanged (and the valid-JSON path returned it, so the heuristic never saw it). Each of
+  // these compares the WHOLE string, so a missed redaction and a corrupted body both fail.
+  const nestedObj = `{"outer":{"token":"${SECRET}","keep":1},"page":2}`;
+  assert(
+    redactBodyText(nestedObj) === '{"outer":{"token":"[redacted]","keep":1},"page":2}',
+    `redaction: a credential NESTED in an object must be redacted with every other byte preserved (${redactBodyText(nestedObj)})`,
+  );
+  const nestedArr = `{"list":[{"apiKey":"${SECRET}","n":1},{"n":2}],"page":2}`;
+  assert(
+    redactBodyText(nestedArr) === '{"list":[{"apiKey":"[redacted]","n":1},{"n":2}],"page":2}',
+    `redaction: a credential NESTED in an array of objects must be redacted with every other byte preserved (${redactBodyText(nestedArr)})`,
+  );
+  const multi = `{"token":"${SECRET}","outer":{"password":"${SECRET}"},"page":2}`;
+  assert(
+    redactBodyText(multi) === '{"token":"[redacted]","outer":{"password":"[redacted]"},"page":2}',
+    `redaction: MULTIPLE credential keys, at least one nested, must all be redacted (${redactBodyText(multi)})`,
+  );
+
+  // THE DOCUMENTED GAPS, asserted so they cannot be mistaken for coverage later:
+  // a base64-encoded body is not text-searchable, and a credential whose name does not
+  // look like one is not detected. Both are stated in the artifact's own note.
+  const b64 = Buffer.from(`password=${SECRET}`).toString('base64');
+  assert(redactBodyText(b64) === b64, 'redaction: a base64-encoded body is left untouched - a KNOWN GAP, since base64 is not text-searchable');
+  assert(
+    Buffer.from(redactBodyText(b64), 'base64').toString('utf8').includes(SECRET),
+    'redaction: and the credential is still RECOVERABLE from that body by decoding it - asserted so the artifact note states the gap instead of claiming coverage',
+  );
+  assert(redactBodyText('page=2&q=hello') === 'page=2&q=hello', 'redaction: text with no credential-named field must be untouched');
+  assert(isCredentialName('api_key') && isCredentialName('Set-Cookie') === false && isCredentialName('page') === false, 'redaction: the names-based test itself');
+}
+
+// The integration half: a REAL har run over a local page, so the wiring is exercised and
+// not just the helpers. One browser launch covers every vector in the artifact.
+async function testHarCredentialRedaction() {
+  const SECRET = 'SECRET-CANARY-456';
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/redir') {
+      res.writeHead(302, { Location: `/final?session=${SECRET}` });
+      res.end('redirecting');
+      return;
+    }
+    if (path === '/api') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(`{"refresh_token":"${SECRET}","ok":true}`);
+      return;
+    }
+    if (path === '/final') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(`{"refresh_token":"${SECRET}","ok":true}`);
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`<!doctype html><title>t</title><link rel="icon" href="data:,">
+      <script>
+        fetch('/api?api_key=${SECRET}', { method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ password: '${SECRET}', page: 2 }) });
+        fetch('/redir');
+      </script>ok`);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const { port } = server.address();
+    const base = join(tmp, `dsj-har-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(base, { recursive: true });
+    const out = join(base, 'network.har');
+    await gather('har', `http://127.0.0.1:${port}/?token=${SECRET}&page=2`, { quiet: true, wait: 2500, bodies: true, out });
+
+    const raw = readFileSync(out, 'utf8');
+    assert(!raw.includes(SECRET), 'dsj har: the credential must not appear anywhere in the raw HAR');
+
+    const entries = JSON.parse(raw).log.entries;
+    const withToken = entries.find((e) => (e.request.url || '').includes('token='));
+    assert(withToken, 'dsj har: the entry carrying the token parameter must be present');
+    assert(withToken.request.url.includes('token=%5Bredacted%5D') || withToken.request.url.includes('token=[redacted]'), `dsj har: the request URL parameter must be redacted (${withToken.request.url})`);
+    assert(withToken.request.url.includes('page=2'), `dsj har: a non-credential parameter in the same URL must survive (${withToken.request.url})`);
+    const qs = (withToken.request.queryString || []).map((q) => `${q.name}=${q.value}`);
+    assert(qs.includes('token=[redacted]') && qs.includes('page=2'), `dsj har: the parsed queryString must redact one and keep the other (${JSON.stringify(qs)})`);
+
+    const postEntry = entries.find((e) => e.request.postData && e.request.postData.text);
+    assert(postEntry, 'dsj har: the POST entry must be present (the body vector)');
+    assert(!postEntry.request.postData.text.includes(SECRET), `dsj har: the request body must be redacted (${postEntry.request.postData.text})`);
+    assert(postEntry.request.postData.text.includes('"page":2'), `dsj har: a non-credential body field must survive (${postEntry.request.postData.text})`);
+    assert(postEntry.request.bodySize === Buffer.byteLength(postEntry.request.postData.text), 'dsj har: bodySize must describe the REDACTED text, not the original secret length');
+    // and the wire lengths are NOT adjusted - the note says so, so assert the gap is real
+    assert(typeof postEntry.response?.bodySize === 'number', 'dsj har: response wire sizes remain measurements (a stated gap, not a hidden one)');
+
+    const redirectEntry = entries.find((e) => (e.response?.status === 302));
+    assert(redirectEntry, 'dsj har: the redirect entry must be present');
+    assert(!String(redirectEntry.response.redirectURL).includes(SECRET), `dsj har: the redirect target must be redacted (${redirectEntry.response.redirectURL})`);
+
+    const bodyEntry = entries.find((e) => (e.response?.content?.text || '').includes('[redacted]'));
+    assert(bodyEntry, 'dsj har: a recorded response body carrying a credential-named field must be redacted (--bodies path)');
+    assert(!entries.some((e) => (e.response?.content?.text || '').includes(SECRET)), 'dsj har: no recorded response body may still carry the credential');
+    // The note claims the WIRE sizes still measure the ORIGINAL bytes, so assert exactly that:
+    // had either been recomputed from the redacted text it would be SHORTER, and this fails.
+    // Compare WITHIN the same entry: bodySize is the wire measurement of the ORIGINAL body,
+    // the recorded text is the redacted one, and for an uncompressed response the former is
+    // longer. An implementation that recomputed bodySize from the redacted text fails here.
+    const redactedLen = Buffer.byteLength(postEntry.response?.content?.text || '');
+    assert(
+      typeof postEntry.response?.bodySize === 'number' && postEntry.response.bodySize > redactedLen,
+      `dsj har: response bodySize must remain the ORIGINAL wire measurement, not a recomputed one (wire ${postEntry.response?.bodySize}, redacted ${redactedLen})`,
+    );
+    assert(
+      typeof postEntry.response?._transferSize === 'number' && postEntry.response._transferSize > redactedLen,
+      `dsj har: _transferSize must remain the ORIGINAL wire measurement too (transfer ${postEntry.response?._transferSize}, redacted ${redactedLen})`,
+    );
+
+    // THE TWO VECTORS THIS TEST FOUND ITSELF, one call site further out than the bead's
+    // list: URL-valued headers (Referer carries the audited page URL verbatim) and the
+    // initiator fields (the inserting document and the JS call-frame URL, which is the page
+    // URL when a script started the request).
+    const refererEntry = entries.find((e) =>
+      (e.request.headers || []).some((h) => String(h.name).toLowerCase() === 'referer' && String(h.value).includes('token=')));
+    assert(refererEntry, 'dsj har: an entry whose Referer carries the token URL must be present (otherwise this vector is untested)');
+    assert(
+      !JSON.stringify(refererEntry.request.headers).includes(SECRET),
+      'dsj har: the Referer header must not carry the credential',
+    );
+    // POSITIVE FIRST, or the absence assertion cannot show an initiator-specific failure:
+    // the fixture must demonstrably have carried the parameter in an initiator URL, and the
+    // redaction must have replaced its VALUE while keeping the name.
+    // URL.toString() percent-encodes the brackets, so accept both renderings.
+    const carried = (v) => /token=(\[redacted\]|%5Bredacted%5D)/i.test(String(v || ''));
+    const initiatorCarried = entries.some((e) => carried(e._initiator?.url) || carried(e._initiator?.callFrame?.url));
+    assert(initiatorCarried, 'dsj har: an initiator URL must have carried the token parameter and been cleaned (otherwise this vector is untested)');
+    assert(
+      !entries.some((e) => String(e._initiator?.url || '').includes(SECRET) || String(e._initiator?.callFrame?.url || '').includes(SECRET)),
+      'dsj har: neither initiator field may carry the credential',
+    );
+
+    const summary = JSON.parse(readFileSync(join(base, 'network-summary.json'), 'utf8'));
+    const summaryRaw = JSON.stringify(summary);
+    assert(!summaryRaw.includes(SECRET), 'dsj har: the model-readable summary must not re-leak what the HAR redacted');
+    const redir = (summary.hygiene?.redirects || []).find((r) => r.status === 302);
+    assert(redir && !String(redir.location).includes(SECRET), `dsj har: the summary redirect target must be redacted (${JSON.stringify(redir)})`);
+  } finally {
+    server.close();
   }
 }
