@@ -1663,6 +1663,31 @@ export function detectEmptyMounts(html) {
   return found;
 }
 
+// A host belongs to a base name when it IS that name or a subdomain of it: the
+// label-boundary form, never a bare suffix match, so 'evil-example.com' is not
+// part of 'example.com'. The trackers first-party test and the cookies domain
+// test both go through this ONE helper, because the cookies call site survived
+// the trackers fix (web-uplift-w1t) by keeping its own copy of the raw suffix
+// comparison (web-uplift-yu8).
+export function isFirstPartyHost(host, base) {
+  return (
+    typeof host === 'string' &&
+    typeof base === 'string' &&
+    base !== '' &&
+    (host === base || host.endsWith('.' + base))
+  );
+}
+
+// A cookie belongs to the page when its domain (RFC 6265, maybe dot-prefixed)
+// labels the page host: the same label-boundary comparison, after the leading dot
+// is stripped. So 'evil-example.com' does not label 'example.com' and a page on
+// 'evil-example.com' is not labelled by 'example.com', while a real subdomain of
+// the cookie domain still is (web-uplift-yu8).
+export function isThirdPartyCookie(pageHost, domain) {
+  const host = typeof domain === 'string' ? domain.replace(/^\./, '') : '';
+  return !!domain && !isFirstPartyHost(pageHost, host);
+}
+
 async function discoverability(client, url, opts, log) {
   // 1. Raw HTML as a non-JS crawler sees it: a plain fetch, no JS execution.
   let rawHtml = '';
@@ -1936,11 +1961,11 @@ async function headers(client, url, opts, log) {
 async function cookies(client, url, opts, log) {
   log('[cookies] auditing ' + url);
   await navigate(client, url, { settleMs: opts.wait || 3000, log });
-  let pageHost = url;
+  let pageHost = '';
   try { pageHost = new URL(url).hostname; } catch {}
   const { cookies: ck } = await client.Network.getCookies({ urls: [url] });
   const analyzed = (ck || []).map(c => {
-    const isThirdParty = c.domain && !pageHost.endsWith(c.domain.replace(/^\./, '')) && !c.domain.replace(/^\./, '').endsWith(pageHost);
+    const isThirdParty = isThirdPartyCookie(pageHost, c.domain);
     const maxAgeDays = c.expires ? Math.round((c.expires - Date.now() / 1000) / 86400) : null;
     return {
       name: c.name, domain: c.domain, path: c.path,
@@ -1998,13 +2023,11 @@ async function trackers(client, url, opts, log) {
   // bare hostname, so a genuine third party whose name merely ENDS WITH the
   // first-party name ('notlocalhost' for 'localhost', 'notexample.com' for
   // 'example.com') was classified first-party and dropped from thirdParty,
-  // thirdPartyOrigins and topThirdPartyByRequests. The first-party host itself
-  // and its subdomains stay first-party, matching the tracker comparison below.
-  const isFirstPartyHost = (host) =>
-    typeof host === 'string' &&
-    firstParty !== '' &&
-    (host === firstParty || host.endsWith('.' + firstParty));
-  const thirdParty = all.filter((o) => !isFirstPartyHost(o.origin));
+  // thirdPartyOrigins and topThirdPartyByRequests. The comparison now lives in
+  // the shared isFirstPartyHost helper (also used by the cookies primitive, so a
+  // future fix cannot miss one call site); the first-party host itself and its
+  // subdomains stay first-party, matching the tracker comparison below.
+  const thirdParty = all.filter((o) => !isFirstPartyHost(o.origin, firstParty));
   const trackersFound = thirdParty.filter(o => [...KNOWN_TRACKERS].some(t => o.origin === t || o.origin.endsWith('.' + t)));
   announceCap('trackers.topThirdPartyByRequests', Math.min(thirdParty.length, 15), thirdParty.length, log);
   const summary = {
