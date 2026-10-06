@@ -1793,6 +1793,34 @@ function testInstalledEvidenceCli() {
   assert(manifest.version === pkg.version, `installed manifest version mismatch: ${JSON.stringify(manifest)}`);
   assert(manifest.agents.includes('codex'), `installed manifest missed selected agent: ${JSON.stringify(manifest)}`);
 
+  // The install vendors a dependency tree into the consumer's project, and those
+  // packages are in no consumer lockfile, so the manifest is the only place that
+  // says which versions are on disk. The record has to be TRUE, not just present:
+  // every version it names must match what was actually copied (web-uplift-92b).
+  const vendored = manifest.vendoredDependencies;
+  assert(
+    Array.isArray(vendored) && vendored.length > 0,
+    `installed manifest must record the vendored dependency versions: ${JSON.stringify(manifest)}`,
+  );
+  const names = vendored.map((entry) => entry.name);
+  assert(
+    names.includes('chrome-remote-interface') && names.includes('web-features'),
+    `both vendored roots must be recorded: ${JSON.stringify(names)}`,
+  );
+  assert(
+    [...names].sort().join(',') === names.join(','),
+    `the vendored record must be sorted by name so the manifest is stable: ${JSON.stringify(names)}`,
+  );
+  assert(new Set(names).size === names.length, `the vendored record must not repeat a package: ${JSON.stringify(names)}`);
+  for (const entry of vendored) {
+    const manifestPath = join(target, '.web-uplift', 'node_modules', ...entry.name.split('/'), 'package.json');
+    const copied = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    assert(
+      copied.version === entry.version,
+      `recorded version for ${entry.name} must match the installed tree: manifest says ${entry.version}, on disk ${copied.version}`,
+    );
+  }
+
   const evidenceUsage = run(process.execPath, ['.web-uplift/evidence/cli.mjs'], {
     cwd: target,
   });

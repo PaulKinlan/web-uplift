@@ -237,7 +237,13 @@ agent session (uses your subscription).`);
   // ../runner) resolve because the layout is preserved under .web-uplift/.
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'aggregate'), to: join(vendorRoot, 'aggregate'), what: 'scorecard + compare + aggregate' });
   plan.push({ action: 'copy-dir', from: join(PKG_ROOT, 'runner'), to: join(vendorRoot, 'runner'), what: 'run history + user-flow record/replay' });
-  plan.push(...dependencyCopySteps(['chrome-remote-interface', 'web-features'], join(vendorRoot, 'node_modules')));
+  // The vendored tree is not in the consumer's lockfile, so what was copied is
+  // recorded in the install manifest below: without that record nothing in the
+  // project names those packages or their versions, they stay invisible to the
+  // consumer's own dependency audit, and two installs of one tool version can
+  // carry different code (web-uplift-92b).
+  const dependencyPlan = dependencyCopySteps(['chrome-remote-interface', 'web-features'], join(vendorRoot, 'node_modules'));
+  plan.push(...dependencyPlan.steps);
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, '.claude/skills/web-audit/SKILL.md'), to: join(vendorRoot, 'skill', 'SKILL.md'), what: 'canonical web-audit SKILL.md' });
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/principles.json'), to: join(vendorRoot, 'knowledge', 'principles.json'), what: 'principles spec' });
   plan.push({ action: 'copy-file', from: join(PKG_ROOT, 'knowledge/baseline.mjs'), to: join(vendorRoot, 'knowledge', 'baseline.mjs'), what: 'baseline oracle' });
@@ -246,7 +252,7 @@ agent session (uses your subscription).`);
   plan.push({
     action: 'write',
     to: join(vendorRoot, 'manifest.json'),
-    content: installManifest({ pkg, selected }),
+    content: installManifest({ pkg, selected, vendoredDependencies: dependencyPlan.vendoredDependencies }),
     what: `install manifest (${pkg.version})`,
   });
 
@@ -285,12 +291,16 @@ function packageInfo() {
   return JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
 }
 
-function installManifest({ pkg, selected }) {
+function installManifest({ pkg, selected, vendoredDependencies = [] }) {
   return JSON.stringify({
     package: pkg.name,
     version: pkg.version,
     installedAt: new Date().toISOString(),
     agents: selected,
+    // What the install actually vendored, name + version, sorted. These packages
+    // are not in the consumer's lockfile, so this list is the only place in the
+    // project that says which versions are on disk (web-uplift-92b).
+    vendoredDependencies,
     updateCommand: 'npx -y web-uplift@latest update --agent all',
   }, null, 2) + '\n';
 }
@@ -354,11 +364,11 @@ function copyDir(from, to) {
 }
 
 function dependencyCopySteps(rootNames, destNodeModules) {
-  const seen = new Set();
+  const seen = new Map();
   const steps = [];
   const visit = (name) => {
     if (seen.has(name)) return;
-    seen.add(name);
+    seen.set(name, null);
 
     let pkgJsonPath;
     try {
@@ -386,6 +396,7 @@ function dependencyCopySteps(rootNames, destNodeModules) {
     const pkgDir = dirname(pkgJsonPath);
 
     const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
+    seen.set(name, pkg.version ?? 'unknown');
     for (const dep of Object.keys(pkg.dependencies ?? {})) visit(dep);
     steps.push({
       action: 'copy-dir',
@@ -395,7 +406,11 @@ function dependencyCopySteps(rootNames, destNodeModules) {
     });
   };
   for (const name of rootNames) visit(name);
-  return steps;
+  // Sorted, so the manifest stays byte-stable for the same resolved tree.
+  const vendoredDependencies = [...seen.entries()]
+    .map(([name, version]) => ({ name, version: version ?? 'unknown' }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { steps, vendoredDependencies };
 }
 
 // --- passthrough -----------------------------------------------------------

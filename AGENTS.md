@@ -83,7 +83,9 @@ at the skill). opencode also reads this `AGENTS.md` for project context.
 The single source of truth for the version is `package.json` (`version` field).
 `bin/web-uplift.mjs` reads it via `pkg.version` and stamps it into the install
 manifest at install/update time, so bumping `package.json` is the only manual
-edit. `.web-uplift/manifest.json` is tracked and should be kept in sync (it is
+edit. The manifest also records `vendoredDependencies`: the name and version of
+every package the install copies into `.web-uplift/node_modules`, which are in no
+consumer lockfile and would otherwise be unrecorded. `.web-uplift/manifest.json` is tracked and should be kept in sync (it is
 also regenerated on every `install`/`update`).
 
 **Where the version literal must agree** (grep `0.1.x` before tagging):
