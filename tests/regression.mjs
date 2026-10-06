@@ -46,6 +46,7 @@ try {
   await testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase();
   await testScorecardRejectsEscapingComparisonRunIds();
   await testScorecardReservesImageBoxes();
+  await testReservedImageBoxInBrowser();
   await testInstallSurfaceMatchesWhatInstallVendors();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
@@ -2309,6 +2310,134 @@ async function testScorecardReservesImageBoxes() {
       assert(html.includes(rule), `xq5: the stylesheet must let the reserved box follow the image ratio, missing ${JSON.stringify(rule)}`);
     }
   });
+}
+
+// The report's inlined screenshots carry a size so the layout can reserve their box
+// before the bitmap arrives. xq5 shipped the structural half of that; this measures the
+// behaviour in a browser, and it measures BOTH shapes so the apparatus is proven able to
+// see the difference: an image carrying the size attributes keeps the content below it
+// still while its bitmap is in flight, and the same image without them shifts that
+// content when the bitmap lands.
+//
+// Purpose-built because three earlier attempts could not establish it: a source-less
+// clone (Chrome gives such an image no aspect ratio), a deliberately slow response (the
+// page's load event waits for it, and the reading came back at zero geometry) and the
+// scorecard's own imagery (a hidden tab panel never requests a lazy image, and a closed
+// dialog never lays one out). So the fixture is a minimal page whose two images are in
+// the normal flow, whose image rules are the REPORT'S OWN extracted from its stylesheet
+// rather than a copy, and whose requests are held at the CDP layer so both bitmaps are
+// genuinely in flight at the first reading (web-uplift-x4d).
+async function testReservedImageBoxInBrowser() {
+  const { evaluate, sleep, withSession } = await import('../evidence/cdp.mjs');
+  const { renderScorecard, scoreReport } = await import('../aggregate/scorecard.mjs');
+
+  // The report's stylesheet, so the measurement is of what ships and not of a copy of it.
+  const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
+  const run = { runId: 'x4d', dir: tmp, report, compare: null, ...scoreReport(report) };
+  const html = renderScorecard({ host: 'example', generatedAt: '2026-01-01 00:00', runs: [run], latest: run });
+  const style = html.match(/<style>([\s\S]*?)<\/style>/)?.[1];
+  assert(style && style.includes('.ba-pair img') && style.includes('.media img'), 'x4d: the report stylesheet must carry the two image rules');
+
+  const reader = `(() => {
+    const read = (imgId, markerId) => {
+      const img = document.getElementById(imgId);
+      const marker = document.getElementById(markerId);
+      return { height: img.getBoundingClientRect().height, pending: !img.complete, decoded: img.complete && img.naturalWidth > 0, markerTop: marker.getBoundingClientRect().top };
+    };
+    return { ready: document.readyState, sized: read('withSize', 'markerA'), unsized: read('withoutSize', 'markerB') };
+  })()`;
+
+  const measured = await withSession(async (client) => {
+    const encoded = await evaluate(client, `(() => { const c = document.createElement('canvas'); c.width = 400; c.height = 250; const x = c.getContext('2d'); x.fillStyle = '#123456'; x.fillRect(0, 0, 400, 250); return c.toDataURL('image/png'); })()`);
+    const png = Buffer.from(String(encoded).split(',')[1], 'base64');
+    // The report's own rules, plus a marker element after each block so the movement of
+    // the content below an image is measurable.
+    const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>reserved box</title><style>${style}
+      body{margin:0;font:16px sans-serif} .x4d-pane{width:400px} .x4d-marker{height:24px;background:#eee}
+    </style></head><body>
+      <div class="x4d-pane media"><figure><img id="withSize" width="400" height="250" src="/shot-a.png" alt="with size"><figcaption>sized</figcaption></figure></div>
+      <div class="x4d-marker" id="markerA">below the sized image</div>
+      <div class="x4d-pane ba-pair"><figure><img id="withoutSize" src="/shot-b.png" alt="without size"></figure></div>
+      <div class="x4d-marker" id="markerB">below the unsized image</div>
+    </body></html>`;
+    const server = http.createServer((req, res) => {
+      if ((req.url || '').startsWith('/shot-a.png') || (req.url || '').startsWith('/shot-b.png')) {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(png);
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(Buffer.from(page));
+    });
+    await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    try {
+      const url = `http://127.0.0.1:${server.address().port}/`;
+      // Hold both image requests: while they are paused the bitmaps are certainly in
+      // flight and the layout is settled, so the first reading is the pre-decode state.
+      await client.Fetch.enable({ patterns: [{ urlPattern: '*shot-*.png*', requestStage: 'Request' }] });
+      const held = [];
+      client.Fetch.requestPaused((event) => { held.push(event.requestId); });
+      await client.Page.navigate({ url });
+      for (let i = 0; i < 60 && (held.length < 2 || (await evaluate(client, 'document.readyState')) === 'loading'); i += 1) await sleep(50);
+      assert(held.length === 2, `x4d: both images must be in flight at the first reading, held ${held.length}`);
+      const pending = await evaluate(client, reader);
+      for (const requestId of held) await client.Fetch.continueRequest({ requestId });
+      await client.Fetch.disable();
+      for (let i = 0; i < 60; i += 1) {
+        const done = await evaluate(client, `document.getElementById('withSize').complete && document.getElementById('withoutSize').complete`);
+        if (done) break;
+        await sleep(50);
+      }
+      const decoded = await evaluate(client, reader);
+      return { pending, decoded };
+    } finally {
+      await new Promise((resolveClose) => server.close(resolveClose));
+    }
+  });
+
+  // The page is parsed and both bitmaps really were in flight: without these the
+  // measurement could be of an empty document, which is how an earlier attempt read zero.
+  assert(['interactive', 'complete'].includes(measured.pending.ready), `x4d: the document must be parsed at the first reading, got ${measured.pending.ready}`);
+  assert(measured.pending.sized.pending === true && measured.pending.unsized.pending === true, `x4d: both bitmaps must be pending at the first reading, got ${JSON.stringify(measured.pending)}`);
+  assert(measured.decoded.sized.decoded === true && measured.decoded.unsized.decoded === true, `x4d: both bitmaps must have arrived by the second reading, got ${JSON.stringify(measured.decoded)}`);
+
+  // The shape the fix ships: the box is reserved before the bitmap arrives, and the
+  // content below it does not move.
+  assert(measured.pending.sized.height > 0, `x4d: an image with size attributes must reserve a box while pending, got ${measured.pending.sized.height}px`);
+  assert(
+    Math.abs(measured.pending.sized.height - measured.decoded.sized.height) < 1,
+    `x4d: the reserved box must equal the decoded box, got ${measured.pending.sized.height}px then ${measured.decoded.sized.height}px`,
+  );
+  assert(
+    Math.abs(measured.pending.sized.markerTop - measured.decoded.sized.markerTop) < 1,
+    `x4d: content below a sized image must not move when the bitmap arrives, got ${measured.pending.sized.markerTop} then ${measured.decoded.sized.markerTop}`,
+  );
+
+  // The shape before the fix, which is what proves the apparatus can see the difference.
+  // Its pending height is not zero: the report's own rule puts a 1px border on the image,
+  // and a border is the one part of the box that does not depend on the bitmap. What
+  // matters is that it reserves essentially none of the height it will occupy.
+  assert(
+    measured.pending.unsized.height < 0.1 * measured.decoded.unsized.height,
+    `x4d: an image with no size attributes must reserve essentially nothing while pending, got ${measured.pending.unsized.height}px of ${measured.decoded.unsized.height}px`,
+  );
+  // The movement is most of the image's height rather than all of it: while the bitmap is
+  // missing the inline-block figure still occupies its baseline line box, so the shift is
+  // the image's height less that line box. Tying the bound to the measured height keeps
+  // the assertion independent of font metrics.
+  const unsizedShift = measured.decoded.unsized.markerTop - measured.pending.unsized.markerTop;
+  assert(
+    unsizedShift > 0.5 * measured.decoded.unsized.height,
+    `x4d: content below an unsized image must move by most of that image's height when the bitmap arrives, moved ${unsizedShift.toFixed(1)}px of ${measured.decoded.unsized.height}px - without this contrast the measurement would not show it can see the difference`,
+  );
+
+  // The numbers, so the gate log carries them rather than only the verdict.
+  console.log(
+    `[x4d] sized: ${measured.pending.sized.height}px pending -> ${measured.decoded.sized.height}px decoded, marker moved ` +
+      `${(measured.decoded.sized.markerTop - measured.pending.sized.markerTop).toFixed(1)}px | unsized: ` +
+      `${measured.pending.unsized.height}px pending -> ${measured.decoded.unsized.height}px decoded, marker moved ` +
+      `${(measured.decoded.unsized.markerTop - measured.pending.unsized.markerTop).toFixed(1)}px`,
+  );
 }
 
 function testInstalledEvidenceCli() {
