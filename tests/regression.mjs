@@ -1,4 +1,13 @@
 #!/usr/bin/env node
+// SUITE CONVENTION, learned the expensive way (web-uplift-17o): a test that needs a local
+// server must drive the CLI IN-PROCESS via gather() - NOT by running the CLI as a child with
+// an in-process server. spawnSync blocks the parent's event loop, so the in-process server
+// never answers the child's browser (observed directly: zero server hits and a 30s timeout
+// on a HEALTHY page, for trace and dom alike). Worse, that failure mode MIMICS a starvation
+// defect: a healthy page simply times out, indistinguishable from the behaviour under test,
+// so a harness built that way cannot observe the behaviour it exists to check. The --out
+// argument-validation tests are the exception: they exit before any browser launches, so a
+// child run with an in-process server is safe there.
 import http from 'node:http';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
