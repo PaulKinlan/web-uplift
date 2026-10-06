@@ -25,7 +25,7 @@
 // opens from file:// and is safe to publish as a CI artifact.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { hostSlug, listRuns, resolveLatest } from '../runner/run-history.mjs';
@@ -181,12 +181,48 @@ function gradeClass(score) {
   return 'poor';
 }
 
+// A report is untrusted input: it is written by an agent whose context includes
+// untrusted page content, so every string in it must be treated as
+// attacker-influenceable. Artifact paths are resolved against a run directory
+// and `join` silently collapses `..`, so a crafted `artifacts[].path` could make
+// the scorecard read any image the process can read
+// (`../../../../home/<user>/.ssh/id_rsa.png`) and inline it into the published
+// scorecard.html. Two checks, so a call site can use the half it needs:
+//
+//   isSafeArtifactPath(relPath)    shape only: non-empty, no NUL, not absolute,
+//                                  no `..` segment. Use before emitting a
+//                                  relative src the browser will resolve.
+//   containedArtifactPath(dir, p)  shape plus a resolved containment check. Use
+//                                  before any readFileSync.
+//
+// Residual, stated rather than implied: the containment check is lexical, so a
+// symlink already inside the run directory that points outside it still
+// resolves. Creating one requires write access to the run directory, which the
+// same agent already has, so this is not a new trust boundary.
+function isSafeArtifactPath(relPath) {
+  return typeof relPath === 'string'
+    && relPath !== ''
+    && !relPath.includes('\0')
+    && !isAbsolute(relPath)
+    && !relPath.split(/[\\/]/).includes('..');
+}
+
+function containedArtifactPath(dir, relPath) {
+  if (!isSafeArtifactPath(relPath)) return null;
+  const base = resolve(dir);
+  const abs = resolve(base, relPath);
+  // The resolved check is authoritative: it also catches shapes the character
+  // checks do not enumerate.
+  if (abs !== base && !abs.startsWith(base + sep)) return null;
+  return abs;
+}
+
 // Inline a screenshot as a data URI so the imagery travels in the HTML. Video is
 // referenced by relative path (too big to inline). Returns null if unreadable.
 function dataUri(dir, relPath) {
   try {
-    const abs = join(dir, relPath);
-    if (!existsSync(abs)) return null;
+    const abs = containedArtifactPath(dir, relPath);
+    if (!abs || !existsSync(abs)) return null;
     const ext = relPath.split('.').pop().toLowerCase();
     const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[ext];
     if (!mime) return null;
@@ -282,6 +318,9 @@ const METRIC_META = {
 function findingDialog(report, dir, f) {
   const arts = (report.artifacts ?? []).filter((a) => (a.findingIds ?? []).includes(f.id));
   const media = arts
+    // An escaping path is dropped entirely, not just blocked from the read: the
+    // `rel` fallback below becomes a src the browser resolves on its own.
+    .filter((a) => isSafeArtifactPath(a.path))
     .map((a) => {
       const rel = `${encodeURI(report.__runId)}/${a.path}`;
       if (a.type === 'screenshot') {

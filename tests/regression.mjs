@@ -46,6 +46,7 @@ try {
   testFixRejectsMalformedReports();
   await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
+  await testScorecardArtifactContainment();
   await testDiscoverabilityHelpers();
   await testDiscoverabilityH1InRaw();
   await testTargetsPrimitive();
@@ -750,6 +751,103 @@ async function testScorecardScoringAndRender() {
   // A not-applicable outcome never fails its gate.
   const naGate = evaluateGates({ overall: 50, outcomes: { memory: null }, findingsBySeverity: { critical: 0, high: 0 } }, { min: { memory: 90 } });
   assert(naGate.passed === true, 'gate: a null (N/A) outcome must not fail its gate');
+}
+
+// web-uplift-2zj: artifact paths in a report are untrusted input, so resolving one
+// outside its run directory must not read the file, and must not be emitted as a
+// relative src either. Before the fix, `join(dir, relPath)` collapsed `..` and the
+// scorecard read and inlined an arbitrary image into the published HTML.
+async function testScorecardArtifactContainment() {
+  const { scoreReport, renderScorecard } = await import('../aggregate/scorecard.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-artifact-'));
+  try {
+    const runDir = join(root, 'host', 'r1');
+    const prevDir = join(root, 'host', 'r0');
+    const outsideDir = join(root, 'outside');
+    for (const d of [runDir, prevDir, outsideDir]) mkdirSync(d, { recursive: true });
+
+    // Distinct markers so each assertion names the exact file it is about.
+    const relSecret = Buffer.from('TRAVERSAL-REL-MARKER');
+    const absSecret = Buffer.from('TRAVERSAL-ABS-MARKER');
+    const legitBytes = Buffer.from('LEGIT-INLINE-MARKER');
+    writeFileSync(join(outsideDir, 'rel-secret.png'), relSecret);
+    writeFileSync(join(outsideDir, 'abs-secret.png'), absSecret);
+    writeFileSync(join(outsideDir, 'clip.mp4'), Buffer.from('outside-video'));
+    writeFileSync(join(runDir, 'shot.png'), legitBytes);
+
+    // Non-vacuity: the planted file must actually be reachable the way the old
+    // unguarded `join(dir, relPath)` resolved it, or the escape assertions below
+    // would pass against a fixture that could never have leaked anyway.
+    assert(
+      existsSync(join(runDir, '../../outside/rel-secret.png')),
+      'scorecard: the traversal fixture must be reachable through a plain join, or the escape test is vacuous',
+    );
+
+    const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
+    report.__runId = 'r1';
+    const findingId = report.findings[0].id;
+    report.artifacts = [
+      { path: 'shot.png', type: 'screenshot', findingIds: [findingId], caption: 'legit' },
+      { path: '../../outside/rel-secret.png', type: 'screenshot', findingIds: [findingId], caption: 'escape' },
+      { path: join(outsideDir, 'abs-secret.png'), type: 'screenshot', findingIds: [findingId], caption: 'absolute' },
+      { path: '../../outside/clip.mp4', type: 'video', findingIds: [findingId], caption: 'escape video' },
+    ];
+    const scored = scoreReport(report);
+    const html = renderScorecard({
+      host: 'example',
+      generatedAt: '2026-01-01 00:00',
+      runs: [{ runId: 'r1', dir: runDir, report, compare: null, ...scored }],
+      latest: { runId: 'r1', dir: runDir, report, compare: null, ...scored },
+    });
+
+    // The positive control matters as much as the negative ones: a guard that
+    // simply stopped inlining would pass every escape assertion below.
+    assert(
+      html.includes(legitBytes.toString('base64')),
+      'scorecard: a contained in-run screenshot must still be inlined',
+    );
+    assert(
+      !html.includes(relSecret.toString('base64')),
+      'scorecard: a ../ artifact path must not be read and inlined',
+    );
+    assert(
+      !html.includes(absSecret.toString('base64')),
+      'scorecard: an absolute artifact path must not be read and inlined',
+    );
+    assert(
+      !html.includes('../../outside'),
+      'scorecard: an escaping artifact path must not be emitted as a relative src',
+    );
+
+    // The compare panel resolves before/after paths against OTHER run directories
+    // and goes through the same read, so it needs the same containment guard.
+    const cmp = {
+      runA: 'r0',
+      runB: 'r1',
+      summary: {},
+      metrics: [],
+      screenshotPairs: [{ before: '../../outside/rel-secret.png', after: 'shot.png', caption: 'pair' }],
+    };
+    const cmpHtml = renderScorecard({
+      host: 'example',
+      generatedAt: '2026-01-01 00:00',
+      runs: [
+        { runId: 'r0', dir: prevDir, report, compare: null, ...scored },
+        { runId: 'r1', dir: runDir, report, compare: cmp, ...scored },
+      ],
+      latest: { runId: 'r1', dir: runDir, report, compare: cmp, ...scored },
+    });
+    assert(
+      cmpHtml.includes(legitBytes.toString('base64')),
+      'scorecard: the compare panel must still inline a contained after-shot',
+    );
+    assert(
+      !cmpHtml.includes(relSecret.toString('base64')),
+      'scorecard: a ../ before/after compare path must not be read and inlined',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 async function testDiscoverabilityHelpers() {
