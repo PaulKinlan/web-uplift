@@ -3904,7 +3904,7 @@ function testBatchWriteScope() {
     //    that failure suppressed the report removal and left a resumable report. The
     //    report must still be renamed out of the way.
     const marker = drive({ args: ['https://marker.example/'], extraArgs: ['--concurrency', '1', '--out', 'm-out'],
-      body: `d=$(ls -dt ${JSON.stringify(join(root, 'm-out'))}/*/*/ 2>/dev/null | head -1)\ncp ${JSON.stringify(findings)} "$d/report.json"\nln -s /nonexistent/target "$d/run-refused.json"\nprintf 'pwned' > ${JSON.stringify(join(root, 'm-escaped.txt'))}` });
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 'm-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncp ${JSON.stringify(findings)} "$d/report.json"\nln -s /nonexistent/target "$d/run-refused.json"\nprintf 'pwned' > ${JSON.stringify(join(root, 'm-escaped.txt'))}` });
     assert(marker.status !== 0, `batch cleanup: the escape must still refuse (${marker.status})`);
     const markerHost = join(root, 'm-out', readdirSync(join(root, 'm-out'))[0]);
     const markerRun = readdirSync(markerHost).find((e) => !e.startsWith('latest'));
@@ -3920,7 +3920,7 @@ function testBatchWriteScope() {
     mkdirSync(innocent, { recursive: true });
     writeFileSync(join(innocent, 'report.json'), '{"innocent":true}\n');
     const swapped = drive({ args: ['https://swap.example/'], extraArgs: ['--concurrency', '1', '--out', 's-out'],
-      body: `d=$(ls -dt ${JSON.stringify(join(root, 's-out'))}/*/*/ 2>/dev/null | head -1)\nrm -rf "$d"\nln -s ${JSON.stringify(innocent)} "$d"\nprintf 'pwned' > ${JSON.stringify(join(root, 's-escaped.txt'))}` });
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 's-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\nrm -rf "$d"\nln -s ${JSON.stringify(innocent)} "$d" || exit 9\n[ -d "$d" ] || exit 9\nprintf 'pwned' > ${JSON.stringify(join(root, 's-escaped.txt'))}` });
     assert(swapped.status !== 0, `batch symlinked run: the escape must still refuse (${swapped.status})`);
     assert(/not a real directory/.test(swapped.stderr), `batch symlinked run: the refusal must say it did not touch anything through the link:\n${swapped.stderr}`);
     assert(existsSync(join(innocent, 'report.json')), 'batch symlinked run: the innocent run report must be untouched');

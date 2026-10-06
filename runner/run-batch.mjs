@@ -207,7 +207,16 @@ async function worker() {
       return { scope: writeScopeFor(url, siteDir, scopeBefore, scopedError), result: scopedResult, agentError: scopedError };
     });
 
-    await writeFile(join(siteDir, 'write-scope.json'), JSON.stringify(scope, null, 2) + '\n');
+    // The agent shares this tree, so it can delete the run directory out from under us.
+    // Writing the record must then fail THIS URL cleanly instead of rejecting out of the
+    // worker and taking the whole batch down with an ENOENT stack.
+    try {
+      await writeFile(join(siteDir, 'write-scope.json'), JSON.stringify(scope, null, 2) + '\n');
+    } catch (err) {
+      failures.push({ url, reason: `run directory is gone before the scope record could be written: ${err.code || err.message}` });
+      console.error(`failed         ${url}: ${err.message}`);
+      continue;
+    }
     console.log(`  changed: ${summariseChanges(scope.changed)}`);
     if (scope.escapedOutsideScope.length) {
       failures.push({ url, reason: `wrote outside --out: ${scope.escapedOutsideScope.join(', ')}` });
