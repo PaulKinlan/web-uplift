@@ -3237,8 +3237,22 @@ async function resilience(client, url, opts, log) {
     log,
     beforeTargetNavigate: () => applyConditions(client, opts, log),
   });
-  // Activation usually lands inside the settle window; wait a bounded moment
-  // more when a page-origin worker is still installing.
+  // The ServiceWorker domain reports registrations asynchronously, so a page-origin
+  // registration can be observed after the settle window - under load, well after it. The
+  // wait therefore has to cover "not observed yet" as well as "observed but not yet
+  // activated": the previous condition required a page-origin registration to EXIST before
+  // it would wait at all, which is precisely the state the race produces, so a slow
+  // registration was snapshotted as no service worker and the audit recorded a false
+  // negative (web-uplift-5jd).
+  //
+  // Cost, stated because it is real: a page with no worker now pays up to 2s (10 x 200ms)
+  // once per resilience call. That is the cheaper error - the alternative is reporting
+  // that a site has no service worker when it does.
+  for (let i = 0; i < 10 && sw.pageOriginRegistrations().length === 0; i++) {
+    await sleep(200);
+  }
+  // Activation usually lands inside the settle window; wait a bounded moment more when a
+  // page-origin worker is registered but still installing.
   for (let i = 0; i < 10 && sw.pageOriginRegistrations().length && sw.pageOriginActiveVersions() === 0; i++) {
     await sleep(300);
   }

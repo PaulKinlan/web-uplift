@@ -78,6 +78,7 @@ try {
   await testDiscoverabilityH1InRaw();
   await testTargetsPrimitive();
   await testResiliencePrimitive();
+  await testResilienceWaitsForLateServiceWorkerRegistration();
   await testA11yTreePrimitive();
   await testBaselineOracle();
   await testFlowNormalize();
@@ -1306,6 +1307,50 @@ async function testFeaturesPrimitive() {
 // all (the navigation fails with a net error). It also checks that CDP's worker
 // list is attributed per origin, because the domain also reports the browser's
 // own extension workers (web-uplift-7v3).
+// A service worker registration is reported by the ServiceWorker domain asynchronously, so
+// under load it can land after the navigation settle window has closed. The primitive used
+// to extend its wait only when a page-origin registration had ALREADY been observed - which
+// is exactly the state the race produces - so a slow registration was snapshotted as no
+// service worker at all: an intermittent false negative in an audit finding
+// (web-uplift-5jd). This fixture makes the race deterministic instead of waiting for
+// contention to produce it: the page registers its worker after the settle window expires,
+// so the registration can only be reported if the primitive waits for it.
+async function testResilienceWaitsForLateServiceWorkerRegistration() {
+  const swJs = [
+    "self.addEventListener('install', (e) => { e.waitUntil(caches.open('late-v1').then((c) => c.addAll(['/']))); });",
+    "self.addEventListener('fetch', (e) => { e.respondWith(fetch(e.request)); });",
+  ].join('\n');
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    const send = (type, body) => {
+      res.writeHead(200, { 'Content-Type': type });
+      res.end(body);
+    };
+    if (path === '/sw.js') return send('text/javascript', swJs);
+    return send('text/html', '<!doctype html><html><head><title>Late worker</title>' +
+      // 1200ms is well past the 400ms settle passed below, so the registration is
+      // guaranteed to be unobserved when the settle window closes.
+      '<script>setTimeout(() => navigator.serviceWorker.register("/sw.js"), 1200);</script>' +
+      '</head><body><h1>Late worker</h1></body></html>');
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const result = await gather('resilience', `${base}/`, { quiet: true, wait: 400 });
+    const regs = result.serviceWorker?.cdp?.registrations ?? [];
+    assert(
+      regs.some((r) => r.pageOrigin && String(r.scopeURL).startsWith(base)),
+      `resilience: a registration landing after the settle window must still be reported, got ${JSON.stringify(regs)}`,
+    );
+    assert(
+      result.serviceWorker?.scriptTextHasFetchListener === true,
+      `resilience: the late worker's script must still be read, got ${JSON.stringify(result.serviceWorker)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
 async function testResiliencePrimitive() {
   const swJs = [
     "const CACHE = 'fixture-v1';",
