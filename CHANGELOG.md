@@ -11,7 +11,7 @@
   travelled into the retained run. A run with no assertion is refused before any
   spawn and records `isolation: refused`. The tool does not sandbox the agent and
   cannot verify the boundary; README.md ("Running it safely") documents that
-  precisely, with a worked bwrap example.
+  precisely (README, "Running it safely", lists what that boundary must guarantee rather than shipping a command that is wrong for some operator layouts - an outer wrapper cannot protect the report history, because the fixer parent and its agent share the mount).
 - **Fix mode scopes every agent run.** The tree is snapshotted around each spawn
   (the baseline audit included) and the run is refused when a change lands outside
   `--target`/`--out`, with a per-run diff written for review. This is DETECTION,

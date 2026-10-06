@@ -560,7 +560,7 @@ providing (`--isolation docker|bwrap|vm|host-permission-model|...`) and it recor
 that assertion as UNVERIFIED in `<out>/run-security.json`. It then snapshots the
 tree around each agent run and refuses the run when a change lands outside
 `--target`/`--out` - detection, not confinement; the gaps are documented in
-README.md ("Running it safely"), which also has a worked bwrap example. Running
+README.md ("Running it safely"), which lists what the operator boundary must guarantee (the tool and dependency trees, credentials and other checkouts not agent-writable, no agent write access to the report history or publication pointer, the source tree as the only writable area, network egress out of scope). Running
 the loop INSIDE your own session (below) is unaffected: you are the model there.
 
 Only with local source. This is a MODEL-DRIVEN hill-climb: YOU write every edit

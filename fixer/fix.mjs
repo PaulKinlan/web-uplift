@@ -222,12 +222,16 @@ let isolationRecord;
 function writeRunSecurity(dir, record) {
   // A RECORD, not an attestation: it lives in the directory the agent can write, so
   // it states what the operator asserted and that the tool could not verify it. It
-  // is evidence for a human, never proof of a boundary.
+  // is evidence for a human, never proof of a boundary. Returns false when it could
+  // not be written - the caller REFUSES to spawn in that case, because a run that
+  // proceeds without the record defeats the point of demanding the assertion.
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'run-security.json'), JSON.stringify({ ...record, recordedAt: new Date().toISOString(), tool: 'web-uplift fix' }, null, 2) + '\n');
+    return true;
   } catch (err) {
     console.error(`Could not record the isolation state: ${err.message}`);
+    return false;
   }
 }
 
@@ -256,7 +260,13 @@ if (!willSpawnAgent) {
     unverified: true,
     reason: 'declared by the operator; the tool did not and cannot verify it',
   };
-  writeRunSecurity(outDir, isolationRecord);
+  if (!writeRunSecurity(outDir, isolationRecord)) {
+    console.error(
+      `REFUSED: the isolation assertion could not be recorded in ${outDir}, and NO AGENT WAS STARTED.\n` +
+      'Recording what was asserted is the point of requiring the assertion, so a run that cannot be recorded does not proceed.',
+    );
+    process.exit(1);
+  }
   console.error(
     `\nWARNING: proceeding on an UNVERIFIED isolation assertion: --isolation ${isolationAssertion}.\n` +
     'This tool does not sandbox the agent and cannot check your boundary. If the agent escapes it, the snapshot/diff\n' +
@@ -265,10 +275,13 @@ if (!willSpawnAgent) {
   );
 }
 
-// 1. Validation FIRST, isolation assertion second. A supplied report is validated
-// before the isolation check so a malformed or unscoreable report still fails with
-// its own named error (that contract has its own beads) instead of being masked by
-// a refusal.
+// 1. Validation of a supplied report. NOTE ON ORDER: the isolation assertion is
+// resolved ABOVE this point, so a run with no assertion refuses before a malformed
+// report is even read. That is deliberate - the assertion gates whether the tool will
+// run at all, while report shape is about the input - but it does mean an operator
+// with both problems hears about the isolation first. A run carrying --findings with
+// --max-iterations 0 never spawns, needs no assertion, and reaches this validation
+// (which is what the malformed/unscoreable report tests exercise).
 let suppliedBaseline = null;
 if (args.findings) {
   try {

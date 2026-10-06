@@ -19,8 +19,10 @@
 // documents an invocation that works from any cwd, and the tool path can simply be
 // passed absolute. But do not repeat the opposite mistake either - rooting the
 // child's cwd at --target only scopes RELATIVE writes; an agent holding write tools
-// can still name an absolute path. It is not an enforcement boundary. The boundary
-// is the OS sandbox (see fixer/sandbox.mjs); this module is the second layer.
+// can still name an absolute path. It is not an enforcement boundary, and neither is
+// this module. The boundary is whatever the OPERATOR supplies and declares with
+// --isolation; this tool does not verify it, and this walk is the second layer that
+// catches realistic escapes when it fails or is absent.
 //
 // Covered: creates, edits, deletes and symlink changes anywhere under the walked
 // roots, including `.git/hooks` and `.git/config` (the persistence vectors for an
