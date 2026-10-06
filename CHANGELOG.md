@@ -10,12 +10,14 @@
   recorded as unverified in `<out>/run-security.json`, warned about on stderr, and
   travelled into the retained run. A run with no assertion is refused before any
   spawn and records `isolation: refused`. The tool does not sandbox the agent and
-  cannot verify the boundary; README.md ("Running it safely") documents that
-  precisely (README, "Running it safely", lists what that boundary must guarantee rather than shipping a command that is wrong for some operator layouts - an outer wrapper cannot protect the report history, because the fixer parent and its agent share the mount).
+  cannot verify the boundary. README.md ("Running it safely") documents what that boundary
+  must guarantee; the tool ships no command for it, deliberately, because a copy-pasteable
+  command would be wrong for some operator layouts and an outer wrapper cannot protect the
+  report history when the fixer parent and its agent share one mount.
 - **Fix mode scopes every agent run.** The tree is snapshotted around each spawn
   (the baseline audit included) and the run is refused when a change lands outside
   `--target`/`--out`, with a per-run diff written for review. This is DETECTION,
-  not confinement, and its gaps are documented in `fixer/write-scope.mjs`.
+  not confinement, and its gaps are documented in `runner/write-scope.mjs`.
 - **A refused run no longer publishes.** The retained after-run, the `latest`
   pointer and the scorecard are written only after a climb completes, so a refused
   or failed run leaves the reports tree exactly as it found it.

@@ -106,7 +106,11 @@ function snapshotScope() {
 // no guard, so the scope-accounted spawns are serialized: one snapshot -> spawn ->
 // diff at a time. The cost is stated in the batch banner and the README: a run with
 // --concurrency > 1 is effectively serial while auditing.
-// Completion for THIS process: no file can influence it.
+// URLs THIS PROCESS SUCCESSFULLY PUBLISHED take precedence from this set, and no file can
+// influence the set itself. That is a precedence rule about what this process already knows it
+// did - NOT a claim that completion is decided in memory for every URL, because a URL that is
+// not in the set is still looked up on disk. The completion check below states the rule and its
+// residual in one place.
 const completedThisBatch = new Set();
 let scopeWindow = Promise.resolve();
 function withScopeWindow(fn) {
@@ -238,16 +242,10 @@ async function worker() {
       failures.push({ url, reason: `wrote outside --out: ${scope.escapedOutsideScope.join(', ')}` });
       // Quarantine the run: rename its report out of the way and leave a record.
       //
-      // ADVISORY EVIDENCE AND DEFENCE IN DEPTH, not a guarantee. Completion is decided by
-      // hasCompletedLatest() below: WITHIN this batch by our own in-memory set, which no
-      // file can influence; ACROSS a resume from a pointer on disk, which the agent being
-      // audited can write too - so a planted pointer naming a run that looks valid can
-      // still make a later --resume skip that URL. That residual is real and is not
-      // something this tool can close; its boundary is operator-provided external
-      // isolation (the fixer's --isolation flag - THIS batch runner has no isolation flag
-      // of its own). resolveLatest() in run-history.mjs keeps its "newest directory
-      // containing a report" fallback for reporting consumers such as the scorecard,
-      // where it is a presentation convenience; the batch deliberately does not call it.
+      // ADVISORY EVIDENCE AND DEFENCE IN DEPTH: it improves the odds against a resumed run
+      // resolving to a refused result, and it is not what makes the refusal stick. The
+      // completion check below is the single place where the guarantee and its residual are
+      // stated - read that before relying on anything here.
       const quarantineProblem = await quarantineRefusedRun(siteDir, { url, escapedOutsideScope: scope.escapedOutsideScope });
       if (quarantineProblem) failures.push({ url, reason: quarantineProblem });
       console.error(
@@ -309,12 +307,9 @@ function dryRunDir(url) {
   return { dir: join(hostRoot, runId), hostRoot, host, runId };
 }
 
-// Quarantine a refused run: rename its report and leave a marker.
-//
-// BOTH STEPS ARE ADVISORY, and neither is what makes the refusal stick. Within this batch
-// the in-memory set excludes the URL; across a resume the completion state comes from disk,
-// which the agent can write, so this quarantine improves the odds rather than guaranteeing
-// anything. RENAME rather than delete because a rename cannot be half-done: the earlier
+// Quarantine a refused run: rename its report and leave a marker. Both steps are ADVISORY -
+// see the completion check for the guarantee and its residual. RENAME rather than delete
+// because a rename cannot be half-done: the earlier
 // version wrote a marker and deleted the report inside ONE try block, so an agent could
 // plant a dangling symlink at the marker path, make that write fail, and suppress the
 // deletion - leaving a resumable report behind. The steps are independently guarded and the
@@ -339,7 +334,7 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
   } catch (err) {
     // ENOENT means there was no report to quarantine, which is a fine outcome.
     if (err?.code !== 'ENOENT') {
-      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). For THIS batch the refusal stands; across a resume the state comes from disk, which the agent can write, so the report being still present is a real residual.`);
+      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). For THIS batch the refusal stands; see the completion check for what a resumed lookup can still do.`);
       problem = `could not quarantine the refused report (${err.code || err.message}): the report is still on disk`;
     }
   }
@@ -352,26 +347,31 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
   return problem;
 }
 
-// COMPLETION CHECK - WHAT THIS ACTUALLY GUARANTEES. Read this before trusting it:
+// COMPLETION CHECK - WHAT THIS ACTUALLY GUARANTEES. Read this before trusting it. It is the
+// single place these limits are stated; the comments at the refusal and quarantine sites
+// point here rather than repeating them.
 //
-//  * WITHIN one batch run, completion is decided by THIS PROCESS's own in-memory set,
-//    which no file can influence. That part is authoritative.
-//  * ACROSS a resume, the state can only come from disk (the pointer this tool wrote,
-//    or latest.txt), and that disk is writable by the agent being audited. A planted
-//    pointer naming a run whose report looks valid can therefore make a later --resume
-//    skip that URL. That is a REAL RESIDUAL, not a guarantee: the honest boundary for
-//    it is operator-supplied isolation (--isolation), the same conclusion we reached
-//    for fix mode, because a tool that shares a writable tree with its adversary cannot
-//    authenticate what it reads from that tree. resolveLatest() in run-history.mjs now
-//    contains the pointer's TARGET, so it cannot name a directory outside the host
-//    root; that bounds WHERE a pointer points and cannot authenticate WHICH run it
-//    names, which is exactly why this residual stands.
-//  * The refusal quarantine (a renamed report, a marker) is therefore ADVISORY EVIDENCE
-//    and defence in depth. It is worth having and it is never the thing that makes a
-//    decision correct.
+//  * URLs THIS PROCESS SUCCESSFULLY PUBLISHED take precedence from completedThisBatch, an
+//    in-memory set that no file can influence. That is a precedence rule about what this
+//    process already knows it did, NOT a blanket statement that a batch run's completion is
+//    decided in memory: a URL that is not in the set is still looked up below.
+//  * EVERY OTHER resume lookup has only disk to read - the pointer this tool wrote, or
+//    latest.txt - and that disk is writable by the agent being audited. A planted pointer
+//    naming a run whose report looks valid can therefore make a later --resume skip that
+//    URL. That is a REAL RESIDUAL, not a guarantee: the honest boundary for it is
+//    operator-provided external isolation (the fixer's --isolation flag; THIS batch runner
+//    has no isolation flag of its own), because a tool that shares a writable tree with its
+//    adversary cannot authenticate what it reads from that tree.
+//    resolveLatest() in run-history.mjs now contains the pointer's TARGET, so it cannot name
+//    a directory outside the host root; that bounds WHERE a pointer points and cannot
+//    authenticate WHICH run it names, which is exactly why this residual stands.
+//  * The refusal quarantine (a renamed report, a marker) is therefore ADVISORY EVIDENCE and
+//    defence in depth. It is worth having and it is never what makes a decision correct.
 // What it deliberately does NOT do is fall back to "the newest directory containing a
-// report": that is a decision the adversary could make for us, and removing it was the
-// point of this change.
+// report": that is a decision the adversary could make for us, and removing it was the point
+// of this change. (resolveLatest() in run-history.mjs keeps that fallback for reporting
+// consumers such as the scorecard, where it is a presentation convenience; the batch
+// deliberately does not call it.)
 function latestPointerTarget(hostRoot) {
   const link = join(hostRoot, 'latest');
   try {
