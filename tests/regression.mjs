@@ -3856,16 +3856,20 @@ function testBatchWriteScope() {
     const twoUp = drive({
       args: ['https://clean.example/', 'https://dirty.example/'],
       extraArgs: ['--concurrency', '2', '--out', 'c-out'],
-      // The stub derives its run dir from the URL slug rather than parsing the prompt
-      // or trusting mtime: under --concurrency the two workers' directories are
-      // created within milliseconds of each other, and a newest-first guess puts the
-      // report in the wrong run (which is a bug in the test, not in the guard).
+      // The stub locates its own run dir by pure shell parameter expansion on the
+      // prompt it is given (`--out <dir>`), with no external commands, no regex and no
+      // nested quoting: an earlier version of this used grep/sed inside $( ) and the
+      // generated script failed to parse, which is what a gate is for.
       body: [
-        `slug=$(printf '%s\\n' "$@" | grep -o 'https://[a-z]*\\.example' | head -1 | sed 's#https://##; s/\\./_/g')`,
-        `d=$(ls -dt ${JSON.stringify(join(root, 'c-out'))}/"$slug"/*/ 2>/dev/null | head -1)`,
+        'd=""',
+        'for a in "$@"; do',
+        '  case "$a" in',
+        '    *c-out/*) rest=${a#*c-out/}; d="' + join(root, 'c-out') + '/${rest%% *}";;',
+        '  esac',
+        'done',
         `cp ${JSON.stringify(findings)} "$d/report.json"`,
         `case "$*" in *dirty.example*) printf 'pwned' > ${JSON.stringify(join(root, 'c-escaped.txt'))};; esac`,
-      ].join('\\n'),
+      ].join('\n'),
     });
     assert(twoUp.status !== 0, 'batch concurrency: the dirty URL must still fail the batch');
     assert(
