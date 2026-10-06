@@ -872,32 +872,6 @@ async function testScorecardArtifactContainment() {
       !cmpHtml.includes(relSecret.toString('base64')),
       'scorecard: a ../ before/after compare path must not be read and inlined',
     );
-    // 5. THE CLEANUP-FAILURE PATH (the P1): the agent plants a DANGLING symlink where the
-    //    refusal marker goes, so writing the marker fails. With the old single try block
-    //    that failure suppressed the report removal and left a resumable report. The
-    //    report must still be renamed out of the way.
-    const marker = drive({ args: ['https://marker.example/'], extraArgs: ['--concurrency', '1', '--out', 'm-out'],
-      body: `d=$(ls -dt ${JSON.stringify(join(root, 'm-out'))}/*/*/ 2>/dev/null | head -1)\ncp ${JSON.stringify(findings)} "$d/report.json"\nln -s /nonexistent/target "$d/run-refused.json"\nprintf 'pwned' > ${JSON.stringify(join(root, 'm-escaped.txt'))}` });
-    assert(marker.status !== 0, `batch cleanup: the escape must still refuse (${marker.status})`);
-    const markerHost = join(root, 'm-out', readdirSync(join(root, 'm-out'))[0]);
-    const markerRun = readdirSync(markerHost).find((e) => !e.startsWith('latest'));
-    assert(
-      existsSync(join(markerHost, markerRun, 'report.refused.json')) && !existsSync(join(markerHost, markerRun, 'report.json')),
-      `batch cleanup: a failing marker write must NOT suppress quarantining the report (${JSON.stringify(readdirSync(join(markerHost, markerRun)))})`,
-    );
-
-    // 6. A SYMLINKED RUN DIRECTORY (the P2a): the agent replaces its run dir with a link
-    //    to another run under the output root. Nothing may be renamed or deleted through
-    //    that link - the innocent run must be untouched.
-    const innocent = join(root, 'innocent', 'RUN');
-    mkdirSync(innocent, { recursive: true });
-    writeFileSync(join(innocent, 'report.json'), '{"innocent":true}\n');
-    const swapped = drive({ args: ['https://swap.example/'], extraArgs: ['--concurrency', '1', '--out', 's-out'],
-      body: `d=$(ls -dt ${JSON.stringify(join(root, 's-out'))}/*/*/ 2>/dev/null | head -1)\nrm -rf "$d"\nln -s ${JSON.stringify(innocent)} "$d"\nprintf 'pwned' > ${JSON.stringify(join(root, 's-escaped.txt'))}` });
-    assert(swapped.status !== 0, `batch symlinked run: the escape must still refuse (${swapped.status})`);
-    assert(/not a real directory/.test(swapped.stderr), `batch symlinked run: the refusal must say it did not touch anything through the link:\n${swapped.stderr}`);
-    assert(existsSync(join(innocent, 'report.json')), 'batch symlinked run: the innocent run report must be untouched');
-    assert(!existsSync(join(innocent, 'report.refused.json')), 'batch symlinked run: nothing may be renamed through the agent-controlled link');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -3925,6 +3899,32 @@ function testBatchWriteScope() {
       failingScope.escapedOutsideScope.some((p) => p.endsWith('f-escaped.txt')),
       `batch failing agent: the escaped path must be recorded even though the agent died (${JSON.stringify(failingScope.escapedOutsideScope)})`,
     );
+    // 5. THE CLEANUP-FAILURE PATH (the P1): the agent plants a DANGLING symlink where the
+    //    refusal marker goes, so writing the marker fails. With the old single try block
+    //    that failure suppressed the report removal and left a resumable report. The
+    //    report must still be renamed out of the way.
+    const marker = drive({ args: ['https://marker.example/'], extraArgs: ['--concurrency', '1', '--out', 'm-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 'm-out'))}/*/*/ 2>/dev/null | head -1)\ncp ${JSON.stringify(findings)} "$d/report.json"\nln -s /nonexistent/target "$d/run-refused.json"\nprintf 'pwned' > ${JSON.stringify(join(root, 'm-escaped.txt'))}` });
+    assert(marker.status !== 0, `batch cleanup: the escape must still refuse (${marker.status})`);
+    const markerHost = join(root, 'm-out', readdirSync(join(root, 'm-out'))[0]);
+    const markerRun = readdirSync(markerHost).find((e) => !e.startsWith('latest'));
+    assert(
+      existsSync(join(markerHost, markerRun, 'report.refused.json')) && !existsSync(join(markerHost, markerRun, 'report.json')),
+      `batch cleanup: a failing marker write must NOT suppress quarantining the report (${JSON.stringify(readdirSync(join(markerHost, markerRun)))})`,
+    );
+
+    // 6. A SYMLINKED RUN DIRECTORY (the P2a): the agent replaces its run dir with a link
+    //    to another run under the output root. Nothing may be renamed or deleted through
+    //    that link - the innocent run must be untouched.
+    const innocent = join(root, 'innocent', 'RUN');
+    mkdirSync(innocent, { recursive: true });
+    writeFileSync(join(innocent, 'report.json'), '{"innocent":true}\n');
+    const swapped = drive({ args: ['https://swap.example/'], extraArgs: ['--concurrency', '1', '--out', 's-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 's-out'))}/*/*/ 2>/dev/null | head -1)\nrm -rf "$d"\nln -s ${JSON.stringify(innocent)} "$d"\nprintf 'pwned' > ${JSON.stringify(join(root, 's-escaped.txt'))}` });
+    assert(swapped.status !== 0, `batch symlinked run: the escape must still refuse (${swapped.status})`);
+    assert(/not a real directory/.test(swapped.stderr), `batch symlinked run: the refusal must say it did not touch anything through the link:\n${swapped.stderr}`);
+    assert(existsSync(join(innocent, 'report.json')), 'batch symlinked run: the innocent run report must be untouched');
+    assert(!existsSync(join(innocent, 'report.refused.json')), 'batch symlinked run: nothing may be renamed through the agent-controlled link');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
