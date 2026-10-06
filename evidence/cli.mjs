@@ -79,7 +79,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { BlockList, isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
-import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines } from './cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
 
@@ -792,6 +792,10 @@ async function axe(client, url, opts, log) {
 // AND a compact, model-readable summary (key timings, long tasks, blocking).
 // The model reads the summary, never the multi-MB raw trace.
 async function trace(client, url, opts, log) {
+  // The navigation below calls Page.navigate DIRECTLY rather than through navigate() because
+  // the trace must start before navigationStart is captured; the bound is the same one
+  // navigate() uses, read through the getter so the --cdp-deadline flag applies here too.
+  const navDeadline = getNavigationDeadlineMs();
   // The category set DevTools itself records for a performance profile, so the
   // resulting trace.json loads in chrome://tracing and the DevTools Performance
   // panel. We keep the devtools.timeline + disabled-by-default-devtools.timeline
@@ -820,7 +824,7 @@ async function trace(client, url, opts, log) {
   // Start tracing on a clean about:blank, then navigate so the whole load is in
   // the trace. navigate() already routes through about:blank, but we begin the
   // trace first so navigationStart is captured.
-  await client.Page.navigate({ url: 'about:blank' });
+  await withDeadline(client.Page.navigate({ url: 'about:blank' }), navDeadline, `the about:blank navigation to be accepted (en route to ${url})`);
   await sleep(150);
   await applyConditions(client, opts, log);
 
@@ -832,8 +836,8 @@ async function trace(client, url, opts, log) {
   log('[evidence] tracing started; navigating');
 
   const loaded = client.Page.loadEventFired();
-  await client.Page.navigate({ url });
-  await loaded;
+  await withDeadline(client.Page.navigate({ url }), navDeadline, `the navigation to ${url} to be accepted`);
+  await withDeadline(loaded, navDeadline, `the load event for ${url}`);
   log(`[evidence] loaded ${url}`);
 
   if (opts.interact) {
@@ -3355,7 +3359,12 @@ async function resilience(client, url, opts, log) {
   let offlinePage = null;
   try {
     const loaded = client.Page.loadEventFired();
-    const nav = await client.Page.navigate({ url });
+    // Bounded by the primitive's OWN offline budget, not the navigation default: this
+    // navigate runs AFTER the network goes offline, and an offline failure response is the
+    // normal path (navigationFailed is the expected outcome for a page with no fallback).
+    // The load wait stays a Promise.race with the same budget - already bounded, so the
+    // bead's helper is not layered on top of it.
+    const nav = await withDeadline(client.Page.navigate({ url }), offlineBudget, `the navigation to ${url} to be accepted`);
     errorText = nav?.errorText || null;
     navigationFailed = !!errorText;
     if (!navigationFailed) await Promise.race([loaded, sleep(offlineBudget)]);

@@ -5131,9 +5131,59 @@ async function testCdpDeadline() {
     }
   } finally {
     await chrome.close();
-    blackhole.close();
-    for (const sock of sockets) sock.destroy();
-    healthy.close();
   }
+
+  // THE TRACE PATH, reproduced the same way: the trace primitive navigates DIRECTLY (it
+  // must start tracing before navigationStart), and before this revision its load wait had
+  // no bound at all - the hole found while writing the residual note. Driven IN-PROCESS via
+  // gather() (the suite's convention, as the har tests do it): a CLI child cannot be used
+  // here because spawnSync blocks this process's event loop, which would freeze the test's
+  // own servers - observed directly: SERVER HITS 0 and a 30s timeout on a healthy page.
+  // The deadline is set through the same module state the CLI flag writes, and RESTORED in
+  // the finally so the rest of the suite keeps the production defaults.
+  const { gather } = await import(pathToFileURL(join(repoRoot, 'evidence/cli.mjs')).href);
+  const { configureCdpDeadlines } = await import(pathToFileURL(join(repoRoot, 'evidence/cdp.mjs')).href);
+  const bhUrl = `http://127.0.0.1:${blackhole.address().port}/`;
+  try {
+    configureCdpDeadlines({ navigationMs: 4000, callMs: 4000 });
+    const t3 = Date.now();
+    let traceErr = null;
+    try {
+      await gather('trace', bhUrl, { quiet: true, wait: 100, out: join(tmp, 'trace-starved.json') });
+    } catch (e) {
+      traceErr = e;
+    }
+    const traceElapsed = Date.now() - t3;
+    assert(
+      traceErr && traceErr.message.includes('timed out after 4000ms') && traceErr.message.includes(bhUrl),
+      `17o trace: a starved trace must fail loudly, naming the URL and the bound (${traceErr && traceErr.message})`,
+    );
+    assert(
+      traceElapsed < 30000,
+      `17o trace: the starved trace must return at the order of the deadline, not the suite timeout (${traceElapsed}ms)`,
+    );
+  } finally {
+    configureCdpDeadlines({ navigationMs: 30000, callMs: 30000 });
+  }
+  // HEALTHY CONTROL for the same primitive: a wrap added to a real primitive whose
+  // generous-deadline behaviour is not asserted would let the fix break the primitive
+  // silently, and trace is user-visible - so it must still succeed when healthy.
+  let healthyTraceErr = null;
+  try {
+    await gather('trace', page, { quiet: true, wait: 200, out: join(tmp, 'trace-ok.json') });
+  } catch (e) {
+    healthyTraceErr = e;
+  }
+  assert(
+    !healthyTraceErr && existsSync(join(tmp, 'trace-ok.json')),
+    `17o trace control: a healthy trace under the default deadline must complete and write its artifact (${healthyTraceErr && healthyTraceErr.message})`,
+  );
+  // RESILIENCE: its initial load goes through navigate() (bounded above), and its offline
+  // reload is wrapped with its own offlineBudget; the suite's existing resilience tests
+  // drive the primitive healthy against a local server, including that reload - so the
+  // healthy control for this wrap already exists in the suite rather than being duplicated.
+  blackhole.close();
+  for (const sock of sockets) sock.destroy();
+  healthy.close();
 }
 

@@ -260,6 +260,28 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // Bound a CDP wait. A rejection carries the bound, what was being awaited, and
 // how to raise the bound, so a starved host produces an actionable error
 // instead of an indefinite hang.
+//
+// WHAT IS BOUNDED AND BY WHAT (17o), and the warning for the next direct caller.
+// By this mechanism: session creation (target create, attach, domain enables)
+// and every navigation - navigate() itself, plus the two primitives that
+// navigate DIRECTLY: trace (via getNavigationDeadlineMs, because it must start
+// tracing before navigationStart) and resilience's offline reload (via its own
+// offlineBudget, because an offline failure response is the normal path). The
+// launch endpoint poll was already bounded (devtoolsTimeoutMs). Bounds that
+// stay with their owners: resilience's load wait (a Promise.race with the
+// offline budget), har's network-idle wait (its own deadline), --interact
+// (--interact-deadline). ENUMERATED EXCEPTION: the trace primitive's
+// Tracing.tracingComplete await is NOT bounded - post-navigation, on the
+// tracing path, out of this bead's scope. AND THE WARNING: a NEW primitive
+// that calls client.Page.navigate directly does NOT inherit any of this - the
+// trace primitive was exactly that hole, and it was found only when this note
+// was written. Wrap it, or route through navigate().
+// The current navigation bound, for callers that navigate directly (the trace
+// primitive) and must take the same bound navigate() uses, flag included.
+export function getNavigationDeadlineMs() {
+  return navigationDeadlineMsDefault;
+}
+
 export function withDeadline(promise, ms, description) {
   return new Promise((resolvePromise, rejectPromise) => {
     const timer = setTimeout(() => {
