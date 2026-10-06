@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, safeFetch, waitForInteractEvidence } from '../evidence/cli.mjs';
+import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, redactHeaderList, safeFetch, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { AGENTS } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
@@ -29,6 +29,7 @@ try {
   testGuidanceUsage();
   testGuidanceVersionPinnedInDocs();
   testHeadlessAllowlistIsScoped();
+  testRedactHeaderList();
   testInstalledEvidenceCli();
   testUpdateDryRunReadsInstallManifest();
   testCachedUpdateWarning();
@@ -39,6 +40,7 @@ try {
   await testHarRedirects();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
+  await testHarRedactsCredentialHeaders();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
   await testConsoleInteractDeadlineValidation();
@@ -2889,5 +2891,106 @@ async function testSafeFetchRedirectAndSizeGuard() {
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
     await new Promise((resolveClose) => secret.close(resolveClose));
+  }
+}
+
+// The redaction itself, without a browser: every credential header name is
+// replaced by the placeholder while a non-secret header is untouched, so the
+// redaction cannot be satisfied by over-redacting everything (web-uplift-dxk).
+function testRedactHeaderList() {
+  const list = [
+    { name: 'Set-Cookie', value: 'a=1' },
+    { name: 'cookie', value: 'b=2' },
+    { name: 'Authorization', value: 'Bearer x' },
+    { name: 'proxy-authorization', value: 'Basic y' },
+    { name: 'X-Auth-Token', value: 't' },
+    { name: 'x-api-key', value: 'k' },
+    { name: 'X-Amz-Security-Token', value: 's' },
+    { name: 'Content-Type', value: 'application/json' },
+    { name: 'ETag', value: 'W/"abc"' },
+  ];
+  const redacted = redactHeaderList(list);
+  assert(redacted.length === list.length, 'the redaction must not drop headers');
+  for (let i = 0; i < 7; i++) {
+    assert(redacted[i].value === '[redacted]', `${list[i].name} must be redacted by value: ${JSON.stringify(redacted[i])}`);
+    assert(redacted[i].name === list[i].name, `the header name must be preserved: ${JSON.stringify(redacted[i])}`);
+  }
+  assert(
+    redacted[7].value === 'application/json' && redacted[8].value === 'W/"abc"',
+    `non-secret headers must be untouched: ${JSON.stringify(redacted.slice(7))}`,
+  );
+}
+
+// A HAR carries every recorded request's and response's headers, and this repo
+// commits evidence-out artifacts to a public remote, so a page-supplied bearer
+// token or API key would be published irreversibly. Credential header VALUES are
+// redacted by default (names, counts, status and URL metadata stay);
+// --no-redact-headers is the explicit opt-out (web-uplift-dxk).
+//
+// Scope note, measured rather than assumed: Chrome keeps Set-Cookie and Cookie out
+// of the Network.requestWillBeSent / responseReceived events this harness consumes
+// (they live in the *ExtraInfo events it does not listen to), so the headers that
+// actually reach a HAR today are page-supplied request headers such as
+// Authorization and X-Api-Key. The full name list is still applied defensively,
+// and testRedactHeaderList covers all of it without a browser.
+async function testHarRedactsCredentialHeaders() {
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/api') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(
+      '<!doctype html><title>creds</title><link rel="icon" href="data:,">' +
+        '<script>fetch("/api",{headers:{Authorization:"Bearer super-secret-token","X-Api-Key":"super-secret-api-key"}})</script>',
+    );
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const url = `http://127.0.0.1:${port}/`;
+    const token = 'super-secret-token';
+    const apiKey = 'super-secret-api-key';
+
+    const out = join(tmp, 'redacted-network.har');
+    const result = await gather('har', url, { quiet: true, wait: 600, out });
+    const harText = readFileSync(out, 'utf8');
+    const summaryText = readFileSync(result.summaryArtifact, 'utf8');
+    const har = JSON.parse(harText);
+
+    for (const [label, text] of [['the HAR', harText], ['the network summary', summaryText]]) {
+      assert(!text.includes(token), `${label} must not carry the raw Authorization value`);
+      assert(!text.includes(apiKey), `${label} must not carry the raw API-key value`);
+    }
+
+    const api = har.log.entries.find((e) => e.request.url.endsWith('/api'));
+    assert(api, `the fixture request must be recorded: ${har.log.entries.map((e) => e.request.url).join(', ')}`);
+    const auth = (api.request.headers || []).find((h) => h.name.toLowerCase() === 'authorization');
+    assert(
+      auth && auth.value === '[redacted]',
+      `a request Authorization must be redacted by value: ${JSON.stringify(api.request.headers)}`,
+    );
+    const apiKeyHeader = (api.request.headers || []).find((h) => h.name.toLowerCase() === 'x-api-key');
+    assert(
+      apiKeyHeader && apiKeyHeader.value === '[redacted]',
+      `a request X-Api-Key must be redacted by value: ${JSON.stringify(api.request.headers)}`,
+    );
+    const contentType = (api.response.headers || []).find((h) => h.name.toLowerCase() === 'content-type');
+    assert(
+      contentType && contentType.value.includes('json'),
+      `a non-secret header must be untouched: ${JSON.stringify(api.response.headers)}`,
+    );
+
+    const rawOut = join(tmp, 'raw-network.har');
+    await gather('har', url, { quiet: true, wait: 600, out: rawOut, redactHeaders: false });
+    const rawText = readFileSync(rawOut, 'utf8');
+    assert(
+      rawText.includes(token) && rawText.includes(apiKey),
+      '--no-redact-headers must keep the raw credential values for an operator who accepts the risk',
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
   }
 }
