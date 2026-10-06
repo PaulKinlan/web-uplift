@@ -445,7 +445,7 @@ UNKNOWN: every raw-derived COMPARISON field is null (`coveragePct`, `isJsShell`,
 the presence comparisons, the empty-mount list, the raw size stats), not a
 finding about the page. The RUN FACTS survive by design - `fetchedStatus`
 records the status when one arrived, `fetchError` records the failure,
-`finalUrl` records the requested URL - precisely so an operator reads a 404 as
+`finalUrl` records the final URL once the exchange resolves (the requested URL only when it failed before a response) - precisely so an operator reads a 404 as
 a status rather than as an absence. A completed, empty 200 stays usable: observed emptiness is real
 evidence. A short budget therefore produces ABSENCE OF EVIDENCE, never evidence
 of absence.

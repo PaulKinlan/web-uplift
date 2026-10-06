@@ -211,8 +211,8 @@ emptiness is real evidence. Every raw-derived COMPARISON field is then null
 (`rawComparisonUsable: false` says why) - the coverage, the shell verdict, the
 presence comparisons, the empty-mount list and the raw size stats - while the
 RUN FACTS survive by design: `fetchedStatus` records the status when one
-arrived, `fetchError` records the failure and `finalUrl` records the requested
-URL, so an operator reads a 404 as a status rather than as an absence. A fetch
+arrived, `fetchError` records the failure and `finalUrl` records the final URL once the exchange
+resolves (the requested URL only when it failed before a response), so an operator reads a 404 as a status rather than as an absence. A fetch
 failure is a network condition, so a short budget produces ABSENCE OF EVIDENCE,
 never evidence of absence.
 
