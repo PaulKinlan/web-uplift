@@ -18,7 +18,7 @@ at the same canonical skill, so the methodology cannot drift.
 
 | Agent | Interactive entry point | Headless `--agent` | Status |
 |---|---|---|---|
-| Claude Code | `.claude/skills/web-audit/` (native skill) | `claude` | wired + real run verified |
+| Claude Code | `.claude/skills/web-audit/` (native skill) | `claude` | wired (scoped allowlist A/B-verified through the real `claude` CLI; end-to-end headless audit NOT re-run since the tightening) |
 | Codex | `.codex/skills/web-audit` -> symlink to the Claude skill; `AGENTS.md` | `codex` | wired (dry-run verified) |
 | Gemini CLI | `.gemini/commands/web-audit.toml` (`{{args}}` wrapper) | `gemini` | wired (dry-run verified) |
 | Antigravity | `.agents/skills/web-audit.md` (wrapper) | `agy` | wired (dry-run verified) |
@@ -157,7 +157,7 @@ to the repo.
 
 | Agent | Binary | Headless invocation | Tooling it needs |
 |---|---|---|---|
-| Claude Code | `claude` | `-p --output-format json --allowedTools …` | the evidence CLI (`Bash(node evidence/cli.mjs:*)`, `Bash(node .web-uplift/evidence/cli.mjs:*)`), the pinned guidance feed (`Bash(npx -y --ignore-scripts modern-web-guidance@0.0.172:*)`), `Bash(ffmpeg:*)`, file tools (set by the runner) |
+| Claude Code | `claude` | `-p --output-format json --allowedTools …` | file tools (set by the runner) plus Bash rules DERIVED from `SKILL_REQUIRED_COMMANDS` in [agents.mjs](agents.mjs): the six node scripts the skill instructs, each in four spellings (repo-relative, vendored `.web-uplift/`, absolute under the spawn root, vendored absolute), the pinned guidance feed (`Bash(npx -y --ignore-scripts modern-web-guidance@0.0.172:*)`), `Bash(mkdir:*)`, `Bash(ffmpeg:*)` |
 | Codex CLI | `codex` | `exec --json --sandbox workspace-write` | node + npx + ffmpeg on PATH |
 | Gemini CLI | `gemini` | `-p --yolo --output-format json` | node + npx + ffmpeg on PATH |
 | Antigravity CLI | `agy` | `-p --dangerously-skip-permissions` | node + npx + ffmpeg on PATH |
@@ -174,9 +174,12 @@ primitive.
 The agent also needs network access to query the Modern Web Guidance feed
 (`npx -y --ignore-scripts modern-web-guidance@0.0.172 …`, the version pinned as
 `guidanceCatalogVersion` in `knowledge/principles.json`). Claude's
-`--allowedTools` list names that invocation and the evidence CLI rather than the
-blanket `Bash(node:*)` / `Bash(npx:*)` prefixes, which matched any trailing
-arguments (web-uplift-tia). Lighthouse is deliberately NOT in the list:
+`--allowedTools` list is DERIVED from `SKILL_REQUIRED_COMMANDS` in
+[agents.mjs](agents.mjs) - the declared table of the node commands SKILL.md
+instructs - rather than granting the blanket `Bash(node:*)` / `Bash(npx:*)`
+prefixes, which matched any trailing arguments (web-uplift-tia), and
+`testHeadlessAllowlistMatchesSkillContract` fails if the table and the skill
+drift apart (web-uplift-7tj). Lighthouse is deliberately NOT in the list:
 `Bash(npx -y lighthouse:*)` is a prefix and would also match a lookalike package
 such as `npx -y lighthouse-evil`; add
 `Bash(npx -y lighthouse@<exact version>:*)` to `runner/agents.mjs` if a run needs
@@ -188,9 +191,10 @@ it.
   (Antigravity), and `--allow-all-tools` (Copilot) auto-approve *every* tool
   call. Fine against the playground; for batch runs over arbitrary third-party
   sites, run inside a container or VM. Claude's invocation uses a scoped
-  `--allowedTools` list instead. That list names the evidence CLI and the pinned
-  guidance feed, so `node -e '<code>'` and `npx -y <any-package>` are no longer
-  permitted by the allowlist. That narrows what a page can reach if it talks the
+  `--allowedTools` list instead. That list is derived from the skill contract
+table in [agents.mjs](agents.mjs), so `node -e '<code>'`, `npx -y <any-package>`
+and any node script the skill does not instruct are not permitted by the
+allowlist. That narrows what a page can reach if it talks the
   agent into running something, but it is NOT an execution sandbox: the node
   entries are path prefixes and the agent has Write access, and none of this
   replaces the container/VM requirement above for batch runs over untrusted

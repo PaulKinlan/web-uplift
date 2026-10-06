@@ -1,7 +1,7 @@
 {
   "package": "web-uplift",
   "version": "0.5.0",
-  "installedAt": "2026-10-06T03:45:11.902Z",
+  "installedAt": "2026-10-06T13:48:21.218Z",
   "agents": [
     "claude",
     "codex",
