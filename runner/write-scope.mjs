@@ -10,6 +10,16 @@
 // agent run (the baseline audit included), hand the operator a per-run diff, and
 // refuse to continue once a change lands outside the declared scope.
 //
+// Consumers and their allowed roots:
+//   fixer/fix.mjs        --target, --out and any --allow-write root: a fix may
+//                        legitimately edit source and write a report.
+//   runner/run-batch.mjs --out only: an audit's one legitimate write is its own run
+//                        directory, which is what makes this module reusable for the
+//                        batch path at all.
+// The module lives under runner/ because runner/ is vendored into .web-uplift/ by
+// `web-uplift install`, so anything the batch runner imports has to travel with it;
+// fixer/ is not vendored, which is why it is not there.
+//
 // THIS IS DETECTION, NOT CONFINEMENT, and saying so is the point. The child still
 // holds its agent CLI's write tools, and a determined agent can reach outside the
 // walked roots, so the walk is a tripwire on the realistic paths, not a sandbox.

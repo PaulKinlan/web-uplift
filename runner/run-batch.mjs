@@ -46,6 +46,7 @@ import { fileURLToPath } from 'node:url';
 import { AGENTS } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest, resolveLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from './write-scope.mjs';
 import { launchChrome, newSession } from '../evidence/cdp.mjs';
 
 const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
@@ -76,6 +77,37 @@ if (!agent) {
 }
 
 const outDir = args.out ?? 'reports';
+
+// Write scope for a batch audit. The agent that audits a URL ingests untrusted
+// page content and holds write tools, so each spawn is snapshotted and refused if
+// a change lands outside the audit's ONE legitimate output root: --out. The child's
+// cwd is set EXPLICITLY to the invocation directory rather than inherited, so the
+// spawn directory and the snapshot boundary are the same stated fact (and the
+// skill's `node .web-uplift/evidence/cli.mjs` still resolves, because install
+// vendors .web-uplift/ into the project root).
+const projectRoot = resolvePath(process.cwd());
+const outRoot = resolvePath(outDir);
+
+// NOTE on concurrency: each run is snapshotted around its own spawn, so with
+// --concurrency > 1 a diff can include another in-flight run's writes. That does
+// not weaken the refusal - anything outside --out is refused no matter which
+// worker wrote it - it only means the per-run diff is not a pristine attribution
+// when runs overlap.
+function snapshotScope() {
+  return snapshotTree(projectRoot, { extraRoots: [outRoot] });
+}
+
+function writeScopeFor(url, siteDir, scopeBefore, agentError) {
+  const changes = diffTrees(scopeBefore, snapshotScope());
+  return {
+    url,
+    allowedRoots: [outRoot],
+    changed: changes,
+    escapedOutsideScope: escapedChanges(changes, projectRoot, [outRoot]),
+    agentError: agentError ? String(agentError.message || agentError) : null,
+    recordWrittenTo: siteDir,
+  };
+}
 const concurrency = Number(args.concurrency ?? 2);
 const maxTurns = Number(args['max-turns'] ?? 80);
 const verbose = Boolean(args.verbose);
@@ -129,8 +161,13 @@ async function worker() {
 
     await mkdir(siteDir, { recursive: true });
     console.log(`auditing       ${url}`);
+    // Snapshot before the spawn, and diff even when the agent then dies: an agent
+    // that writes out of scope and exits non-zero must not hide the write.
+    const scopeBefore = snapshotScope();
+    let agentError = null;
+    let result = null;
+    let extra = '';
     try {
-      let extra = '';
       if (flow) {
         console.log(`replaying flow ${flow.title} (${flow.steps.length} steps)`);
         const res = await replayFlowIntoRun(url, siteDir);
@@ -138,7 +175,31 @@ async function worker() {
         console.log(`flow replayed  ${res.steps.length} step(s), ${failed} failed`);
         extra = flowExtra(siteDir);
       }
-      const result = await runAgent(url, siteDir, extra);
+      result = await runAgent(url, siteDir, extra);
+    } catch (err) {
+      agentError = err;
+    }
+
+    const scope = writeScopeFor(url, siteDir, scopeBefore, agentError);
+    await writeFile(join(siteDir, 'write-scope.json'), JSON.stringify(scope, null, 2) + '\n');
+    console.log(`  changed: ${summariseChanges(scope.changed)}`);
+    if (scope.escapedOutsideScope.length) {
+      failures.push({ url, reason: `wrote outside --out: ${scope.escapedOutsideScope.join(', ')}` });
+      console.error(
+        `CONFINEMENT FAILURE ${url}: this audit changed ${scope.escapedOutsideScope.length} path(s) outside ` +
+        `${outRoot}:\n  ${scope.escapedOutsideScope.join('\n  ')}\n` +
+        'The agent auditing an untrusted page held write tools, so this is a refusal, not a warning. Nothing is ' +
+        `reverted automatically; review ${join(siteDir, 'write-scope.json')}.`,
+      );
+      continue;
+    }
+    if (agentError) {
+      failures.push({ url, reason: String(agentError) });
+      console.error(`failed         ${url}: ${agentError}`);
+      continue;
+    }
+
+    try {
       await writeFile(join(siteDir, 'run.json'), result);
       const ok = await exists(join(siteDir, 'report.json'));
       if (ok) {
@@ -234,7 +295,11 @@ function runAgent(url, siteDir, extra = '') {
   const slug = slugify(url);
   if (verbose) console.log(`[${slug}] $ ${agent.bin} ${cliArgs.join(' ')}`);
   return new Promise((resolve, reject) => {
-    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // cwd is the project root, set explicitly rather than inherited: the skill
+    // finds the vendored tool at .web-uplift/evidence/cli.mjs relative to this
+    // directory, and it is the same directory the write-scope snapshot is anchored
+    // to, so the boundary is a stated fact instead of an inherited default.
+    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'], cwd: projectRoot });
     let out = '';
     let err = '';
     const echoOut = verbose ? linePrinter(`[${slug}] `, process.stdout) : null;

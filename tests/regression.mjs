@@ -61,6 +61,7 @@ try {
   testFixModeScopeEdgeCases();
   testFixIsolationAssertion();
   testFixIsolatedRunPublishes();
+  testBatchWriteScope();
   await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
   await testScorecardArtifactContainment();
@@ -3355,11 +3356,11 @@ async function testAxeKeepsPagePolicyAndDisclosesInjectionBypass() {
 
 // web-uplift-arp: fix mode drives an agent whose prompt context carries untrusted
 // page content, so what it writes is scoped to --target by snapshot + refusal
-// rather than by the filesystem. See fixer/write-scope.mjs for why rooting the
+// rather than by the filesystem. See runner/write-scope.mjs for why rooting the
 // child's cwd at --target is not an option (the skill's vendored tool path,
 // `.web-uplift/evidence/cli.mjs`, is relative to the PROJECT root).
 async function testFixWriteScopeDiffing() {
-  const { snapshotTree, diffTrees, escapedChanges, summariseChanges } = await import('../fixer/write-scope.mjs');
+  const { snapshotTree, diffTrees, escapedChanges, summariseChanges } = await import('../runner/write-scope.mjs');
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-scope-'));
   try {
     mkdirSync(join(root, 'sub'), { recursive: true });
@@ -3783,6 +3784,73 @@ function testFixIsolatedRunPublishes() {
       existsSync(join(root, 'reports', host, readlinkSync(join(root, 'reports', host, 'latest')), 'run-security.json')),
       'isolation run: the isolation record must travel into the retained result',
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// web-uplift-wy6: the batch audit path spawns the same write-capable agent as fix
+// mode against the same untrusted page content, so it gets the same write-scope
+// treatment. Its ONE legitimate output root is --out, so that test has two halves:
+// a normal audit must still complete end to end (or the guard has broken real
+// audits), and an audit that writes outside --out must refuse.
+function testBatchWriteScope() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-batchscope-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const findings = join(repoRoot, 'examples', 'playground-report.json');
+
+    // Stand-in agent CLI: writes a valid report.json into the run dir the batcher
+    // just created (what the real skill does), optionally plus an out-of-scope write.
+    const drive = ({ outName, escape }) => {
+      const outAbs = join(root, outName);
+      const bin = join(binDir, 'claude');
+      const lines = [
+        '#!/bin/sh',
+        `d=$(ls -dt ${JSON.stringify(outAbs)}/*/*/ 2>/dev/null | head -1)`,
+        `cp ${JSON.stringify(findings)} "$d/report.json"`,
+      ];
+      if (escape) lines.push(`printf 'pwned' > ${JSON.stringify(join(root, `escaped-${outName}.txt`))}`);
+      lines.push(`echo '{"agent":"stub"}'`);
+      writeFileSync(bin, lines.join('\n') + '\n');
+      chmodSync(bin, 0o755);
+      const res = run(
+        process.execPath,
+        [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com/', '--agent', 'claude', '--out', outName, '--concurrency', '1'],
+        { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
+      );
+      return { res, outAbs };
+    };
+
+    // A (positive control): a normal audit must still succeed end to end.
+    const a = drive({ outName: 'audit-out', escape: false });
+    assert(a.res.status === 0, `batch scope: a normal audit must exit 0 (got ${a.res.status})\n${a.res.stdout}${a.res.stderr}`);
+    assert(!/CONFINEMENT FAILURE/.test(a.res.stderr), `batch scope: a normal audit must not refuse:\n${a.res.stderr}`);
+    assert(/done \(coverage complete\)/.test(a.res.stdout), `batch scope: a normal audit must complete:\n${a.res.stdout}`);
+    const hostA = readdirSync(a.outAbs)[0];
+    const runA = readdirSync(join(a.outAbs, hostA))[0];
+    const scopeA = JSON.parse(readFileSync(join(a.outAbs, hostA, runA, 'write-scope.json'), 'utf8'));
+    assert(scopeA.escapedOutsideScope.length === 0, `batch scope: a clean audit records no escape: ${JSON.stringify(scopeA.escapedOutsideScope)}`);
+    assert(
+      scopeA.changed.added.some((p) => p.includes(join('audit-out', hostA))),
+      `batch scope: the audit's own output must be recorded but allowed, got ${JSON.stringify(scopeA.changed.added)}`,
+    );
+
+    // B: an audit that writes outside --out refuses, records the path, and does not
+    // promote itself as the newest run for the host.
+    const b = drive({ outName: 'audit-escape', escape: true });
+    assert(b.res.status !== 0, `batch scope: an escaping audit must exit non-zero (got ${b.res.status})`);
+    assert(/CONFINEMENT FAILURE/.test(b.res.stderr), `batch scope: the escape must be diagnosed:\n${b.res.stderr}`);
+    assert(/wrote outside --out/.test(b.res.stdout), `batch scope: the escape must be recorded as a failure:\n${b.res.stdout}`);
+    const hostB = readdirSync(b.outAbs)[0];
+    const runB = readdirSync(join(b.outAbs, hostB))[0];
+    const scopeB = JSON.parse(readFileSync(join(b.outAbs, hostB, runB, 'write-scope.json'), 'utf8'));
+    assert(
+      scopeB.escapedOutsideScope.some((p) => p.endsWith('escaped-audit-escape.txt')),
+      `batch scope: the escaped path must be recorded, got ${JSON.stringify(scopeB.escapedOutsideScope)}`,
+    );
+    assert(!existsSync(join(b.outAbs, hostB, 'latest')), 'batch scope: a refused audit must not promote itself as latest');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
