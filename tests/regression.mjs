@@ -47,6 +47,7 @@ try {
   await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
   await testScorecardArtifactContainment();
+  await testCompareArtifactContainment();
   await testDiscoverabilityHelpers();
   await testDiscoverabilityH1InRaw();
   await testTargetsPrimitive();
@@ -814,6 +815,14 @@ async function testScorecardArtifactContainment() {
       !html.includes(absSecret.toString('base64')),
       'scorecard: an absolute artifact path must not be read and inlined',
     );
+    // The base64 check above is NOT sufficient on its own: pre-fix, `join(dir,
+    // absPath)` produced a nonexistent path, so the file was never inlined and
+    // the assertion passed anyway - the leak was the emitted relative URL. Assert
+    // on the filename so this fails against the pre-fix code.
+    assert(
+      !html.includes('abs-secret.png'),
+      'scorecard: an absolute artifact path must not be emitted into the HTML at all',
+    );
     assert(
       !html.includes('../../outside'),
       'scorecard: an escaping artifact path must not be emitted as a relative src',
@@ -845,6 +854,75 @@ async function testScorecardArtifactContainment() {
       !cmpHtml.includes(relSecret.toString('base64')),
       'scorecard: a ../ before/after compare path must not be read and inlined',
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// web-uplift-2zj (reviewer finding): aggregate/compare.mjs had the same
+// uncontained-artifact shape as the scorecard - `resolveArtifact` fell back to a
+// bare `join(dir, p)`, and it ALSO passed absolute paths straight through, so a
+// report-supplied HAR path could be read from anywhere on disk. compare.md also
+// emitted before/after paths verbatim.
+async function testCompareArtifactContainment() {
+  const { compareReports, renderCompareMd } = await import('../aggregate/compare.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-compare-'));
+  try {
+    const dirA = join(root, 'host', 'r0');
+    const dirB = join(root, 'host', 'r1');
+    const outsideDir = join(root, 'outside');
+    for (const d of [dirA, dirB, outsideDir]) mkdirSync(d, { recursive: true });
+
+    // Same 2-entry HAR inside and outside, so "was it read?" is answered by the
+    // entry count alone: 2 means it was read, null means the guard refused.
+    const har = { log: { entries: [{ response: { _transferSize: 100 } }, { response: { _transferSize: 200 } }] } };
+    writeFileSync(join(outsideDir, 'rel-secret.har'), JSON.stringify(har));
+    // diffNetwork reads the A side against dirA and the B side against dirB, so
+  // the contained control has to exist in BOTH run dirs.
+  writeFileSync(join(dirA, 'run.har'), JSON.stringify(har));
+  writeFileSync(join(dirB, 'run.har'), JSON.stringify(har));
+    writeFileSync(join(outsideDir, 'rel-secret.png'), Buffer.from('COMPARE-TRAVERSAL-MARKER'));
+    writeFileSync(join(dirA, 'shot.png'), Buffer.from('COMPARE-LEGIT-MARKER'));
+
+    const base = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
+    const withArtifact = (path) => {
+      const r = structuredClone(base);
+      r.artifacts = [{ type: 'har', path }];
+      return r;
+    };
+    const contained = withArtifact('run.har');
+    const escaping = withArtifact('../../outside/rel-secret.har');
+    const absolute = withArtifact(join(outsideDir, 'rel-secret.har'));
+
+    // If either HAR had been read, its count would be 2. `null` on the unsafe
+    // side and 2 on the contained side is the containment proof AND the positive
+    // control in one assertion.
+    const blocked = compareReports(escaping, contained, { dirA, dirB });
+    assert(
+      blocked.network?.requestCount.before === null && blocked.network?.requestCount.after === 2,
+      `compare: an escaping HAR path must not be read while a contained one is (got ${JSON.stringify(blocked.network)})`,
+    );
+    const blockedAbs = compareReports(absolute, contained, { dirA, dirB });
+    assert(
+      blockedAbs.network?.requestCount.before === null,
+      `compare: an absolute HAR path must not be read (got ${JSON.stringify(blockedAbs.network)})`,
+    );
+
+    // compare.md must not emit an escaping or absolute image reference.
+    const cmp = {
+      ...compareReports(base, base, { dirA, dirB }),
+      screenshotPairs: [
+        { before: '../../outside/rel-secret.png', after: join(outsideDir, 'rel-secret.png'), caption: 'escape' },
+        { before: 'shot.png', after: 'shot.png', caption: 'legit' },
+      ],
+    };
+    const md = renderCompareMd(cmp, { hostName: 'example.test', runAId: 'r0', runBId: 'r1', dirA, dirB });
+    assert(!md.includes('../../outside'), 'compare.md: an escaping before/after path must not be emitted');
+    assert(!md.includes(outsideDir), 'compare.md: an absolute before/after path must not be emitted');
+    // Positive control: a contained path is still rendered (rewritten relative to
+    // runB's dir, which is why the legitimate reference itself starts with ../).
+    assert(md.includes('![before](../r0/shot.png)'), `compare.md: a contained before path must still be emitted:\n${md}`);
+    assert(md.includes('![after](shot.png)'), 'compare.md: a contained after path must still be emitted');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

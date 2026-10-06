@@ -24,6 +24,7 @@ import { join, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostSlug, pickRuns } from '../runner/run-history.mjs';
 import { countOutstanding, completionState } from '../runner/remaining-work.mjs';
+import { containedArtifactPath, isSafeArtifactPath } from './artifact-path.mjs';
 
 export function compareReports(reportA, reportB, { dirA, dirB } = {}) {
   const principleChanges = diffPrinciples(reportA, reportB);
@@ -263,8 +264,11 @@ function pairScreenshots(a, b) {
 // --- shared -----------------------------------------------------------------
 
 function resolveArtifact(dir, p) {
-  if (!p) return null;
-  return isAbsolute(p) ? p : join(dir, p);
+  // web-uplift-2zj: a report is untrusted input, so an artifact path must not
+  // resolve outside its run directory. Before this, `isAbsolute(p) ? p :
+  // join(dir, p)` let a crafted `artifacts[].path` (
+  // '../../../../etc/passwd') or an absolute path be read into JSON.parse here.
+  return containedArtifactPath(dir, p);
 }
 
 function round(n) {
@@ -354,8 +358,8 @@ export function renderCompareMd(cmp, { hostName, runAId, runBId, dirA, dirB } = 
       lines.push('');
       lines.push('| Before | After |');
       lines.push('|---|---|');
-      const beforeRef = p.before ? `![before](${relForMd(dirB, dirA, p.before)})` : '_n/a_';
-      const afterRef = p.after ? `![after](${p.after})` : '_n/a_';
+      const beforeRef = p.before && isSafeArtifactPath(p.before) ? `![before](${relForMd(dirB, dirA, p.before)})` : '_n/a_';
+      const afterRef = p.after && isSafeArtifactPath(p.after) ? `![after](${p.after})` : '_n/a_';
       lines.push(`| ${beforeRef} | ${afterRef} |`);
     }
     lines.push('');
