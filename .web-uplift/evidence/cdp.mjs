@@ -240,6 +240,49 @@ function removeDirNow(dir) {
 // slow one. The fix for that is retrying the launch, not waiting longer.
 const DEVTOOLS_ENDPOINT_TIMEOUT_MS = 20000;
 
+// Hard deadlines for the CDP waits. A starved host can leave a browser that
+// never answers: Page.loadEventFired never fires, the attach never completes,
+// the domain enables never resolve. Until these bounds existed a run on such a
+// host hung forever (the dl6 reproduction), and nothing on the path failed
+// loudly. Now every wait on the attach and navigation path is bounded, and the
+// failure names what it waited for, the bound, and how to raise it
+// (--cdp-deadline / WEB_UPLIFT_CDP_DEADLINE_MS). The defaults are overridable
+// per call so tests can use tiny values, and from the CLI via
+// configureCdpDeadlines (main wires the flag and the environment there).
+let navigationDeadlineMsDefault = 30000;
+let cdpCallDeadlineMsDefault = 30000;
+
+export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
+  if (Number.isFinite(navigationMs) && navigationMs > 0) navigationDeadlineMsDefault = navigationMs;
+  if (Number.isFinite(callMs) && callMs > 0) cdpCallDeadlineMsDefault = callMs;
+}
+
+// Bound a CDP wait. A rejection carries the bound, what was being awaited, and
+// how to raise the bound, so a starved host produces an actionable error
+// instead of an indefinite hang.
+export function withDeadline(promise, ms, description) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(() => {
+      rejectPromise(
+        new Error(
+          `web-uplift: timed out after ${ms}ms waiting for ${description} ` +
+            '(raise the bound with --cdp-deadline <ms> or WEB_UPLIFT_CDP_DEADLINE_MS)',
+        ),
+      );
+    }, ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolvePromise(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        rejectPromise(e);
+      },
+    );
+  });
+}
+
 // A wedge or a lost race is transient and a fresh attempt is cheap (1-2 s), so
 // retry the WHOLE launch - new profile dir included - with a small jittered
 // backoff rather than a fixed lockstep delay on an already starved box.
@@ -502,19 +545,22 @@ async function withRetry(fn, { label, attempts = 8, delayMs = 200, maxDelayMs = 
 
 // Open a fresh CDP session against a new target (tab) and enable the domains we
 // rely on across the auditor. Returns the CDP client plus a per-target cleanup.
-export async function newSession(port, { log = () => {} } = {}) {
+export async function newSession(port, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault } = {}) {
   // Create a dedicated target via the /json/new HTTP endpoint and attach to the
   // WebSocket URL it returns directly. A bare CDP({ port }) uses chrome-remote-
   // interface's default target chooser, which reads /json/list and throws
   // "No inspectable targets" when Chrome for Testing 154 boots without a usable
   // default page (the default New Tab can fail with "incorrect profile type").
   // /json/new does not depend on that page, so a fresh target is deterministic.
-  const target = await withRetry(() => CDP.New({ port }), { label: 'create CDP target' });
+  const target = await withRetry(
+    () => withDeadline(CDP.New({ port }), cdpDeadlineMs, 'the browser to accept a new target (CDP /json/new)'),
+    { label: 'create CDP target' },
+  );
 
   let client;
   try {
     client = await withRetry(
-      () => CDP({ target: target.webSocketDebuggerUrl }),
+      () => withDeadline(CDP({ target: target.webSocketDebuggerUrl }), cdpDeadlineMs, 'the browser to accept a CDP attach'),
       { label: 'attach to CDP target' },
     );
   } catch (err) {
@@ -525,13 +571,11 @@ export async function newSession(port, { log = () => {} } = {}) {
 
   const targetId = target.id;
   const { Page, Runtime, DOM, CSS, Emulation, Network } = client;
-  await Promise.all([
-    Page.enable(),
-    Runtime.enable(),
-    DOM.enable(),
-    CSS.enable(),
-    Network.enable(),
-  ]);
+  await withDeadline(
+    Promise.all([Page.enable(), Runtime.enable(), DOM.enable(), CSS.enable(), Network.enable()]),
+    cdpDeadlineMs,
+    'the browser to enable the CDP domains',
+  );
   void Emulation;
   log('[browser] session ready');
 
@@ -563,19 +607,19 @@ export async function newSession(port, { log = () => {} } = {}) {
 export async function navigate(
   client,
   url,
-  { settleMs = 1200, log = () => {}, beforeTargetNavigate = null } = {},
+  { settleMs = 1200, log = () => {}, beforeTargetNavigate = null, navigationDeadlineMs = navigationDeadlineMsDefault } = {},
 ) {
   const { Page } = client;
 
   const blanked = Page.loadEventFired();
-  await Page.navigate({ url: 'about:blank' });
-  await blanked;
+  await withDeadline(Page.navigate({ url: 'about:blank' }), navigationDeadlineMs, 'the about:blank navigation to be accepted');
+  await withDeadline(blanked, navigationDeadlineMs, 'the load event for about:blank');
 
-  if (beforeTargetNavigate) await beforeTargetNavigate();
+  if (beforeTargetNavigate) await withDeadline(beforeTargetNavigate(), navigationDeadlineMs, 'the pre-navigation preparation');
 
   const loaded = Page.loadEventFired();
-  await Page.navigate({ url });
-  await loaded;
+  await withDeadline(Page.navigate({ url }), navigationDeadlineMs, `the navigation to ${url} to be accepted`);
+  await withDeadline(loaded, navigationDeadlineMs, `the load event for ${url}`);
   log(`[browser] loaded ${url}`);
   if (settleMs > 0) {
     await new Promise((r) => setTimeout(r, settleMs));

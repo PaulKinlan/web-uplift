@@ -41,6 +41,7 @@ try {
   await testHarRedirects();
   await testCredentialRedactionHelpers();
   await testHarCredentialRedaction();
+  await testCdpDeadline();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -5011,3 +5012,123 @@ async function testHarCredentialRedaction() {
     server.close();
   }
 }
+
+// web-uplift-17o: a starved host can leave the browser never answering, and until the CDP
+// deadline landed the evidence CLI waited INDEFINITELY (the dl6 reproduction). The honest
+// evidence is a BOUNDED REPRODUCTION of the wait, not an assertion that a timeout constant
+// exists: a server that accepts connections and never responds is the starvation condition
+// itself (the load event never fires), and the navigation must fail loudly within the order
+// of the deadline, naming the URL, the bound and how to raise it.
+async function testCdpDeadline() {
+  const { withDeadline, launchChrome, newSession, navigate } = await import(
+    pathToFileURL(join(repoRoot, 'evidence/cdp.mjs')).href
+  );
+
+  // THE MECHANISM, directly: a promise that never settles must reject within the bound,
+  const t0 = Date.now();
+  let mechErr = null;
+  try {
+    await withDeadline(new Promise(() => {}), 120, 'the test wait');
+  } catch (e) {
+    mechErr = e;
+  }
+  assert(
+    mechErr && mechErr.message.includes('timed out after 120ms waiting for the test wait'),
+    `17o deadline: a never-settling wait must reject with the loud text (${mechErr && mechErr.message})`,
+  );
+  assert(
+    mechErr && mechErr.message.includes('--cdp-deadline'),
+    '17o deadline: the error must say how to raise the bound',
+  );
+  assert(
+    Date.now() - t0 < 5000,
+    `17o deadline: the rejection must arrive at the order of the bound, not the suite timeout (${Date.now() - t0}ms)`,
+  );
+  // and a promise that settles must pass through undisturbed.
+  assert(
+    (await withDeadline(Promise.resolve(42), 120, 'a settled wait')) === 42,
+    '17o deadline: a settling promise must pass through',
+  );
+
+  // --out naming a directory (or a path with a missing parent) must fail LOUDLY AND FAST,
+  // before any browser is launched - the raw EISDIR used to surface from writeFileSync
+  // mid-run and read as a tool bug.
+  const healthy = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<!doctype html><title>ok</title><p>healthy</p>');
+  });
+  await new Promise((res) => healthy.listen(0, '127.0.0.1', res));
+  const page = `http://127.0.0.1:${healthy.address().port}/`;
+  const t1 = Date.now();
+  const badOut = run(process.execPath, ['evidence/cli.mjs', 'dom', page, '--out', tmp]);
+  assert(badOut.status !== 0, `17o --out: a directory must be rejected (exit ${badOut.status})`);
+  assert(
+    (badOut.stderr || '').includes('must be a file path') && (badOut.stderr || '').includes(tmp),
+    `17o --out: the error must name the path (${badOut.stderr})`,
+  );
+  assert(
+    Date.now() - t1 < 20000,
+    `17o --out: the rejection must precede any browser launch (${Date.now() - t1}ms)`,
+  );
+  const missingParent = run(process.execPath, ['evidence/cli.mjs', 'dom', page, '--out', join(tmp, 'no-such-dir', 'x.json')]);
+  assert(
+    missingParent.status !== 0 && (missingParent.stderr || '').includes('does not exist'),
+    `17o --out: a missing parent directory must be rejected loudly (${missingParent.stderr})`,
+  );
+
+  // THE REAL PATH: a server that accepts connections and never answers. The first
+  // navigation (about:blank) completes; the second load event never fires, and the
+  // deadline must turn an indefinite hang into a loud, bounded failure.
+  const sockets = new Set();
+  const blackhole = http.createServer(() => {
+    /* accept and never answer */
+  });
+  blackhole.on('connection', (sock) => {
+    sockets.add(sock);
+    sock.on('close', () => sockets.delete(sock));
+  });
+  await new Promise((res) => blackhole.listen(0, '127.0.0.1', res));
+  const chrome = await launchChrome({ log: () => {} });
+  try {
+    const session = await newSession(chrome.port, { log: () => {} });
+    try {
+      const starvedUrl = `http://127.0.0.1:${blackhole.address().port}/`;
+      const t2 = Date.now();
+      let navErr = null;
+      try {
+        await navigate(session.client, starvedUrl, { settleMs: 0, navigationDeadlineMs: 400 });
+      } catch (e) {
+        navErr = e;
+      }
+      const elapsed = Date.now() - t2;
+      assert(
+        navErr && navErr.message.includes('timed out after 400ms') && navErr.message.includes(starvedUrl),
+        `17o: a starved navigation must fail loudly, naming the URL and the bound (${navErr && navErr.message})`,
+      );
+      assert(
+        elapsed < 15000,
+        `17o: the starved navigation must return at the order of the deadline, not the suite timeout (${elapsed}ms)`,
+      );
+      // CONTROL: the same navigation with a generous deadline against a healthy server must
+      // complete, so the bound is not just always-failing.
+      let controlErr = null;
+      try {
+        await navigate(session.client, page, { settleMs: 0, navigationDeadlineMs: 20000 });
+      } catch (e) {
+        controlErr = e;
+      }
+      assert(
+        !controlErr,
+        `17o control: a healthy navigation under a generous deadline must complete (${controlErr && controlErr.message})`,
+      );
+    } finally {
+      await session.close();
+    }
+  } finally {
+    await chrome.close();
+    blackhole.close();
+    for (const sock of sockets) sock.destroy();
+    healthy.close();
+  }
+}
+

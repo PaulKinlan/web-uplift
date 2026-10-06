@@ -73,13 +73,13 @@ import {
   existsSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, relative } from 'node:path';
+import { join, resolve, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { BlockList, isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
-import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence } from './cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
 
@@ -3672,6 +3672,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--out') args.out = argv[++i];
+    else if (a === '--cdp-deadline') args.cdpDeadline = Number(argv[++i]);
     else if (a === '--emulate-media') args.emulateMediaRaw = argv[++i];
     else if (a === '--viewport') args.viewportRaw = argv[++i];
     else if (a === '--max-nodes') args.maxNodes = Number(argv[++i]);
@@ -3779,9 +3780,31 @@ async function main() {
         '         --locale de-DE --timezone Asia/Tokyo\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f --interact-deadline ms\n' +
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies\n' +
+        '         --cdp-deadline ms (bound every CDP attach/navigation wait; default 30000)\n' +
         '         --no-redact-headers (keep raw credential header values; publication risk) --quiet',
     );
     process.exit(1);
+  }
+  // --out names a FILE: a directory (EISDIR) or a missing parent surfaces at the
+  // first writeFileSync as a raw syscall error, which reads as a tool bug rather
+  // than an argument mistake (the dl6 footgun). Validate once here - opts.out
+  // flows into every writeFileSync site - before any browser is launched.
+  if (args.out) {
+    const resolvedOut = resolve(args.out);
+    if (existsSync(resolvedOut) && statSync(resolvedOut).isDirectory()) {
+      console.error(`web-uplift: --out names a directory, but it must be a file path: ${resolvedOut}`);
+      process.exit(1);
+    }
+    const outDir = dirname(resolvedOut);
+    if (!existsSync(outDir)) {
+      console.error(`web-uplift: --out's directory does not exist: ${outDir}`);
+      process.exit(1);
+    }
+  }
+  // The flag beats the environment; either overrides the CDP wait defaults.
+  const deadlineArg = Number(args.cdpDeadline ?? process.env.WEB_UPLIFT_CDP_DEADLINE_MS);
+  if (Number.isFinite(deadlineArg) && deadlineArg > 0) {
+    configureCdpDeadlines({ navigationMs: deadlineArg, callMs: deadlineArg });
   }
   const result = await gather(primitive, url, args);
   // Print the result (or artifact pointer) as JSON to stdout for the model.
