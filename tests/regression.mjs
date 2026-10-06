@@ -42,6 +42,8 @@ try {
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
   await testAxeKeepsPagePolicyAndDisclosesInjectionBypass();
+  await testHeadersPrimitiveFindsHeadersRegardlessOfNameCase();
+  await testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
   await testEvidenceTruncationReporting();
@@ -1768,6 +1770,211 @@ function testSchemaValidation() {
   validateJson(ajv, configSchema, 'web-uplift.example.json');
   validateJson(ajv, findingsSchema, 'examples/playground-report.json');
   validateJson(ajv, findingsSchema, 'examples/playground-report-fixed.json');
+}
+
+// The headers primitive reads a site's security response headers, and header names
+// are case-insensitive (RFC 9110): Chrome hands them over as the server sent them, so
+// an HTTP/1.1 response arrives capitalised and an HTTP/2 one lowercased. The lookup
+// used to be lowercase-only, which made every capitalised response report all six
+// headers as missing - a false negative written into the tool's own security
+// evidence. This drives the real primitive over both wire shapes and checks that a
+// header the response does not send still reads as absent, so the fix cannot be
+// over-broad (web-uplift-0w6).
+async function testHeadersPrimitiveFindsHeadersRegardlessOfNameCase() {
+  const page = (title) =>
+    `<!doctype html><html lang="en"><head><title>${title}</title></head><body><main><h1>${title}</h1></main></body></html>`;
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/caps') {
+      // HTTP/1.1 wire shape: Node writes header names exactly as given.
+      res.writeHead(200, {
+        'Content-Type': 'text/html',
+        'Content-Security-Policy': "default-src 'self'",
+        'Strict-Transport-Security': 'max-age=63072000',
+      });
+      res.end(page('caps'));
+      return;
+    }
+    if (path === '/lower') {
+      // The shape HTTP/2 delivers: the case that already worked, kept as a
+      // regression guard in the other direction.
+      res.writeHead(200, {
+        'content-type': 'text/html',
+        'content-security-policy': "default-src 'self'",
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(page('lower'));
+      return;
+    }
+    if (path === '/empty') {
+      // Present but empty protects nothing: it must read as its own state, not as
+      // absent and not as a pass.
+      res.setHeader('Content-Security-Policy', '');
+      res.setHeader('Referrer-Policy', '');
+      res.setHeader('Strict-Transport-Security', 'max-age=63072000');
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(page('empty'));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(page('bare'));
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    // Prove the fixtures carry the casing each case is about: res.rawHeaders keeps
+    // the wire casing, while res.headers is lowercased by Node itself and would
+    // prove nothing here.
+    const wireNames = async (path) =>
+      new Promise((resolve, reject) => {
+        const request = http.get(`${base}${path}`, (res) => {
+          const names = res.rawHeaders.filter((_, index) => index % 2 === 0);
+          res.resume();
+          resolve(names);
+        });
+        request.on('error', reject);
+      });
+    assert(
+      (await wireNames('/caps')).includes('Content-Security-Policy'),
+      'the HTTP/1.1 fixture must really send a capitalised header name',
+    );
+    assert(
+      (await wireNames('/lower')).includes('content-security-policy'),
+      'the lowercase fixture must really send a lowercase header name',
+    );
+
+    const caps = await gather('headers', `${base}/caps`, { quiet: true, wait: 400 });
+    assert(
+      caps.securityHeaders['content-security-policy'].present === true,
+      `a capitalised response header must be found: ${JSON.stringify(caps.securityHeaders['content-security-policy'])}`,
+    );
+    assert(
+      caps.securityHeaders['content-security-policy'].value === "default-src 'self'",
+      `the header value must survive the normalisation: ${JSON.stringify(caps.securityHeaders['content-security-policy'])}`,
+    );
+    assert(
+      caps.securityHeaders['strict-transport-security'].present === true,
+      `a capitalised HSTS header must be found: ${JSON.stringify(caps.securityHeaders['strict-transport-security'])}`,
+    );
+    assert(
+      caps.securityHeaders['x-frame-options'].present === false,
+      `a header the response does not send must still read as absent: ${JSON.stringify(caps.securityHeaders['x-frame-options'])}`,
+    );
+
+    const lower = await gather('headers', `${base}/lower`, { quiet: true, wait: 400 });
+    assert(
+      lower.securityHeaders['content-security-policy'].present === true,
+      `a lowercase response header must still be found: ${JSON.stringify(lower.securityHeaders['content-security-policy'])}`,
+    );
+    assert(
+      lower.securityHeaders['x-content-type-options'].present === true,
+      `a lowercase nosniff header must still be found: ${JSON.stringify(lower.securityHeaders['x-content-type-options'])}`,
+    );
+
+    const bare = await gather('headers', `${base}/bare`, { quiet: true, wait: 400 });
+    assert(
+      bare.securityHeaders['content-security-policy'].present === false &&
+        bare.securityHeaders['strict-transport-security'].present === false,
+      `a response that sends no security headers must report none: ${JSON.stringify(bare.securityHeaders)}`,
+    );
+
+    // Present-but-empty is a third state. Reading it as absent would be the false
+    // negative this bead fixed; reading it as a pass would be false assurance - an
+    // empty security header protects nothing.
+    const empty = await gather('headers', `${base}/empty`, { quiet: true, wait: 400 });
+    const emptyCsp = empty.securityHeaders['content-security-policy'];
+    assert(emptyCsp.present === true, `a header sent with an empty value is still present: ${JSON.stringify(emptyCsp)}`);
+    assert(
+      emptyCsp.empty === true && emptyCsp.value === '',
+      `an empty value must be recorded as its own state: ${JSON.stringify(emptyCsp)}`,
+    );
+    assert(
+      emptyCsp.issues.includes('present but empty'),
+      `an empty security header must not read as a pass: ${JSON.stringify(emptyCsp)}`,
+    );
+    assert(
+      empty.securityHeaders['referrer-policy'].empty === true,
+      `an empty referrer-policy is empty too: ${JSON.stringify(empty.securityHeaders['referrer-policy'])}`,
+    );
+    const controlHsts = empty.securityHeaders['strict-transport-security'];
+    assert(
+      controlHsts.present === true && controlHsts.empty === false && controlHsts.issues.length === 0,
+      `a header sent with a value must read as neither absent nor empty: ${JSON.stringify(controlHsts)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// The HAR path reads two header values out of the raw CDP objects: a request's
+// content-type and a redirect's location. Both were looked up by one exact casing
+// ('Content-Type', and only 'Location'/'location'), so any other casing was missed
+// - the fetch API sends a lower-case name, and a server may send LOCATION in any
+// case at all. Both now go through headerMap, the same lower-casing the rest of
+// the HAR path uses (web-uplift-0w6).
+async function testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase() {
+  const received = [];
+  const page = (title, script = '') =>
+    `<!doctype html><html lang="en"><head><title>${title}</title></head><body><main><h1>${title}</h1></main>${script}</body></html>`;
+  const postScript = `<script>fetch('/post',{method:'POST',headers:{'content-type':'application/json'},body:'{"a":1}'}).catch(()=>{})</script>`;
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/post') {
+      received.push(req.rawHeaders);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
+    if (path === '/redirect') {
+      res.writeHead(302, { 'LOCATION': '/final', 'Content-Type': 'text/html' });
+      res.end(page('redirect', postScript));
+      return;
+    }
+    // A redirect response body is never executed, so the POST belongs to the page
+    // the redirect lands on.
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(page(path === '/final' ? 'final' : 'root', path === '/final' ? postScript : ''));
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    // Prove the fixtures: the redirect really leaves with an all-caps name, and the
+    // POST really arrives with a lower-case one.
+    const wire = await new Promise((resolve, reject) => {
+      const request = http.get(`${base}/redirect`, (res) => {
+        const names = res.rawHeaders.filter((_, index) => index % 2 === 0);
+        res.resume();
+        resolve(names);
+      });
+      request.on('error', reject);
+    });
+    assert(wire.includes('LOCATION'), `the redirect fixture must really send an all-caps header name: ${JSON.stringify(wire)}`);
+
+    const out = join(tmp, 'har-header-case.har');
+    await gather('har', `${base}/redirect`, { quiet: true, wait: 1200, out });
+    const entries = JSON.parse(readFileSync(out, 'utf8')).log.entries;
+    const redirect = entries.find((entry) => entry.response.status === 302);
+    assert(redirect, `the redirect entry must be recorded: ${JSON.stringify(entries.map((entry) => entry.response.status))}`);
+    assert(
+      redirect.response.redirectURL === '/final',
+      `a redirect location must be read whatever case its name arrives in: ${JSON.stringify(redirect.response.redirectURL)}`,
+    );
+    assert(received.length > 0, 'the fixture must have received the POST');
+    assert(
+      received[0].includes('content-type'),
+      `the POST must really arrive with a lower-case header name: ${JSON.stringify(received[0])}`,
+    );
+    const post = entries.find((entry) => entry.request.method === 'POST');
+    assert(post, `the POST entry must be recorded: ${JSON.stringify(entries.map((entry) => entry.request.method))}`);
+    assert(
+      post.request.postData?.mimeType === 'application/json',
+      `a request content-type must be read whatever case its name arrives in: ${JSON.stringify(post.request.postData)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
 }
 
 function testInstalledEvidenceCli() {
