@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { gather, iconSatisfies, waitForInteractEvidence } from '../evidence/cli.mjs';
+import { gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -19,6 +19,7 @@ try {
   testPackageRootImportIsSideEffectFree();
   testChromeCandidateDiscovery();
   testIconSatisfiesMatrix();
+  testFirstPartyHostMatrix();
   await testLaunchRetryAndDiagnostics();
   testSchemaValidation();
   testAtomicCoverageValidator();
@@ -2386,5 +2387,50 @@ function testIconSatisfiesMatrix() {
         `iconSatisfies must classify like the direct construction for ${size}: ${JSON.stringify(icons)}`,
       );
     }
+  }
+}
+
+// The label-boundary comparison is shared by the trackers first-party test and
+// the cookies domain test. The raw suffix match it replaced called lookalikes
+// first-party ('evil-example.com' for a page on 'example.com', or the reverse),
+// and the cookies call site kept its own copy of that bug until web-uplift-yu8,
+// which is why there is now one helper. This pins it over the lookalike matrix,
+// including full-width subdomains and the cookie leading-dot form.
+function testFirstPartyHostMatrix() {
+  const core = [
+    ['example.com', 'example.com', true],
+    ['sub.example.com', 'example.com', true],
+    ['a.b.example.com', 'example.com', true],
+    ['evil-example.com', 'example.com', false],
+    ['notexample.com', 'example.com', false],
+    ['example.com.evil.net', 'example.com', false],
+    ['example.com', 'sub.example.com', false],
+    [undefined, 'example.com', false],
+    ['example.com', '', false],
+    ['example.com', undefined, false],
+  ];
+  for (const [host, base, expected] of core) {
+    assert(
+      isFirstPartyHost(host, base) === expected,
+      `isFirstPartyHost(${JSON.stringify(host)}, ${JSON.stringify(base)}) must be ${expected}`,
+    );
+  }
+
+  const cookie = [
+    ['example.com', 'example.com', false],
+    ['sub.example.com', '.example.com', false],
+    ['a.b.example.com', 'example.com', false],
+    ['example.com', 'evil-example.com', true],
+    ['evil-example.com', 'example.com', true],
+    ['notexample.com', 'example.com', true],
+    ['example.com', undefined, false],
+    ['example.com', '', false],
+    ['', 'example.com', true],
+  ];
+  for (const [pageHost, domain, expected] of cookie) {
+    assert(
+      isThirdPartyCookie(pageHost, domain) === expected,
+      `isThirdPartyCookie(${JSON.stringify(pageHost)}, ${JSON.stringify(domain)}) must be ${expected}`,
+    );
   }
 }
