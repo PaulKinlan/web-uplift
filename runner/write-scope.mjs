@@ -95,10 +95,16 @@ export function isExcludedPath(relPath) {
 // this is how a --target that lives outside the invocation directory still gets a
 // diff. A root already covered by another root is skipped, so overlapping roots
 // do not double-walk.
-export function snapshotTree(base, { extraRoots = [], exclude = isExcludedPath } = {}) {
+export function snapshotTree(base, { extraRoots = [], exclude = isExcludedPath, walkUnder = [] } = {}) {
   const entries = new Map();
   const baseAbs = resolve(base);
   const wanted = [baseAbs, ...extraRoots.filter(Boolean).map((r) => resolve(r))];
+  // Roots that must be traversed even when the exclusion predicate would skip them,
+  // and whose ANCESTORS must be descended through to reach them. The batch runner's
+  // default output is the reports directory, which the generic exclusion exists to
+  // avoid tripping over - but that also made the default output tree invisible in
+  // both directions, so the caller names it here and the walk covers it deliberately.
+  const forcedRoots = walkUnder.filter(Boolean).map((w) => resolve(w));
   const roots = wanted.filter((r, i) => !wanted.some((other, j) => j !== i && (r === other ? j < i : r.startsWith(other + sep))));
 
   const walk = (rootAbs, dirAbs) => {
@@ -111,7 +117,8 @@ export function snapshotTree(base, { extraRoots = [], exclude = isExcludedPath }
     for (const child of children) {
       const abs = join(dirAbs, child.name);
       const key = relative(baseAbs, abs);
-      if (exclude(key)) continue;
+      const forced = forcedRoots.some((w) => abs === w || abs.startsWith(w + sep) || w.startsWith(abs + sep));
+      if (!forced && exclude(key)) continue;
       if (child.isSymbolicLink()) {
         try {
           entries.set(key, `link:${readlinkSync(abs)}`);

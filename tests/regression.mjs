@@ -3789,11 +3789,11 @@ function testFixIsolatedRunPublishes() {
   }
 }
 
-// web-uplift-wy6: the batch audit path spawns the same write-capable agent as fix
-// mode against the same untrusted page content, so it gets the same write-scope
-// treatment. Its ONE legitimate output root is --out, so that test has two halves:
-// a normal audit must still complete end to end (or the guard has broken real
-// audits), and an audit that writes outside --out must refuse.
+// web-uplift-wy6: the batch audit path gets the same write-scope accounting as fix
+// mode, with FOUR things a review found missing: the DEFAULT output must be walked
+// (the generic exclusion skips a directory named reports/), a refused run must not be
+// usable as the current result for its URL, concurrent runs must not refuse each
+// other's clean work, and the escape path must be exercised with a FAILING agent.
 function testBatchWriteScope() {
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-batchscope-'));
   try {
@@ -3801,56 +3801,92 @@ function testBatchWriteScope() {
     mkdirSync(binDir, { recursive: true });
     const findings = join(repoRoot, 'examples', 'playground-report.json');
 
-    // Stand-in agent CLI: writes a valid report.json into the run dir the batcher
-    // just created (what the real skill does), optionally plus an out-of-scope write.
-    const drive = ({ outName, escape }) => {
-      const outAbs = join(root, outName);
+    const drive = ({ args = [], body, extraArgs = [], cwd = root }) => {
       const bin = join(binDir, 'claude');
-      const lines = [
-        '#!/bin/sh',
-        `d=$(ls -dt ${JSON.stringify(outAbs)}/*/*/ 2>/dev/null | head -1)`,
-        `cp ${JSON.stringify(findings)} "$d/report.json"`,
-      ];
-      if (escape) lines.push(`printf 'pwned' > ${JSON.stringify(join(root, `escaped-${outName}.txt`))}`);
-      lines.push(`echo '{"agent":"stub"}'`);
-      writeFileSync(bin, lines.join('\n') + '\n');
-      chmodSync(bin, 0o755);
-      const res = run(
-        process.execPath,
-        [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com/', '--agent', 'claude', '--out', outName, '--concurrency', '1'],
-        { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
-      );
-      return { res, outAbs };
+      if (body) {
+        writeFileSync(bin, `#!/bin/sh\n${body}\n`);
+        chmodSync(bin, 0o755);
+      }
+      const res = run(process.execPath, [join(repoRoot, 'runner', 'run-batch.mjs'), ...args, '--agent', 'claude', ...extraArgs],
+        { cwd, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+      return res;
+    };
+    const writesReport = (outAbs) => [
+      `d=$(ls -dt ${JSON.stringify(outAbs)}/*/*/ 2>/dev/null | head -1)`,
+      `cp ${JSON.stringify(findings)} "$d/report.json"`,
+    ].join('\n');
+    const hostDir = (outName) => {
+      const abs = join(root, outName);
+      const host = readdirSync(abs)[0];
+      return { root: join(abs, host), run: readdirSync(join(abs, host)).find((e) => !e.startsWith('latest')) };
     };
 
-    // A (positive control): a normal audit must still succeed end to end.
-    const a = drive({ outName: 'audit-out', escape: false });
-    assert(a.res.status === 0, `batch scope: a normal audit must exit 0 (got ${a.res.status})\n${a.res.stdout}${a.res.stderr}`);
-    assert(!/CONFINEMENT FAILURE/.test(a.res.stderr), `batch scope: a normal audit must not refuse:\n${a.res.stderr}`);
-    assert(/done \(coverage complete\)/.test(a.res.stdout), `batch scope: a normal audit must complete:\n${a.res.stdout}`);
-    const hostA = readdirSync(a.outAbs)[0];
-    const runA = readdirSync(join(a.outAbs, hostA))[0];
-    const scopeA = JSON.parse(readFileSync(join(a.outAbs, hostA, runA, 'write-scope.json'), 'utf8'));
-    assert(scopeA.escapedOutsideScope.length === 0, `batch scope: a clean audit records no escape: ${JSON.stringify(scopeA.escapedOutsideScope)}`);
+    // 1. THE DEFAULT OUTPUT (no --out at all, i.e. `reports/`) must be walked and
+    //    recorded as an allowed change. A positive control on a convenient custom
+    //    output name hid exactly this: the default tree is dropped by the generic
+    //    exclusion, so it was unwatched in both directions.
+    const dflt = drive({ args: ['https://example.com/'], extraArgs: ['--concurrency', '1'], body: writesReport(join(root, 'reports')) });
+    assert(dflt.status === 0, `batch default output: a normal audit must exit 0 (got ${dflt.status})\n${dflt.stdout}${dflt.stderr}`);
+    assert(/done \(coverage complete\)/.test(dflt.stdout), `batch default output: the audit must complete:\n${dflt.stdout}`);
+    const dfltRun = hostDir('reports');
+    const dfltScope = JSON.parse(readFileSync(join(dfltRun.root, dfltRun.run, 'write-scope.json'), 'utf8'));
+    assert(dfltScope.escapedOutsideScope.length === 0, `batch default output: nothing refused (${JSON.stringify(dfltScope.escapedOutsideScope)})`);
     assert(
-      scopeA.changed.added.some((p) => p.includes(join('audit-out', hostA))),
-      `batch scope: the audit's own output must be recorded but allowed, got ${JSON.stringify(scopeA.changed.added)}`,
+      dfltScope.changed.added.some((p) => p.includes(join('reports', 'example_com'))),
+      `batch default output: the DEFAULT output tree must be recorded as an allowed change, got ${JSON.stringify(dfltScope.changed.added)}`,
     );
 
-    // B: an audit that writes outside --out refuses, records the path, and does not
-    // promote itself as the newest run for the host.
-    const b = drive({ outName: 'audit-escape', escape: true });
-    assert(b.res.status !== 0, `batch scope: an escaping audit must exit non-zero (got ${b.res.status})`);
-    assert(/CONFINEMENT FAILURE/.test(b.res.stderr), `batch scope: the escape must be diagnosed:\n${b.res.stderr}`);
-    assert(/wrote outside --out/.test(b.res.stdout), `batch scope: the escape must be recorded as a failure:\n${b.res.stdout}`);
-    const hostB = readdirSync(b.outAbs)[0];
-    const runB = readdirSync(join(b.outAbs, hostB))[0];
-    const scopeB = JSON.parse(readFileSync(join(b.outAbs, hostB, runB, 'write-scope.json'), 'utf8'));
+    // 2. A REFUSED RUN MUST NOT BE THE CURRENT RESULT. The refusal skips the pointer,
+    //    but latest resolution falls back to the newest run CONTAINING a report, so a
+    //    refused run could become what --resume treats as done and skip the URL.
+    const refused = drive({ args: ['https://refused.example/'], extraArgs: ['--concurrency', '1', '--out', 'r-out'],
+      body: `${writesReport(join(root, 'r-out'))}\nprintf 'pwned' > ${JSON.stringify(join(root, 'escaped.txt'))}` });
+    assert(refused.status !== 0, `batch refusal: an escaping audit must exit non-zero (${refused.status})`);
+    const refusedHost = join(root, 'r-out', readdirSync(join(root, 'r-out'))[0]);
+    const refusedRun = readdirSync(refusedHost).find((e) => !e.startsWith('latest'));
+    assert(existsSync(join(refusedHost, refusedRun, 'run-refused.json')), 'batch refusal: the run must be marked as refused');
+    assert(!existsSync(join(refusedHost, refusedRun, 'report.json')), 'batch refusal: a refused run must not leave a report behind');
+    const resume = drive({ args: ['https://refused.example/'], extraArgs: ['--concurrency', '1', '--out', 'r-out', '--resume'], body: writesReport(join(root, 'r-out')) });
+    assert(!/resume skip/.test(resume.stdout), `batch refusal: --resume must NOT skip a URL whose only run was refused:\n${resume.stdout}`);
+
+    // 3. CONCURRENCY MUST NOT REFUSE CLEAN WORK. Two URLs, one escaping agent: the
+    //    clean URL shares the project tree, so an overlapping snapshot window would
+    //    catch the other agent's write and refuse it too. The scope windows are
+    //    serialized; the clean URL must complete.
+    const twoUp = drive({
+      args: ['https://clean.example/', 'https://dirty.example/'],
+      extraArgs: ['--concurrency', '2', '--out', 'c-out'],
+      // The stub derives its run dir from the URL slug rather than parsing the prompt
+      // or trusting mtime: under --concurrency the two workers' directories are
+      // created within milliseconds of each other, and a newest-first guess puts the
+      // report in the wrong run (which is a bug in the test, not in the guard).
+      body: [
+        `slug=$(printf '%s\\n' "$@" | grep -o 'https://[a-z]*\\.example' | head -1 | sed 's#https://##; s/\\./_/g')`,
+        `d=$(ls -dt ${JSON.stringify(join(root, 'c-out'))}/"$slug"/*/ 2>/dev/null | head -1)`,
+        `cp ${JSON.stringify(findings)} "$d/report.json"`,
+        `case "$*" in *dirty.example*) printf 'pwned' > ${JSON.stringify(join(root, 'c-escaped.txt'))};; esac`,
+      ].join('\\n'),
+    });
+    assert(twoUp.status !== 0, 'batch concurrency: the dirty URL must still fail the batch');
     assert(
-      scopeB.escapedOutsideScope.some((p) => p.endsWith('escaped-audit-escape.txt')),
-      `batch scope: the escaped path must be recorded, got ${JSON.stringify(scopeB.escapedOutsideScope)}`,
+      /done \(coverage complete\)\s+https:\/\/clean\.example\//.test(twoUp.stdout),
+      `batch concurrency: the CLEAN url must still complete when a neighbour escapes:\n${twoUp.stdout}`,
     );
-    assert(!existsSync(join(b.outAbs, hostB, 'latest')), 'batch scope: a refused audit must not promote itself as latest');
+
+    // 4. THE ESCAPE PATH WITH A FAILING AGENT: the diff must still be computed and the
+    //    refusal still recorded when the agent exits non-zero (the earlier stub always
+    //    exited 0, so this path was untested).
+    const failing = drive({ args: ['https://failing.example/'], extraArgs: ['--concurrency', '1', '--out', 'f-out'],
+      body: `printf 'pwned' > ${JSON.stringify(join(root, 'f-escaped.txt'))}\nexit 7` });
+    assert(failing.status !== 0, `batch failing agent: must exit non-zero (${failing.status})`);
+    assert(/CONFINEMENT FAILURE/.test(failing.stderr), `batch failing agent: the escape must still be diagnosed:\n${failing.stderr}`);
+    const failingHost = join(root, 'f-out', readdirSync(join(root, 'f-out'))[0]);
+    const failingRun = readdirSync(failingHost).find((e) => !e.startsWith('latest'));
+    const failingScope = JSON.parse(readFileSync(join(failingHost, failingRun, 'write-scope.json'), 'utf8'));
+    assert(
+      failingScope.escapedOutsideScope.some((p) => p.endsWith('f-escaped.txt')),
+      `batch failing agent: the escaped path must be recorded even though the agent died (${JSON.stringify(failingScope.escapedOutsideScope)})`,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

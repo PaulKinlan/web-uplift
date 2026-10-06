@@ -39,8 +39,8 @@
  * state. This runner ORCHESTRATES the fan-out; it contains no checks.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile, access } from 'node:fs/promises';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS } from './agents.mjs';
@@ -94,7 +94,23 @@ const outRoot = resolvePath(outDir);
 // worker wrote it - it only means the per-run diff is not a pristine attribution
 // when runs overlap.
 function snapshotScope() {
-  return snapshotTree(projectRoot, { extraRoots: [outRoot] });
+  // --out is a walked root even when its name is one the generic exclusion skips
+  // (the DEFAULT is `reports`), so the audit's own output is recorded as an allowed
+  // change instead of being invisible in both directions.
+  return snapshotTree(projectRoot, { extraRoots: [outRoot], walkUnder: [outRoot] });
+}
+
+// P1c: with two workers in flight, each agent's writes land inside the other's
+// snapshot window, so one agent's out-of-scope write can refuse a CLEAN URL (it loses
+// completion and its latest promotion). A guard that fails clean work is worse than
+// no guard, so the scope-accounted spawns are serialized: one snapshot -> spawn ->
+// diff at a time. The cost is stated in --help and the README: a batch run with
+// --concurrency > 1 that includes agent runs is effectively serial while auditing.
+let scopeWindow = Promise.resolve();
+function withScopeWindow(fn) {
+  const run = scopeWindow.then(fn, fn);
+  scopeWindow = run.then(() => undefined, () => undefined);
+  return run;
 }
 
 function writeScopeFor(url, siteDir, scopeBefore, agentError) {
@@ -128,6 +144,11 @@ if (!urls.length) {
 }
 
 console.log(`${urls.length} URLs via ${agentName}, concurrency ${concurrency}, output -> ${outDir}/`);
+if (concurrency > 1) {
+  console.log('note: agent runs are scope-accounted one at a time, so a batch audit is effectively');
+  console.log('      serial while auditing - the snapshot/spawn/diff window cannot overlap, or one');
+  console.log('      run would refuse a clean URL that happened to be auditing beside it.');
+}
 
 const queue = [...urls];
 const failures = [];
@@ -161,30 +182,46 @@ async function worker() {
 
     await mkdir(siteDir, { recursive: true });
     console.log(`auditing       ${url}`);
-    // Snapshot before the spawn, and diff even when the agent then dies: an agent
-    // that writes out of scope and exits non-zero must not hide the write.
-    const scopeBefore = snapshotScope();
-    let agentError = null;
-    let result = null;
-    let extra = '';
-    try {
-      if (flow) {
-        console.log(`replaying flow ${flow.title} (${flow.steps.length} steps)`);
-        const res = await replayFlowIntoRun(url, siteDir);
-        const failed = res.steps.filter((s) => !s.ok).length;
-        console.log(`flow replayed  ${res.steps.length} step(s), ${failed} failed`);
-        extra = flowExtra(siteDir);
+    // ONE scope window at a time (see withScopeWindow): the snapshot, the spawn and
+    // the diff are a single critical section, so no other worker's writes can land
+    // inside this window and refuse a clean URL. The diff is still computed when the
+    // agent dies - an agent that writes out of scope and exits non-zero must not hide
+    // the write.
+    const { scope, result, agentError } = await withScopeWindow(async () => {
+      const scopeBefore = snapshotScope();
+      let scopedError = null;
+      let scopedResult = null;
+      let extra = '';
+      try {
+        if (flow) {
+          console.log(`replaying flow ${flow.title} (${flow.steps.length} steps)`);
+          const res = await replayFlowIntoRun(url, siteDir);
+          const failed = res.steps.filter((s) => !s.ok).length;
+          console.log(`flow replayed  ${res.steps.length} step(s), ${failed} failed`);
+          extra = flowExtra(siteDir);
+        }
+        scopedResult = await runAgent(url, siteDir, extra);
+      } catch (err) {
+        scopedError = err;
       }
-      result = await runAgent(url, siteDir, extra);
-    } catch (err) {
-      agentError = err;
-    }
+      return { scope: writeScopeFor(url, siteDir, scopeBefore, scopedError), result: scopedResult, agentError: scopedError };
+    });
 
-    const scope = writeScopeFor(url, siteDir, scopeBefore, agentError);
     await writeFile(join(siteDir, 'write-scope.json'), JSON.stringify(scope, null, 2) + '\n');
     console.log(`  changed: ${summariseChanges(scope.changed)}`);
     if (scope.escapedOutsideScope.length) {
       failures.push({ url, reason: `wrote outside --out: ${scope.escapedOutsideScope.join(', ')}` });
+      // Mark the run AND remove its report: latest resolution falls back to the newest
+      // run directory that CONTAINS a report when there is no pointer, so leaving one
+      // behind would let a refused run become what a later --resume treats as current
+      // for this URL - and that URL would then be skipped. The refusal record
+      // (write-scope.json + this marker) is what survives, not the agent's claim.
+      try {
+        await writeFile(join(siteDir, 'run-refused.json'), JSON.stringify({ url, reason: 'wrote outside --out', escapedOutsideScope: scope.escapedOutsideScope, at: new Date().toISOString() }, null, 2) + '\n');
+        await rm(join(siteDir, 'report.json'), { force: true });
+      } catch (err) {
+        console.error(`Could not mark the refused run: ${err.message}`);
+      }
       console.error(
         `CONFINEMENT FAILURE ${url}: this audit changed ${scope.escapedOutsideScope.length} path(s) outside ` +
         `${outRoot}:\n  ${scope.escapedOutsideScope.join('\n  ')}\n` +
@@ -234,6 +271,9 @@ function hasCompletedLatest(url) {
   const hostRoot = join(outDir, hostSlug(url));
   const latestDir = resolveLatest(hostRoot);
   if (!latestDir) return false;
+  // Belt and braces beside removing the report: a run marked as refused is never the
+  // current result, however resolution reached it.
+  if (existsSync(join(latestDir, 'run-refused.json'))) return false;
   return validateAtomicReport(join(latestDir, 'report.json')).ok;
 }
 
