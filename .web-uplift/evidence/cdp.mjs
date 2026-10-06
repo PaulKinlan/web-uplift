@@ -429,7 +429,10 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs }
     );
   } catch (err) {
     // spawn itself failed (binary vanished, EACCES): no process, no group,
-    // just the empty profile dir to drop before reporting.
+    // just the empty profile dir to drop before reporting. The attempt is
+    // still recorded (pid null - none was created), or a run of failed
+    // launches would leave the run tree with no sign a browser was ever tried.
+    recordLaunchFailure({ pid: null, profileDir: userDataDir, reason: `spawn failed: ${err.message}` });
     removeDirNow(userDataDir);
     return {
       ok: false,
@@ -523,6 +526,13 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs }
       signal: proc.signalCode,
       stderrText,
     };
+    // Attribute the failed attempt BEFORE teardown: close() reaps the tree and
+    // removes the profile, and a post-mortem needs the pid/profile/reason of
+    // the attempt that just died (web-uplift-6x7).
+    // Attribute the failed attempt BEFORE teardown: close() reaps the tree and
+    // removes the profile, and a post-mortem needs the pid/profile/reason of
+    // the attempt that just died (web-uplift-6x7).
+    recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: err.message });
     // The browser we spawned (or its wedged tree) must not outlive the failure,
     // and its profile dir must not be left behind for the next attempt.
     await close();
@@ -588,6 +598,7 @@ export function recordLaunch({ primitive, url, chrome, launchesFile = process.en
       launchesFile,
       JSON.stringify({
         ts: new Date().toISOString(),
+        outcome: 'launched',
         primitive,
         url,
         pid: chrome.proc?.pid ?? null,
@@ -597,6 +608,33 @@ export function recordLaunch({ primitive, url, chrome, launchesFile = process.en
     );
   } catch {
     // Observability is not evidence: never fail the primitive over a marker.
+  }
+}
+
+// The failure twin of recordLaunch (web-uplift-6x7). A launch attempt that
+// fails AFTER the browser process exists tears the tree down and removes the
+// profile - nothing is orphaned - but nothing was attributable either: the run
+// tree had no record that a browser ever existed for this attempt. Record what
+// the attempt knew (pid once spawned, profile dir, the failure reason) to the
+// same launches.jsonl with outcome:'failed', so a post-mortem can tell a dead
+// attempt from a live one. Same contract as recordLaunch: env-unset is a
+// no-op, and a marker failure never breaks the launch path.
+export function recordLaunchFailure({ pid, profileDir, reason, launchesFile = process.env.WEB_UPLIFT_LAUNCH_LOG } = {}) {
+  if (!launchesFile) return;
+  try {
+    appendFileSync(
+      launchesFile,
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        outcome: 'failed',
+        pid: pid ?? null,
+        profileDir: profileDir ?? null,
+        reason: String(reason ?? 'unknown'),
+        launcherPid: process.pid,
+      }) + '\n',
+    );
+  } catch {
+    // Observability is not evidence: never fail the launch path over a marker.
   }
 }
 

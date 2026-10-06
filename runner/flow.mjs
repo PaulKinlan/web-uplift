@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchChrome, newSession, navigate, evaluate, sleep } from '../evidence/cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep, recordLaunch } from '../evidence/cdp.mjs';
 
 // --- flow loading / normalisation -------------------------------------------
 
@@ -196,6 +196,9 @@ async function main() {
     const outDir = opt('out') || `reports/flow-${Date.now()}/evidence`;
     const log = (m) => console.error(m);
     const chrome = await launchChrome({ log });
+    // Operator-present launch, attributed like every agent-run primitive
+    // (web-uplift-6x7): env-unset is a no-op.
+    recordLaunch({ primitive: 'flow-replay', url: startUrl ?? null, chrome });
     try {
       const session = await newSession(chrome.port, { log });
       try {
@@ -218,6 +221,8 @@ async function main() {
     const log = (m) => console.error(m);
     const { recordFlow } = await import('./flow-record.mjs');
     const chrome = await launchChrome({ log, headless: false });
+    // Same attribution as the replay path (web-uplift-6x7).
+    recordLaunch({ primitive: 'flow-record', url, chrome });
     try {
       const session = await newSession(chrome.port, { log });
       try {
