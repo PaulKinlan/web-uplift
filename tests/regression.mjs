@@ -4373,10 +4373,18 @@ function testBatchWriteScope() {
         body: `d=$(ls -dt ${JSON.stringify(dupOut)}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncp ${JSON.stringify(findings)} "$d/report.json"\nchmod 0500 "$(dirname \"$d\")"`,
       });
       assert(/could not publish completion/.test(dup.stderr), `batch publication failure: the failure must be reported:\n${dup.stderr}`);
-      const dupFailures = (dup.stdout.match(/https:\/\/dup\.example\//g) || []).length;
+      // Counting APPEARANCES was too weak: it could be satisfied by the URL being mentioned
+      // without the duplicate ever being attempted. Assert the duplicate's OWN failure
+      // REASON instead - a second, DISTINCT reason in the summary is proof the second attempt
+      // actually ran rather than being skipped by the in-memory set.
+      const reasons = [...dup.stdout.matchAll(/https:\/\/dup\.example\/: ([^\n]+)/g)].map((m) => m[1].trim());
       assert(
-        dupFailures >= 2,
-        `batch publication failure: the URL whose publication FAILED must not count as complete, so the duplicate must still be ATTEMPTED (saw ${dupFailures} mentions):\n${dup.stdout}`,
+        reasons.some((r) => /completion could not be published|could not publish completion/.test(r)),
+        `batch publication failure: the publication failure must appear as its own reason (saw ${JSON.stringify(reasons)})`,
+      );
+      assert(
+        reasons.length >= 2 && new Set(reasons).size >= 2,
+        `batch publication failure: the duplicate must be ATTEMPTED and carry its own reason, not merely be mentioned (saw ${JSON.stringify(reasons)})`,
       );
     } finally {
       // Restore what the fixture made read-only, or the suite's own cleanup cannot
