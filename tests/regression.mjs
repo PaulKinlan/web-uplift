@@ -78,6 +78,7 @@ try {
   await testDiscoverabilityH1InRaw();
   await testTargetsPrimitive();
   await testResiliencePrimitive();
+  await testResilienceWaitsForLateServiceWorkerRegistration();
   await testA11yTreePrimitive();
   await testBaselineOracle();
   await testFlowNormalize();
@@ -1306,6 +1307,90 @@ async function testFeaturesPrimitive() {
 // all (the navigation fails with a net error). It also checks that CDP's worker
 // list is attributed per origin, because the domain also reports the browser's
 // own extension workers (web-uplift-7v3).
+// A service worker registration is reported by the ServiceWorker domain asynchronously, so
+// under load it can land after the navigation settle window has closed. The primitive used
+// to extend its wait only when a page-origin registration had ALREADY been observed - which
+// is exactly the state the race produces - so a slow registration was snapshotted as no
+// service worker at all: an intermittent false negative in an audit finding
+// (web-uplift-5jd). This fixture makes the race deterministic instead of waiting for
+// contention to produce it: the page registers its worker after the settle window expires,
+// so the registration can only be reported if the primitive waits for it.
+async function testResilienceWaitsForLateServiceWorkerRegistration() {
+  const swJs = [
+    "self.addEventListener('install', (e) => { e.waitUntil(caches.open('late-v1').then((c) => c.addAll(['/']))); });",
+    "self.addEventListener('fetch', (e) => { e.respondWith(fetch(e.request)); });",
+  ].join('\n');
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    const send = (type, body) => {
+      res.writeHead(200, { 'Content-Type': type });
+      res.end(body);
+    };
+    if (path === '/sw.js') return send('text/javascript', swJs);
+    if (path === '/no-worker') {
+      return send('text/html', '<!doctype html><html><head><title>No worker</title></head>' +
+        '<body><h1>No worker</h1></body></html>');
+    }
+    return send('text/html', '<!doctype html><html><head><title>Late worker</title>' +
+      // 1200ms is well past the 400ms settle passed below, so the registration is
+      // guaranteed to be unobserved when the settle window closes.
+      '<script>setTimeout(() => navigator.serviceWorker.register("/sw.js"), 1200);</script>' +
+      '</head><body><h1>Late worker</h1></body></html>');
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    // screenshots: false, matching the other resilience fixtures that assert state rather
+    // than pixels: without it (or an `out` path) the primitive derives the offline
+    // screenshot name from the report path and writes it into the working directory, which
+    // leaves an untracked file in the checkout after every suite run.
+    const result = await gather('resilience', `${base}/`, { quiet: true, wait: 400, screenshots: false });
+    const regs = result.serviceWorker?.cdp?.registrations ?? [];
+    assert(
+      regs.some((r) => r.pageOrigin && String(r.scopeURL).startsWith(base)),
+      `resilience: a registration landing after the settle window must still be reported, got ${JSON.stringify(regs)}`,
+    );
+    assert(
+      result.serviceWorker?.scriptTextHasFetchListener === true,
+      `resilience: the late worker's script must still be read, got ${JSON.stringify(result.serviceWorker)}`,
+    );
+
+    // The report has to say which of the two claims it is making. A worker observed inside
+    // the window must not be recorded as an expired window (web-uplift-5jd).
+    const seen = result.serviceWorker?.observation;
+    assert(
+      seen?.registrationObserved === true && seen?.budgetExhausted === false,
+      `resilience: an observed registration must not be reported as an exhausted window, got ${JSON.stringify(seen)}`,
+    );
+    assert(
+      seen?.budgetMs > 0 && seen?.waitedMs <= seen.budgetMs,
+      `resilience: the observation window must be recorded with what was actually spent, got ${JSON.stringify(seen)}`,
+    );
+
+    // The other half of the distinction: a page with no worker at all. The primitive cannot
+    // prove absence - it can only say the window closed with nothing observed - so the
+    // artifact has to carry that caveat rather than leaving a reader to infer absence from
+    // an empty list.
+    const bare = await gather('resilience', `${base}/no-worker`, { quiet: true, wait: 400, screenshots: false });
+    const unseen = bare.serviceWorker?.observation;
+    assert(
+      unseen?.registrationObserved === false && unseen?.budgetExhausted === true,
+      `resilience: a page with no worker must be recorded as an expired window, not as an observation of one, got ${JSON.stringify(unseen)}`,
+    );
+    assert(
+      typeof unseen?.note === 'string' && unseen.note.includes('not evidence of absence'),
+      `resilience: an expired window must carry its caveat in the artifact itself, got ${JSON.stringify(unseen)}`,
+    );
+    assert(
+      (bare.serviceWorker?.page?.registrations?.length ?? -1) === 0 &&
+        bare.installabilitySignals?.serviceWorkerRegistered === false,
+      `resilience: a page with no worker should still report none in the page view, got ${JSON.stringify(bare.serviceWorker?.page)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
 async function testResiliencePrimitive() {
   const swJs = [
     "const CACHE = 'fixture-v1';",

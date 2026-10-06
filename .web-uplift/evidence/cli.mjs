@@ -3237,8 +3237,36 @@ async function resilience(client, url, opts, log) {
     log,
     beforeTargetNavigate: () => applyConditions(client, opts, log),
   });
-  // Activation usually lands inside the settle window; wait a bounded moment
-  // more when a page-origin worker is still installing.
+  // The ServiceWorker domain reports registrations asynchronously, so a page-origin
+  // registration can be observed after the settle window - under load, well after it. The
+  // wait therefore has to cover "not observed yet" as well as "observed but not yet
+  // activated": the previous condition required a page-origin registration to EXIST before
+  // it would wait at all, which is precisely the state the race produces, so a slow
+  // registration was snapshotted as no service worker and the audit recorded a false
+  // negative (web-uplift-5jd).
+  //
+  // Cost, stated because it is real: a page with no worker pays the whole budget once per
+  // resilience call. That is the cheaper error - the alternative is reporting that a site
+  // has no service worker when it does.
+  //
+  // The budget cannot be infinite, so what the report says about it matters: an empty
+  // registration list is an OBSERVATION made inside a bounded window, not proof of absence,
+  // and the two are recorded separately below in serviceWorker.observation. A page that
+  // registers later, or a browser under load, produces the same empty state, so a consumer
+  // that reads the list alone would repeat the false negative this wait exists to prevent.
+  const REGISTRATION_WAIT_BUDGET_MS = 2000;
+  const REGISTRATION_WAIT_STEP_MS = 200;
+  let registrationWaitedMs = 0;
+  while (registrationWaitedMs < REGISTRATION_WAIT_BUDGET_MS && sw.pageOriginRegistrations().length === 0) {
+    await sleep(REGISTRATION_WAIT_STEP_MS);
+    registrationWaitedMs += REGISTRATION_WAIT_STEP_MS;
+  }
+  const registrationObserved = sw.pageOriginRegistrations().length > 0;
+  // The loop only exits early on success, so "nothing observed" and "the window closed"
+  // are the same fact here; both are recorded because a reader should not have to derive it.
+  const registrationBudgetExhausted = !registrationObserved;
+  // Activation usually lands inside the settle window; wait a bounded moment more when a
+  // page-origin worker is registered but still installing.
   for (let i = 0; i < 10 && sw.pageOriginRegistrations().length && sw.pageOriginActiveVersions() === 0; i++) {
     await sleep(300);
   }
@@ -3247,7 +3275,10 @@ async function resilience(client, url, opts, log) {
   log(
     `[evidence] resilience: ${sw.pageOriginRegistrations().length} service worker registration(s) for this origin ` +
       `(${cdpWorkers.registrations.length} seen by CDP, which includes the browser's own extension workers), ` +
-      `${sw.pageOriginActiveVersions()} activated`,
+      `${sw.pageOriginActiveVersions()} activated` +
+      (registrationObserved
+        ? ''
+        : ` - none observed within ${registrationWaitedMs}ms of waiting, which is an expired observation window rather than evidence of absence`),
   );
 
   const pageWorkers = await evaluate(
@@ -3375,6 +3406,26 @@ async function resilience(client, url, opts, log) {
       page: pageWorkers,
       scriptURL: swScriptUrl,
       scriptTextHasFetchListener: swScriptHasFetchListener,
+      // What this run could and could not establish about registration. `page.registrations`
+      // being empty means "not observed inside this window", never "absent": the primitive
+      // cannot await a registration the page makes on its own schedule, so the window is
+      // recorded alongside the list and carries its own caveat when it expired
+      // (web-uplift-5jd).
+      observation: {
+        budgetMs: REGISTRATION_WAIT_BUDGET_MS,
+        waitedMs: registrationWaitedMs,
+        registrationObserved: registrationObserved,
+        budgetExhausted: registrationBudgetExhausted,
+        ...(registrationBudgetExhausted
+          ? {
+              note:
+                `No page-origin service worker registration was observed within ` +
+                `${REGISTRATION_WAIT_BUDGET_MS}ms of waiting after the settle window. This is an ` +
+                `observation window that expired, not evidence of absence: a page that registers ` +
+                `later, or a browser under load, produces the same empty state.`,
+            }
+          : {}),
+      },
     },
     installabilitySignals: {
       secureContext,
@@ -3399,7 +3450,7 @@ async function resilience(client, url, opts, log) {
       screenshot: offlineScreenshot,
     },
     note:
-      'Offline and installable evidence for be-resilient. The page is loaded ONLINE first so a service worker can install, activate and cache, then Network.emulateNetworkConditions(offline: true) is applied and the URL is reloaded: `offline.navigationFailed` is the net error Page.navigate reported, and `offline.rendered` is what actually painted (title, text, controller state) with `offline.screenshot` as the legible artifact - a failed navigation with no worker means the site is unusable offline, while a rendered fallback (or the cached page) is the offline story. `installabilitySignals` are the mechanical signals Chrome uses (secure context, resolved manifest with a name, 192 and 512 icons, a standalone-ish display, a registered service worker, and a fetch listener found by reading the worker script - a stated text heuristic, not a browser verdict), so judge installability from them rather than from any one field. Worker state comes from the ServiceWorker CDP domain (every entry says whether it belongs to the audited origin, because the domain also reports the browser\'s own extension workers) and is cross-checked against the page view, which is the only source for the controller. Descriptive signal, not a verdict.',
+      'Offline and installable evidence for be-resilient. The page is loaded ONLINE first so a service worker can install, activate and cache, then Network.emulateNetworkConditions(offline: true) is applied and the URL is reloaded: `offline.navigationFailed` is the net error Page.navigate reported, and `offline.rendered` is what actually painted (title, text, controller state) with `offline.screenshot` as the legible artifact - a failed navigation with no worker means the site is unusable offline, while a rendered fallback (or the cached page) is the offline story. `installabilitySignals` are the mechanical signals Chrome uses (secure context, resolved manifest with a name, 192 and 512 icons, a standalone-ish display, a registered service worker, and a fetch listener found by reading the worker script - a stated text heuristic, not a browser verdict), so judge installability from them rather than from any one field. Worker state comes from the ServiceWorker CDP domain (every entry says whether it belongs to the audited origin, because the domain also reports the browser\'s own extension workers) and is cross-checked against the page view, which is the only source for the controller. `serviceWorker.observation` states the bounded window registration was looked for in: `registrationObserved` false with `budgetExhausted` true means none was seen inside that window, which is NOT the same claim as the page having no worker, and must not be reported as one. Descriptive signal, not a verdict.',
   };
   return emit(opts, result, client);
 }
