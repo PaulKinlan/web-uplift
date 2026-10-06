@@ -124,6 +124,36 @@ for breaking skill/schema changes):
    `.claude/skills/web-audit/SKILL.md` per the `files` allowlist).
 6. `git tag v<VERSION> && git push && git push --tags`.
 
+### Current release: v0.5.0
+
+Minor over v0.4.2, cut on 2026-10-06 from the same audit line. Three defects fixed,
+one record added, and the skill change that makes a release necessary at all:
+
+- **Fix mode requires an operator-supplied isolation assertion** and scopes every
+  agent run; a refused run publishes nothing. The tool still does not sandbox the
+  agent, and README.md ("Running it safely") states what the boundary must
+  guarantee; the CHANGELOG entry is the precise version of what changed.
+- **The axe primitive audits the page under the page's own policy.** The policy used
+  to be lifted before navigation, so the page's own blocked scripts ran during the
+  audit and the result never said so. It is now lifted only for the injection of
+  the vendored engine, and `cspBypassedForInjection`/`cspBypassNote` record that it
+  happened, so a reader can tell such a run from one with no bypass.
+- **The headers primitive matches header names case-insensitively and reports three
+  states per header** - absent, present with a value, present but empty. A
+  capitalised response previously reported every security header as absent, and an
+  empty value now reads as neither missing nor satisfied. `present` for
+  `x-content-type-options` means "the response sent the header"; `issues` carries
+  the value judgement.
+- **The install manifest records the vendored dependency tree**
+  (`vendoredDependencies`), which no consumer lockfile covers.
+- **`conditions` records the emulation profile a run was measured under** -
+  `profile` (`mobile` or `desktop`), `deviceScaleFactor` and `mobile`, alongside the
+  dimensions - so an artifact can be read without having watched stderr. A run with
+  no device-metrics override still records no profile rather than an invented one.
+- The skill's frontmatter `description` is wrapped over several lines, with the
+  parsed value unchanged. That is the change that made this release necessary:
+  installs only pick up a skill fix when the version the installer sees moves.
+
 ### Current release: v0.4.2
 
 Patch over v0.4.1. Fixes the intermittent `npm test` failure in the evidence

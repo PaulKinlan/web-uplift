@@ -1,6 +1,6 @@
 # Changelog — web-uplift
 
-## [Unreleased]
+## [0.5.0] - 2026-10-06
 
 ### Security
 
@@ -20,17 +20,17 @@
   pointer and the scorecard are written only after a climb completes, so a refused
   or failed run leaves the reports tree exactly as it found it.
 
-> **Reconstructed entries.** The 0.3.0, 0.4.0 and 0.4.1 entries below were
-> written after the fact from git history, not at release time: the release
-> commits for those versions (`2ba024c`, `23e9f76`, `6301563`) did not touch this
-> file, so it stopped at 0.2.3 while the package moved on. Each entry names the
-> commit range it was reconstructed from and summarises only what those commits
-> say; nothing here is inferred. `RELEASING.md` now makes a contemporaneous
-> entry mandatory, and `tests/changelog-version-check.mjs` fails a version that
-> has no entry here.
+### Added
+- **The install manifest records the vendored dependency tree.** `install` copies
+  `chrome-remote-interface` and `web-features` (with their dependencies) into
+  `.web-uplift/node_modules`. Those packages are in no consumer lockfile, so
+  nothing in the project named them or their versions. The manifest now carries
+  `vendoredDependencies`, the name and version of every package that was copied,
+  so the tree a project received can be inventoried and audited from the project
+  itself. (Landed in web-uplift-92b without its own entry; written here by the
+  release owner.)
 
-## [Unreleased]
-
+### Fixed
 - **axe primitive**: the page is now navigated and analysed with its own
   Content-Security-Policy enforced; the policy is lifted only for the injection
   of the vendored axe-core (a strict `script-src` otherwise refuses it) and
@@ -54,6 +54,23 @@
   run used. A reader of the JSON can now tell a mobile emulation from a narrow
   desktop window. A run with no device-metrics override still records no viewport at
   all, rather than an invented profile.
+
+### Changed
+- **`x-content-type-options.present` now means the response sent the header**, not
+  that the value was `nosniff`. A non-nosniff value now reports `present: true`
+  with a `not nosniff` issue, and an empty value reports `present: true,
+  empty: true` with a `present but empty` issue, where both previously read as
+  `present: false`. Consumers that treated `present` as "the value is correct"
+  should read `issues` for this header.
+
+> **Reconstructed entries.** The 0.3.0, 0.4.0 and 0.4.1 entries below were
+> written after the fact from git history, not at release time: the release
+> commits for those versions (`2ba024c`, `23e9f76`, `6301563`) did not touch this
+> file, so it stopped at 0.2.3 while the package moved on. Each entry names the
+> commit range it was reconstructed from and summarises only what those commits
+> say; nothing here is inferred. `RELEASING.md` now makes a contemporaneous
+> entry mandatory, and `tests/changelog-version-check.mjs` fails a version that
+> has no entry here.
 
 ## [0.4.2] - 2026-10-05
 
