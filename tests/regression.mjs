@@ -3925,6 +3925,39 @@ function testBatchWriteScope() {
     assert(/not a real directory/.test(swapped.stderr), `batch symlinked run: the refusal must say it did not touch anything through the link:\n${swapped.stderr}`);
     assert(existsSync(join(innocent, 'report.json')), 'batch symlinked run: the innocent run report must be untouched');
     assert(!existsSync(join(innocent, 'report.refused.json')), 'batch symlinked run: nothing may be renamed through the agent-controlled link');
+    // The reviewer's point: the scope record is written THROUGH the run directory, so a
+    // swapped link would have overwritten the innocent run's record too.
+    writeFileSync(join(innocent, 'write-scope.json'), '{"innocent":"scope-record"}\n');
+    const swapped2 = drive({ args: ['https://swap2.example/'], extraArgs: ['--concurrency', '1', '--out', 's2-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 's2-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\nrm -rf "$d"\nln -s ${JSON.stringify(innocent)} "$d" || exit 9\nprintf 'pwned' > ${JSON.stringify(join(root, 's2-escaped.txt'))}` });
+    assert(swapped2.status !== 0, `batch symlinked run: the escape must still refuse (${swapped2.status})`);
+    assert(
+      readFileSync(join(innocent, 'write-scope.json'), 'utf8').includes('innocent'),
+      'batch symlinked run: the innocent run\'s SCOPE RECORD must not be overwritten through the link',
+    );
+
+    // 7. A REFUSED RUN MUST NEVER RESOLVE AS CURRENT, whatever the agent plants: with a
+    //    DIRECTORY sitting where the quarantined report would go, the rename cannot
+    //    happen, so completion must still not resolve - the decision comes from the
+    //    pointer this tool writes, not from what is on disk.
+    mkdirSync(join(root, 'd-out'), { recursive: true });
+    const blocked = drive({ args: ['https://blocked.example/'], extraArgs: ['--concurrency', '1', '--out', 'd-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 'd-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncp ${JSON.stringify(findings)} "$d/report.json"\nmkdir -p "$d/report.refused.json"\nprintf 'pwned' > ${JSON.stringify(join(root, 'd-escaped.txt'))}` });
+    assert(blocked.status !== 0, `batch blocked quarantine: the escape must still refuse (${blocked.status})`);
+    assert(/NOT QUARANTINED/.test(blocked.stderr), `batch blocked quarantine: a quarantine that cannot happen must be LOUD:\n${blocked.stderr}`);
+    const blockedResume = drive({ args: ['https://blocked.example/'], extraArgs: ['--concurrency', '1', '--out', 'd-out', '--resume'], body: writesReport(join(root, 'd-out')) });
+    assert(!/resume skip/.test(blockedResume.stdout), `batch blocked quarantine: --resume must not treat a refused run as done, however it is blocked:\n${blockedResume.stdout}`);
+    assert(/done \(coverage complete\)\s+https:\/\/blocked\.example\//.test(blockedResume.stdout), `batch blocked quarantine: the URL must be RE-AUDITED and complete:\n${blockedResume.stdout}`);
+
+    // 8. A URL THAT DESTROYS ITS OWN RUN DIRECTORY MUST NOT TAKE THE BATCH DOWN: a LATER
+    //    URL still has to complete.
+    const deletes = drive({
+      args: ['https://deleter.example/', 'https://later.example/'],
+      extraArgs: ['--concurrency', '1', '--out', 'del-out'],
+      body: `d=$(ls -dt ${JSON.stringify(join(root, 'del-out'))}/*/*/ 2>/dev/null | head -1); d=${'${d%/}'}\ncase "$*" in *deleter.example*) rm -rf "$d";; *) cp ${JSON.stringify(findings)} "$d/report.json";; esac`,
+    });
+    assert(/done \(coverage complete\)\s+https:\/\/later\.example\//.test(deletes.stdout), `batch deleted run dir: a LATER url must still complete:\n${deletes.stdout}`);
+    assert(/failed\s+https:\/\/deleter\.example\//.test(deletes.stdout) || /\/deleter\.example\//.test(deletes.stdout), 'batch deleted run dir: the destructive URL must be reported as failed, not silently dropped');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

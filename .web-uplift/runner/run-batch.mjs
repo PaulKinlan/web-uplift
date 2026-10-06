@@ -40,11 +40,11 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile, access } from 'node:fs/promises';
-import { existsSync, lstatSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS } from './agents.mjs';
-import { hostSlug, makeRunId, runDir, updateLatest, resolveLatest } from './run-history.mjs';
+import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from './write-scope.mjs';
 import { launchChrome, newSession } from '../evidence/cdp.mjs';
@@ -167,10 +167,18 @@ async function worker() {
       console.log(`resume skip    ${url} (latest report passed atomic coverage)`);
       continue;
     }
-    const planned = args['dry-run']
-      ? dryRunDir(url)
-      : runDir(outDir, url, makeRunId());
-    const siteDir = planned.dir;
+    let planned;
+    let siteDir;
+    try {
+      planned = args['dry-run'] ? dryRunDir(url) : runDir(outDir, url, makeRunId());
+      siteDir = planned.dir;
+    } catch (err) {
+      // Preparing the next URL used to sit outside the per-URL guard, so a failure here
+      // aborted the whole batch. Fold it in: one URL cannot take the others down.
+      failures.push({ url, reason: `could not prepare a run directory: ${err.message}` });
+      console.error(`failed         ${url}: ${err.message}`);
+      continue;
+    }
 
     if (args['dry-run']) {
       const extra = flow ? flowExtra(siteDir) : '';
@@ -211,11 +219,14 @@ async function worker() {
     // Writing the record must then fail THIS URL cleanly instead of rejecting out of the
     // worker and taking the whole batch down with an ENOENT stack.
     try {
+      if (!isRealDir(siteDir)) throw new Error('the run directory was replaced before the scope record could be written');
       await writeFile(join(siteDir, 'write-scope.json'), JSON.stringify(scope, null, 2) + '\n');
     } catch (err) {
-      failures.push({ url, reason: `run directory is gone before the scope record could be written: ${err.code || err.message}` });
-      console.error(`failed         ${url}: ${err.message}`);
-      continue;
+      // Logged, but NOT a short-circuit: the refusal below is the security-relevant
+      // fact and must still be reported, even when the run directory cannot be
+      // written - which is precisely when it was deleted or replaced.
+      failures.push({ url, reason: `run directory unusable when the scope record was written: ${err.code || err.message}` });
+      console.error(`record failed  ${url}: ${err.message}`);
     }
     console.log(`  changed: ${summariseChanges(scope.changed)}`);
     if (scope.escapedOutsideScope.length) {
@@ -285,22 +296,21 @@ function dryRunDir(url) {
 // agent shares this tree and could replace its run directory with a symlink to another
 // run, and anything following that path would act on the wrong run.
 async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
-  let realDir = false;
-  try {
-    realDir = lstatSync(siteDir).isDirectory() && statSync(siteDir).isDirectory();
-  } catch {
-    realDir = false;
-  }
+  const realDir = isRealDir(siteDir);
   if (!realDir) {
     console.error(`Refused run at ${siteDir} is not a real directory (replaced by a link?): not touching anything through it.`);
     return;
   }
-  // Step 1, the one that actually matters.
+  // Step 1, the one that actually matters. EVERY failure here is loud: the exclusion
+  // itself no longer depends on this succeeding (resolution reads the tool's pointer),
+  // but a run that cannot be quarantined must not pass silently either.
   try {
     await rename(join(siteDir, 'report.json'), join(siteDir, 'report.refused.json'));
   } catch (err) {
     // ENOENT means there was no report to quarantine, which is a fine outcome.
-    if (err?.code !== 'ENOENT') console.error(`Could not quarantine the refused report: ${err.message}`);
+    if (err?.code !== 'ENOENT') {
+      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). The run is still not current - completion is decided by this tool's pointer - but the report is still on disk.`);
+    }
   }
   // Step 2, diagnostic only: its failure must not affect step 1.
   try {
@@ -310,15 +320,47 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
   }
 }
 
+// AUTHORITATIVE COMPLETION CHECK. The decision comes from the pointer THIS TOOL wrote
+// on a successful run, and from nothing else. It deliberately does not fall back to
+// "the newest directory that contains a report": that fallback is decided by the
+// filesystem, which the agent can write, so a refused run could become what a later
+// --resume treats as done - which is exactly the hole this replaced. On-disk markers
+// (run-refused.json, a renamed report) remain as advisory records and defence in depth;
+// they are not load-bearing for the decision.
+function latestPointerTarget(hostRoot) {
+  const link = join(hostRoot, 'latest');
+  try {
+    if (lstatSync(link).isSymbolicLink()) return resolvePath(hostRoot, readlinkSync(link));
+  } catch {
+    /* no symlink: fall through to the text form */
+  }
+  try {
+    const txt = readFileSync(join(hostRoot, 'latest.txt'), 'utf8').trim();
+    if (txt) return join(hostRoot, txt);
+  } catch {
+    /* no pointer at all */
+  }
+  return null;
+}
+
 function hasCompletedLatest(url) {
   const hostRoot = join(outDir, hostSlug(url));
-  const latestDir = resolveLatest(hostRoot);
-  if (!latestDir) return false;
-  // Secondary signal only. The primary defence is that a refused run's report is
-  // RENAMED (report.refused.json), so resolution does not find it - and that cannot be
-  // defeated by an agent making this marker unwritable.
-  if (existsSync(join(latestDir, 'run-refused.json'))) return false;
+  const latestDir = latestPointerTarget(hostRoot);
+  if (!latestDir) return false; // no pointer: nothing this tool published is current
+  if (!isRealDir(latestDir)) return false;
   return validateAtomicReport(join(latestDir, 'report.json')).ok;
+}
+
+// Validate a path immediately before EVERY use rather than once, early: the agent
+// shares this tree and can replace its run directory with a symlink between the check
+// and the write, which would make a write land in another run - or outside the output
+// tree entirely, escaping the accounting.
+function isRealDir(p) {
+  try {
+    return lstatSync(p).isDirectory() && statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function validateAtomicReport(reportPath) {
