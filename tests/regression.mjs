@@ -44,6 +44,7 @@ try {
   await testAxeKeepsPagePolicyAndDisclosesInjectionBypass();
   await testHeadersPrimitiveFindsHeadersRegardlessOfNameCase();
   await testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase();
+  await testScorecardRejectsEscapingComparisonRunIds();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
   await testEvidenceTruncationReporting();
@@ -1980,6 +1981,73 @@ async function testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
+}
+
+// The comparison record is untrusted input: it is written by an agent whose context
+// includes page content. Its run identifiers are joined into the directory the
+// before/after screenshots are read from, so they become the BASE for those reads -
+// and `join` normalises a `..` in them BEFORE the path containment check runs, so
+// that check validates the screenshot path against a base the record itself chose.
+// The earlier artifact-path fix validated the PATH; this validates the BASE
+// (web-uplift-9li).
+async function testScorecardRejectsEscapingComparisonRunIds() {
+  const { renderScorecard, scoreReport } = await import('../aggregate/scorecard.mjs');
+  const hostRoot = join(tmp, 'scorecard-runs', 'example');
+  // Bytes that must never reach the published report, sitting one level above the
+  // host's run directory - exactly where a record-supplied `..` points.
+  const outsideDir = join(hostRoot, '..', 'scorecard-outside');
+  const secret = Buffer.from('SECRET-BYTES-FROM-OUTSIDE-THE-REPORTS-TREE');
+  mkdirSync(outsideDir, { recursive: true });
+  writeFileSync(join(outsideDir, 'secret.png'), secret);
+
+  const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
+  const runIds = ['20260101-000000', '20260102-000000'];
+  const dirs = runIds.map((id) => join(hostRoot, id));
+  mkdirSync(hostRoot, { recursive: true });
+  dirs.forEach((dir, index) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'report.json'), JSON.stringify(report));
+    writeFileSync(join(dir, index === 0 ? 'before.png' : 'after.png'), Buffer.from(`screenshot-bytes-${index}`));
+  });
+  const data = (compare) => ({
+    host: 'example',
+    generatedAt: '2026-01-01 00:00',
+    runs: runIds.map((runId, index) => ({ runId, dir: dirs[index], report, compare: null, ...scoreReport(report) })),
+    latest: { runId: runIds[1], dir: dirs[1], report, compare, ...scoreReport(report) },
+  });
+
+  // Positive control: a comparison naming its two sibling runs still renders both.
+  const ok = renderScorecard(data({
+    runA: runIds[0],
+    runB: runIds[1],
+    metrics: [],
+    summary: {},
+    screenshotPairs: [{ before: 'before.png', after: 'after.png', caption: 'hero' }],
+  }));
+  assert(
+    (ok.match(/data:image\/png;base64,/g) || []).length === 2,
+    "scorecard: a normal comparison must still render both runs' screenshots",
+  );
+
+  // The attack: an identifier that climbs out of the host's run directory must be
+  // refused rather than used as the base, so bytes from outside never reach the report.
+  const escaped = renderScorecard(data({
+    runA: '../scorecard-outside',
+    runB: '../../..',
+    metrics: [],
+    summary: {},
+    screenshotPairs: [{ before: 'secret.png', after: 'secret.png', caption: 'evil' }],
+  }));
+  assert(
+    !escaped.includes(secret.toString('base64')),
+    'scorecard: a record-supplied run identifier must not read outside the reports tree',
+  );
+  // A comparison record with no identifiers at all used to throw from join().
+  const noIds = renderScorecard(data({ metrics: [], summary: {}, screenshotPairs: [{ before: 'before.png', after: 'after.png', caption: 'no ids' }] }));
+  assert(
+    !noIds.includes(secret.toString('base64')),
+    'scorecard: a comparison with no run identifiers must not read outside the reports tree',
+  );
 }
 
 function testInstalledEvidenceCli() {

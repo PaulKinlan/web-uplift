@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostSlug, listRuns, resolveLatest } from '../runner/run-history.mjs';
-import { containedArtifactPath, isSafeArtifactPath } from './artifact-path.mjs';
+import { containedArtifactPath, containedChildDir, isSafeArtifactPath } from './artifact-path.mjs';
 
 // --- Outcome model ----------------------------------------------------------
 // The 17 quality principles, grouped into the outcomes a site owner recognises.
@@ -462,10 +462,20 @@ export function renderScorecard(data) {
         return `<tr><td>${esc(meta.label)}</td><td>${esc(fmt(m.before))}</td><td>${esc(fmt(m.after))}</td><td class="${dir}">${arrow} ${esc(deltaTxt)}</td></tr>`;
       })
       .join('');
+    // The comparison record is untrusted input, and these identifiers become the
+    // BASE that the screenshot paths are then resolved against, so they have to be
+    // validated as bases rather than used to build one. `join(latest.dir, '..',
+    // cmp.runA)` normalises the record's `..` away before containedArtifactPath
+    // ever sees the result, which is why the earlier path-containment fix does not
+    // cover this: it validated the path against a base the record supplied. A
+    // rejected identifier leaves that side out of the pair (web-uplift-9li).
+    const comparisonRoot = resolve(latest.dir, '..');
+    const dirA = containedChildDir(comparisonRoot, cmp.runA);
+    const dirB = containedChildDir(comparisonRoot, cmp.runB);
     const pairs = (cmp.screenshotPairs ?? [])
       .map((p) => {
-        const beforeSrc = p.before ? (dataUri(join(latest.dir, '..', cmp.runA), p.before) ?? '') : '';
-        const afterSrc = p.after ? (dataUri(join(latest.dir, '..', cmp.runB), p.after) ?? '') : '';
+        const beforeSrc = p.before && dirA ? (dataUri(dirA, p.before) ?? '') : '';
+        const afterSrc = p.after && dirB ? (dataUri(dirB, p.after) ?? '') : '';
         if (!beforeSrc && !afterSrc) return '';
         return `<div class="ba-pair"><figure><figcaption>Before</figcaption>${beforeSrc ? `<img loading="lazy" src="${esc(beforeSrc)}" alt="before">` : '<div class="noimg">n/a</div>'}</figure><figure><figcaption>After</figcaption>${afterSrc ? `<img loading="lazy" src="${esc(afterSrc)}" alt="after">` : '<div class="noimg">n/a</div>'}</figure><p class="ba-cap">${esc(p.caption || p.condition || '')}</p></div>`;
       })
