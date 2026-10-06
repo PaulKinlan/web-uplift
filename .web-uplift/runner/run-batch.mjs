@@ -478,7 +478,9 @@ function flowExtra(siteDir) {
 
 function runAgent(url, siteDir, extra = '') {
   const prompt = agent.prompt(url, siteDir, extra);
-  const cliArgs = agent.args(prompt, { maxTurns });
+  // `root` is passed so the derived absolute-path Bash rules name the SAME
+  // directory the child is spawned with as cwd (the write-scope anchor).
+  const cliArgs = agent.args(prompt, { maxTurns, root: projectRoot });
   const slug = slugify(url);
   if (verbose) console.log(`[${slug}] $ ${agent.bin} ${cliArgs.join(' ')}`);
   return new Promise((resolve, reject) => {

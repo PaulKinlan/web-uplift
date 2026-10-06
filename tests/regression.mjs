@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, redactHeaderList, safeFetch, scanTextForSecrets, waitForInteractEvidence } from '../evidence/cli.mjs';
-import { AGENTS } from '../runner/agents.mjs';
+import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -38,6 +38,7 @@ try {
   testGuidanceUsage();
   testGuidanceVersionPinnedInDocs();
   testHeadlessAllowlistIsScoped();
+  testHeadlessAllowlistMatchesSkillContract();
   testRedactHeaderList();
   testInstalledEvidenceCli();
   testInstalledTreeRelativeImportsResolve();
@@ -3847,6 +3848,101 @@ async function testSafeFetchRedirectAndSizeGuard() {
 // The redaction itself, without a browser: every credential header name is
 // replaced by the placeholder while a non-secret header is untouched, so the
 // redaction cannot be satisfied by over-redacting everything (web-uplift-dxk).
+// THE SKILL <-> SANDBOX CONTRACT DRIFT CHECK (web-uplift-7tj). The headless
+// Claude allowlist and the commands SKILL.md instructs the agent to run are two
+// halves of one contract, and nothing used to compare them: the scoped list
+// omitted the report validator, the scorecard, the compare, the Baseline oracle
+// and the journey replay, and its prefix rules missed absolute-path
+// invocations, so a REAL headless audit was blocked 38s in by permission
+// denials for steps the skill mandates - invisible to every check that read the
+// allowlist on its own. This test re-reads SKILL.md and fails in BOTH
+// directions: a `node <script>` command the skill instructs that the contract
+// table does not declare (the sandbox forbids a mandated step), and a declared
+// entry the skill nowhere instructs (speculative sandbox widening). It also
+// replays the real failure mode under the documented STRING-PREFIX matching:
+// every spelling the allowlist generates must admit the corresponding command,
+// including the ABSOLUTE-PATH form the 7tj run was denied on, while lookalike
+// commands stay refused.
+function testHeadlessAllowlistMatchesSkillContract() {
+  const skill = readFileSync(join(repoRoot, '.claude/skills/web-audit/SKILL.md'), 'utf8');
+
+  // 1. Every `node <path>.mjs` command SKILL.md instructs the agent to run
+  //    (the vendored `.web-uplift/` spelling normalises to the same script).
+  const instructed = new Set(
+    [...skill.matchAll(/\bnode ((?:\.web-uplift\/)?[\w./-]+\.mjs)\b/g)]
+      .map((m) => m[1].replace(/^\.web-uplift\//, '')),
+  );
+  assert(instructed.size > 0, 'could not extract any node commands from SKILL.md; the drift check is blind');
+  const declared = new Set(SKILL_REQUIRED_COMMANDS.map((c) => c.script));
+  for (const script of instructed) {
+    assert(
+      declared.has(script),
+      `SKILL.md instructs the agent to run \`node ${script}\`, but runner/agents.mjs SKILL_REQUIRED_COMMANDS ` +
+        `does not declare it, so the headless allowlist DENIES a step the skill requires (web-uplift-7tj). ` +
+        `Add it to the contract table or change the skill to stop requiring it.`,
+    );
+  }
+  for (const entry of SKILL_REQUIRED_COMMANDS) {
+    assert(
+      instructed.has(entry.script),
+      `SKILL_REQUIRED_COMMANDS declares \`${entry.script}\` (${entry.skillStep}), but SKILL.md nowhere ` +
+        `instructs \`node ${entry.script}\`. The allowlist must admit exactly what the skill requires, ` +
+        `nothing speculative.`,
+    );
+  }
+
+  // 2. Admission under the STRING-PREFIX semantics documented in agents.mjs:
+  //    `Bash(<prefix>:*)` admits command C iff C starts with <prefix>.
+  const root = '/srv/web-uplift-checkout';
+  const rules = headlessBashRules({ root });
+  const admits = (command) =>
+    rules.some((rule) => {
+      const m = /^Bash\((.*):\*\)$/.exec(rule);
+      return m !== null && (command === m[1] || command.startsWith(m[1]));
+    });
+
+  for (const { script } of SKILL_REQUIRED_COMMANDS) {
+    const admitted = [
+      `node ${script} axe https://example.com --out evidence`,
+      `node .web-uplift/${script} --help`,
+      `node ${root}/${script} --help`, // the ABSOLUTE-PATH form the 7tj run was denied on
+      `node ${root}/.web-uplift/${script} --help`,
+    ];
+    for (const command of admitted) {
+      assert(admits(command), `the derived allowlist must admit \`${command}\` (a form of skill-required \`${script}\`): ${rules.join(', ')}`);
+    }
+  }
+
+  const pinned = readJson('knowledge/principles.json').guidanceCatalogVersion;
+  assert(
+    admits(`npx -y --ignore-scripts ${pinned} search color-scheme`),
+    `the derived allowlist must admit the pinned guidance feed invocation ${pinned}`,
+  );
+
+  // 3. Posture: the derivation may not have widened the sandbox. Refusals the
+  //    tightening (e2138c9 + bd7de74) bought stay refused.
+  const refused = [
+    'node -e process.exit(0)',
+    'node evidence/evil.mjs --help',
+    `node ${root}/evidence/evil.mjs --help`,
+    'node /etc/passwd',
+    'npx -y some-package',
+    'npx -y lighthouse https://example.com',
+    'npx -y modern-web-guidance-evil search color-scheme',
+    'npx -y web-uplift evidence screenshot https://example.com',
+  ];
+  for (const command of refused) {
+    assert(!admits(command), `the derived allowlist must still refuse \`${command}\`: ${rules.join(', ')}`);
+  }
+
+  // 4. The production claude args carry EXACTLY the derived rules (so the
+  //    contract cannot be bypassed by a hand-maintained copy in the args).
+  const args = AGENTS.claude.args('prompt', { maxTurns: 3, root });
+  const allowed = args[args.indexOf('--allowedTools') + 1];
+  for (const rule of rules) {
+    assert(allowed.includes(rule), `claude --allowedTools must carry the derived rule ${rule}: ${allowed}`);
+  }
+}
 function testRedactHeaderList() {
   const list = [
     { name: 'Set-Cookie', value: 'a=1' },
