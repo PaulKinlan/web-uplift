@@ -2057,13 +2057,28 @@ function concatChunks(chunks, total) {
   return out;
 }
 
-async function readBodyCapped(res, maxBytes) {
+// The exchange is time-bounded, because a starved host can stall a fetch or a body read
+// indefinitely - and the discoverability primitive fetches BEFORE its first navigation, so
+// an unbounded stall here would hang the CLI before any page is reached.
+const SAFEFETCH_DEADLINE_MS = 30000;
+
+async function readBodyCapped(res, maxBytes, deadlineMs = SAFEFETCH_DEADLINE_MS) {
   const reader = res.body?.getReader();
   if (!reader) return '';
   const chunks = [];
   let total = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    let read;
+    try {
+      read = await withDeadline(reader.read(), deadlineMs, 'the response body to arrive');
+    } catch (e) {
+      await reader.cancel().catch(() => {});
+      throw new Error(
+        `web-uplift: a response body read did not complete within ${deadlineMs}ms (the host may be starved)`,
+        { cause: e },
+      );
+    }
+    const { done, value } = read;
     if (done) break;
     total += value.byteLength;
     if (total > maxBytes) {
@@ -2085,7 +2100,7 @@ async function readBodyCapped(res, maxBytes) {
 export async function safeFetch(rawUrl, { base, targetOrigin, headers, maxBytes = FETCH_MAX_BYTES } = {}) {
   let current = await assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin });
   for (let hop = 0; hop <= FETCH_MAX_REDIRECTS; hop++) {
-    const res = await fetch(current.href, { redirect: 'manual', headers });
+    const res = await fetch(current.href, { redirect: 'manual', headers, signal: AbortSignal.timeout(SAFEFETCH_DEADLINE_MS) });
     const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
     if (location === null) {
       return { res, url: current.href, text: () => readBodyCapped(res, maxBytes) };

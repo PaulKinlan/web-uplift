@@ -51,6 +51,7 @@ try {
   await testCredentialRedactionHelpers();
   await testHarCredentialRedaction();
   await testCdpDeadline();
+  testAwaitCensus();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -5235,4 +5236,78 @@ async function testCdpDeadline() {
   for (const sock of sockets) sock.destroy();
   healthy.close();
 }
+
+// web-uplift-17o, the census ENFORCED. The completeness claim is arithmetic, and this test is
+// what keeps it true rather than read: every non-comment await line in the two evidence files
+// must match exactly one disposition rule below, and each rule's count must equal its
+// expectation. A NEW await that matches nothing fails HERE, naming the file, the line number
+// and the text, so the next author classifies it (bounds it, or records the exclusion with
+// its reason) in the census comment next to withDeadline in evidence/cdp.mjs - and a
+// classification that drifts fails the same way. The expected counts live here, not in
+// prose, so this is the one authoritative list; the comment summarises and points here.
+function testAwaitCensus() {
+  const rules = [
+    ['bounded:withDeadline', /await withDeadline\(|await withRetry\(/],
+    ['bounded:navigate-helper', /await navigate\(/],
+    ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable/],
+    ['bounded:sleep', /await sleep\(|await new Promise\(\(r\) => setTimeout/],
+    ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|await fn\(|return await fn\(/],
+    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await fetch\(|await fetched\.text\(\)|await docPromise/],
+    ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
+    ['excluded:page-side-template', /await navigator\./],
+    ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(/],
+  ];
+  const expected = {
+    'evidence/cdp.mjs': {
+      'bounded:withDeadline': 12,
+      'bounded:pre-existing-mechanism': 8,
+      'bounded:sleep': 4,
+      'bounded:gather-spine': 4,
+      'excluded:primitive-probe': 1,
+    },
+    'evidence/cli.mjs': {
+      'bounded:withDeadline': 13,
+      'bounded:navigate-helper': 20,
+      'bounded:transitive-caller-wraps': 7,
+      'bounded:sleep': 22,
+      'bounded:own-deadline': 8,
+      'bounded:gather-spine': 6,
+      'bounded:pre-existing-mechanism': 1,
+      'excluded:primitive-probe': 63,
+      'excluded:page-side-template': 1,
+    },
+  };
+  for (const [file, expect] of Object.entries(expected)) {
+    const lines = readFileSync(join(repoRoot, file), 'utf8').split('\n');
+    const counts = {};
+    const unmatched = [];
+    let total = 0;
+    lines.forEach((ln, i) => {
+      if (!ln.includes('await ') || ln.trim().startsWith('//')) return;
+      total += 1;
+      const rule = rules.find(([, re]) => re.test(ln));
+      if (!rule) {
+        unmatched.push(`${file}:${i + 1}: ${ln.trim().slice(0, 100)}`);
+        return;
+      }
+      counts[rule[0]] = (counts[rule[0]] || 0) + 1;
+    });
+    assert(
+      unmatched.length === 0,
+      `await census: ${unmatched.length} await site(s) in ${file} match NO disposition rule - classify them in the census comment next to withDeadline in evidence/cdp.mjs and in this test:\n  ${unmatched.join('\n  ')}`,
+    );
+    const expectTotal = Object.values(expect).reduce((a, b) => a + b, 0);
+    assert(
+      total === expectTotal,
+      `await census: ${file} has ${total} non-comment await sites but the census expects ${expectTotal} - a site was added or removed without updating the census (testAwaitCensus + the comment next to withDeadline)`,
+    );
+    for (const [name, n] of Object.entries(expect)) {
+      assert(
+        (counts[name] || 0) === n,
+        `await census: ${file} disposition '${name}' holds ${counts[name] || 0} site(s), expected ${n} - a classification drifted; update the census with the reason`,
+      );
+    }
+  }
+}
+
 
