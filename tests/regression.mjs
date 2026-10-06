@@ -52,6 +52,7 @@ try {
   await testHarCredentialRedaction();
   await testCdpDeadline();
   testAwaitCensus();
+  await testFetchDeadlineAndRawComparison();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -5246,24 +5247,32 @@ async function testCdpDeadline() {
 // classification that drifts fails the same way. The expected counts live here, not in
 // prose, so this is the one authoritative list; the comment summarises and points here.
 function testAwaitCensus() {
+  // The rules match the ACTUAL bounded call sites, not shapes that merely look bounded: the
+  // fetch rule requires the AbortSignal on the same line, so removing the signal leaves the
+  // site UNCLASSIFIED (loud) rather than still "bounded"; and the primitive dispatch is
+  // excluded, because it can run the unbounded content probes. Each site must match EXACTLY
+  // ONE rule (checked below): first-match-permissive is how a dispatch got called bounded.
+  // THE CENSUS'S LIMIT, stated plainly: it verifies that every site is CLASSIFIED. It cannot
+  // verify that a bound is still PRESENT at a classified site - that is what review and the
+  // targeted tests are for.
   const rules = [
     ['bounded:withDeadline', /await withDeadline\(|await withRetry\(/],
     ['bounded:navigate-helper', /await navigate\(/],
     ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable/],
     ['bounded:sleep', /await sleep\(|await new Promise\(\(r\) => setTimeout/],
-    ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|await fn\(|return await fn\(/],
-    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await fetch\(|await fetched\.text\(\)|await docPromise/],
+    ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|return await fn\(\)/],
+    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await fetch\(.*AbortSignal|await fetched\.text\(\)|await docPromise/],
     ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
     ['excluded:page-side-template', /await navigator\./],
-    ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(/],
+    ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],
   ];
   const expected = {
     'evidence/cdp.mjs': {
       'bounded:withDeadline': 12,
-      'bounded:pre-existing-mechanism': 8,
+      'bounded:pre-existing-mechanism': 7,
       'bounded:sleep': 4,
       'bounded:gather-spine': 4,
-      'excluded:primitive-probe': 1,
+      'excluded:primitive-probe': 2,
     },
     'evidence/cli.mjs': {
       'bounded:withDeadline': 13,
@@ -5272,8 +5281,7 @@ function testAwaitCensus() {
       'bounded:sleep': 22,
       'bounded:own-deadline': 8,
       'bounded:gather-spine': 6,
-      'bounded:pre-existing-mechanism': 1,
-      'excluded:primitive-probe': 63,
+      'excluded:primitive-probe': 61,
       'excluded:page-side-template': 1,
     },
   };
@@ -5285,12 +5293,14 @@ function testAwaitCensus() {
     lines.forEach((ln, i) => {
       if (!ln.includes('await ') || ln.trim().startsWith('//')) return;
       total += 1;
-      const rule = rules.find(([, re]) => re.test(ln));
-      if (!rule) {
-        unmatched.push(`${file}:${i + 1}: ${ln.trim().slice(0, 100)}`);
+      const matches = rules.filter(([, re]) => re.test(ln));
+      if (matches.length !== 1) {
+        unmatched.push(
+          `${file}:${i + 1} [${matches.length === 0 ? 'NO' : matches.length + ' (' + matches.map((m) => m[0]).join(',') + ')'} rule match(es)]: ${ln.trim().slice(0, 100)}`,
+        );
         return;
       }
-      counts[rule[0]] = (counts[rule[0]] || 0) + 1;
+      counts[matches[0][0]] = (counts[matches[0][0]] || 0) + 1;
     });
     assert(
       unmatched.length === 0,
@@ -5309,5 +5319,119 @@ function testAwaitCensus() {
     }
   }
 }
+
+// web-uplift-17o rev4: the raw-fetch exchange is bounded AND the bound is configurable, and
+// a timed-out raw fetch is never reported as evidence about the page. The slow-but-successful
+// control only passes because the budget was raised - a fixed bound would be a product
+// regression (a slow response recorded as a fetch error, then an empty raw document compared
+// against the rendered page, manufacturing a JS-shell signal from a network condition).
+async function testFetchDeadlineAndRawComparison() {
+  const { safeFetch, readBodyCapped, configureFetchDeadline } = await import(
+    pathToFileURL(join(repoRoot, 'evidence/cli.mjs')).href
+  );
+
+  const slow = http.createServer((req, res) => {
+    setTimeout(() => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><title>slow</title><h1>Slow Canary Heading</h1><p>slow but successful content, present in the raw document</p>');
+    }, 800);
+  });
+  await new Promise((r) => slow.listen(0, '127.0.0.1', r));
+  const slowUrl = `http://127.0.0.1:${slow.address().port}/`;
+  const slowOrigin = new URL(slowUrl).origin;
+
+  const stallBody = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.write('<!doctype html><title>stall</title>');
+    // never ends the body
+  });
+  await new Promise((r) => stallBody.listen(0, '127.0.0.1', r));
+  const stallUrl = `http://127.0.0.1:${stallBody.address().port}/`;
+  const stallOrigin = new URL(stallUrl).origin;
+
+  try {
+    // 1. THE BOUND: a 200ms budget against an 800ms server fails loudly,
+    let fastErr = null;
+    try {
+      await safeFetch(slowUrl, { targetOrigin: slowOrigin, deadlineMs: 200 });
+    } catch (e) {
+      fastErr = e;
+    }
+    assert(fastErr, 'fetch deadline: a slow response under a small budget must fail rather than hang');
+    // 2. ...and the SAME fetch under a raised budget SUCCEEDS. This control only passes
+    //    because the budget was raised, which is what makes the bound configurable rather
+    //    than a fixed regression.
+    const raised = await safeFetch(slowUrl, { targetOrigin: slowOrigin, deadlineMs: 5000 });
+    const raisedText = await raised.text();
+    assert(
+      raisedText.includes('Slow Canary Heading'),
+      `fetch deadline: a slow-but-successful response must arrive intact under a raised budget (${raisedText.length} chars)`,
+    );
+
+    // 3. STALLED BODY: headers arrive, the body never does -> the read times out loudly.
+    const stalled = await safeFetch(stallUrl, { targetOrigin: stallOrigin, deadlineMs: 1500 });
+    let bodyErr = null;
+    try {
+      await stalled.text();
+    } catch (e) {
+      bodyErr = e;
+    }
+    assert(
+      bodyErr && bodyErr.message.includes('did not complete within'),
+      `fetch deadline: a stalled body must fail loudly, naming the bound (${bodyErr && bodyErr.message})`,
+    );
+
+    // 4. STALLED CANCELLATION: a reader whose read() AND cancel() never resolve. The timeout
+    //    must throw WITHOUT awaiting the cancellation - cleanup awaited after a deadline is
+    //    how a bounded operation still hangs (the rev2 class, one layer down).
+    const neverReader = { read: () => new Promise(() => {}), cancel: () => new Promise(() => {}) };
+    const mockRes = { body: { getReader: () => neverReader } };
+    const t0 = Date.now();
+    let cancelErr = null;
+    try {
+      await readBodyCapped(mockRes, 1024 * 1024, 150);
+    } catch (e) {
+      cancelErr = e;
+    }
+    const cancelElapsed = Date.now() - t0;
+    assert(
+      cancelErr && cancelErr.message.includes('did not complete within 150ms'),
+      `fetch deadline: a stalled read must fail loudly (${cancelErr && cancelErr.message})`,
+    );
+    assert(
+      cancelElapsed < 3000,
+      `fetch deadline: the throw must NOT await a stalled cancellation (${cancelElapsed}ms)`,
+    );
+
+    // 5. THE DISTINCTION, end to end: a discoverability run whose raw fetch times out must
+    //    record the comparison as NOT USABLE - a timeout is a network condition, never
+    //    evidence that the page lacked raw content.
+    configureFetchDeadline(400); // the server answers at 800ms: the raw fetch times out
+    const timed = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });
+    assert(timed && timed.fetchError, `discoverability: the timed-out raw fetch must be recorded as an error (${JSON.stringify(timed && { fetchError: timed.fetchError })})`);
+    assert(
+      timed.coveragePct === null && timed.isJsShell !== true && timed.rawComparisonUsable === false,
+      `discoverability: a timed-out raw fetch must NOT produce a comparison or a shell verdict (${JSON.stringify({ coveragePct: timed.coveragePct, isJsShell: timed.isJsShell, rawComparisonUsable: timed.rawComparisonUsable })})`,
+    );
+    assert(
+      typeof timed.rawComparisonNote === 'string' && timed.rawComparisonNote.includes('network condition'),
+      'discoverability: the summary must SAY the comparison is not evidence about the page',
+    );
+
+    // 6. THE RAISED-BUDGET CONTROL, end to end: the same page with the budget raised yields
+    //    a real comparison - this passes only because the budget is configurable.
+    configureFetchDeadline(5000);
+    const ok = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });
+    assert(
+      ok.rawComparisonUsable === true && ok.coveragePct !== null && ok.isJsShell === false,
+      `discoverability: with the budget raised, the slow-but-successful page must compare for real (${JSON.stringify({ coveragePct: ok.coveragePct, isJsShell: ok.isJsShell, rawComparisonUsable: ok.rawComparisonUsable })})`,
+    );
+  } finally {
+    configureFetchDeadline(30000); // restore the production default for the rest of the suite
+    slow.close();
+    stallBody.close();
+  }
+}
+
 
 

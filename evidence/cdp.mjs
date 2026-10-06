@@ -265,11 +265,13 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // was wrong three times, and a bucket-summed version hid a miscount behind a grand total
 // that agreed, so the authoritative classification is INDIVIDUAL and lives in the test:
 // testAwaitCensus (tests/regression.mjs) matches every non-comment await line in the two
-// evidence files against exactly one disposition rule and fails - naming the file, line and
-// text - when a site matches no rule or a rule's count drifts. Recipe:
-// `grep -E "await " evidence/{cdp,cli}.mjs | grep -cvE "^\s*//"` counts the code sites
-// (cdp 29, cli 141 at this revision; the raw grep counts 32+142 lines, four of which are
-// comments containing the word). Adding an await without classifying it fails the suite.
+// evidence files against exactly one disposition rule (exactly one - a line matching zero
+// or two rules fails), and fails - naming the file, line and text - when a site is
+// unclassified or a rule's count drifts. THE CENSUS'S LIMIT, stated plainly: it verifies
+// that every site is CLASSIFIED; it cannot verify that a bound is still PRESENT at a
+// classified site. That is what review and the targeted tests are for, and the census must
+// never be read as a proof of boundedness. (No manual recipe is given here: the previous
+// one went stale within a revision. The test IS the recipe.)
 //
 // WHAT THE CENSUS SHOWS, in summary. Bounded by withDeadline (this bead's helper): in
 // newSession the target create, the attach, the cleanup-Close after an attach failure and

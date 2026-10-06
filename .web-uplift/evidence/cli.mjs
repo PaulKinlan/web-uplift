@@ -2061,8 +2061,16 @@ function concatChunks(chunks, total) {
 // indefinitely - and the discoverability primitive fetches BEFORE its first navigation, so
 // an unbounded stall here would hang the CLI before any page is reached.
 const SAFEFETCH_DEADLINE_MS = 30000;
+// The fetch exchange budget is CONFIGURABLE (--fetch-deadline / WEB_UPLIFT_FETCH_DEADLINE_MS),
+// because a fixed bound turns a slow-but-successful response into a recorded error - and
+// downstream of that error, evidence that was never gathered gets read as evidence about the
+// page. Operators on slow networks raise it; tests override it per call.
+let fetchDeadlineMsDefault = SAFEFETCH_DEADLINE_MS;
+export function configureFetchDeadline(ms) {
+  if (Number.isFinite(ms) && ms > 0) fetchDeadlineMsDefault = ms;
+}
 
-async function readBodyCapped(res, maxBytes, deadlineMs = SAFEFETCH_DEADLINE_MS) {
+export async function readBodyCapped(res, maxBytes, deadlineMs = fetchDeadlineMsDefault) {
   const reader = res.body?.getReader();
   if (!reader) return '';
   const chunks = [];
@@ -2072,7 +2080,9 @@ async function readBodyCapped(res, maxBytes, deadlineMs = SAFEFETCH_DEADLINE_MS)
     try {
       read = await withDeadline(reader.read(), deadlineMs, 'the response body to arrive');
     } catch (e) {
-      await reader.cancel().catch(() => {});
+      // Best-effort and DETACHED, not awaited: a stalled cancellation must not delay the
+      // timeout this catch exists to deliver (cleanup-after-deadline, the class from rev2).
+      reader.cancel().catch(() => {});
       throw new Error(
         `web-uplift: a response body read did not complete within ${deadlineMs}ms (the host may be starved)`,
         { cause: e },
@@ -2082,7 +2092,7 @@ async function readBodyCapped(res, maxBytes, deadlineMs = SAFEFETCH_DEADLINE_MS)
     if (done) break;
     total += value.byteLength;
     if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
+      reader.cancel().catch(() => {}); // detached best-effort, as above
       throw new Error(`refused: response body exceeded ${maxBytes} bytes`);
     }
     chunks.push(value);
@@ -2097,17 +2107,18 @@ async function readBodyCapped(res, maxBytes, deadlineMs = SAFEFETCH_DEADLINE_MS)
 // are validated as resolved, but global fetch gives no way to pin the address the
 // connection actually uses, so a name that re-resolves between this check and the
 // connect is not fully covered (DNS rebinding).
-export async function safeFetch(rawUrl, { base, targetOrigin, headers, maxBytes = FETCH_MAX_BYTES } = {}) {
+export async function safeFetch(rawUrl, { base, targetOrigin, headers, maxBytes = FETCH_MAX_BYTES, deadlineMs = fetchDeadlineMsDefault } = {}) {
   let current = await assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin });
   for (let hop = 0; hop <= FETCH_MAX_REDIRECTS; hop++) {
-    const res = await fetch(current.href, { redirect: 'manual', headers, signal: AbortSignal.timeout(SAFEFETCH_DEADLINE_MS) });
+    const res = await fetch(current.href, { redirect: 'manual', headers, signal: AbortSignal.timeout(deadlineMs) });
     const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
     if (location === null) {
-      return { res, url: current.href, text: () => readBodyCapped(res, maxBytes) };
+      return { res, url: current.href, text: () => readBodyCapped(res, maxBytes, deadlineMs) };
     }
     // Drain and drop a redirect body: it is not evidence, and an uncancelled
-    // stream can pin a socket.
-    await res.body?.cancel().catch(() => {});
+    // stream can pin a socket. Detached, not awaited: a stalled cancellation must
+    // not hang the hop loop.
+    res.body?.cancel().catch(() => {});
     if (hop === FETCH_MAX_REDIRECTS) throw new Error(`refused: more than ${FETCH_MAX_REDIRECTS} redirects`);
     current = await assertPageDerivedFetchAllowed(location, { base: current.href, targetOrigin });
   }
@@ -2277,6 +2288,12 @@ async function discoverability(client, url, opts, log) {
   );
 
   // 3. Compare rendered content against the raw HTML.
+  // A raw fetch that failed or TIMED OUT is not an empty document: comparing its absence
+  // against the rendered page would manufacture a JS-shell signal from a network condition
+  // (the rev4 regression). The comparison only means anything when the raw document was
+  // actually retrieved; when it was not, coverage and the shell verdict are null and the
+  // summary says why.
+  const rawComparisonUsable = fetchError === null && rawStatus !== null;
   const rawText = stripHtmlToText(rawHtml);
   const renderedTokens = contentTokens(rendered.text);
   const rawTokens = contentTokens(rawText);
@@ -2286,7 +2303,7 @@ async function discoverability(client, url, opts, log) {
   // (not 100%) - the render likely failed, redirected, or the page is genuinely
   // empty. Surface that honestly rather than manufacture a perfect score.
   const renderedEmpty = renderedTokens.size < 3;
-  const coveragePct = renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100);
+  const coveragePct = !rawComparisonUsable || renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100);
   const emptyMounts = detectEmptyMounts(rawHtml);
   const titleInRaw = rendered.title ? contentPresentInRaw(rendered.title, rawText) : null;
   const h1InRaw = rendered.h1.length ? rendered.h1.some((h) => contentPresentInRaw(h, rawText)) : null;
@@ -2329,7 +2346,15 @@ async function discoverability(client, url, opts, log) {
     fetchedStatus: rawStatus,
     fetchError,
     crawlerUserAgent: CRAWLER_UA,
-    coveragePct, // share of rendered content words that also appear in the raw server HTML (null if the render was empty)
+    coveragePct, // share of rendered content words that also appear in the raw server HTML (null if the render was empty OR the raw fetch failed/timed out)
+    rawComparisonUsable, // false when the raw document was never retrieved: coveragePct and isJsShell are then NOT evidence about the page, and must not be reported as such
+    ...(rawComparisonUsable
+      ? {}
+      : {
+          rawComparisonNote:
+            `The raw HTML fetch failed or timed out (${fetchError || 'no response'}), so there is no raw document ` +
+            'to compare against the rendered page. A timeout is a network condition, not a property of the page.',
+        }),
     contentVisibleWithoutJs: coveragePct,
     isJsShell,
     renderedEmpty,
@@ -3709,6 +3734,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--out') args.out = argv[++i];
     else if (a === '--cdp-deadline') args.cdpDeadline = Number(argv[++i]);
+    else if (a === '--fetch-deadline') args.fetchDeadline = Number(argv[++i]);
     else if (a === '--emulate-media') args.emulateMediaRaw = argv[++i];
     else if (a === '--viewport') args.viewportRaw = argv[++i];
     else if (a === '--max-nodes') args.maxNodes = Number(argv[++i]);
@@ -3817,6 +3843,7 @@ async function main() {
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f --interact-deadline ms\n' +
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies\n' +
         '         --cdp-deadline ms (bound every CDP attach/navigation wait; default 30000)\n' +
+        '         --fetch-deadline ms (bound each raw-fetch exchange; default 30000)\n' +
         '         --no-redact-headers (keep raw credential header values; publication risk) --quiet',
     );
     process.exit(1);
@@ -3841,6 +3868,10 @@ async function main() {
   const deadlineArg = Number(args.cdpDeadline ?? process.env.WEB_UPLIFT_CDP_DEADLINE_MS);
   if (Number.isFinite(deadlineArg) && deadlineArg > 0) {
     configureCdpDeadlines({ navigationMs: deadlineArg, callMs: deadlineArg });
+  }
+  const fetchDeadlineArg = Number(args.fetchDeadline ?? process.env.WEB_UPLIFT_FETCH_DEADLINE_MS);
+  if (Number.isFinite(fetchDeadlineArg) && fetchDeadlineArg > 0) {
+    configureFetchDeadline(fetchDeadlineArg);
   }
   const result = await gather(primitive, url, args);
   // Print the result (or artifact pointer) as JSON to stdout for the model.
