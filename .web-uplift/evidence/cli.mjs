@@ -2292,8 +2292,9 @@ async function discoverability(client, url, opts, log) {
   // that the fetch failed. (rev5: coverage and the shell verdict were gated, but the
   // presence comparisons still emitted false from an empty string - the same class one
   // level down, and gating per-line is how a fourth sibling gets missed in a later
-  // revision.) When the raw document was never retrieved, EVERY comparison field is null
-  // and the summary says why. Fields that describe the RENDERED page (renderedEmpty,
+  // revision.) When the raw document was never retrieved, EVERY comparison field - the
+  // shell verdict included, since it consumes the gated fields - is null, and the summary
+  // says why. Fields that describe the RENDERED page (renderedEmpty,
   // rendered.*, the screenshots) stay computed: the render exists regardless of the raw
   // fetch, so they are not comparisons and they remain meaningful - that is the answer to
   // "is any field legitimately meaningful without raw HTML".
@@ -2303,19 +2304,30 @@ async function discoverability(client, url, opts, log) {
   // (not 100%) - the render likely failed, redirected, or the page is genuinely
   // empty. Surface that honestly rather than manufacture a perfect score.
   const renderedEmpty = renderedTokens.size < 3;
-  const { coveragePct, emptyMounts, titleInRaw, h1InRaw, metaInRaw, rawStats } = rawComparisonUsable
+  const { coveragePct, emptyMounts, titleInRaw, h1InRaw, metaInRaw, rawStats, isJsShell } = rawComparisonUsable
     ? (() => {
         const rawText = stripHtmlToText(rawHtml);
         const rawTokens = contentTokens(rawText);
         let overlap = 0;
         for (const t of renderedTokens) if (rawTokens.has(t)) overlap++;
+        const coverage = renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100);
+        const mounts = detectEmptyMounts(rawHtml);
         return {
-          coveragePct: renderedEmpty ? null : Math.round((overlap / renderedTokens.size) * 100),
-          emptyMounts: detectEmptyMounts(rawHtml),
+          coveragePct: coverage,
+          emptyMounts: mounts,
           titleInRaw: rendered.title ? contentPresentInRaw(rendered.title, rawText) : null,
           h1InRaw: rendered.h1.length ? rendered.h1.some((h) => contentPresentInRaw(h, rawText)) : null,
           metaInRaw: rendered.metaDescription ? /name=["']description["']/i.test(rawHtml) : null,
           rawStats: { htmlBytes: byteLength(rawHtml), textChars: rawText.length, contentTokens: rawTokens.size },
+          // The verdict consumes the gated fields, so it is produced under the SAME
+          // condition: unknown (null) whenever coverage is undefined, whether the raw
+          // document is missing or the render was empty. "Not a shell" is a claim; it must
+          // never be emitted for a comparison that did not happen.
+          isJsShell:
+            coverage == null
+              ? null
+              : (mounts.length > 0 && coverage < 25) ||
+                (renderedTokens.size >= 50 && coverage < 10),
         };
       })()
     : {
@@ -2326,14 +2338,8 @@ async function discoverability(client, url, opts, log) {
         metaInRaw: null,
         // "0 bytes / 0 tokens" would be a claim about a document that was never retrieved.
         rawStats: { htmlBytes: null, textChars: null, contentTokens: null },
+        isJsShell: null,
       };
-  // A JS shell: an empty SPA mount with almost no content in the raw HTML, or a
-  // content-rich rendered page whose text is essentially absent from the raw.
-  // Only assertable when we actually got rendered content to compare against.
-  const isJsShell =
-    coveragePct != null &&
-    ((emptyMounts.length > 0 && coveragePct < 25) || (renderedTokens.size >= 50 && coveragePct < 10));
-
   // Visual proof: a browser view (JS on, already loaded) vs a crawler view (JS
   // disabled, reloaded). For a shell site the crawler view is blank/near-empty -
   // the single most legible evidence for this finding. Unless --no-screenshots.

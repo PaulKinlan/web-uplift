@@ -5412,26 +5412,46 @@ async function testFetchDeadlineAndRawComparison() {
     configureFetchDeadline(400); // the server answers at 800ms: the raw fetch times out
     const timed = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });
     assert(timed && timed.fetchError, `discoverability: the timed-out raw fetch must be recorded as an error (${JSON.stringify(timed && { fetchError: timed.fetchError })})`);
-    // EVERY derived raw-comparison field must be null, not just the shell verdict: a false
-    // here is a claim that the element is absent from the raw HTML, asserted on the sole
-    // basis that the fetch failed. Asserting the whole block is what catches a sibling that
-    // slips through a later revision (the rev5 partial-fix class).
-    assert(
-      timed.coveragePct === null &&
-        timed.isJsShell !== true &&
-        timed.rawComparisonUsable === false &&
-        timed.titlePresentInRaw === null &&
-        timed.h1PresentInRaw === null &&
-        timed.metaDescriptionPresentInRaw === null &&
-        timed.emptyMounts === null &&
-        timed.raw.htmlBytes === null &&
-        timed.raw.textChars === null &&
-        timed.raw.contentTokens === null,
-      `discoverability: a timed-out raw fetch must null EVERY raw-comparison field (${JSON.stringify({ coveragePct: timed.coveragePct, isJsShell: timed.isJsShell, rawComparisonUsable: timed.rawComparisonUsable, titlePresentInRaw: timed.titlePresentInRaw, h1PresentInRaw: timed.h1PresentInRaw, metaDescriptionPresentInRaw: timed.metaDescriptionPresentInRaw, emptyMounts: timed.emptyMounts })})`,
-    );
+    assert(timed.rawComparisonUsable === false, 'discoverability: the gate itself must be false when the raw fetch failed');
     assert(
       typeof timed.rawComparisonNote === 'string' && timed.rawComparisonNote.includes('network condition'),
       'discoverability: the summary must SAY the comparison is not evidence about the page',
+    );
+    // THE WHOLE RAW-DERIVED SURFACE, not named fields: three revisions each missed a
+    // DIFFERENT consumer of the failed fetch, and the third miss (the shell verdict) was a
+    // value DERIVED from the gated ones rather than a member of them - a test that names
+    // fields can only catch the fields somebody remembered. So instead enumerate the
+    // EMITTED keys: each must be either unknown (null) or on the explicit
+    // meaningful-without-raw list, with its reason. A key added to the summary later must
+    // be classified here or the test fails - the same reason the census is enforced.
+    const meaningfulWithoutRaw = new Map([
+      ['type', 'the primitive name - a fact about the run'],
+      ['url', 'the audited URL - an input fact'],
+      ['finalUrl', 'where the (failed) exchange left the client - a run fact, not a comparison'],
+      ['fetchedStatus', 'null itself when no response arrived'],
+      ['fetchError', 'the record of the failure - not a claim about the page'],
+      ['crawlerUserAgent', 'the user agent used - a run fact'],
+      ['rawComparisonUsable', 'the gate itself'],
+      ['rawComparisonNote', 'the explanation of why the comparison is absent'],
+      ['renderedEmpty', 'describes the RENDER, which exists regardless of the raw fetch'],
+      ['rendered', 'rendered-page facts - the render exists regardless of the raw fetch'],
+      ['screenshots', 'captured from the render, same reason'],
+      ['signalsFor', 'static metadata'],
+      ['note', 'static documentation'],
+    ]);
+    const notUnknown = [];
+    for (const [k, v] of Object.entries(timed)) {
+      if (meaningfulWithoutRaw.has(k)) continue;
+      if (k === 'raw') {
+        if (v && typeof v === 'object' && Object.values(v).every((x) => x === null)) continue;
+        notUnknown.push(`raw=${JSON.stringify(v)}`);
+        continue;
+      }
+      if (v !== null) notUnknown.push(`${k}=${JSON.stringify(v)}`);
+    }
+    assert(
+      notUnknown.length === 0,
+      `discoverability: with the raw fetch failed, EVERY raw-derived key must be unknown; these are not - null them or classify them with a reason: ${notUnknown.join(', ')}`,
     );
 
     // 6. THE RAISED-BUDGET CONTROL, end to end: the same page with the budget raised yields
