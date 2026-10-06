@@ -45,6 +45,7 @@ try {
   await testHeadersPrimitiveFindsHeadersRegardlessOfNameCase();
   await testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase();
   await testScorecardRejectsEscapingComparisonRunIds();
+  await testScorecardReservesImageBoxes();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
   await testEvidenceTruncationReporting();
@@ -2048,6 +2049,239 @@ async function testScorecardRejectsEscapingComparisonRunIds() {
     !noIds.includes(secret.toString('base64')),
     'scorecard: a comparison with no run identifiers must not read outside the reports tree',
   );
+}
+
+// The report inlines its screenshots as data URIs, so the browser takes no network
+// hop that could tell it the size: unless the image element carries its width and
+// height, its box is zero high until the bitmap decodes and everything below it moves
+// when it does. This checks, structurally, the sizes the renderer derives from the
+// bytes for every format it claims to handle, the shapes it must refuse, and the
+// stylesheet that lets those sizes reserve the box. It does NOT measure the box in a
+// browser; that needs a fixture whose image is visible and not yet fetched, which is
+// web-uplift-x4d (web-uplift-xq5).
+async function testScorecardReservesImageBoxes() {
+  const { renderScorecard, scoreReport } = await import('../aggregate/scorecard.mjs');
+  const { evaluate, sleep, withSession } = await import('../evidence/cdp.mjs');
+
+  const root = join(tmp, 'xq5-runs');
+  const runIds = ['20260101-000000', '20260102-000000'];
+  const dirs = runIds.map((id) => join(root, id));
+  dirs.forEach((dir) => mkdirSync(dir, { recursive: true }));
+  const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
+
+  // Byte shapes the browser cannot be asked to produce here, plus the malformed and
+  // truncated ones whose whole point is that they must NOT yield a size.
+  const pngHeader = (w, h) => Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from([0, 0, 0, 13]),
+    Buffer.from('IHDR', 'latin1'),
+    (() => { const b = Buffer.alloc(8); b.writeUInt32BE(w, 0); b.writeUInt32BE(h, 4); return b; })(),
+    Buffer.from([8, 6, 0, 0, 0]),
+    Buffer.alloc(4),
+  ]);
+  const webpVp8l = (w, h) => {
+    const b = Buffer.alloc(40);
+    b.write('RIFF', 0, 'latin1');
+    b.writeUInt32LE(32, 4);
+    b.write('WEBP', 8, 'latin1');
+    b.write('VP8L', 12, 'latin1');
+    b.writeUInt32LE(20, 16);
+    b[20] = 0x2f;
+    b.writeUInt32LE((w - 1) | ((h - 1) << 14), 21);
+    return b;
+  };
+  const gif = (() => {
+    const g = Buffer.alloc(16);
+    g.write('GIF89a', 0, 'latin1');
+    g.writeUInt16LE(64, 6);
+    g.writeUInt16LE(48, 8);
+    return g;
+  })();
+  // Which fixtures are real and which are not, since it matters: the PNG, JPEG and
+  // WebP below are produced by Chrome's own encoder, and the fill-byte JPEG is a real
+  // encoded JPEG with padding injected before its start-of-frame. The GIF is synthetic
+  // because this environment has no GIF encoder, and the VP8L, the two counterexamples
+  // and the malformed files are synthetic because the malformed ones cannot come from
+  // an encoder by definition.
+  writeFileSync(join(dirs[0], 'plain.gif'), gif);
+  writeFileSync(join(dirs[1], 'vp8l.webp'), webpVp8l(130, 70));
+  // Malformed or truncated: a PNG signature with no IHDR, a GIF too short to hold a
+  // logical screen descriptor, a JPEG that ends inside its frame header, a WebP whose
+  // lossy frame sync code is wrong, and bytes that are not an image at all.
+  writeFileSync(join(dirs[0], 'bad.png'), pngHeader(400, 250).subarray(0, 16));
+  writeFileSync(join(dirs[0], 'bad.gif'), Buffer.from('GIF89aabc', 'latin1'));
+  writeFileSync(join(dirs[0], 'bad.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00]));
+  writeFileSync(join(dirs[1], 'bad.webp'), (() => {
+    const b = Buffer.alloc(40);
+    b.write('RIFF', 0, 'latin1');
+    b.writeUInt32LE(32, 4);
+    b.write('WEBP', 8, 'latin1');
+    b.write('VP8 ', 12, 'latin1');
+    b.writeUInt32LE(20, 16);
+    return b;
+  })());
+  // The reviewer's two counterexamples for this round: a chunk whose declared extent
+  // runs past its own container, and a start-of-frame whose declared length cannot hold
+  // the component entries it claims.
+  writeFileSync(join(dirs[0], 'oversized-chunk.webp'), (() => {
+    const b = Buffer.alloc(40);
+    b.write('RIFF', 0, 'latin1');
+    b.writeUInt32LE(32, 4);
+    b.write('WEBP', 8, 'latin1');
+    b.write('VP8X', 12, 'latin1');
+    b.writeUInt32LE(9999, 16);
+    b.writeUIntLE(5, 24, 3);
+    b.writeUIntLE(5, 27, 3);
+    return b;
+  })());
+  writeFileSync(join(dirs[0], 'short-sof-components.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 0x08, 0x00, 0x0b, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00]));
+  writeFileSync(join(dirs[0], 'junk.png'), Buffer.from('not an image at all'));
+  // The two counterexamples from the review: shapes the EARLIER parser sized from
+  // bytes the file does not claim to contain, which is what makes these fixtures
+  // distinguish validation from its absence. A start-of-frame whose declared segment
+  // length (2) cannot hold the dimension fields the old walk read past its end, and a
+  // RIFF container declaring size 0 while the fields sit at offsets 24-29.
+  writeFileSync(
+    join(dirs[0], 'short-sof.jpg'),
+    Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]),
+  );
+  writeFileSync(join(dirs[0], 'undersized-riff.webp'), (() => {
+    const b = Buffer.alloc(30);
+    b.write('RIFF', 0, 'latin1');
+    b.writeUInt32LE(0, 4);
+    b.write('WEBP', 8, 'latin1');
+    b.write('VP8X', 12, 'latin1');
+    b.writeUInt32LE(10, 16);
+    return b;
+  })());
+
+  await withSession(async (client) => {
+    const encode = async (type, w, h) => {
+      const url = await evaluate(client, `(() => { const c = document.createElement('canvas'); c.width = ${w}; c.height = ${h}; const x = c.getContext('2d'); x.fillStyle = '#123456'; x.fillRect(0, 0, ${w}, ${h}); return c.toDataURL('${type}'); })()`);
+      return Buffer.from(String(url).split(',')[1], 'base64');
+    };
+    writeFileSync(join(dirs[0], 'before.png'), await encode('image/png', 400, 250));
+    // A real JPEG with marker FILL bytes injected before its start-of-frame: the fill
+    // path exercised on a structurally valid image rather than on hand-built arithmetic,
+    // and it stays decodable, which the browser is asked to confirm below.
+    const realJpeg = await encode('image/jpeg', 222, 111);
+    const sofAt = (() => {
+      for (let i = 2; i + 3 < realJpeg.length; i += 1) {
+        if (realJpeg[i] !== 0xff) continue;
+        const marker = realJpeg[i + 1];
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) return i;
+      }
+      return -1;
+    })();
+    assert(sofAt > 0, 'xq5: the encoded JPEG must contain a start-of-frame to pad before');
+    const fillJpeg = Buffer.concat([realJpeg.subarray(0, sofAt), Buffer.from([0xff, 0xff, 0xff]), realJpeg.subarray(sofAt)]);
+    writeFileSync(join(dirs[0], 'fill.jpg'), fillJpeg);
+    const decodedFill = await evaluate(
+      client,
+      `(async () => { const i = new Image(); i.src = ${JSON.stringify('data:image/jpeg;base64,' + fillJpeg.toString('base64'))}; await i.decode(); return { w: i.naturalWidth, h: i.naturalHeight }; })()`,
+    );
+    assert(
+      decodedFill.w === 222 && decodedFill.h === 111,
+      `xq5: the fill-byte fixture must be a real decodable JPEG of 222x111, got ${JSON.stringify(decodedFill)}`,
+    );
+    writeFileSync(join(dirs[1], 'after.jpg'), await encode('image/jpeg', 300, 180));
+    writeFileSync(join(dirs[1], 'extra.webp'), await encode('image/webp', 200, 120));
+    // A screenshot attached to a finding: the third emission site, inside the finding
+    // dialog, which the pair and gallery sites do not cover. It is written into the
+    // latest run's directory because that is the one the dialogs render from.
+    const dialogPng = await encode('image/png', 111, 77);
+    for (const dir of dirs) writeFileSync(join(dir, 'dialog.png'), dialogPng);
+    const evidenceReport = {
+      ...report,
+      __runId: 'xq5',
+      artifacts: [{ path: 'dialog.png', type: 'screenshot', caption: 'dialog evidence', findingIds: [report.findings[0].id] }],
+    };
+
+    // The report is shared by both runs, but each side of a pair resolves against its
+    // OWN run directory, so every fixture is placed in both.
+    for (const dir of dirs) {
+      for (const other of dirs) {
+        if (dir === other) continue;
+        for (const name of readdirSync(other)) {
+          if (!existsSync(join(dir, name))) writeFileSync(join(dir, name), readFileSync(join(other, name)));
+        }
+      }
+    }
+
+    const compare = {
+      runA: runIds[0],
+      runB: runIds[1],
+      metrics: [],
+      summary: {},
+      screenshotPairs: [
+        { before: 'before.png', after: 'after.jpg', caption: 'real PNG and JPEG' },
+        { before: 'plain.gif', after: 'extra.webp', caption: 'GIF header and real WebP' },
+        { before: 'fill.jpg', after: 'vp8l.webp', caption: 'JPEG fill bytes and VP8L' },
+        { before: 'bad.png', after: 'before.png', caption: 'truncated PNG' },
+        { before: 'bad.gif', after: 'fill.jpg', caption: 'truncated GIF' },
+        { before: 'bad.jpg', after: 'vp8l.webp', caption: 'truncated JPEG' },
+        { before: 'bad.webp', after: 'after.jpg', caption: 'bad WebP sync' },
+        { before: 'junk.png', after: 'after.jpg', caption: 'not an image' },
+        { before: 'short-sof.jpg', after: 'before.png', caption: 'segment too short for its fields' },
+        { before: 'undersized-riff.webp', after: 'after.jpg', caption: 'container too small for its fields' },
+        { before: 'oversized-chunk.webp', after: 'after.jpg', caption: 'chunk extends past its container' },
+        { before: 'short-sof-components.jpg', after: 'before.png', caption: 'frame cannot hold its components' },
+        { before: 'missing.png', after: 'after.jpg', caption: 'absent file' },
+        // Neither side readable: the pair is dropped, which is the production rule and
+        // was left uncovered when this test was rewritten.
+        { before: 'missing.png', after: 'also-missing.png', caption: 'nothing-readable' },
+      ],
+    };
+    const html = renderScorecard({
+      host: 'example',
+      generatedAt: '2026-01-01 00:00',
+      runs: runIds.map((runId, index) => ({ runId, dir: dirs[index], report: evidenceReport, compare: index === 1 ? compare : null, ...scoreReport(evidenceReport) })),
+      latest: { runId: runIds[1], dir: dirs[1], report: evidenceReport, compare, ...scoreReport(evidenceReport) },
+    });
+
+    // Every readable image carries the size read from its own bytes. PNG, JPEG and
+    // WebP here are real encoder output; the GIF, the JPEG with fill bytes and the
+    // VP8L file are the shapes the browser cannot be asked to produce.
+    for (const [label, size] of [
+      ['PNG', ' width="400" height="250"'],
+      ['JPEG', ' width="300" height="180"'],
+      ['GIF', ' width="64" height="48"'],
+      ['WebP', ' width="200" height="120"'],
+      ['JPEG with fill bytes', ' width="222" height="111"'],
+      ['WebP VP8L', ' width="130" height="70"'],
+      ['the finding-dialog screenshot', ' width="111" height="77"'],
+    ]) {
+      assert(html.includes(size), `xq5: the rendered markup must carry the ${label} size, missing ${JSON.stringify(size)}`);
+    }
+    // ...and nothing unreadable gets one. Each malformed fixture still renders as an
+    // image, so the tag carrying those exact bytes is the thing to check: it must not
+    // have been given a size.
+    const escRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (const [name, ext, bytes] of [
+      ['bad.png', 'png', readFileSync(join(dirs[0], 'bad.png'))],
+      ['bad.gif', 'gif', readFileSync(join(dirs[0], 'bad.gif'))],
+      ['bad.jpg', 'jpeg', readFileSync(join(dirs[0], 'bad.jpg'))],
+      ['bad.webp', 'webp', readFileSync(join(dirs[1], 'bad.webp'))],
+      ['junk.png', 'png', readFileSync(join(dirs[0], 'junk.png'))],
+      ['short-sof.jpg', 'jpeg', readFileSync(join(dirs[0], 'short-sof.jpg'))],
+      ['undersized-riff.webp', 'webp', readFileSync(join(dirs[0], 'undersized-riff.webp'))],
+      ['oversized-chunk.webp', 'webp', readFileSync(join(dirs[0], 'oversized-chunk.webp'))],
+      ['short-sof-components.jpg', 'jpeg', readFileSync(join(dirs[0], 'short-sof-components.jpg'))],
+    ]) {
+      const src = `src="data:image/${ext};base64,${bytes.toString('base64')}"`;
+      const tag = html.match(new RegExp(`<img[^>]*${escRe(src)}[^>]*>`))?.[0];
+      assert(tag, `xq5: ${name} must still render as an image`);
+      assert(!tag.includes('width="'), `xq5: ${name} is not readable, so it must carry no size, got: ${tag.slice(0, 140)}`);
+    }
+    assert(
+      (html.match(/<div class="noimg">n\/a<\/div>/g) || []).length === 1,
+      'xq5: a side with nothing to show must still render the placeholder',
+    );
+    assert(!html.includes('nothing-readable'), 'xq5: a pair with nothing readable on either side must stay dropped');
+    for (const rule of ['.media img,.media video{width:100%;height:auto;', '.ba-pair img{width:100%;height:auto;']) {
+      assert(html.includes(rule), `xq5: the stylesheet must let the reserved box follow the image ratio, missing ${JSON.stringify(rule)}`);
+    }
+  });
 }
 
 function testInstalledEvidenceCli() {

@@ -184,20 +184,153 @@ function gradeClass(score) {
 // Artifact paths are report-supplied, so containment lives in
 // ./artifact-path.mjs and is shared with aggregate/compare.mjs.
 
-// Inline a screenshot as a data URI so the imagery travels in the HTML. Video is
-// referenced by relative path (too big to inline). Returns null if unreadable.
-function dataUri(dir, relPath) {
+// Intrinsic pixel size of an image, read from its own bytes. The report inlines
+// screenshots as data URIs, so the browser has no network hop to learn the size
+// from: without width/height on the element its height is 0 until the bitmap
+// decodes, and everything below it jumps when it does. Reading the size here lets
+// the markup reserve the same box the image will occupy (web-uplift-xq5).
+//
+// Every branch validates the header it depends on before using it, and follows ONE
+// rule rather than a set of special cases:
+//
+//   EVERY FIELD READ HERE MUST LIE INSIDE THE BUFFER AND INSIDE THE RANGE THE FORMAT
+//   ITSELF DECLARES FOR IT - a JPEG marker's segment length, the RIFF container size,
+//   the chunk size. When either fails, this returns null.
+//
+// A size is never computed from bytes the file does not claim to contain, because a
+// made-up box is worse than no box: it reserves the wrong space and then still moves
+// when the bitmap arrives. A malformed, truncated or unreadable file gets NO size
+// rather than an invented one, and the caller then emits no attributes.
+//
+// Residuals, stated rather than implied: a JPEG whose EXIF orientation rotates it can
+// display with a different ratio from its start-of-frame dimensions, and this reads
+// the start-of-frame only (browser-produced screenshots do not carry EXIF rotation);
+// and an image in a format this does not handle gets no attributes, so its box stays
+// unreserved until the bitmap arrives - the fail-safe direction, since nothing is
+// invented and only the movement below it is unbounded.
+function imageSize(buf) {
+  const usable = (width, height) => (width > 0 && height > 0 ? { width, height } : null);
+  try {
+    // PNG: 8-byte signature, then an IHDR chunk that declares its own length and type
+    // ahead of the dimensions.
+    if (
+      buf.length >= 24 &&
+      buf.readUInt32BE(0) === 0x89504e47 &&
+      buf.readUInt32BE(4) === 0x0d0a1a0a &&
+      buf.readUInt32BE(8) === 13 &&
+      buf.toString('latin1', 12, 16) === 'IHDR'
+    ) {
+      return usable(buf.readUInt32BE(16), buf.readUInt32BE(20));
+    }
+    // GIF: signature AND version, then the logical screen descriptor.
+    if (buf.length >= 13 && /^GIF8[79]a$/.test(buf.toString('latin1', 0, 6))) {
+      return usable(buf.readUInt16LE(6), buf.readUInt16LE(8));
+    }
+    // JPEG: walk the marker segments to the start-of-frame, which carries the size.
+    if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+      let i = 2;
+      while (i < buf.length) {
+        if (buf[i] !== 0xff) {
+          i++;
+          continue;
+        }
+        // Marker fill: any number of 0xFF bytes may pad the space before a marker.
+        // Reading the byte after the first 0xFF as the marker instead treats that
+        // padding as a segment header, reads a length out of the next bytes, and can
+        // step straight over the start-of-frame - so a valid image lost its box.
+        let j = i;
+        while (j < buf.length && buf[j] === 0xff) j++;
+        if (j >= buf.length) return null;
+        const marker = buf[j];
+        // A stuffed 0xFF00 byte and the stand-alone markers carry no length field.
+        if (marker === 0x00 || marker === 0x01 || marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd9)) {
+          i = j + 1;
+          continue;
+        }
+        if (j + 4 > buf.length) return null;
+        const len = buf.readUInt16BE(j + 1);
+        if (len < 2) return null;
+        // The segment must end inside the buffer before any field of it is read.
+        if (j + len + 1 > buf.length) return null;
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          // A start-of-frame declares its own length, and that length has to cover the
+          // precision, the size AND every component entry it claims: eight bytes plus
+          // three per component. A flat minimum of eight let a segment with no
+          // component entries at all be given a size.
+          if (j + 8 > buf.length) return null;
+          const components = buf[j + 8];
+          if (components < 1 || len < 8 + 3 * components) return null;
+          return usable(buf.readUInt16BE(j + 6), buf.readUInt16BE(j + 4));
+        }
+        i = j + 1 + len;
+      }
+      return null;
+    }
+    // WebP: a RIFF container that declares enough bytes for what is read, then one of
+    // the three chunk shapes, each with the bytes that identify it and a chunk size
+    // long enough to hold its own fields.
+    if (buf.length >= 30 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') {
+      const containerEnd = 8 + buf.readUInt32LE(4);
+      if (containerEnd > buf.length) return null; // declares more than the file holds
+      const chunkSize = buf.readUInt32LE(16);
+      const fourCc = buf.toString('latin1', 12, 16);
+      // The whole chunk extent, padding included, must fit inside BOTH the container
+      // the RIFF header declares and the buffer itself. A chunk with a minimum size but
+      // no upper bound let a chunk declared past the end of its own file yield
+      // dimensions.
+      const chunkDataStart = 20;
+      const chunkEnd = chunkDataStart + chunkSize + (chunkSize % 2);
+      if (chunkEnd > containerEnd || chunkEnd > buf.length) return null;
+      // Both directions matter: a container or chunk declared too SMALL leaves the
+      // fields outside the range the format claims just as much as one declared too
+      // large leaves them outside the buffer.
+      const inside = (offset, length) => offset + length <= chunkEnd && offset + length <= buf.length;
+      if (fourCc === 'VP8X') {
+        if (chunkSize < 10 || !inside(24, 6)) return null;
+        return usable(buf.readUIntLE(24, 3) + 1, buf.readUIntLE(27, 3) + 1);
+      }
+      if (fourCc === 'VP8 ') {
+        if (chunkSize < 10 || !inside(23, 7)) return null;
+        if (buf[23] !== 0x9d || buf[24] !== 0x01 || buf[25] !== 0x2a) return null;
+        return usable(buf.readUInt16LE(26) & 0x3fff, buf.readUInt16LE(28) & 0x3fff);
+      }
+      if (fourCc === 'VP8L') {
+        if (chunkSize < 5 || !inside(20, 5)) return null;
+        if (buf[20] !== 0x2f) return null;
+        const bits = buf.readUInt32LE(21);
+        return usable((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1);
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// Inline a screenshot as a data URI so the imagery travels in the HTML, plus the
+// intrinsic size the markup needs to reserve the box before the bitmap decodes.
+// Video is referenced by relative path (too big to inline). Returns null if
+// unreadable.
+function imageData(dir, relPath) {
   try {
     const abs = containedArtifactPath(dir, relPath);
     if (!abs || !existsSync(abs)) return null;
     const ext = relPath.split('.').pop().toLowerCase();
     const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[ext];
     if (!mime) return null;
-    const b64 = readFileSync(abs, { encoding: 'base64' });
-    return `data:${mime};base64,${b64}`;
+    const buf = readFileSync(abs);
+    const size = imageSize(buf);
+    return { src: `data:${mime};base64,${buf.toString('base64')}`, ...(size ?? {}) };
   } catch {
     return null;
   }
+}
+
+// The size attributes a reserved box needs, or an empty string when the size could
+// not be read (in which case the element behaves as it did before: the box appears
+// when the bitmap does).
+function sizeAttrs(image) {
+  return image.width && image.height ? ` width="${image.width}" height="${image.height}"` : '';
 }
 
 // SVG ring gauge, Lighthouse-style: a track circle plus a coloured arc whose
@@ -291,8 +424,9 @@ function findingDialog(report, dir, f) {
     .map((a) => {
       const rel = `${encodeURI(report.__runId)}/${a.path}`;
       if (a.type === 'screenshot') {
-        const inline = dataUri(dir, a.path) ?? rel;
-        return `<figure><img loading="lazy" src="${esc(inline)}" alt="${esc(a.caption || 'evidence screenshot')}"><figcaption>${esc(a.caption || '')}${a.condition ? ` <span class="cond">(${esc(a.condition)})</span>` : ''}</figcaption></figure>`;
+        const image = imageData(dir, a.path);
+        const inline = image?.src ?? rel;
+        return `<figure><img loading="lazy"${image ? sizeAttrs(image) : ''} src="${esc(inline)}" alt="${esc(a.caption || 'evidence screenshot')}"><figcaption>${esc(a.caption || '')}${a.condition ? ` <span class="cond">(${esc(a.condition)})</span>` : ''}</figcaption></figure>`;
       }
       if (a.type === 'video') {
         return `<figure><video controls preload="none" src="${esc(rel)}"></video><figcaption>${esc(a.caption || 'evidence recording')}${a.condition ? ` <span class="cond">(${esc(a.condition)})</span>` : ''}</figcaption></figure>`;
@@ -474,10 +608,10 @@ export function renderScorecard(data) {
     const dirB = containedChildDir(comparisonRoot, cmp.runB);
     const pairs = (cmp.screenshotPairs ?? [])
       .map((p) => {
-        const beforeSrc = p.before && dirA ? (dataUri(dirA, p.before) ?? '') : '';
-        const afterSrc = p.after && dirB ? (dataUri(dirB, p.after) ?? '') : '';
-        if (!beforeSrc && !afterSrc) return '';
-        return `<div class="ba-pair"><figure><figcaption>Before</figcaption>${beforeSrc ? `<img loading="lazy" src="${esc(beforeSrc)}" alt="before">` : '<div class="noimg">n/a</div>'}</figure><figure><figcaption>After</figcaption>${afterSrc ? `<img loading="lazy" src="${esc(afterSrc)}" alt="after">` : '<div class="noimg">n/a</div>'}</figure><p class="ba-cap">${esc(p.caption || p.condition || '')}</p></div>`;
+        const before = p.before && dirA ? imageData(dirA, p.before) : null;
+        const after = p.after && dirB ? imageData(dirB, p.after) : null;
+        if (!before && !after) return '';
+        return `<div class="ba-pair"><figure><figcaption>Before</figcaption>${before ? `<img loading="lazy"${sizeAttrs(before)} src="${esc(before.src)}" alt="before">` : '<div class="noimg">n/a</div>'}</figure><figure><figcaption>After</figcaption>${after ? `<img loading="lazy"${sizeAttrs(after)} src="${esc(after.src)}" alt="after">` : '<div class="noimg">n/a</div>'}</figure><p class="ba-cap">${esc(p.caption || p.condition || '')}</p></div>`;
       })
       .join('');
     beforeAfter = `<div class="ba-summary">
@@ -731,7 +865,7 @@ svg.mini circle.good{fill:var(--good)}svg.mini circle.ok{fill:var(--ok)}svg.mini
 .ba-pairs{display:flex;flex-direction:column;gap:18px}
 .ba-pair{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
 .ba-pair>figure{display:inline-block;width:calc(50% - 8px);margin:0;vertical-align:top}
-.ba-pair img{width:100%;border-radius:8px;border:1px solid var(--line)}
+.ba-pair img{width:100%;height:auto;border-radius:8px;border:1px solid var(--line)}
 .ba-pair figcaption{color:var(--muted);font-size:.8rem;margin-bottom:4px}
 .ba-cap{color:var(--muted);font-size:.85rem;margin:.6em 0 0}
 .noimg{aspect-ratio:16/10;display:grid;place-items:center;color:var(--muted);border:1px dashed var(--line);border-radius:8px}
@@ -745,7 +879,7 @@ svg.mini circle.good{fill:var(--good)}svg.mini circle.ok{fill:var(--ok)}svg.mini
 .finding-dialog h4{margin-top:16px;font-size:.8rem;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
 .media{display:flex;flex-direction:column;gap:14px}
 .media figure{margin:0}
-.media img,.media video{width:100%;border-radius:8px;border:1px solid var(--line)}
+.media img,.media video{width:100%;height:auto;border-radius:8px;border:1px solid var(--line)}
 .media figcaption{color:var(--muted);font-size:.8rem;margin-top:4px}
 .cond{opacity:.8}
 .foot{max-width:1000px;margin:0 auto;padding:22px;color:var(--muted);font-size:.82rem;border-top:1px solid var(--line)}
