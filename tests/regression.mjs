@@ -2,9 +2,9 @@
 import http from 'node:http';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, redactHeaderList, safeFetch, scanTextForSecrets, waitForInteractEvidence } from '../evidence/cli.mjs';
@@ -31,6 +31,7 @@ try {
   testHeadlessAllowlistIsScoped();
   testRedactHeaderList();
   testInstalledEvidenceCli();
+  testInstalledTreeRelativeImportsResolve();
   testUpdateDryRunReadsInstallManifest();
   testCachedUpdateWarning();
   await testPreNavigationEmulation();
@@ -2442,25 +2443,34 @@ async function testReservedImageBoxInBrowser() {
 }
 
 // The `latest` pointer is a file in a tree the audited agent can write, and a consumer
-// reads it as the directory to load a run's report from. A planted target must not be
-// able to name a directory outside the host's run root; a legitimate target still
-// resolves, and with no legitimate pointer at all the fallback is the newest run INSIDE
-// the tree (web-uplift-9t8).
+// reads it as the directory to load a run's report from. A planted target must not be able
+// to name a directory outside the host's run root (web-uplift-9t8), and EACH pointer form
+// has its own positive control.
+//
+// The positive controls are written so that only a working pointer resolution can satisfy
+// them: the tree holds two runs and the pointer names the OLDER one, while the fallback
+// returns the newest by name. A branch that resolves nothing - or one masked by a leftover
+// pointer of the other form - returns the newest run and fails the assertion, which is the
+// distinction a negative-only test cannot make (web-uplift-uz9).
 async function testLatestPointerCannotEscapeTheRunRoot() {
   const { resolveLatest } = await import('../runner/run-history.mjs');
   const hostRoot = join(tmp, 'pointer-host');
-  const inside = join(hostRoot, '20260101-000000');
+  const older = join(hostRoot, '20260101-000000');
+  const newest = join(hostRoot, '20260102-000000');
   const outside = join(tmp, 'pointer-outside');
-  for (const dir of [inside, outside]) {
+  for (const dir of [older, newest, outside]) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'report.json'), '{}');
   }
 
-  // Positive control: a pointer naming a real run in the tree resolves to it.
+  // Positive control, text form: names the OLDER run, so the fallback cannot satisfy it.
   writeFileSync(join(hostRoot, 'latest.txt'), '20260101-000000\n');
-  assert(resolveLatest(hostRoot) === inside, `pointer: a legitimate pointer must resolve to its run dir, got ${resolveLatest(hostRoot)}`);
+  assert(
+    resolveLatest(hostRoot) === older,
+    `pointer: a legitimate text pointer must resolve to its run dir, got ${resolveLatest(hostRoot)}`,
+  );
 
-  // The text form with parent segments.
+  // Negative, text form: parent segments must not escape the run root.
   writeFileSync(join(hostRoot, 'latest.txt'), '../pointer-outside\n');
   const escapedTxt = resolveLatest(hostRoot);
   assert(
@@ -2468,8 +2478,18 @@ async function testLatestPointerCannotEscapeTheRunRoot() {
     `pointer: a planted latest.txt must not resolve outside the run root, got ${escapedTxt}`,
   );
 
-  // The symlink form, which is what a dev box writes.
+  // Positive control, symlink form: the text pointer is removed first, so a symlink branch
+  // that resolves nothing cannot be masked by it and cannot lean on the fallback.
   rmSync(join(hostRoot, 'latest.txt'), { force: true });
+  rmSync(join(hostRoot, 'latest'), { force: true });
+  symlinkSync('20260101-000000', join(hostRoot, 'latest'), 'dir');
+  assert(
+    resolveLatest(hostRoot) === older,
+    `pointer: a legitimate symlink pointer must resolve to its run dir, got ${resolveLatest(hostRoot)}`,
+  );
+
+  // Negative, symlink form: the planted target is refused.
+  rmSync(join(hostRoot, 'latest'), { force: true });
   symlinkSync('../pointer-outside', join(hostRoot, 'latest'), 'dir');
   const escapedLink = resolveLatest(hostRoot);
   assert(
@@ -2477,9 +2497,12 @@ async function testLatestPointerCannotEscapeTheRunRoot() {
     `pointer: a planted symlink must not resolve outside the run root, got ${escapedLink}`,
   );
 
-  // ...and a refused pointer falls back to the newest run inside the tree, not to the
+  // ...and a refused pointer falls back to the newest run INSIDE the tree, not to the
   // directory the pointer named.
-  assert(escapedLink === inside, `pointer: a refused pointer must fall back to a run inside the tree, got ${escapedLink}`);
+  assert(
+    escapedLink === newest,
+    `pointer: a refused pointer must fall back to a run inside the tree, got ${escapedLink}`,
+  );
 }
 
 function testInstalledEvidenceCli() {
@@ -2552,6 +2575,64 @@ function testInstalledEvidenceCli() {
     !scorecardUsage.stderr.includes('ERR_MODULE_NOT_FOUND') && scorecardUsage.stderr.includes('scorecard'),
     `installed scorecard did not load (aggregate/ or runner/ not vendored?):\n${scorecardUsage.stderr}`,
   );
+}
+
+// The installed vendored tree is where a packaging defect shows up and the source tree
+// cannot. A module that imports across the vended directories has to resolve inside the
+// installed copy, because that is the shape that broke a shipped copy once already - the
+// CLI imported a module the package did not carry. The scorecard load asserted above
+// already exercises one such import transitively; this asserts the general class and says
+// which modules it exercised. It reuses the target installed by testInstalledEvidenceCli
+// rather than paying for a second pack+install, so it is registered immediately after it
+// and fails loudly if that target is not there (web-uplift-uz9).
+function testInstalledTreeRelativeImportsResolve() {
+  const target = join(tmp, 'installed-target');
+  const vendoredRoot = join(target, '.web-uplift');
+  assert(
+    existsSync(vendoredRoot),
+    'installed tree: this check reuses the target installed by testInstalledEvidenceCli, which must run first',
+  );
+  const vendoredModules = (dir) =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory()
+        ? vendoredModules(join(dir, entry.name))
+        : entry.name.endsWith('.mjs')
+          ? [join(dir, entry.name)]
+          : [],
+    );
+  const dangling = [];
+  const crossDirectory = [];
+  for (const file of vendoredModules(vendoredRoot)) {
+    for (const match of readFileSync(file, 'utf8').matchAll(/(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]/g)) {
+      const specifier = match[1];
+      if (!existsSync(resolve(dirname(file), specifier))) dangling.push(`${relative(vendoredRoot, file)} -> ${specifier}`);
+      if (specifier.startsWith('../')) crossDirectory.push({ file, specifier });
+    }
+  }
+  assert(
+    dangling.length === 0,
+    `installed tree: every relative import must resolve inside the vendored tree, dangling: ${JSON.stringify(dangling)}`,
+  );
+  assert(
+    crossDirectory.length > 0,
+    'installed tree: expected at least one import crossing the vendored directories, otherwise this check exercises nothing',
+  );
+  for (const { file, specifier } of crossDirectory.slice(0, 5)) {
+    const loaded = run(process.execPath, [
+      '-e',
+      `import(${JSON.stringify(pathToFileURL(file).href)}).catch((e) => { console.error('LOADFAIL ' + e.code); process.exit(3); })`,
+    ]);
+    // Not `status === 0`: several of these modules are entry points whose own main logic
+    // prints usage and exits non-zero when there is nothing to do, which says nothing
+    // about packaging. The discriminator is a MODULE-RESOLUTION failure, the same one the
+    // scorecard assertion above uses.
+    assert(
+      !String(loaded.stderr).includes('ERR_MODULE_NOT_FOUND') &&
+        !String(loaded.stderr).includes('LOADFAIL') &&
+        !String(loaded.stderr).includes('Cannot find package'),
+      `installed tree: ${relative(vendoredRoot, file)} imports ${specifier} across directories and must load, got: ${loaded.stderr || loaded.stdout}`,
+    );
+  }
 }
 
 function testUpdateDryRunReadsInstallManifest() {
