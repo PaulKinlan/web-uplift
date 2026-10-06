@@ -39,8 +39,8 @@
  * state. This runner ORCHESTRATES the fan-out; it contains no checks.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile, access } from 'node:fs/promises';
-import { existsSync, writeFileSync } from 'node:fs';
+import { mkdir, readFile, rename, writeFile, access } from 'node:fs/promises';
+import { existsSync, lstatSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS } from './agents.mjs';
@@ -88,11 +88,11 @@ const outDir = args.out ?? 'reports';
 const projectRoot = resolvePath(process.cwd());
 const outRoot = resolvePath(outDir);
 
-// NOTE on concurrency: each run is snapshotted around its own spawn, so with
-// --concurrency > 1 a diff can include another in-flight run's writes. That does
-// not weaken the refusal - anything outside --out is refused no matter which
-// worker wrote it - it only means the per-run diff is not a pristine attribution
-// when runs overlap.
+// Concurrency: the snapshot/spawn/diff window is SERIALIZED (see withScopeWindow), so
+// another worker's writes cannot land inside it. Without that, one agent's
+// out-of-scope write appeared in a clean neighbour's diff and refused it too - a guard
+// that fails clean work. The throughput cost is stated in the batch banner and the
+// README (this runner has no --help output of its own).
 function snapshotScope() {
   // --out is a walked root even when its name is one the generic exclusion skips
   // (the DEFAULT is `reports`), so the audit's own output is recorded as an allowed
@@ -104,8 +104,8 @@ function snapshotScope() {
 // snapshot window, so one agent's out-of-scope write can refuse a CLEAN URL (it loses
 // completion and its latest promotion). A guard that fails clean work is worse than
 // no guard, so the scope-accounted spawns are serialized: one snapshot -> spawn ->
-// diff at a time. The cost is stated in --help and the README: a batch run with
-// --concurrency > 1 that includes agent runs is effectively serial while auditing.
+// diff at a time. The cost is stated in the batch banner and the README: a run with
+// --concurrency > 1 is effectively serial while auditing.
 let scopeWindow = Promise.resolve();
 function withScopeWindow(fn) {
   const run = scopeWindow.then(fn, fn);
@@ -216,12 +216,7 @@ async function worker() {
       // behind would let a refused run become what a later --resume treats as current
       // for this URL - and that URL would then be skipped. The refusal record
       // (write-scope.json + this marker) is what survives, not the agent's claim.
-      try {
-        await writeFile(join(siteDir, 'run-refused.json'), JSON.stringify({ url, reason: 'wrote outside --out', escapedOutsideScope: scope.escapedOutsideScope, at: new Date().toISOString() }, null, 2) + '\n');
-        await rm(join(siteDir, 'report.json'), { force: true });
-      } catch (err) {
-        console.error(`Could not mark the refused run: ${err.message}`);
-      }
+      await quarantineRefusedRun(siteDir, { url, escapedOutsideScope: scope.escapedOutsideScope });
       console.error(
         `CONFINEMENT FAILURE ${url}: this audit changed ${scope.escapedOutsideScope.length} path(s) outside ` +
         `${outRoot}:\n  ${scope.escapedOutsideScope.join('\n  ')}\n` +
@@ -267,12 +262,52 @@ function dryRunDir(url) {
   return { dir: join(hostRoot, runId), hostRoot, host, runId };
 }
 
+// Take a refused run out of the running without depending on a deletion succeeding, or
+// on a marker the agent could arrange to be unwritable.
+//
+// RENAME, not delete: latest resolution looks for the report FILENAME, so renaming it
+// excludes the run by construction. The earlier version wrote a marker and deleted the
+// report inside ONE try block, so an agent could plant a dangling symlink at the marker
+// path, make that write fail, and thereby suppress the deletion - leaving a perfectly
+// resumable report behind. Each step here is independently guarded, and the rename (the
+// load-bearing one) goes first.
+//
+// The run directory is verified to be a real directory before anything touches it: the
+// agent shares this tree and could replace its run directory with a symlink to another
+// run, and anything following that path would act on the wrong run.
+async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
+  let realDir = false;
+  try {
+    realDir = lstatSync(siteDir).isDirectory() && statSync(siteDir).isDirectory();
+  } catch {
+    realDir = false;
+  }
+  if (!realDir) {
+    console.error(`Refused run at ${siteDir} is not a real directory (replaced by a link?): not touching anything through it.`);
+    return;
+  }
+  // Step 1, the one that actually matters.
+  try {
+    await rename(join(siteDir, 'report.json'), join(siteDir, 'report.refused.json'));
+  } catch (err) {
+    // ENOENT means there was no report to quarantine, which is a fine outcome.
+    if (err?.code !== 'ENOENT') console.error(`Could not quarantine the refused report: ${err.message}`);
+  }
+  // Step 2, diagnostic only: its failure must not affect step 1.
+  try {
+    await writeFile(join(siteDir, 'run-refused.json'), JSON.stringify({ url, reason: 'wrote outside --out', escapedOutsideScope, at: new Date().toISOString() }, null, 2) + '\n');
+  } catch (err) {
+    console.error(`Could not write the refusal marker: ${err.message}`);
+  }
+}
+
 function hasCompletedLatest(url) {
   const hostRoot = join(outDir, hostSlug(url));
   const latestDir = resolveLatest(hostRoot);
   if (!latestDir) return false;
-  // Belt and braces beside removing the report: a run marked as refused is never the
-  // current result, however resolution reached it.
+  // Secondary signal only. The primary defence is that a refused run's report is
+  // RENAMED (report.refused.json), so resolution does not find it - and that cannot be
+  // defeated by an agent making this marker unwritable.
   if (existsSync(join(latestDir, 'run-refused.json'))) return false;
   return validateAtomicReport(join(latestDir, 'report.json')).ok;
 }
