@@ -42,6 +42,7 @@ try {
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
   await testAxeKeepsPagePolicyAndDisclosesInjectionBypass();
+  await testHeadersPrimitiveFindsHeadersRegardlessOfNameCase();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
   await testEvidenceTruncationReporting();
@@ -1768,6 +1769,107 @@ function testSchemaValidation() {
   validateJson(ajv, configSchema, 'web-uplift.example.json');
   validateJson(ajv, findingsSchema, 'examples/playground-report.json');
   validateJson(ajv, findingsSchema, 'examples/playground-report-fixed.json');
+}
+
+// The headers primitive reads a site's security response headers, and header names
+// are case-insensitive (RFC 9110): Chrome hands them over as the server sent them, so
+// an HTTP/1.1 response arrives capitalised and an HTTP/2 one lowercased. The lookup
+// used to be lowercase-only, which made every capitalised response report all six
+// headers as missing - a false negative written into the tool's own security
+// evidence. This drives the real primitive over both wire shapes and checks that a
+// header the response does not send still reads as absent, so the fix cannot be
+// over-broad (web-uplift-0w6).
+async function testHeadersPrimitiveFindsHeadersRegardlessOfNameCase() {
+  const page = (title) =>
+    `<!doctype html><html lang="en"><head><title>${title}</title></head><body><main><h1>${title}</h1></main></body></html>`;
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/caps') {
+      // HTTP/1.1 wire shape: Node writes header names exactly as given.
+      res.writeHead(200, {
+        'Content-Type': 'text/html',
+        'Content-Security-Policy': "default-src 'self'",
+        'Strict-Transport-Security': 'max-age=63072000',
+      });
+      res.end(page('caps'));
+      return;
+    }
+    if (path === '/lower') {
+      // The shape HTTP/2 delivers: the case that already worked, kept as a
+      // regression guard in the other direction.
+      res.writeHead(200, {
+        'content-type': 'text/html',
+        'content-security-policy': "default-src 'self'",
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(page('lower'));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(page('bare'));
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    // Prove the fixtures carry the casing each case is about: res.rawHeaders keeps
+    // the wire casing, while res.headers is lowercased by Node itself and would
+    // prove nothing here.
+    const wireNames = async (path) =>
+      new Promise((resolve, reject) => {
+        const request = http.get(`${base}${path}`, (res) => {
+          const names = res.rawHeaders.filter((_, index) => index % 2 === 0);
+          res.resume();
+          resolve(names);
+        });
+        request.on('error', reject);
+      });
+    assert(
+      (await wireNames('/caps')).includes('Content-Security-Policy'),
+      'the HTTP/1.1 fixture must really send a capitalised header name',
+    );
+    assert(
+      (await wireNames('/lower')).includes('content-security-policy'),
+      'the lowercase fixture must really send a lowercase header name',
+    );
+
+    const caps = await gather('headers', `${base}/caps`, { quiet: true, wait: 400 });
+    assert(
+      caps.securityHeaders['content-security-policy'].present === true,
+      `a capitalised response header must be found: ${JSON.stringify(caps.securityHeaders['content-security-policy'])}`,
+    );
+    assert(
+      caps.securityHeaders['content-security-policy'].value === "default-src 'self'",
+      `the header value must survive the normalisation: ${JSON.stringify(caps.securityHeaders['content-security-policy'])}`,
+    );
+    assert(
+      caps.securityHeaders['strict-transport-security'].present === true,
+      `a capitalised HSTS header must be found: ${JSON.stringify(caps.securityHeaders['strict-transport-security'])}`,
+    );
+    assert(
+      caps.securityHeaders['x-frame-options'].present === false,
+      `a header the response does not send must still read as absent: ${JSON.stringify(caps.securityHeaders['x-frame-options'])}`,
+    );
+
+    const lower = await gather('headers', `${base}/lower`, { quiet: true, wait: 400 });
+    assert(
+      lower.securityHeaders['content-security-policy'].present === true,
+      `a lowercase response header must still be found: ${JSON.stringify(lower.securityHeaders['content-security-policy'])}`,
+    );
+    assert(
+      lower.securityHeaders['x-content-type-options'].present === true,
+      `a lowercase nosniff header must still be found: ${JSON.stringify(lower.securityHeaders['x-content-type-options'])}`,
+    );
+
+    const bare = await gather('headers', `${base}/bare`, { quiet: true, wait: 400 });
+    assert(
+      bare.securityHeaders['content-security-policy'].present === false &&
+        bare.securityHeaders['strict-transport-security'].present === false,
+      `a response that sends no security headers must report none: ${JSON.stringify(bare.securityHeaders)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
 }
 
 function testInstalledEvidenceCli() {

@@ -19,6 +19,11 @@
   The result now records that the injection bypass happened
   (`cspBypassedForInjection`, `cspBypassNote`) so a reader can tell this run from
   one where the policy was never lifted.
+- **headers primitive**: response header names are now matched case-insensitively.
+  A capitalised response - the shape an HTTP/1.1 response arrives in - previously
+  had every security header read as absent, so a site that really sends a
+  content-security-policy, strict-transport-security or the others could be
+  reported as sending none of them.
 
 ## [0.4.2] - 2026-10-05
 

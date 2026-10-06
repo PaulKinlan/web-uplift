@@ -2170,8 +2170,14 @@ async function headers(client, url, opts, log) {
   });
   await navigate(client, url, { settleMs: opts.wait || 3000, log });
   const resp = await docPromise;
-  if (resp && resp.headers) Object.assign(respHeaders, resp.headers);
-  const get = (k) => respHeaders[k] || respHeaders[k.toLowerCase()] || null;
+  // Header names are case-insensitive (RFC 9110), and Chrome hands them over as the
+  // server sent them: capitalised on an HTTP/1.1 response, lowercased on HTTP/2. The
+  // lookups below used to be lowercase-only, so a capitalised response reported
+  // every security header as missing. Normalise through headerMap/headerArray - the
+  // same lower-casing the HAR path uses - and look up by lower-cased name, so no
+  // wire shape can be missed (web-uplift-0w6).
+  if (resp && resp.headers) Object.assign(respHeaders, headerMap(headerArray(resp.headers)));
+  const get = (name) => respHeaders[name.toLowerCase()] ?? null;
   const csp = get('content-security-policy');
   const hsts = get('strict-transport-security');
   const xcto = get('x-content-type-options');
