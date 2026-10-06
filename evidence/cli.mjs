@@ -1137,7 +1137,8 @@ async function har(client, url, opts, log) {
     note:
       'Valid HAR 1.2 log of the network over the load. The raw .har opens in DevTools Network import and is the basis for cross-run network deltas; read the companion *-summary.json for the compact, model-readable network signals (read the summary, never the raw HAR).' +
       ' Credential redaction, by default and controlled by ONE flag (--no-redact-headers keeps everything raw and accepts the publication risk): the values of credential-named HEADERS (Set-Cookie, Cookie, Authorization, Proxy-Authorization, X-Auth-Token, X-Api-Key, X-Amz-Security-Token); credential-named QUERY PARAMETERS in request URLs and in each entry\'s queryString, keeping the names; credential-named FIELDS in request bodies, with the entry\'s bodySize recomputed from the redacted text so the size cannot leak the original length; the REDIRECT TARGET (a Location can carry a credential in its query string); credential-named fields in RESPONSE BODY TEXT when bodies are recorded; URL-VALUED HEADERS, including the Referer that carries the audited page URL verbatim; and the INITIATOR fields, which record the inserting document and the JS call-frame URL.' +
-      ' NOT covered, stated so nobody assumes blanket protection: base64-encoded bodies (not text-searchable), and any credential whose field, parameter or header NAME does not look like one - the test is names-based because the tool cannot know which value in an arbitrary URL or body is a secret. Treat a HAR as sensitive whenever the audited site handled credentials.' +
+      ' Names are matched as whole words after splitting on separators AND camelCase, so accessToken, refreshToken, apiKey and clientSecret are recognised along with the separator-delimited spellings.' +
+      ' STILL NOT covered, stated so nobody assumes blanket protection: (1) base64-encoded bodies, which are not text-searchable, and the credential in one remains recoverable by decoding it; (2) a credential whose field, parameter or header NAME does not look like one - the test is names-based because the tool cannot know which value in an arbitrary URL or body is a secret, and it deliberately errs towards over-redacting ambiguous names such as `code` or `key`; (3) WIRE LENGTHS - the request body size is recomputed from the redacted text, but response bodySize and _transferSize are measurements of the ORIGINAL bytes, so for an uncompressed response the length of a redacted value can still be inferred. Treat a HAR as sensitive whenever the audited site handled credentials.' +
       (settle.pending > 0
         ? ` WARNING: ${settle.pending} request(s) were still pending when the network was snapshotted (load waited ${loadWaitMs}ms, settle waited ${settle.ms}ms); their bodies and statuses are missing from this HAR, which is a harness/load artifact rather than absence.`
         : ''),
@@ -1256,10 +1257,10 @@ function summariseHar(har, mainUrl, log, { redactCredentials = true } = {}) {
       });
     }
 
-    // The redirect target is kept raw on purpose: it IS the diagnostic signal, and
-    // the credential-header redaction above does not apply to it. A Location can
-    // itself carry a credential in its query string, which is a recorded residual
-    // rather than an oversight (web-uplift-dxk).
+    // The redirect target IS a diagnostic signal, and a Location can carry a credential
+    // in its query string - which is exactly why it now goes through the URL redaction
+    // (web-uplift-dsj). The residual, stated where it belongs, is that a credential whose
+    // NAME does not look like one is not detected.
     // Hygiene: cacheable responses missing cache-control AND expires. Skip
     // redirects/errors and non-200s where caching is not the relevant signal.
     const status = num(res.status) || 0;
@@ -1658,11 +1659,31 @@ const REDACTED_HEADER_VALUE = '[redacted]';
 // value in an arbitrary URL or body is a secret, so it redacts the VALUES of fields
 // whose NAME says credential and leaves everything else untouched (a redaction that
 // blanked whole fields would destroy the evidence the artifact exists to carry).
-const CREDENTIAL_NAME_RE =
-  /(^|[-_.])(pass|passwd|password|pwd|secret|token|api[-_]?key|apikey|auth|authorization|session|sessionid|sid|signature|sig|credential|bearer|jwt|otp|access[-_]?key|private[-_]?key|client[-_]?secret|refresh[-_]?token|id[-_]?token|code)([-_.]|$)/i;
+// Words that mark a value as credential-shaped. Matched as WHOLE WORDS after splitting
+// the name on separators AND camelCase boundaries, because a regex anchored on separators
+// missed the common spellings `accessToken`, `refreshToken`, `apiKey` and `clientSecret`
+// entirely - a hole the review found by asking what a plausible credential parameter
+// actually looks like, rather than by testing the spellings we happened to think of.
+const CREDENTIAL_WORDS = new Set([
+  'passwd', 'password', 'pwd', 'secret', 'token', 'apikey', 'auth', 'authorization',
+  'session', 'sessionid', 'sig', 'signature', 'credential', 'credentials', 'bearer',
+  'jwt', 'otp', 'key', 'accesstoken', 'refreshtoken', 'clientsecret', 'privatekey',
+  'accesskey', 'secretkey', 'idtoken', 'code',
+]);
 
+// Deliberately fail-closed on ambiguity: `code` and `key` can be innocent (`countryCode`,
+// `sortKey`), and redacting an innocent value costs evidence, but leaving a credential
+// costs a disclosure. The artifact note says the test is names-based and can over-redact.
 export function isCredentialName(name) {
-  return typeof name === 'string' && CREDENTIAL_NAME_RE.test(name);
+  if (typeof name !== 'string' || !name) return false;
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // camelCase / PascalCase boundary
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (!words.length) return false;
+  if (CREDENTIAL_WORDS.has(words.join(''))) return true;
+  return words.some((w) => CREDENTIAL_WORDS.has(w));
 }
 
 // Redact the VALUES of credential-named query parameters in a URL; keep the names and
@@ -1711,10 +1732,23 @@ export function redactQueryList(list) {
 // name and every other field survive; only the value becomes [redacted].
 export function redactBodyText(text) {
   if (typeof text !== 'string' || !text) return text;
-  return text.replace(
-    /(["']?)([A-Za-z0-9_.\-]+)\1(\s*[:=]\s*)("([^"]*)"|'([^']*)'|[^&;,\s}]+)/g,
-    (match, q, name, sep) => (isCredentialName(name) ? `${q}${name}${q}${sep}"${REDACTED_HEADER_VALUE}"` : match),
-  );
+  return text
+    // Quoted values, with ESCAPES handled: a naive `"[^"]*"` ends at the first quote even
+    // when it is backslash-escaped, so a value containing \" was replaced only up to the
+    // backslash and the credential after it stayed in the recorded body. The alternative
+    // below consumes escaped characters properly, so the WHOLE string value is replaced.
+    .replace(
+      /(["'])([A-Za-z0-9_.\-]+)\1(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^&;,\s}]+)/g,
+      (match, q, name, sep) => (isCredentialName(name) ? `${q}${name}${q}${sep}"${REDACTED_HEADER_VALUE}"` : match),
+    )
+    // Unquoted keys with either `=` (form-encoded, query) or `:` (JS/JSON-ish object
+    // literals in a recorded document body). The colon form is what a page's own inline
+    // script uses - `{ password: 'SECRET' }` - and it was reaching the artifact because the
+    // earlier scanner only understood `name=value`.
+    .replace(
+      /(^|[?&;,\s{([])([A-Za-z0-9_.\-]+)(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^&;,\s}]+)/g,
+      (match, pre, name, sep) => (isCredentialName(name) ? `${pre}${name}${sep}"${REDACTED_HEADER_VALUE}"` : match),
+    );
 }
 
 export function redactHeaderList(headers) {
