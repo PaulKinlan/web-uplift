@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, waitForInteractEvidence } from '../evidence/cli.mjs';
+import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, safeFetch, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -20,6 +20,8 @@ try {
   testChromeCandidateDiscovery();
   testIconSatisfiesMatrix();
   testFirstPartyHostMatrix();
+  await testPageDerivedFetchGuard();
+  await testSafeFetchRedirectAndSizeGuard();
   await testLaunchRetryAndDiagnostics();
   testSchemaValidation();
   testAtomicCoverageValidator();
@@ -1140,6 +1142,13 @@ async function testResiliencePrimitive() {
     '<link rel="manifest" href="/manifest.webmanifest">' +
     '<script>navigator.serviceWorker.register("/sw.js")</script></head>' +
     `<body><h1>${title}</h1><p>Fixture body content for the resilience primitive.</p></body></html>`;
+  // A page-controlled manifest href must not make the privileged Node process
+  // fetch a private address: the guard has to refuse it and persist nothing into
+  // the report (threat model I2 / F-003, web-uplift-2kh). 169.254.169.254 is the
+  // cloud metadata service.
+  const evilManifestPage = '<!doctype html><html><head><title>Evil manifest</title>' +
+    '<link rel="manifest" href="http://169.254.169.254/latest/meta-data/"></head>' +
+    '<body><h1>Evil manifest</h1></body></html>';
 
   const server = http.createServer((req, res) => {
     const path = (req.url || '').split('?')[0];
@@ -1163,6 +1172,7 @@ async function testResiliencePrimitive() {
       return send('text/html', '<!doctype html><html><head><title>No service worker</title></head>' +
         '<body><h1>No service worker</h1><p>Nothing resilient here.</p></body></html>');
     }
+    if (path === '/evil-manifest') return send('text/html', evilManifestPage);
     // no-store, so the browser's HTTP cache cannot quietly stand in for the
     // service worker's fallback: offline emulation still serves cache hits.
     if (path === '/uncached-sw') return send('text/html', swPage('Uncached page with service worker'), 200, { 'Cache-Control': 'no-store' });
@@ -1240,6 +1250,17 @@ async function testResiliencePrimitive() {
     assert(
       bare.offline.navigationFailed === true && typeof bare.offline.errorText === 'string' && bare.offline.rendered === null,
       `resilience: offline navigation should fail with a net error: ${JSON.stringify(bare.offline)}`,
+    );
+
+    // A page-controlled manifest href pointing at a private address must be
+    // refused by the guard, with no body persisted into the evidence.
+    const evil = await gather('resilience', `${base}/evil-manifest`, { quiet: true, wait: 300, screenshots: false });
+    assert(
+      evil.manifest.found === false &&
+        evil.manifest.data === null &&
+        /refused:/.test(String(evil.manifest.fetchError)) &&
+        evil.installabilitySignals.manifestResolved === false,
+      `resilience: a manifest href pointing at a private address must be refused with nothing persisted: ${JSON.stringify(evil.manifest)}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
@@ -2467,5 +2488,178 @@ function testGuidanceVersionPinnedInDocs() {
         `${rel} names modern-web-guidance@${ref}, but guidanceCatalogVersion is ${pinned}`,
       );
     }
+  }
+}
+// A page controls the manifest href and the redirects the raw fetch follows, and
+// both are fetched by the privileged Node process. The guard must refuse every
+// private target, including every IP literal encoding, and fail closed on a name
+// it cannot resolve (threat model I2 / F-003, web-uplift-2kh).
+async function testPageDerivedFetchGuard() {
+  const refused = [
+    'file:///etc/passwd',
+    'data:text/plain,hi',
+    'blob:https://example.com/x',
+    'ftp://example.com/x',
+    'http://2130706433/',
+    'http://0x7f.0.0.1/',
+    'http://0177.0.0.1/',
+    'http://127.1/',
+    'http://127.0.0.1/',
+    'http://0.0.0.0/',
+    'http://169.254.169.254/latest/meta-data/',
+    'http://10.0.0.1/',
+    'http://172.16.0.1/',
+    'http://192.168.1.1/',
+    'http://100.64.0.1/',
+    'https://198.18.0.1/',
+    'http://[::1]/',
+    'http://[::ffff:127.0.0.1]/',
+    'http://[fe80::1]/',
+    'http://[fc00::1]/',
+    'http://localhost:1234/m.webmanifest',
+    'http://no-such-name.invalid/m.webmanifest',
+  ];
+  for (const candidate of refused) {
+    let error = null;
+    try {
+      await assertPageDerivedFetchAllowed(candidate, { targetOrigin: 'https://example.com' });
+    } catch (e) {
+      error = e;
+    }
+    assert(error && /refused:/.test(error.message), `the fetch guard must refuse ${candidate}: ${error?.message}`);
+  }
+
+  // The exemption is ORIGIN-scoped: the same host on a different port is another
+  // local service and must be refused (adversarial review P1a: a page served from
+  // 127.0.0.1:8080 must not be able to read 127.0.0.1:2375).
+  let crossPort = null;
+  try {
+    await assertPageDerivedFetchAllowed('http://127.0.0.1:2375/containers/json', { targetOrigin: 'http://127.0.0.1:8080' });
+  } catch (e) {
+    crossPort = e;
+  }
+  assert(crossPort && /refused:/.test(crossPort.message), `the exemption must not cross ports: ${crossPort?.message}`);
+
+  // Public IP literals need no DNS and must stay fetchable (this direction is what
+  // catches an over-blocking classification bug); the audited target's own ORIGIN
+  // is exempt so a deliberate local audit keeps working; a relative href resolves
+  // against the target.
+  for (const publicUrl of ['http://93.184.216.34/m.webmanifest', 'http://8.8.8.8/', 'http://1.1.1.1/', 'http://[2606:4700:4700::1111]/']) {
+    const allowedUrl = await assertPageDerivedFetchAllowed(publicUrl, { targetOrigin: 'https://example.com' });
+    assert(allowedUrl.href.length > 0, `a public address must stay fetchable: ${publicUrl}`);
+  }
+  const exempt = await assertPageDerivedFetchAllowed('http://127.0.0.1:8080/m.webmanifest', { targetOrigin: 'http://127.0.0.1:8080' });
+  assert(exempt.port === '8080', `the audited target ORIGIN must be exempt: ${exempt.href}`);
+  const relative = await assertPageDerivedFetchAllowed('/m.webmanifest', {
+    base: 'http://127.0.0.1:8080/deep/page',
+    targetOrigin: 'http://127.0.0.1:8080',
+  });
+  assert(relative.pathname === '/m.webmanifest', `a relative manifest href must resolve against the target: ${relative.href}`);
+}
+
+// The redirect is where a first-URL-only check fails: Node's fetch follows
+// redirects internally, so the guard has to re-validate every hop, bound the hop
+// count and cap the body. A legitimate same-host fetch must still go through.
+async function testSafeFetchRedirectAndSizeGuard() {
+  // A second local service on another port: the P1a exploit shape is a page on the
+  // audited origin pointing its manifest at this one.
+  const secret = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"Secret":"cross-port local service"}');
+  });
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/ok.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
+    if (path === '/redirect-private') {
+      res.writeHead(302, { Location: 'http://169.254.169.254/latest/meta-data/' });
+      res.end();
+      return;
+    }
+    if (path === '/redirect-file') {
+      res.writeHead(302, { Location: 'file:///etc/passwd' });
+      res.end();
+      return;
+    }
+    if (path === '/redirect-loop') {
+      res.writeHead(302, { Location: '/redirect-loop' });
+      res.end();
+      return;
+    }
+    if (path === '/sw-redirect') {
+      res.writeHead(302, { Location: 'http://169.254.169.254/latest/meta-data/' });
+      res.end();
+      return;
+    }
+    if (path === '/huge.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('x'.repeat(4096));
+      return;
+    }
+    res.writeHead(404);
+    res.end('nope');
+  });
+  await new Promise((resolveListen) => secret.listen(0, '127.0.0.1', resolveListen));
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    const targetOrigin = base;
+
+    // POSITIVE, end to end: the body really arrives through the guard (an
+    // over-blocking bug fails here, not just in the URL validation above).
+    const ok = await safeFetch(`${base}/ok.json`, { targetOrigin });
+    assert(
+      JSON.parse(await ok.text()).ok === true,
+      'a legitimate same-origin fetch must fetch and return its body through the guard',
+    );
+
+    // P1a: same host, different port is a different origin and must be refused.
+    const secretOrigin = `http://127.0.0.1:${secret.address().port}`;
+    let crossPortError = null;
+    try {
+      await safeFetch(`${secretOrigin}/containers/json`, { targetOrigin });
+    } catch (e) {
+      crossPortError = e;
+    }
+    assert(crossPortError && /refused:/.test(crossPortError.message), `a same-host different-port fetch must be refused: ${crossPortError?.message}`);
+
+    // P1b: the worker-script URL starts same-origin, but a redirect to a private
+    // address must be refused on that path too.
+    let swError = null;
+    try {
+      await safeFetch(`${base}/sw-redirect`, { targetOrigin });
+    } catch (e) {
+      swError = e;
+    }
+    assert(swError && /refused:/.test(swError.message), `a worker-script redirect to a private address must be refused: ${swError?.message}`);
+
+    for (const path of ['/redirect-private', '/redirect-file', '/redirect-loop']) {
+      let error = null;
+      try {
+        await safeFetch(`${base}${path}`, { targetOrigin });
+      } catch (e) {
+        error = e;
+      }
+      assert(error && /refused:/.test(error.message), `${path} must be refused: ${error?.message}`);
+    }
+
+    let capError = null;
+    try {
+      const big = await safeFetch(`${base}/huge.json`, { targetOrigin, maxBytes: 1024 });
+      await big.text();
+    } catch (e) {
+      capError = e;
+    }
+    assert(capError && /exceeded/.test(capError.message), `an oversized body must be refused: ${capError?.message}`);
+
+    const relativeFetch = await safeFetch('/ok.json', { base: `${base}/deep/page`, targetOrigin });
+    assert(JSON.parse(await relativeFetch.text()).ok === true, 'a relative href must resolve against the base and fetch');
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+    await new Promise((resolveClose) => secret.close(resolveClose));
   }
 }
