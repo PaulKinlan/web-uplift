@@ -71,7 +71,7 @@
     "aggregate": "node aggregate/aggregate.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "axe-core": "^4.13.0",
     "chrome-remote-interface": "^0.33.3",
     "web-features": "3.40.0",
