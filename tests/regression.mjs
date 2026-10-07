@@ -57,6 +57,7 @@ try {
   await testFetchDeadlineAndRawComparison();
   await testLaunchAttributionForHungPrimitive();
   await testOperatorLaunchAttribution();
+  await testAgentChildEnvAllowlist();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -6012,6 +6013,95 @@ async function testOperatorLaunchAttribution() {
     rmSync(runTmp, { recursive: true, force: true });
   }
 }
+
+// The agent-child environment allowlist (web-uplift-l6d): the spawned agent
+// ingests untrusted page text with network egress, so it must NOT inherit the
+// operator's shell env - a page that talks the agent into reading a credential
+// can exfiltrate it. The child gets an explicit allowlist instead, sensitive
+// withholdings are warned on BY NAME (never values), and --agent-env is the
+// explicit opt-in.
+async function testAgentChildEnvAllowlist() {
+  const { buildAgentEnv, parseAgentEnvFlag } = await import(pathToFileURL(join(repoRoot, 'runner/agents.mjs')).href);
+
+  // 1. UNIT: what passes, what is withheld, what is warned.
+  const warnings = [];
+  const fakeEnv = {
+    PATH: '/usr/bin', HOME: '/home/op', LANG: 'en_GB.UTF-8',
+    ANTHROPIC_API_KEY: 'sk-ant-secret', WEB_UPLIFT_FETCH_DEADLINE_MS: '5000',
+    GITHUB_TOKEN: 'ghp_secret', AWS_SECRET_ACCESS_KEY: 'aws-secret',
+    SSH_AUTH_SOCK: '/tmp/ssh-agent', NPM_TOKEN: 'npm-secret', RANDOM_NOISE: 'harmless',
+  };
+  const built = buildAgentEnv({ env: fakeEnv, warn: (m) => warnings.push(m) });
+  for (const kept of ['PATH', 'HOME', 'LANG', 'ANTHROPIC_API_KEY', 'WEB_UPLIFT_FETCH_DEADLINE_MS']) {
+    assert(built[kept] === fakeEnv[kept], `the child needs ${kept}: it must pass the allowlist`);
+  }
+  for (const dropped of ['GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'SSH_AUTH_SOCK', 'NPM_TOKEN', 'RANDOM_NOISE']) {
+    assert(built[dropped] === undefined, `${dropped} must NOT reach the agent child`);
+  }
+  assert(warnings.length === 1, `withheld variables must be warned on once: ${JSON.stringify(warnings)}`);
+  for (const named of ['GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'SSH_AUTH_SOCK', 'NPM_TOKEN']) {
+    assert(warnings[0].includes(named), `the warning must name the withheld ${named}: ${warnings[0]}`);
+  }
+  assert(
+    !warnings[0].includes('ghp_secret') && !warnings[0].includes('aws-secret'),
+    'the warning must name variables but NEVER carry their values',
+  );
+  assert(!warnings[0].includes('RANDOM_NOISE'), 'a harmless variable is dropped silently; only sensitive-looking ones are named');
+
+  // 2. --agent-env parsing: explicit additions win, values may contain '=', bad
+  //    shapes are rejected loudly.
+  const extra = parseAgentEnvFlag(['COPILOT_GITHUB_TOKEN=ghp_scoped', 'WEIRD=a=b=c']);
+  assert(extra.COPILOT_GITHUB_TOKEN === 'ghp_scoped' && extra.WEIRD === 'a=b=c', `--agent-env parsing: ${JSON.stringify(extra)}`);
+  const withExtra = buildAgentEnv({ env: fakeEnv, extra, warn: () => {} });
+  assert(withExtra.COPILOT_GITHUB_TOKEN === 'ghp_scoped', 'an --agent-env addition must reach the child');
+  for (const bad of ['NOEQUALS', '=x', '1BAD=x', 'BAD-NAME=x']) {
+    let threw = false;
+    try { parseAgentEnvFlag([bad]); } catch { threw = true; }
+    assert(threw, `--agent-env must reject ${JSON.stringify(bad)}`);
+  }
+
+  // 3. THE SPAWN SEAM, end to end: a stub agent records the environment it
+  //    ACTUALLY received from the batch runner, proving the child gets the
+  //    allowlist and nothing else - including the run-level launches.jsonl
+  //    path, which is runner-set on top of the allowlist (4wx).
+  const envTmp = mkdtempSync(join(tmpdir(), 'web-uplift-agent-env-'));
+  try {
+    const captureFile = join(envTmp, 'child-env-keys.txt');
+    const binDir = join(envTmp, 'bin');
+    mkdirSync(binDir);
+    const stubPath = join(binDir, 'claude');
+    writeFileSync(stubPath, `#!/bin/sh\nenv | cut -d= -f1 | sort > ${captureFile}\nexit 0\n`);
+    chmodSync(stubPath, 0o755);
+    const run = await runAsync(
+      process.execPath,
+      [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com', '--agent', 'claude', '--out', join(envTmp, 'reports')],
+      {
+        env: {
+          PATH: `${binDir}:${process.env.PATH}`,
+          HOME: envTmp,
+          GITHUB_TOKEN: 'ghp_parent_secret',
+          ANTHROPIC_API_KEY: 'sk-ant-parent',
+          SSH_AUTH_SOCK: '/tmp/ssh-parent',
+        },
+      },
+    );
+    assert(existsSync(captureFile), `the stub agent must have run (runner stderr: ${run.stderr.slice(-400)})`);
+    const childKeys = readFileSync(captureFile, 'utf8').trim().split('\n');
+    assert(childKeys.includes('ANTHROPIC_API_KEY'), 'the child keeps its own provider credential');
+    assert(childKeys.includes('PATH') && childKeys.includes('HOME'), 'the child keeps PATH/HOME');
+    assert(childKeys.includes('WEB_UPLIFT_LAUNCH_LOG'), 'the run-level launches path must reach the child (4wx)');
+    for (const dropped of ['GITHUB_TOKEN', 'SSH_AUTH_SOCK']) {
+      assert(!childKeys.includes(dropped), `the operator's ${dropped} must NOT reach the agent child`);
+    }
+    assert(
+      run.stderr.includes('withheld') && run.stderr.includes('GITHUB_TOKEN'),
+      `the runner must warn the withheld names on stderr: ${run.stderr.slice(-400)}`,
+    );
+  } finally {
+    rmSync(envTmp, { recursive: true, force: true });
+  }
+}
+
 
 
 

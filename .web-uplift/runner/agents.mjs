@@ -83,6 +83,90 @@ export function headlessBashRules({ root } = {}) {
   return rules;
 }
 
+// ---------------------------------------------------------------------------
+// THE AGENT CHILD ENVIRONMENT (web-uplift-l6d): an explicit allowlist, NEVER a
+// process.env spread. The spawned agent ingests untrusted page text and has
+// network egress, so every variable it inherits is one prompt injection away
+// from exfiltration (threat model C3). What the child legitimately needs:
+//   - how to find binaries and where its own config/auth lives: PATH, HOME,
+//     TMPDIR, SHELL, USER/LOGNAME, TERM, locale/timezone, XDG dirs, proxies;
+//   - its OWN provider authentication when the operator authenticates the agent
+//     CLI by environment variable (the ANTHROPIC_/OPENAI_/GEMINI_ families and
+//     GOOGLE_API_KEY) - this is the single credential class the child must hold
+//     to function at all;
+//   - WEB_UPLIFT_* tunables, which the evidence-CLI grandchildren read.
+// Everything else the operator's shell happens to carry - GITHUB_TOKEN, cloud
+// keys, SSH agent sockets, registry tokens - stays out, and its NAME (never its
+// value) is warned on so an operator learns what was withheld. Anything else a
+// specific run genuinely needs goes through --agent-env KEY=VALUE, an explicit
+// operator choice (e.g. a fine-grained token for the Copilot CLI, whose
+// GITHUB_TOKEN auth is deliberately not passed by default).
+//
+// RESIDUAL, stated plainly: the child still holds its own provider credential
+// and whatever --agent-env adds, and it keeps network egress, so a page can
+// still talk the agent into exfiltrating THAT credential. The allowlist removes
+// every OTHER credential from reach; it does not make the held one safe, which
+// is why the README's operator-supplied isolation boundary stays the rule.
+const AGENT_ENV_PASSTHROUGH = [
+  'PATH', 'HOME', 'TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'TERM', 'COLORTERM',
+  'LANG', 'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES', 'TZ',
+  'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_RUNTIME_DIR',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+];
+const AGENT_ENV_PROVIDER_PREFIXES = ['ANTHROPIC_', 'OPENAI_', 'GEMINI_', 'WEB_UPLIFT_'];
+const AGENT_ENV_PROVIDER_NAMES = new Set(['GOOGLE_API_KEY']);
+
+// A name reads as sensitive when it carries a credential-shaped token, or is a
+// known credential channel. Used ONLY to warn about withheld variables - the
+// allowlist above decides what passes, never this pattern.
+const SENSITIVE_ENV_NAME = new RegExp(
+  '(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|API_?KEY|PRIVATE_?KEY|AUTH|SESSION|CONNECTION_?STRING)(_|$)' +
+    '|^(SSH_AUTH_SOCK|SSH_AGENT_PID|KUBECONFIG|DOCKER_AUTH_CONFIG|GOOGLE_APPLICATION_CREDENTIALS)$' +
+    '|^(AWS|GITHUB|GH|NPM|DOCKER|STRIPE|TWILIO|SLACK|DIGITALOCEAN|HEROKU)_[A-Z]',
+);
+
+export function buildAgentEnv({ extra = {}, env = process.env, warn = (m) => console.error(m) } = {}) {
+  const out = {};
+  for (const name of AGENT_ENV_PASSTHROUGH) {
+    if (env[name] !== undefined) out[name] = env[name];
+  }
+  for (const [name, value] of Object.entries(env)) {
+    if (out[name] !== undefined) continue;
+    if (AGENT_ENV_PROVIDER_PREFIXES.some((p) => name.startsWith(p)) || AGENT_ENV_PROVIDER_NAMES.has(name)) {
+      out[name] = value;
+    }
+  }
+  // The operator's explicit choices always win, including over the allowlist.
+  for (const [name, value] of Object.entries(extra)) out[name] = value;
+
+  const withheld = Object.keys(env)
+    .filter((name) => out[name] === undefined && SENSITIVE_ENV_NAME.test(name))
+    .sort();
+  if (withheld.length) {
+    warn(
+      `[agent-env] withheld ${withheld.length} sensitive-looking variable(s) from the agent child ` +
+        `(names only): ${withheld.join(', ')} - if the agent genuinely needs one, pass it ` +
+        `explicitly with --agent-env KEY=VALUE`,
+    );
+  }
+  return out;
+}
+
+// Parse the repeatable --agent-env KEY=VALUE flag. Values may themselves
+// contain '='; only the first one splits the pair.
+export function parseAgentEnvFlag(values) {
+  const extra = {};
+  for (const entry of [].concat(values ?? [])) {
+    const text = String(entry);
+    const eq = text.indexOf('=');
+    if (eq < 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(text.slice(0, eq))) {
+      throw new Error(`--agent-env expects KEY=VALUE with a shell-style KEY; got "${text}"`);
+    }
+    extra[text.slice(0, eq)] = text.slice(eq + 1);
+  }
+  return extra;
+}
+
 // Prompts. Claude surfaces the skill as a slash command; the rest are pointed at
 // the SKILL.md file directly (plain markdown any agent can follow). `extra` is
 // appended verbatim so the fixer can pass `--source <dir> --fix ...`.

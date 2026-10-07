@@ -46,7 +46,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, access, cp } from 'node:fs/promises';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { AGENTS, AGENT_NAMES } from '../runner/agents.mjs';
+import { AGENTS, AGENT_NAMES, buildAgentEnv, parseAgentEnvFlag } from '../runner/agents.mjs';
 import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
 import { countOutstanding, completionState, remaining } from '../runner/remaining-work.mjs';
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
@@ -54,6 +54,12 @@ import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from 
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from '../runner/write-scope.mjs';
 
 const args = parseArgs(process.argv.slice(2));
+
+// The agent child's environment is an explicit ALLOWLIST (web-uplift-l6d) built
+// once, here - never a process.env spread. See buildAgentEnv in runner/agents.mjs
+// for what passes (PATH/HOME/locale, the child's own provider auth, WEB_UPLIFT_*)
+// and what is withheld (warned by name).
+const agentEnv = buildAgentEnv({ extra: parseAgentEnvFlag(args['agent-env']) });
 
 // --goal defines a SCORE target to hill-climb to, an alternative stop condition
 // to "every issue fixed". Same shape as the CI gate:
@@ -615,7 +621,7 @@ function runAgent(prompt, iteration) {
   return new Promise((resolve, reject) => {
     // cwd is the project root, set explicitly rather than inherited: the skill finds
     // the vendored tool at .web-uplift/evidence/cli.mjs relative to this directory.
-    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'], cwd: projectRoot });
+    const child = spawn(agent.bin, cliArgs, { stdio: ['ignore', 'pipe', 'pipe'], cwd: projectRoot, env: agentEnv });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; if (verbose) process.stdout.write(d); });
@@ -707,7 +713,7 @@ function parseArgs(argv) {
   const out = { _: [] };
   const valueFlags = new Set([
     'target', 'audit-url', 'agent', 'max-iterations', 'findings', 'out', 'reports-root',
-    'goal-overall', 'goal-min', 'goal-max-critical', 'goal-max-high', 'allow-write', 'isolation',
+    'goal-overall', 'goal-min', 'goal-max-critical', 'goal-max-high', 'allow-write', 'isolation', 'agent-env',
   ]);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
@@ -762,6 +768,11 @@ Options:
                           verify your boundary; it records the assertion as
                           unverified and warns. See "Running it safely" in
                           README.md for a worked example.
+  --agent-env KEY=VALUE   Extra variable for the agent child's allowlisted
+                          environment (repeatable). The child never inherits the
+                          operator's shell env; its own provider auth, PATH, HOME,
+                          locale and WEB_UPLIFT_* pass by default, and withheld
+                          sensitive-looking variables are warned on by name.
   --dry-run               Print the per-iteration command for each agent; do not run.
   --verbose               Stream agent stdout/stderr live.
   -h, --help              This help.
