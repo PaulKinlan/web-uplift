@@ -4197,6 +4197,12 @@ function testSourceTreeRedactsBeforeInlining() {
   writeFileSync(join(root, 'signing.pem'), `-----BEGIN PRIVATE KEY-----\n${secret}\n-----END PRIVATE KEY-----\n`);
   writeFileSync(join(root, 'firebase.json'), JSON.stringify({ api_key: secret }));
   writeFileSync(join(root, 'wrangler.toml'), `api_token = "${secret}"\n`);
+  // web-uplift-xwr: a DIRECTORY whose name says credential is skipped wholesale -
+  // the documented fail-closed decision. Descending would rely on the in-text pass
+  // catching every file inside; one miss is a disclosure, so the whole tree is
+  // dropped as RECORDED evidence loss instead.
+  mkdirSync(join(root, 'secret-utils'), { recursive: true });
+  writeFileSync(join(root, 'secret-utils', 'sign.js'), `export const s = "${secret}";\n`);
 
   const tree = readSourceTree(root);
   const serialised = JSON.stringify(tree);
@@ -4220,6 +4226,8 @@ function testSourceTreeRedactsBeforeInlining() {
   for (const name of ['.env', 'service-credentials.json', 'signing.pem', 'firebase.json', 'wrangler.toml']) {
     assert(skipped.includes(name), `a credential-named file must be skipped and recorded, not read: ${name} (${JSON.stringify(skipped)})`);
   }
+  assert(skipped.includes('secret-utils'), `a credential-named DIRECTORY must be skipped wholesale and recorded: ${JSON.stringify(skipped)}`);
+  assert(!tree.files.some((f) => f.path.startsWith('secret-utils')), `nothing inside a skipped directory may be read: ${JSON.stringify(tree.files.map((f) => f.path))}`);
   for (const entry of tree.skippedFiles) {
     assert(entry.reason === 'high-risk-name', `a skip must state its reason: ${JSON.stringify(entry)}`);
   }
@@ -5304,6 +5312,38 @@ async function testCredentialRedactionHelpers() {
   assert(uni.includes('"page":2'), `redaction: a non-credential field beside it must survive (${uni})`);
   const cont = redactBodyText("var x = { password: 'head\\\n" + SECRET + "tail', page: 2 };");
   assert(!cont.includes(SECRET), `redaction: a JS LINE CONTINUATION inside the value must not end the match (${cont})`);
+
+  // 7. TYPESCRIPT TYPE ANNOTATIONS (web-uplift-xwr). In `const apiKey: string = "secret"`
+  //    the ':' after the key binds to the TYPE, not the value. The generic colon rule
+  //    redacted the type token and left the secret in the artifact:
+  //    'const apiKey: "[redacted]" = "secret123"'. .ts/.tsx trees are exactly what
+  //    `dom --source` walks, so this was a live bypass, not a curiosity.
+  const tsDecl = redactBodyText(`const apiKey: string = "${SECRET}";\nconst region: string = 'eu-west-1';`);
+  assert(!tsDecl.includes(SECRET), `redaction: a TS annotation must not swallow the redaction - the value AFTER '=' is the secret (${tsDecl})`);
+  assert(tsDecl.includes('string'), `redaction: the TYPE name is not a credential value and must survive (${tsDecl})`);
+  assert(tsDecl.includes('eu-west-1'), `redaction: a non-credential annotated declaration must survive (${tsDecl})`);
+  const tsNoSpace = redactBodyText(`let token:string='${SECRET}';`);
+  assert(!tsNoSpace.includes(SECRET), `redaction: an annotation without spaces (${tsNoSpace})`);
+  const tsUnion = redactBodyText(`const clientSecret: string | null = "${SECRET}";`);
+  assert(!tsUnion.includes(SECRET), `redaction: a union-typed annotation (${tsUnion})`);
+
+  // 8. PLURALIZED CREDENTIAL NAMES (web-uplift-xwr). CREDENTIAL_WORDS carries singulars,
+  //    so isCredentialName('secrets'|'tokens'|'apiKeys') was false and {"secrets":{...}}
+  //    walked through BOTH the structured and the heuristic pass untouched.
+  for (const name of ['apiKeys', 'secrets', 'tokens', 'passwords', 'clientSecrets', 'accessTokens']) {
+    assert(isCredentialName(name), `redaction: pluralized credential name '${name}' must be recognised`);
+  }
+  const pluralJson = redactBodyText(`{"secrets":{"db":"${SECRET}"},"tokens":["${SECRET}"],"page":2}`);
+  assert(!pluralJson.includes(SECRET), `redaction: plural-named containers must be redacted whole (${pluralJson})`);
+  assert(pluralJson.includes('"page":2'), `redaction: a non-credential field beside them must survive (${pluralJson})`);
+  const pluralApiKeys = redactBodyText(`{"apiKeys":["${SECRET}"]}`);
+  assert(!pluralApiKeys.includes(SECRET), `redaction: an apiKeys array (${pluralApiKeys})`);
+  const pluralForm = redactBodyText(`user=bob&tokens=${SECRET}&remember=1`);
+  assert(!pluralForm.includes(SECRET) && pluralForm.includes('user=bob'), `redaction: a plural name in a form body (${pluralForm})`);
+  // DIRECTION CHECK: stemming must not turn innocent plurals into credentials.
+  for (const name of ['colors', 'fonts', 'boxes', 'regions']) {
+    assert(!isCredentialName(name), `redaction: innocent plural '${name}' must NOT be treated as a credential (over-redaction costs evidence)`);
+  }
 
   // FIDELITY: the assertion that catches BOTH classes of corruption. The redacted body must be
   // byte-identical to the input EXCEPT at the redacted spans - so a body that still round-trips

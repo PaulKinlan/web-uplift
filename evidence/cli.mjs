@@ -658,9 +658,13 @@ async function dom(client, url, opts, log) {
 // credential and copies every other byte through untouched. A secret that no
 // credential-looking name carries (an unlabelled 40-character string, a base64
 // blob) therefore still reaches the artifact, and that residual is stated in
-// `redaction.residual` rather than left for the reader to discover. Files whose
-// NAME says credential defeat an in-text pass entirely, so they are not read at
-// all and every skip is recorded in `skippedFiles` - never silent.
+// `redaction.residual` rather than left for the reader to discover. Files AND
+// DIRECTORIES whose NAME says credential defeat an in-text pass entirely, so
+// they are not read at all: a matching directory is skipped WHOLESALE (the
+// fail-closed decision recorded on web-uplift-xwr - descending into e.g.
+// secret-utils/ would rely on the in-text pass catching every file inside, and
+// one miss is a disclosure, so the deliberate evidence loss is preferred) and
+// every skip, file or directory, is recorded in `skippedFiles` - never silent.
 const SOURCE_SKIP_DIRS = new Set(['node_modules', '.git', 'reports', 'scratch', 'examples']);
 const SOURCE_TEXT_EXT = /\.(html?|css|js|mjs|cjs|ts|tsx|jsx|json|svg|md|txt)$/i;
 const SOURCE_HIGH_RISK_NAMES = [
@@ -686,7 +690,7 @@ const SOURCE_REDACTION = {
     'names-based, the same pass the HAR bodies use: the VALUE of every field whose NAME looks like a credential becomes "[redacted]"; every other byte is unchanged',
   skippedNames: ['.env*', '*credentials*', '*secret*', '*.pem', 'firebase.json', 'wrangler.toml'],
   residual:
-    'a secret that no credential-looking name carries (an unlabelled opaque string, a base64 blob) can still reach this artifact, and a credential-named file is skipped unread rather than redacted, so its contents are absent evidence. Treat a source read as sensitive whenever the tree handles credentials.',
+    'a secret that no credential-looking name carries (an unlabelled opaque string, a base64 blob) can still reach this artifact, and a credential-named file or directory is skipped unread rather than redacted - a matching DIRECTORY is dropped wholesale (fail-closed, recorded in skippedFiles) - so its contents are absent evidence. Treat a source read as sensitive whenever the tree handles credentials.',
 };
 
 export function readSourceTree(dir) {
@@ -1751,6 +1755,14 @@ const CREDENTIAL_WORDS = new Set([
 // Deliberately fail-closed on ambiguity: `code` and `key` can be innocent (`countryCode`,
 // `sortKey`), and redacting an innocent value costs evidence, but leaving a credential
 // costs a disclosure. The artifact note says the test is names-based and can over-redact.
+//
+// web-uplift-xwr: CREDENTIAL_WORDS carries singulars, and a pluralized name is exactly
+// as credential-shaped ('secrets', 'tokens', 'apiKeys' — the last via the joined
+// spelling 'apikeys'). A word therefore also matches when stripping ONE trailing 's'
+// lands in the set; the strip is conditional on the RESULT being a credential word, so
+// innocent plurals ('boxes', 'regions', 'fonts') never stem into a match.
+const credentialWord = (w) => CREDENTIAL_WORDS.has(w) || (w.endsWith('s') && CREDENTIAL_WORDS.has(w.slice(0, -1)));
+
 export function isCredentialName(name) {
   if (typeof name !== 'string' || !name) return false;
   const words = name
@@ -1759,8 +1771,8 @@ export function isCredentialName(name) {
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
   if (!words.length) return false;
-  if (CREDENTIAL_WORDS.has(words.join(''))) return true;
-  return words.some((w) => CREDENTIAL_WORDS.has(w));
+  if (credentialWord(words.join(''))) return true;
+  return words.some(credentialWord);
 }
 
 // Redact the VALUES of credential-named query parameters in a URL; keep the names and
@@ -1931,6 +1943,17 @@ export function redactBodyText(text) {
   const structured = redactJsonText(text);
   if (structured !== null) return structured;
   return text
+    // TYPESCRIPT TYPE ANNOTATIONS (web-uplift-xwr): in `const apiKey: string = "secret"`
+    // the ':' after the key binds to the TYPE, not the value - the generic colon rule
+    // below redacted the type token and left the secret in the artifact. The annotated
+    // declaration is handled FIRST: keep `name: TYPE =` intact and redact the value
+    // after the '='. The type token is space-free except explicit `|`/`&` unions, so a
+    // paren or a comma-without-later-'=' ends it and `{ password: hash(x), y = 1 }`
+    // is NOT mistaken for an annotation.
+    .replace(
+      /([A-Za-z0-9_.\-]+)(\s*:\s*[A-Za-z0-9_.\-<>\[\]|,]+(?:\s*[|&]\s*[A-Za-z0-9_.\-<>\[\]|,]+)*\s*=\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
+      (match, name, mid) => (isCredentialName(name) ? `${name}${mid}"${REDACTED_HEADER_VALUE}"` : match),
+    )
     // Quoted values, with ESCAPES handled: a naive `"[^"]*"` ends at the first quote even
     // when it is backslash-escaped, so a value containing \" was replaced only up to the
     // backslash and the credential after it stayed in the recorded body. The alternative
@@ -1943,8 +1966,14 @@ export function redactBodyText(text) {
     // literals in a recorded document body). The colon form is what a page's own inline
     // script uses - `{ password: 'SECRET' }` - and it was reaching the artifact because the
     // earlier scanner only understood `name=value`.
+    // Two web-uplift-xwr guards: the unquoted value must be consumed to its token end
+    // (maximal munch), and the whole match must NOT be followed by `\s*=` - that shape is
+    // an annotated declaration (`key: TYPE = value`), already handled above; without the
+    // guard this rule would redact the TYPE token of any annotation whose name is
+    // credential-shaped but whose declaration the rule above did not match (e.g. a
+    // union with spaces inside a container type), reproducing the original bypass.
     .replace(
-      /(^|[?&;,\s{([])([A-Za-z0-9_.\-]+)(\s*[:=]\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
+      /(^|[?&;,\s{([])([A-Za-z0-9_.\-]+)(\s*[:=]\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+(?![^&;,\s}]))(?!\s*=)/g,
       (match, pre, name, sep) => (isCredentialName(name) ? `${pre}${name}${sep}"${REDACTED_HEADER_VALUE}"` : match),
     );
 }
