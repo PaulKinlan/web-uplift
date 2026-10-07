@@ -46,7 +46,7 @@ import { fileURLToPath } from 'node:url';
 import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
-import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor } from './write-scope.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
 
 const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
@@ -103,8 +103,10 @@ const outRoot = resolvePath(outDir);
 function snapshotScope() {
   // --out is a walked root even when its name is one the generic exclusion skips
   // (the DEFAULT is `reports`), so the audit's own output is recorded as an allowed
-  // change instead of being invisible in both directions.
-  return snapshotTree(projectRoot, { extraRoots: [outRoot], walkUnder: [outRoot] });
+  // change instead of being invisible in both directions. The executed first-party
+  // trees are hash-stamped (web-uplift-dzd), so a same-size+mtime rewrite of the
+  // vendored CLI or the schema validator is still a detected change.
+  return snapshotTree(projectRoot, { extraRoots: [outRoot], walkUnder: [outRoot], hashUnder: EXECUTABLE_HASH_ROOTS });
 }
 
 // P1c: with two workers in flight, each agent's writes land inside the other's
@@ -124,6 +126,21 @@ function withScopeWindow(fn) {
   const run = scopeWindow.then(fn, fn);
   scopeWindow = run.then(() => undefined, () => undefined);
   return run;
+}
+
+// PRE-SPAWN INTEGRITY GATE state (web-uplift-dzd). The batch executes code from
+// .web-uplift/, evidence/, runner/, schema/ and the dependency tree on EVERY URL
+// (the agent spawns `node evidence/cli.mjs` per primitive; the runner spawns the
+// schema validator after each audit). A refusal for the tampering run alone would
+// still let the NEXT URL execute the tampered tree - the old refusal path
+// continues the batch - so the executed set is hashed at batch start and
+// re-verified before every spawn: any drift refuses that spawn and aborts the
+// remaining URLs. Hash cost is milliseconds (see EXECUTABLE_HASH_ROOTS).
+const integrityBaseline = executableIntegrity(projectRoot);
+let integrityAbort = false;
+function executableDrift() {
+  const d = diffTrees(integrityBaseline, executableIntegrity(projectRoot));
+  return [...d.added, ...d.modified, ...d.deleted];
 }
 
 function writeScopeFor(url, siteDir, scopeBefore, agentError) {
@@ -176,6 +193,14 @@ if (failures.length) {
 async function worker() {
   while (queue.length) {
     const url = queue.shift();
+    // After an integrity failure the remaining URLs are drained as named skips,
+    // not silently dropped: every URL the operator asked for gets an accounting
+    // line, and the batch still exits non-zero.
+    if (integrityAbort) {
+      failures.push({ url, reason: 'skipped: batch aborted after an executable-tree integrity failure' });
+      console.error(`skipped        ${url}: batch aborted after an executable-tree integrity failure`);
+      continue;
+    }
     if (args.resume && hasCompletedLatest(url)) {
       console.log(`resume skip    ${url} (latest report passed atomic coverage)`);
       continue;
@@ -209,7 +234,12 @@ async function worker() {
     // agent dies - an agent that writes out of scope and exits non-zero must not hide
     // the write.
     let recordFailed = false;
-    const { scope, result, agentError } = await withScopeWindow(async () => {
+    const { scope, result, agentError, integrityDrift } = await withScopeWindow(async () => {
+      // Gate FIRST (web-uplift-dzd): if the executed tree drifted since batch
+      // start, this agent is never spawned - see executableDrift's declaration
+      // for why a post-run refusal alone is not enough.
+      const drift = executableDrift();
+      if (drift.length) return { integrityDrift: drift };
       const scopeBefore = snapshotScope();
       let scopedError = null;
       let scopedResult = null;
@@ -228,6 +258,20 @@ async function worker() {
       }
       return { scope: writeScopeFor(url, siteDir, scopeBefore, scopedError), result: scopedResult, agentError: scopedError };
     });
+
+    if (integrityDrift) {
+      integrityAbort = true;
+      const shown = integrityDrift.slice(0, 8).join(', ') + (integrityDrift.length > 8 ? ', ...' : '');
+      failures.push({ url, reason: `executable tree changed since batch start: ${shown}` });
+      console.error(
+        `INTEGRITY FAILURE ${url}: the executed tree changed since the batch started:\n  ${integrityDrift.join('\n  ')}\n` +
+        'Every audit runs code from these paths (the agent spawns the evidence CLI per primitive; the runner\n' +
+        'spawns the schema validator), so every remaining URL would execute attacker-influenced code. Refusing\n' +
+        'to spawn this agent and aborting the remaining URLs. Nothing is reverted automatically; review the\n' +
+        'paths above and the earlier runs\u2019 write-scope.json before re-running.',
+      );
+      continue;
+    }
 
     // The agent shares this tree, so it can delete the run directory out from under us.
     // Writing the record must then fail THIS URL cleanly instead of rejecting out of the

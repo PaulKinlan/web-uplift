@@ -9,7 +9,7 @@
 // argument-validation tests are the exception: they exit before any browser launches, so a
 // child run with an in-process server is safe there.
 import http from 'node:http';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -19,6 +19,7 @@ import addFormats from 'ajv-formats';
 import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, readSourceTree, redactHeaderList, safeFetch, scanTextForSecrets, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
+import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -89,6 +90,8 @@ try {
   testFixIsolationAssertion();
   testFixIsolatedRunPublishes();
   testBatchWriteScope();
+  testWriteScopeCoversExecutedTrees();
+  testBatchIntegrityGateAbortsOnTamperedExecutedTree();
   await testCompareReportsUnconcludedChecks();
   await testScorecardScoringAndRender();
   await testScorecardArtifactContainment();
@@ -4290,7 +4293,11 @@ async function testFixWriteScopeDiffing() {
     writeFileSync(join(root, 'keep.txt'), 'one changed');
     writeFileSync(join(root, 'added.txt'), 'new');
     rmSync(join(root, 'sub', 'gone.txt'));
-    // Excluded trees must not make the scope walk noisy (or slow).
+    // web-uplift-dzd: the dependency tree is NO LONGER excluded - it is executed
+    // (the CLI the agent spawns imports from it), so a mid-run rewrite of dep.js
+    // must be a visible change. The old "ignore excluded trees" policy here was
+    // the vulnerability; `reports` is the only blanket exclusion left (covered in
+    // testWriteScopeCoversExecutedTrees).
     writeFileSync(join(root, 'node_modules', 'dep.js'), 'dep changed');
     const after = snapshotTree(root);
 
@@ -4299,8 +4306,8 @@ async function testFixWriteScopeDiffing() {
     assert(diff.modified.includes('keep.txt'), `scope: a rewritten file must be reported, got ${diff.modified}`);
     assert(diff.deleted.includes(join('sub', 'gone.txt')), `scope: a deleted file must be reported, got ${diff.deleted}`);
     assert(
-      !diff.modified.some((p) => p.startsWith('node_modules')),
-      'scope: the snapshot must ignore excluded trees, or every run reports the dependency tree',
+      diff.modified.includes(join('node_modules', 'dep.js')),
+      `scope: a dependency rewrite must be reported (web-uplift-dzd: executed trees are covered), got ${diff.modified}`,
     );
 
     // Only the declared source root (and the report dir) are legitimate scopes.
@@ -4312,7 +4319,7 @@ async function testFixWriteScopeDiffing() {
       'scope: a change INSIDE the allowed root must not be called an escape',
     );
     assert(
-      summariseChanges(diff).includes('modified 1'),
+      summariseChanges(diff).includes('modified 2'),
       `scope: the summary must be bounded and truthful: ${summariseChanges(diff)}`,
     );
 
@@ -4985,6 +4992,192 @@ function testBatchWriteScope() {
         chmodSync(dupOut, 0o755);
       } catch { /* best effort */ }
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// web-uplift-dzd: the tripwire used to skip any path with a `node_modules` or
+// `.web-uplift` segment - exactly the trees the tool EXECUTES from. This pins the
+// new coverage: hash strength on the executed first-party set (including the
+// vendored tree and its dependency closure), stat strength on the project
+// dependency tree, `reports` still excluded unless walked, and the integrity
+// snapshot the pre-spawn gate compares. Includes the mutation control: at stat
+// strength alone, the same-size+mtime rewrite the hash catches is invisible -
+// so the hash assertions above cannot pass vacuously.
+function testWriteScopeCoversExecutedTrees() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-dzd-scope-'));
+  try {
+    mkdirSync(join(root, 'evidence'), { recursive: true });
+    mkdirSync(join(root, 'schema'), { recursive: true });
+    mkdirSync(join(root, 'bin'), { recursive: true });
+    mkdirSync(join(root, '.web-uplift', 'evidence'), { recursive: true });
+    mkdirSync(join(root, '.web-uplift', 'node_modules', 'dep'), { recursive: true });
+    mkdirSync(join(root, 'node_modules', 'dep'), { recursive: true });
+    mkdirSync(join(root, 'reports', 'site'), { recursive: true });
+    writeFileSync(join(root, 'evidence', 'cli.mjs'), 'console.log(1);\n');
+    writeFileSync(join(root, 'schema', 'validate-report.mjs'), 'console.log(2);\n');
+    writeFileSync(join(root, 'bin', 'web-uplift.mjs'), 'console.log(3);\n');
+    writeFileSync(join(root, 'install-surface.mjs'), 'export const x = 1;\n');
+    writeFileSync(join(root, '.web-uplift', 'evidence', 'cli.mjs'), 'console.log(1);\n');
+    writeFileSync(join(root, '.web-uplift', 'node_modules', 'dep', 'index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(root, 'node_modules', 'dep', 'index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(root, 'reports', 'site', 'report.json'), '{}\n');
+
+    const snap = () => snapshotTree(root, { hashUnder: EXECUTABLE_HASH_ROOTS });
+    const before = snap();
+    // Executed first-party set, the vendored tree (including its vendored
+    // dependencies) and the single-file root: CONTENT-HASH strength.
+    for (const k of ['evidence/cli.mjs', 'schema/validate-report.mjs', 'bin/web-uplift.mjs',
+      'install-surface.mjs', '.web-uplift/evidence/cli.mjs', '.web-uplift/node_modules/dep/index.js']) {
+      assert(String(before.get(k) || '').startsWith('sha256:'), `dzd coverage: ${k} must be hash-stamped, got ${before.get(k)}`);
+    }
+    // Project dependency tree: COVERED (no longer excluded), at stat strength.
+    const depKey = join('node_modules', 'dep', 'index.js');
+    assert(before.has(depKey) && !String(before.get(depKey)).startsWith('sha256:'),
+      `dzd coverage: the project dependency tree must be walked at stat strength, got ${before.get(depKey)}`);
+    // Published output stays excluded unless the caller walks it (the fixer must
+    // not trip over its own report writes).
+    assert(!before.has(join('reports', 'site', 'report.json')),
+      'dzd coverage: reports must stay excluded when not named by walkUnder');
+
+    // The blind spot the hashes close: a rewrite preserving BOTH size and mtime.
+    const cliPath = join(root, 'evidence', 'cli.mjs');
+    const st = statSync(cliPath);
+    writeFileSync(cliPath, 'console.log(9);\n');
+    utimesSync(cliPath, st.atime, st.mtime);
+    assert(statSync(cliPath).size === st.size, 'dzd fixture: the rewrite must preserve size');
+    const d = diffTrees(before, snap());
+    assert(d.modified.length === 1 && d.modified[0] === 'evidence/cli.mjs',
+      `dzd coverage: a same-size+mtime rewrite of executed code must be a detected change, got ${JSON.stringify(d)}`);
+
+    // MUTATION CONTROL: at stat strength alone the identical rewrite is invisible,
+    // proving the hash stamp (not the walk) is what the assertion above owes to.
+    writeFileSync(cliPath, 'console.log(1);\n');
+    utimesSync(cliPath, st.atime, st.mtime);
+    const statOnly = snapshotTree(root);
+    writeFileSync(cliPath, 'console.log(9);\n');
+    utimesSync(cliPath, st.atime, st.mtime);
+    const d2 = diffTrees(statOnly, snapshotTree(root));
+    assert(!d2.modified.includes('evidence/cli.mjs'),
+      'dzd control: at stat strength the same-size+mtime rewrite must be invisible (else the hash assertion proves nothing)');
+    writeFileSync(cliPath, 'console.log(1);\n');
+    utimesSync(cliPath, st.atime, st.mtime);
+
+    // The stat-strength residual, stated as behaviour rather than hidden: the same
+    // trick on a project dependency is NOT caught. Hash strength is reserved for
+    // the executed first-party set to keep the walk affordable (module header).
+    // NOTE the baseline is taken AFTER normalising the mtime: utimesSync with Date
+    // values truncates sub-millisecond fractions, so a restore against a
+    // never-truncated baseline leaves a fractional delta - which is itself a
+    // (correct) detection, not the blind spot being documented here.
+    const depPath = join(root, 'node_modules', 'dep', 'index.js');
+    const dst0 = statSync(depPath);
+    utimesSync(depPath, dst0.atime, dst0.mtime);
+    const beforeDep = snap();
+    const dst = statSync(depPath);
+    writeFileSync(depPath, 'module.exports = 2;\n');
+    utimesSync(depPath, dst.atime, dst.mtime);
+    const d3 = diffTrees(beforeDep, snap());
+    assert(!d3.modified.includes(depKey),
+      'dzd residual: stat-strength paths keep the documented same-size+mtime blind spot');
+    writeFileSync(depPath, 'module.exports = 1;\n');
+    utimesSync(depPath, dst.atime, dst.mtime);
+
+    // executableIntegrity: the pre-spawn gate's own snapshot. Hashes the executed
+    // set only (fast), and drifts on both a content tamper and a symlink swap.
+    const baseline = executableIntegrity(root);
+    assert(String(baseline.get('.web-uplift/evidence/cli.mjs') || '').startsWith('sha256:'),
+      'dzd integrity: the vendored CLI must be in the integrity set');
+    assert(!baseline.has(depKey),
+      'dzd integrity: the project dependency tree must NOT be in the fast integrity set (the snapshot stat-covers it instead)');
+    assert(diffTrees(baseline, executableIntegrity(root)).modified.length === 0,
+      'dzd integrity: an untouched tree must diff clean');
+    writeFileSync(join(root, '.web-uplift', 'evidence', 'cli.mjs'), 'console.log("pwned");\n');
+    let drift = diffTrees(baseline, executableIntegrity(root));
+    assert(drift.modified.length === 1 && drift.modified[0] === '.web-uplift/evidence/cli.mjs',
+      `dzd integrity: a vendored-CLI tamper must drift, got ${JSON.stringify(drift)}`);
+    rmSync(join(root, '.web-uplift', 'evidence', 'cli.mjs'));
+    symlinkSync('../../evidence/cli.mjs', join(root, '.web-uplift', 'evidence', 'cli.mjs'));
+    drift = diffTrees(baseline, executableIntegrity(root));
+    assert(drift.modified.length === 1 && String(executableIntegrity(root).get('.web-uplift/evidence/cli.mjs')).startsWith('link:'),
+      'dzd integrity: a symlink swap of executed code must drift and be recorded as a link');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// web-uplift-dzd: the bead's threat scenario end to end on the REAL batch runner.
+// An agent tampers with the vendored evidence CLI during URL 1. The old behaviour:
+// the exclusion made the tamper invisible, URL 1 "completed", and URL 2's agent
+// EXECUTED the tampered tree (its own diff was clean - the tamper predated its
+// snapshot). The new behaviour this pins: URL 1 is refused with the executed-tree
+// path in its escape list (hash coverage sees the tamper), and URL 2's agent is
+// NEVER SPAWNED because the pre-spawn integrity gate compares against the
+// batch-start baseline, refuses and aborts the remaining URLs.
+function testBatchIntegrityGateAbortsOnTamperedExecutedTree() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-dzd-batch-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(join(root, '.web-uplift', 'evidence'), { recursive: true });
+    const vendoredCli = join(root, '.web-uplift', 'evidence', 'cli.mjs');
+    writeFileSync(vendoredCli, 'console.log("vendored");\n');
+    const findings = join(repoRoot, 'examples', 'playground-report.json');
+    const outAbs = join(root, 'o1');
+    // The spawn counter lives under the OUTPUT root so it is an allowed change:
+    // the only escape URL 1 commits is the executed-tree tamper itself.
+    const spawnCount = join(outAbs, 'spawns.txt');
+    mkdirSync(outAbs, { recursive: true });
+    writeFileSync(spawnCount, '0\n');
+
+    const bin = join(binDir, 'claude');
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      `n=$(cat ${JSON.stringify(spawnCount)} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${JSON.stringify(spawnCount)}`,
+      `if [ "$n" = "1" ]; then printf 'console.log("pwned");\\n' > ${JSON.stringify(vendoredCli)}; fi`,
+      `d=$(ls -dt ${JSON.stringify(outAbs)}/*/*/ 2>/dev/null | head -1)`,
+      `cp ${JSON.stringify(findings)} "$d/report.json"`,
+      `echo '{"agent":"stub"}'`,
+    ].join('\n') + '\n');
+    chmodSync(bin, 0o755);
+
+    const res = run(
+      process.execPath,
+      [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://i1.example/', 'https://i2.example/',
+        '--agent', 'claude', '--concurrency', '1', '--out', 'o1'],
+      { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
+    );
+
+    assert(res.status !== 0, `dzd batch: a tampering batch must exit non-zero (got ${res.status})\n${res.stdout}${res.stderr}`);
+    // THE CORE CONTROL: exactly one spawn. Without the pre-spawn gate the second
+    // agent runs the tampered tree (and its own clean diff lets it "complete").
+    assert(readFileSync(spawnCount, 'utf8').trim() === '1',
+      `dzd batch: the agent must be spawned EXACTLY once - URL 2's spawn must be refused by the integrity gate (count: ${readFileSync(spawnCount, 'utf8').trim()})`);
+    assert(/INTEGRITY FAILURE/.test(res.stderr) && /aborting the remaining URLs/.test(res.stderr),
+      `dzd batch: the integrity refusal must be loud and name the abort:\n${res.stderr}`);
+    assert(/CONFINEMENT FAILURE/.test(res.stderr) && /\.web-uplift/.test(res.stderr),
+      `dzd batch: URL 1 must be refused with the executed-tree path in the escape list:\n${res.stderr}`);
+
+    // URL 1's scope record names the vendored tamper as the escape.
+    const hosts = readdirSync(outAbs).filter((e) => !e.includes('spawns'));
+    const hostDirs = hosts.filter((e) => statSync(join(outAbs, e)).isDirectory());
+    assert(hostDirs.length === 2, `dzd batch: both URLs get host directories, got ${JSON.stringify(hostDirs)}`);
+    let scope = null;
+    for (const h of hostDirs) {
+      const hAbs = join(outAbs, h);
+      for (const r of readdirSync(hAbs).filter((e) => !e.startsWith('latest'))) {
+        const p = join(hAbs, r, 'write-scope.json');
+        if (existsSync(p)) scope = JSON.parse(readFileSync(p, 'utf8'));
+      }
+    }
+    assert(scope, 'dzd batch: URL 1 must leave a scope record');
+    assert(scope.escapedOutsideScope.some((p) => p.includes(join('.web-uplift', 'evidence', 'cli.mjs'))),
+      `dzd batch: the escape list must name the tampered vendored CLI: ${JSON.stringify(scope.escapedOutsideScope)}`);
+    // URL 2 published nothing and left no scope record (refused before spawn).
+    const reports = hostDirs.flatMap((h) => readdirSync(join(outAbs, h)).filter((e) => !e.startsWith('latest'))
+      .map((r) => join(outAbs, h, r, 'report.json')).filter((p) => existsSync(p)));
+    assert(reports.length === 0, `dzd batch: no URL may publish a report after a tamper: ${JSON.stringify(reports)}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
