@@ -5146,7 +5146,7 @@ function testBatchIntegrityGateAbortsOnTamperedExecutedTree() {
     const res = run(
       process.execPath,
       [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://i1.example/', 'https://i2.example/',
-        '--agent', 'claude', '--concurrency', '1', '--out', 'o1'],
+        '--agent', 'claude', '--isolation', 'test-suite', '--concurrency', '1', '--out', 'o1'],
       { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
     );
 
