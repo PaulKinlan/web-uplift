@@ -2572,7 +2572,7 @@ async function secrets(client, url, opts, log) {
   const scriptUrls = scripts?.urls || [];
   for (const su of scriptUrls) {
     try {
-      const js = await evaluate(client, `fetch('${su}').then(r=>r.text()).catch(()=>'')`, { awaitPromise: true });
+      const js = await evaluate(client, `fetch(${JSON.stringify(su)}).then(r=>r.text()).catch(()=>'')`, { awaitPromise: true });
       if (js) findings.push(...scanTextForSecrets(js, 'external JS: ' + su.split('/').pop(), seen));
     } catch {}
   }

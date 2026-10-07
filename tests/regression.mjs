@@ -61,6 +61,7 @@ try {
   await testAgentChildEnvAllowlist();
   await testBatchIsolationGate();
   await testMcpSkillsServerStdio();
+  await testSecretsScanHandlesQuotedScriptUrl();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -4113,6 +4114,46 @@ async function testSecretsArtifactDoesNotPersistMatches() {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
 }
+
+// A page-derived script URL is attacker-controlled text, and it used to be
+// interpolated into the evaluated fetch() expression UNQUOTED (web-uplift-991),
+// unlike every other interpolation in the file. Empirically (this fixture was
+// built to find out): the DOM URL-serializes apostrophes in http(s) script URLs
+// to %27, so THAT spelling is not reachable - but a data: URL's opaque path is
+// NOT normalized, so a raw quote in it reaches the interpolation verbatim. With
+// the unquoted form the expression is a syntax error the try/catch swallows and
+// the external script is silently NEVER scanned. The fixture keeps the planted
+// key percent-encoded so the page HTML itself contains no key: a finding can
+// only come from the fetched external script.
+async function testSecretsScanHandlesQuotedScriptUrl() {
+  const encKey = Array.from('AKIAIOSFODNN7EXAMPLE')
+    .map((c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+    .join('');
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(
+      `<!doctype html><title>quoted</title><link rel="icon" href="data:,">` +
+        `<script src="data:text/plain,x='${encKey}"></script><body>page</body>`,
+    );
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const result = await gather('secrets', `http://127.0.0.1:${port}/`, { quiet: true, wait: 300 });
+    const ext = result.findings.filter((f) => typeof f.source === 'string' && f.source.startsWith('external JS'));
+    assert(
+      ext.length >= 1 && ext[0].pattern === 'aws-access-key',
+      `the quoted data: script URL must still be fetched and scanned (a syntax-erroring fetch is a silent skip): ${JSON.stringify(result.findings)}`,
+    );
+    assert(
+      !result.findings.some((f) => f.source === 'page HTML'),
+      `the key is percent-encoded in the HTML, so a page-HTML finding would mean the fixture is wrong: ${JSON.stringify(result.findings)}`,
+    );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
 
 // The persisted shape itself, without a browser. The fixture value is built at
 // runtime so this file contains no provider-shaped key literal, and the scan is
