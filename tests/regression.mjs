@@ -60,6 +60,7 @@ try {
   await testOperatorLaunchAttribution();
   await testAgentChildEnvAllowlist();
   await testBatchIsolationGate();
+  await testMcpSkillsServerStdio();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -6460,6 +6461,70 @@ async function testBatchIsolationGate() {
     rmSync(isoTmp, { recursive: true, force: true });
   }
 }
+
+// The MCP skills server (mcp/skills-server.mjs) is a production entry point
+// registered into agent CLIs via .mcp.json and friends, and it had NO test
+// (web-uplift-2ca): an SDK bump or edit could break the handshake silently.
+// This drives the REAL server over stdio with the JSON-RPC handshake an MCP
+// host performs: initialize -> serverInfo, prompts/list -> web-audit,
+// resources/list -> skill://web-audit/SKILL.md, and a clean stderr.
+async function testMcpSkillsServerStdio() {
+  const child = spawn(process.execPath, [join(repoRoot, 'mcp', 'skills-server.mjs')], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', (d) => { stderr += d; });
+  let buffer = '';
+  let nextId = 1;
+  const pending = new Map();
+  child.stdout.on('data', (d) => {
+    buffer += d;
+    let i;
+    while ((i = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, i).trim();
+      buffer = buffer.slice(i + 1);
+      if (!line) continue;
+      const msg = JSON.parse(line);
+      if (msg.id !== undefined && pending.has(msg.id)) {
+        pending.get(msg.id)(msg);
+        pending.delete(msg.id);
+      }
+    }
+  });
+  const request = (method, params) =>
+    new Promise((resolveReq, rejectReq) => {
+      const id = nextId++;
+      pending.set(id, resolveReq);
+      setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          rejectReq(new Error(`MCP ${method}: no response within 10s`));
+        }
+      }, 10000);
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+    });
+  try {
+    const init = await request('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'web-uplift-regression', version: '0' },
+    });
+    assert(init.result?.serverInfo?.name === 'web-uplift', `initialize must name the server: ${JSON.stringify(init)}`);
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+    const prompts = await request('prompts/list', {});
+    assert(
+      prompts.result?.prompts?.some((p) => p.name === 'web-audit'),
+      `prompts/list must carry the web-audit prompt: ${JSON.stringify(prompts)}`,
+    );
+    const resources = await request('resources/list', {});
+    assert(
+      resources.result?.resources?.some((r) => r.uri === 'skill://web-audit/SKILL.md'),
+      `resources/list must carry the skill resource: ${JSON.stringify(resources)}`,
+    );
+    assert(stderr.trim() === '', `the server must keep stderr clean through the handshake: ${stderr.slice(-300)}`);
+  } finally {
+    child.kill('SIGKILL');
+  }
+}
+
 
 
 
