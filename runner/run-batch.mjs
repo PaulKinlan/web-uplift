@@ -83,7 +83,7 @@ const outDir = args.out ?? 'reports';
 // ingests untrusted page text with network egress; the operator's shell
 // credentials stay out, and --agent-env KEY=VALUE is the explicit opt-in for
 // anything a specific run genuinely needs.
-const agentEnv = buildAgentEnv({ extra: parseAgentEnvFlag(args['agent-env']) });
+const agentEnv = buildAgentEnv({ agentName, extra: parseAgentEnvFlag(args['agent-env']) });
 
 // Write scope for a batch audit. The agent that audits a URL ingests untrusted
 // page content and holds write tools, so each spawn is snapshotted and refused if
