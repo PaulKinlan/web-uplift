@@ -5352,6 +5352,23 @@ async function testCredentialRedactionHelpers() {
   const cmp2 = redactBodyText(`password=${SECRET} = 2`);
   assert(!cmp2.includes(SECRET), `redaction: a second assignment after the value must not abort redaction (${cmp2})`);
 
+  // 10. ROUND-2 REVIEW PROBES, PINNED. The annotation rule must not steal colon shapes
+  //     that are NOT declarations: a comparison inside an object literal and a
+  //     destructuring rename both bind the token AFTER ':' — and a quoted-literal union
+  //     type IS a declaration and must keep its type. Each of these leaked (or destroyed
+  //     an operator) on the blocked revision 2861e7f.
+  const cmpObj = redactBodyText(`let obj = { password: mySecret === input }`);
+  assert(!cmpObj.includes('mySecret'), `redaction: a colon-comparison in an object literal must not be read as an annotation (${cmpObj})`);
+  assert(cmpObj.includes('=== input'), `redaction: the comparison must survive (${cmpObj})`);
+  const destr = redactBodyText(`let { password: mySecret } = y;`);
+  assert(!destr.includes('mySecret'), `redaction: a destructuring rename must not be read as an annotation (${destr})`);
+  assert(destr.includes('= y'), `redaction: the destructuring binding source must survive (${destr})`);
+  const tsLiteralUnion = redactBodyText(`const apiKey: 'sandbox' | 'live' = "${SECRET}";`);
+  assert(!tsLiteralUnion.includes(SECRET), `redaction: a quoted-literal union type must not leak the value (${tsLiteralUnion})`);
+  assert(tsLiteralUnion.includes(`'sandbox' | 'live'`), `redaction: the literal union type must survive (${tsLiteralUnion})`);
+  const opPreserved = redactBodyText(`const x = "secret" == true`);
+  assert(opPreserved.includes('== true'), `redaction: a comparison operator must not be redacted as a value (${opPreserved})`);
+
   // 8. PLURALIZED CREDENTIAL NAMES (web-uplift-xwr). CREDENTIAL_WORDS carries singulars,
   //    so isCredentialName('secrets'|'tokens'|'apiKeys') was false and {"secrets":{...}}
   //    walked through BOTH the structured and the heuristic pass untouched.
