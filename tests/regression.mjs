@@ -16,7 +16,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, redactHeaderList, safeFetch, scanTextForSecrets, waitForInteractEvidence } from '../evidence/cli.mjs';
+import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, readSourceTree, redactHeaderList, safeFetch, scanTextForSecrets, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 
@@ -71,6 +71,8 @@ try {
   await testInstallSurfaceMatchesWhatInstallVendors();
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
+  testSourceTreeRedactsBeforeInlining();
+  await testDomSourceArtifactIsRedacted();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
   await testConsoleInteractDeadlineValidation();
@@ -4129,6 +4131,96 @@ function testSecretsScanDoesNotPersistMatchCharacters() {
   assert(!serialised.includes(value.slice(0, 6)), 'no part of the matched value may be persisted (head)');
   assert(!serialised.includes(value.slice(-4)), 'no part of the matched value may be persisted (tail)');
   assert(!serialised.includes(value), 'the whole matched value must never be persisted');
+}
+
+// The source read without a browser. `dom --source <dir>` inlines the local tree
+// into an artifact that is committed and republished, so a credential in the tree
+// must not survive the read (web-uplift-obl). Read THROUGH the existing
+// names-based redaction rather than a second implementation, and do not read at
+// all a file whose NAME says credential. The fixture secret is built at runtime so
+// this file carries no provider-shaped key literal.
+function testSourceTreeRedactsBeforeInlining() {
+  const secret = 'AKIA' + 'ABCDEFGHIJKLMNOP';
+  const root = join(tmp, 'source-tree');
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'src', 'config.json'), JSON.stringify({ api_key: secret, region: 'eu-west-1' }, null, 2));
+  writeFileSync(join(root, 'src', 'app.js'), `const apiKey = "${secret}";\nconst region = 'eu-west-1';\n`);
+  writeFileSync(join(root, 'src', 'page.html'), `<p data-region="eu-west-1">ok</p>\n`);
+  writeFileSync(join(root, '.env'), `AWS_ACCESS_KEY_ID=${secret}\n`);
+  writeFileSync(join(root, 'service-credentials.json'), JSON.stringify({ serviceAccountToken: secret }));
+  writeFileSync(join(root, 'signing.pem'), `-----BEGIN PRIVATE KEY-----\n${secret}\n-----END PRIVATE KEY-----\n`);
+  writeFileSync(join(root, 'firebase.json'), JSON.stringify({ api_key: secret }));
+  writeFileSync(join(root, 'wrangler.toml'), `api_token = "${secret}"\n`);
+
+  const tree = readSourceTree(root);
+  const serialised = JSON.stringify(tree);
+  assert(!serialised.includes(secret), `no source read may carry a credential value: ${serialised}`);
+  assert(!serialised.includes(secret.slice(0, 4)), 'not even the head of the value may survive the read');
+
+  const config = tree.files.find((f) => f.path === 'src/config.json');
+  assert(config, `the JSON config must still be read: ${JSON.stringify(tree.files.map((f) => f.path))}`);
+  assert(config.content.includes('"api_key": "[redacted]"'), `the credential value must be replaced in place: ${config.content}`);
+  assert(config.content.includes('"region": "eu-west-1"'), `the rest of the file must survive byte-for-byte: ${config.content}`);
+  assert(config.redacted === true, `a file that had a value replaced must say so: ${JSON.stringify(config)}`);
+
+  const app = tree.files.find((f) => f.path === 'src/app.js');
+  assert(app && app.content.includes('[redacted]'), `a credential-named const in JS must be redacted: ${JSON.stringify(app)}`);
+  assert(app.content.includes("'eu-west-1'"), `a non-credential value in JS must survive: ${app.content}`);
+
+  const page = tree.files.find((f) => f.path === 'src/page.html');
+  assert(page && page.redacted === false, `a clean file must be recorded as unredacted: ${JSON.stringify(page)}`);
+
+  const skipped = tree.skippedFiles.map((s) => s.path).sort();
+  for (const name of ['.env', 'service-credentials.json', 'signing.pem', 'firebase.json', 'wrangler.toml']) {
+    assert(skipped.includes(name), `a credential-named file must be skipped and recorded, not read: ${name} (${JSON.stringify(skipped)})`);
+  }
+  for (const entry of tree.skippedFiles) {
+    assert(entry.reason === 'high-risk-name', `a skip must state its reason: ${JSON.stringify(entry)}`);
+  }
+  assert(tree.redactedFiles === 2, `exactly the two credential-bearing files should count as redacted: ${tree.redactedFiles}`);
+
+  // The artifact must say a redaction happened AND what it cannot cover, so a
+  // reader never treats a redacted read as either raw or complete.
+  assert(tree.redaction && tree.redaction.applied === true, `the artifact must record that redaction was applied: ${JSON.stringify(tree.redaction)}`);
+  assert(
+    typeof tree.redaction.residual === 'string' && /still reach|not carried|opaque/.test(tree.redaction.residual),
+    `the residual must be documented, not implied: ${JSON.stringify(tree.redaction)}`,
+  );
+}
+
+// The same guarantee end to end: what `dom --source` actually writes to disk. The
+// artifact is the thing that gets published, so the check is on the artifact text,
+// not on the in-memory return (web-uplift-obl).
+async function testDomSourceArtifactIsRedacted() {
+  const secret = 'AKIA' + 'QRSTUVWXYZ012345';
+  const root = join(tmp, 'dom-source-tree');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'config.json'), JSON.stringify({ apiKey: secret, siteName: 'fixture' }, null, 2));
+  writeFileSync(join(root, '.env'), `API_KEY=${secret}\n`);
+
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<!doctype html><html><head><title>source redaction fixture</title></head><body><p>ok</p></body></html>');
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const out = join(tmp, 'dom-source.json');
+    const result = await gather('dom', `http://127.0.0.1:${port}/`, { quiet: true, wait: 300, source: root, out });
+    assert(result.source, `dom --source must return a source block: ${Object.keys(result)}`);
+    assert(result.source.redactedFiles >= 1, `the fixture credential must be redacted: ${JSON.stringify(result.source.redactedFiles)}`);
+    assert(
+      result.source.skippedFiles.some((s) => s.path === '.env'),
+      `the credential-named file must be skipped and recorded: ${JSON.stringify(result.source.skippedFiles)}`,
+    );
+    const config = result.source.files.find((f) => f.path === 'config.json');
+    assert(config && config.content.includes('[redacted]'), `the config value must be replaced: ${JSON.stringify(config)}`);
+    for (const [label, text] of [['the artifact', readFileSync(out, 'utf8')], ['stdout', JSON.stringify(result)]]) {
+      assert(!text.includes(secret), `${label} must not carry the source credential value`);
+    }
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
 }
 
 // The axe primitive audits the page under the page's own policy. A strict
