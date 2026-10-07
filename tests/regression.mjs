@@ -6533,13 +6533,16 @@ async function testMcpSkillsServerStdio() {
   const request = (method, params) =>
     new Promise((resolveReq, rejectReq) => {
       const id = nextId++;
-      pending.set(id, resolveReq);
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
           rejectReq(new Error(`MCP ${method}: no response within 10s`));
         }
       }, 10000);
+      pending.set(id, (msg) => {
+        clearTimeout(timer);
+        resolveReq(msg);
+      });
       child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     });
   try {
@@ -6549,6 +6552,7 @@ async function testMcpSkillsServerStdio() {
       clientInfo: { name: 'web-uplift-regression', version: '0' },
     });
     assert(init.result?.serverInfo?.name === 'web-uplift', `initialize must name the server: ${JSON.stringify(init)}`);
+    assert(init.result?.serverInfo?.version === '0.1.0', `initialize must carry the server version: ${JSON.stringify(init)}`);
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const prompts = await request('prompts/list', {});
     assert(
@@ -6559,6 +6563,19 @@ async function testMcpSkillsServerStdio() {
     assert(
       resources.result?.resources?.some((r) => r.uri === 'skill://web-audit/SKILL.md'),
       `resources/list must carry the skill resource: ${JSON.stringify(resources)}`,
+    );
+    // Listing alone would pass even if the SKILL.md went missing; READ it.
+    const read = await request('resources/read', { uri: 'skill://web-audit/SKILL.md' });
+    const skillContent = read.result?.contents?.[0]?.text;
+    assert(
+      typeof skillContent === 'string' && skillContent.length > 1000 && skillContent.includes('web-uplift'),
+      `resources/read must return the actual SKILL.md text, got: ${JSON.stringify(read ?? null).slice(0, 200)}`,
+    );
+    const got = await request('prompts/get', { name: 'web-audit', arguments: { url: 'https://example.com' } });
+    const promptText = got.result?.messages?.[0]?.content?.text;
+    assert(
+      typeof promptText === 'string' && promptText.includes('https://example.com'),
+      `prompts/get must render the skill with the url argument: ${JSON.stringify(got ?? null).slice(0, 200)}`,
     );
     assert(stderr.trim() === '', `the server must keep stderr clean through the handshake: ${stderr.slice(-300)}`);
   } finally {
