@@ -99,7 +99,19 @@ npm run batch -- --urls ./top-1k.txt --concurrency 4
 npm run batch -- https://example.com --agent codex --dry-run   # print commands only
 npm run batch -- https://example.com --verbose                 # stream agent output live
 npm run batch -- https://example.com --agent-env COPILOT_GITHUB_TOKEN=...   # extra child env (repeatable)
+npm run batch -- https://example.com --isolation docker        # REQUIRED: name your boundary (or --i-know-this-is-unisolated)
 ```
+
+Like fix mode, the batch runner refuses to spawn the agent until you say which
+isolation boundary protects the run (web-uplift-odx): it drives the SAME
+write-capable agent over pages that may be hostile, and batch runs are exactly
+the unattended case. `--isolation <mechanism>` (docker, bwrap, vm, ...) or the
+explicit `--i-know-this-is-unisolated` acknowledgement is recorded as
+UNVERIFIED in `<out>/run-security.json` and warned on stderr - the tool cannot
+check your boundary, it records what you assert. `--dry-run` spawns nothing and
+is exempt. The remaining asymmetry with fix mode is the threat surface, not the
+contract: one batch shares a project tree and a reports/ root across all URLs,
+so a compromised run sits beside the other sites' evidence.
 
 The agent child never inherits the operator's shell environment: it gets an
 explicit allowlist (PATH/HOME/locale/proxies, its own provider credential

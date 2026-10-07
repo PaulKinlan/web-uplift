@@ -40,7 +40,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile, access } from 'node:fs/promises';
-import { existsSync, lstatSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
@@ -94,6 +94,76 @@ const agentEnv = buildAgentEnv({ extra: parseAgentEnvFlag(args['agent-env']) });
 // vendors .web-uplift/ into the project root).
 const projectRoot = resolvePath(process.cwd());
 const outRoot = resolvePath(outDir);
+
+// --- Operator-supplied isolation, asserted BEFORE any agent spawn ------------
+// The SAME contract as fix mode (fixer/fix.mjs), and the same reason: the batch
+// runner drives the same write-capable agent, whose context carries untrusted
+// page content, over URLs that may be hostile - and it does it unattended,
+// which is exactly when a missing boundary is not noticed (web-uplift-odx).
+// This tool does not provide a sandbox, so: no assertion, no spawn. An
+// assertion (or the explicit --i-know-this-is-unisolated acknowledgement) is
+// recorded as UNVERIFIED in <out>/run-security.json and warned on stderr; the
+// record is evidence for a human, never proof of a boundary. A --dry-run spawns
+// nothing, so it is exempt.
+const isolationAssertion = args.isolation && args.isolation !== true ? String(args.isolation).trim() : '';
+let isolationRecord = null;
+if (isolationAssertion) {
+  isolationRecord = {
+    isolation: `operator-supplied:${isolationAssertion}`,
+    unverified: true,
+    reason: 'declared by the operator; the tool did not and cannot verify it',
+  };
+} else if (args['i-know-this-is-unisolated'] === true) {
+  isolationRecord = {
+    isolation: 'operator-acknowledged-none',
+    unverified: true,
+    reason: 'the operator explicitly acknowledged running with NO isolation boundary (--i-know-this-is-unisolated)',
+  };
+}
+if (!args['dry-run']) {
+  mkdirSync(outRoot, { recursive: true });
+  if (!isolationRecord) {
+    try {
+      writeFileSync(
+        join(outRoot, 'run-security.json'),
+        JSON.stringify({
+          isolation: 'refused',
+          reason: 'no --isolation assertion was given, so the tool cannot know what boundary is protecting the agent',
+          required: '--isolation <mechanism> (docker, bwrap, vm, host-permission-model, ...) or --i-know-this-is-unisolated',
+          recordedAt: new Date().toISOString(),
+          tool: 'web-uplift batch',
+        }, null, 2) + '\n',
+      );
+    } catch { /* the refusal message below says where the record would have gone */ }
+    console.error(
+      [
+        'REFUSED: no isolation assertion, and NO AGENT WAS STARTED.',
+        'A batch audit drives a write-capable agent whose context carries untrusted page content, and this tool does NOT sandbox it.',
+        'Say which boundary you are providing: --isolation <mechanism> (docker, bwrap, vm, host-permission-model, ...),',
+        'or acknowledge the risk explicitly with --i-know-this-is-unisolated.',
+        `Recorded in ${join(outRoot, 'run-security.json')}. The tool cannot verify the boundary - it records only what you assert.`,
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+  try {
+    writeFileSync(
+      join(outRoot, 'run-security.json'),
+      JSON.stringify({ ...isolationRecord, recordedAt: new Date().toISOString(), tool: 'web-uplift batch' }, null, 2) + '\n',
+    );
+  } catch (err) {
+    console.error(
+      `REFUSED: the isolation assertion could not be recorded in ${outRoot} (${err.message}), and NO AGENT WAS STARTED.\n` +
+        'Recording what was asserted is the point of requiring the assertion, so a run that cannot be recorded does not proceed.',
+    );
+    process.exit(1);
+  }
+  console.error(
+    `\nWARNING: batch audit proceeding with agent isolation ${isolationRecord.isolation}, UNVERIFIED.\n` +
+      'This tool does not sandbox the agent and cannot check your boundary; the write-scope tripwire is detection,\n' +
+      `not confinement. Recorded in ${join(outRoot, 'run-security.json')}.\n`,
+  );
+}
 
 // Concurrency: the snapshot/spawn/diff window is SERIALIZED (see withScopeWindow), so
 // another worker's writes cannot land inside it. Without that, one agent's
@@ -174,6 +244,13 @@ if (!urls.length) {
 }
 
 console.log(`${urls.length} URLs via ${agentName}, concurrency ${concurrency}, output -> ${outDir}/`);
+console.log(
+  `agent isolation: ${
+    args['dry-run']
+      ? 'not required (dry run spawns nothing)'
+      : `${isolationRecord.isolation}, UNVERIFIED - see ${join(outRoot, 'run-security.json')}`
+  }`,
+);
 if (concurrency > 1) {
   console.log('note: agent runs are scope-accounted one at a time, so a batch audit is effectively');
   console.log('      serial while auditing - the snapshot/spawn/diff window cannot overlap, or one');
@@ -410,8 +487,8 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
 //    latest.txt - and that disk is writable by the agent being audited. A planted pointer
 //    naming a run whose report looks valid can therefore make a later --resume skip that
 //    URL. That is a REAL RESIDUAL, not a guarantee: the honest boundary for it is
-//    operator-provided external isolation (the fixer's --isolation flag; THIS batch runner
-//    has no isolation flag of its own), because a tool that shares a writable tree with its
+//    operator-provided external isolation (the --isolation assertion this runner
+//    shares with fix mode - asserted, recorded as unverified, never checked), because a tool that shares a writable tree with its
 //    adversary cannot authenticate what it reads from that tree.
 //    resolveLatest() in run-history.mjs now contains the pointer's TARGET, so it cannot name
 //    a directory outside the host root; that bounds WHERE a pointer points and cannot
@@ -614,7 +691,7 @@ async function exists(path) {
 
 function parseArgs(argv) {
   const out = { _: [] };
-  const valueFlags = new Set(['urls', 'agent', 'concurrency', 'out', 'max-turns', 'flow', 'agent-env']);
+  const valueFlags = new Set(['urls', 'agent', 'concurrency', 'out', 'max-turns', 'flow', 'agent-env', 'isolation']);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
       const key = argv[i].slice(2);
