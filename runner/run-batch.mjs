@@ -43,7 +43,7 @@ import { mkdir, readFile, rename, writeFile, access } from 'node:fs/promises';
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AGENTS } from './agents.mjs';
+import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor } from './write-scope.mjs';
@@ -77,6 +77,13 @@ if (!agent) {
 }
 
 const outDir = args.out ?? 'reports';
+
+// The agent child's environment is an explicit ALLOWLIST (web-uplift-l6d), built
+// once here and handed to every spawn - never a process.env spread. The child
+// ingests untrusted page text with network egress; the operator's shell
+// credentials stay out, and --agent-env KEY=VALUE is the explicit opt-in for
+// anything a specific run genuinely needs.
+const agentEnv = buildAgentEnv({ extra: parseAgentEnvFlag(args['agent-env']) });
 
 // Write scope for a batch audit. The agent that audits a URL ingests untrusted
 // page content and holds write tools, so each spawn is snapshotted and refused if
@@ -497,7 +504,7 @@ function runAgent(url, siteDir, extra = '') {
     const child = spawn(agent.bin, cliArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: projectRoot,
-      env: { ...process.env, WEB_UPLIFT_LAUNCH_LOG: join(siteDir, 'launches.jsonl') },
+      env: { ...agentEnv, WEB_UPLIFT_LAUNCH_LOG: join(siteDir, 'launches.jsonl') },
     });
     let out = '';
     let err = '';
@@ -563,13 +570,16 @@ async function exists(path) {
 
 function parseArgs(argv) {
   const out = { _: [] };
-  const valueFlags = new Set(['urls', 'agent', 'concurrency', 'out', 'max-turns', 'flow']);
+  const valueFlags = new Set(['urls', 'agent', 'concurrency', 'out', 'max-turns', 'flow', 'agent-env']);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
       const key = argv[i].slice(2);
       const next = argv[i + 1];
-      if (valueFlags.has(key) && next !== undefined) { out[key] = next; i++; }
-      else out[key] = true;
+      if (valueFlags.has(key) && next !== undefined) {
+        // Accumulate repeated value flags (e.g. multiple --agent-env) into an array.
+        out[key] = out[key] === undefined ? next : [].concat(out[key], next);
+        i++;
+      } else out[key] = true;
     } else {
       out._.push(argv[i]);
     }

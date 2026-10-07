@@ -286,7 +286,17 @@ is worse than no command, so here is what your boundary MUST guarantee instead:
 assert a boundary; it records that assertion as *unverified* in
 `<out>/run-security.json`; it warns on stderr that it did not check it; and it
 snapshots the tree around every agent run and refuses the run when a change lands
-outside `--target`/`--out`. That is detection of realistic escapes, not
+outside `--target`/`--out`. The agent child's environment is an explicit allowlist
+(runner/agents.mjs `buildAgentEnv`): PATH/HOME/locale/proxies, the child CLI's own
+provider credential (the ANTHROPIC_/OPENAI_/GEMINI_ families, GOOGLE_API_KEY), and
+WEB_UPLIFT_* tunables pass; everything else your shell carries - GITHUB_TOKEN, cloud
+keys, SSH agent sockets, registry tokens - is withheld, and the withheld
+sensitive-looking names (never values) are warned on. `--agent-env KEY=VALUE` is the
+explicit opt-in for anything else a run genuinely needs. RESIDUAL: the child still
+holds its own provider credential and whatever `--agent-env` adds, and it keeps
+network egress, so a page can still talk it into exfiltrating THAT credential -
+the allowlist removes every other credential from reach, it does not make the held
+one safe. That is detection of realistic escapes, not
 confinement: the agent still runs as you, with your network, and the snapshot walk
 has documented gaps (writes outside the walked roots, through pre-existing
 symlinks or hard links, and metadata-only changes are not seen). If you need a

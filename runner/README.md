@@ -98,7 +98,15 @@ npm run batch -- https://example.com --agent gemini        # claude | codex | ge
 npm run batch -- --urls ./top-1k.txt --concurrency 4
 npm run batch -- https://example.com --agent codex --dry-run   # print commands only
 npm run batch -- https://example.com --verbose                 # stream agent output live
+npm run batch -- https://example.com --agent-env COPILOT_GITHUB_TOKEN=...   # extra child env (repeatable)
 ```
+
+The agent child never inherits the operator's shell environment: it gets an
+explicit allowlist (PATH/HOME/locale/proxies, its own provider credential
+family, and WEB_UPLIFT_* tunables), withheld sensitive-looking variables are
+warned about by name on stderr, and `--agent-env KEY=VALUE` is the explicit
+opt-in for anything else (web-uplift-l6d). The child keeps network egress, so
+scope whatever credential the agent CLI itself runs on.
 
 (`npm run batch` is `node runner/run-batch.mjs`; everything after `--` is
 passed through.) URLs can mix positional arguments and a `--urls` file;
