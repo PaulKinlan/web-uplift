@@ -286,12 +286,23 @@ is worse than no command, so here is what your boundary MUST guarantee instead:
 assert a boundary; it records that assertion as *unverified* in
 `<out>/run-security.json`; it warns on stderr that it did not check it; and it
 snapshots the tree around every agent run and refuses the run when a change lands
-outside `--target`/`--out`. That is detection of realistic escapes, not
-confinement: the agent still runs as you, with your network, and the snapshot walk
-has documented gaps (writes outside the walked roots, through pre-existing
-symlinks or hard links, and metadata-only changes are not seen). If you need a
-guarantee rather than a tripwire, the boundary has to be yours - docker, bwrap, a
-VM, or a permission model you control - and `--isolation` is where you say so.
+outside `--target`/`--out`. The snapshot covers the trees the tool itself
+EXECUTES: the first-party executed set (`evidence/`, `runner/`, `fixer/`,
+`aggregate/`, `schema/`, `knowledge/`, `bin/`, `install-surface.mjs` and the
+vendored `.web-uplift/` tree including its dependency closure) is stamped with
+content hashes, so even a rewrite preserving size and mtime is a detected change,
+and the project `node_modules/` tree is walked at stat strength. Batch runs
+additionally re-verify the hashed set against a batch-start baseline BEFORE every
+agent spawn: any drift refuses that spawn and aborts the remaining URLs, so an
+audit that tampered with the vendored CLI can never have its tampering executed
+by the next URL. That is detection of realistic escapes, not confinement: the
+agent still runs as you, with your network, and the snapshot walk has documented
+gaps (writes outside the walked roots, through pre-existing symlinks or hard
+links, metadata-only changes, and - on stat-stamped paths only, i.e. the project
+dependency tree - content rewrites that preserve both size and mtime are not
+seen). If you need a guarantee rather than a tripwire, the boundary has to be
+yours - docker, bwrap, a VM, or a permission model you control - and
+`--isolation` is where you say so.
 
 The headless runner orchestrates. It still does not contain checks. The spawned
 model follows the same [SKILL.md](.claude/skills/web-audit/SKILL.md).

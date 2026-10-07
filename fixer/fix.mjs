@@ -51,7 +51,7 @@ import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
 import { countOutstanding, completionState, remaining } from '../runner/remaining-work.mjs';
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
-import { snapshotTree, diffTrees, escapedChanges, summariseChanges } from '../runner/write-scope.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -165,7 +165,11 @@ let agentFailure = null;
 
 // The walk covers the invocation directory, the target when it sits outside it,
 // and any operator-allowed root, so an out-of-tree path still gets a per-run diff.
-const snapshotScope = () => snapshotTree(projectRoot, { extraRoots: [scopeRoot, ...allowWrite] });
+// The executed first-party trees are hash-stamped (web-uplift-dzd): a fix
+// iteration that tampers with .web-uplift/ or evidence/ is an escape this diff
+// can SEE, and the climb's existing break-on-escape then stops the next
+// iteration executing the tampered code.
+const snapshotScope = () => snapshotTree(projectRoot, { extraRoots: [scopeRoot, ...allowWrite], hashUnder: EXECUTABLE_HASH_ROOTS });
 
 function fixExtra(findingsPath, iteration) {
   return (

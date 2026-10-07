@@ -39,33 +39,113 @@
 // injected agent) and the `--target` tree when it sits outside the invocation
 // directory.
 //
-// NOT covered, stated rather than implied. First, the excluded trees: any path
-// with a `node_modules`, `.web-uplift` or `reports` segment is skipped, as is
-// `.git/objects` and the rest of `.git` outside the keep set. Those exclusions are
-// what make the walk cheap enough to run every iteration, and they are also the
-// places where an unobserved change matters most, because the tool EXECUTES code
-// from some of them and PUBLISHES from others: the vendored evidence CLI and the
-// dependency tree are both run by later steps, and `reports/<host>/latest` is the
-// pointer a consumer reads. A change there is recorded nowhere by this module.
-// Because the segment test runs first, a target that lives beneath one of those
-// names is skipped wholesale, keep set included.
+// Coverage of the EXECUTED trees (web-uplift-dzd). This module used to skip any
+// path with a `node_modules` or `.web-uplift` segment - which are exactly the
+// trees the tool executes from: the skill spawns `node .web-uplift/evidence/cli.mjs`
+// as a fresh process on every primitive, later batch URLs and fix iterations run
+// that vendored code, and the runner itself spawns `schema/validate-report.mjs`
+// after each audit. An injected page could overwrite the vendored CLI or a
+// dependency without the tripwire seeing it, and the next run would execute the
+// attacker's code. Now: the executed first-party set (EXECUTABLE_HASH_ROOTS -
+// evidence/, runner/, fixer/, aggregate/, schema/, knowledge/, bin/,
+// install-surface.mjs and the whole vendored .web-uplift/ tree including its
+// node_modules) is stamped with CONTENT HASHES (sha256), so even a rewrite that
+// preserves size and mtime is a detected change; the project-level dependency
+// tree (`node_modules/`) re-enters the walk at stat-strength stamps, which catches
+// every realistic injection (created, resized or rewritten files, swapped links)
+// at the cost of one stat per dependency file per snapshot. Only `reports`
+// remains a blanket-excluded segment (the fixer must not trip over its own
+// report output; callers that WANT the output tree walked pass it as `walkUnder`).
+// `run-batch.mjs` layers a pre-spawn integrity gate on top of the hashes: the
+// executed set is compared against a batch-start baseline BEFORE each agent
+// spawn, and any drift refuses the spawn and aborts the remaining URLs - because
+// a refusal for the tampering run alone would still let the NEXT URL execute the
+// tampered tree. Because the segment test runs first, a target that lives beneath
+// a `reports` directory is skipped wholesale unless named in `walkUnder`.
 //
-// Second, the gaps that do not depend on exclusions: writes outside the walked
-// roots (`$HOME`, `/tmp`, another checkout); writes THROUGH a symlink that already
+// NOT covered, stated rather than implied: writes outside the walked roots
+// (`$HOME`, `/tmp`, another checkout); writes THROUGH a symlink that already
 // points outside the roots (the link itself is unchanged, so nothing is
 // recorded); writes to an external inode through a hard link that already exists
-// inside a walked root; metadata-only changes, since the stamp is size plus mtime
-// (so making an existing file executable is invisible); empty-directory creation
-// and removal; content rewrites that preserve both size and mtime; and a file
-// created and deleted inside one run.
+// inside a walked root; metadata-only changes (the stamps - stat or hash - do not
+// see a chmod); empty-directory creation and removal; and, at STAT strength only
+// (everything outside EXECUTABLE_HASH_ROOTS, i.e. the project `node_modules/`
+// tree), content rewrites that preserve both size and mtime. Hashed roots have no
+// such rewrite blind spot. And a file created and deleted inside one run remains
+// invisible to the surrounding snapshots.
 
-import { readdirSync, readlinkSync, statSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-// Excluded wherever they appear: installed dependencies, the vendored tool, and
-// the tool's own report output (excluding reports/ is what stops the fixer
-// tripping its own detector when the agent writes report.json under --out).
-const EXCLUDE_SEGMENTS = new Set(['node_modules', '.web-uplift', 'reports']);
+// The only blanket-excluded segment left: the tool's own report output (excluding
+// reports/ is what stops the fixer tripping its own detector when the agent
+// writes report.json under --out). `node_modules` and `.web-uplift` were removed
+// from this set by web-uplift-dzd: they are executed trees, and excluding them
+// made the tripwire blind to exactly the paths whose unobserved change matters
+// most. See the header for the strength each covered tree now gets.
+const EXCLUDE_SEGMENTS = new Set(['reports']);
+
+// Executed first-party trees, relative to the snapshot base: every file here is
+// run or imported by a LATER step of the same pipeline (the agent's next
+// primitive, the next batch URL, the next fix iteration, or the runner's own
+// post-audit validation), so they are stamped by CONTENT HASH rather than stat.
+// `.web-uplift` is listed wholesale: its vendored node_modules (the dependency
+// closure the vendored CLI actually imports) and its manifest are part of the
+// executed surface and small enough to hash every snapshot.
+export const EXECUTABLE_HASH_ROOTS = [
+  'evidence', 'runner', 'fixer', 'aggregate', 'schema', 'knowledge', 'bin',
+  'install-surface.mjs', '.web-uplift',
+];
+
+// sha256 stamp for one file, or null when it raced away.
+function hashFile(abs) {
+  try {
+    return `sha256:${createHash('sha256').update(readFileSync(abs)).digest('hex')}`;
+  } catch {
+    return null;
+  }
+}
+
+// Integrity snapshot of the executed first-party set ONLY (no project
+// node_modules walk): rel-path -> sha256 stamp, symlinks recorded as link:target
+// (a swap to a symlink IS the attack). Callers compare two snapshots with
+// diffTrees; run-batch does this before every agent spawn against a batch-start
+// baseline and refuses to spawn on any drift.
+export function executableIntegrity(base) {
+  const baseAbs = resolve(base);
+  const entries = new Map();
+  const record = (abs, stamp) => { if (stamp !== null) entries.set(relative(baseAbs, abs), stamp); };
+  const walkDir = (abs) => {
+    let children;
+    try {
+      children = readdirSync(abs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const child of children) {
+      const p = join(abs, child.name);
+      if (child.isSymbolicLink()) {
+        try {
+          record(p, `link:${readlinkSync(p)}`);
+        } catch { /* raced away */ }
+      } else if (child.isDirectory()) walkDir(p);
+      else if (child.isFile()) record(p, hashFile(p));
+    }
+  };
+  for (const root of EXECUTABLE_HASH_ROOTS) {
+    const abs = resolve(baseAbs, root);
+    let st;
+    try {
+      st = statSync(abs);
+    } catch {
+      continue; // root absent in this project: nothing to stamp
+    }
+    if (st.isDirectory()) walkDir(abs);
+    else if (st.isFile()) record(abs, hashFile(abs));
+  }
+  return entries;
+}
 
 // .git is walked ONLY where an injected agent could plant persistence. The
 // object store, logs and worktree metadata are large, noisy and not a
@@ -95,7 +175,14 @@ export function isExcludedPath(relPath) {
 // this is how a --target that lives outside the invocation directory still gets a
 // diff. A root already covered by another root is skipped, so overlapping roots
 // do not double-walk.
-export function snapshotTree(base, { extraRoots = [], exclude = isExcludedPath, walkUnder = [] } = {}) {
+//
+// `hashUnder` names roots (relative to `base`, or absolute) that are FORCE-walked
+// like `walkUnder` AND whose files are stamped `sha256:<hex>` instead of
+// size:mtime - the content-hash strength for executed code (web-uplift-dzd),
+// where a rewrite preserving size and mtime must still be a visible change. A
+// hashUnder entry may name a single file. Both snapshots being diffed must use
+// the same options, or every file whose stamp KIND changed counts as modified.
+export function snapshotTree(base, { extraRoots = [], exclude = isExcludedPath, walkUnder = [], hashUnder = [] } = {}) {
   const entries = new Map();
   const baseAbs = resolve(base);
   const wanted = [baseAbs, ...extraRoots.filter(Boolean).map((r) => resolve(r))];
@@ -105,6 +192,9 @@ export function snapshotTree(base, { extraRoots = [], exclude = isExcludedPath, 
   // avoid tripping over - but that also made the default output tree invisible in
   // both directions, so the caller names it here and the walk covers it deliberately.
   const forcedRoots = walkUnder.filter(Boolean).map((w) => resolve(w));
+  const hashedRoots = hashUnder.filter(Boolean).map((h) => (isAbsolute(h) ? resolve(h) : resolve(baseAbs, h)));
+  for (const h of hashedRoots) forcedRoots.push(h);
+  const isHashed = (abs) => hashedRoots.some((h) => abs === h || abs.startsWith(h + sep));
   const roots = wanted.filter((r, i) => !wanted.some((other, j) => j !== i && (r === other ? j < i : r.startsWith(other + sep))));
 
   const walk = (rootAbs, dirAbs) => {
@@ -132,6 +222,14 @@ export function snapshotTree(base, { extraRoots = [], exclude = isExcludedPath, 
         continue;
       }
       if (!child.isFile()) continue;
+      // Executed trees get content hashes; everything else keeps the cheap stat
+      // stamp (web-uplift-dzd: the hash is what closes the same-size+mtime
+      // rewrite blind spot exactly where the next iteration runs the code).
+      if (isHashed(abs)) {
+        const stamp = hashFile(abs);
+        if (stamp !== null) entries.set(key, stamp);
+        continue;
+      }
       try {
         const st = statSync(abs);
         entries.set(key, `${st.size}:${st.mtimeMs}`);
@@ -142,6 +240,22 @@ export function snapshotTree(base, { extraRoots = [], exclude = isExcludedPath, 
   };
 
   for (const root of roots) walk(root, root);
+  // A hashUnder entry may name a single FILE (e.g. install-surface.mjs); the
+  // directory walk above never reaches it when it sits directly at a root edge.
+  for (const h of hashedRoots) {
+    let st;
+    try {
+      st = statSync(h);
+    } catch {
+      continue;
+    }
+    if (!st.isFile()) continue;
+    const key = relative(baseAbs, h);
+    if (key && !entries.has(key)) {
+      const stamp = hashFile(h);
+      if (stamp !== null) entries.set(key, stamp);
+    }
+  }
   return entries;
 }
 
