@@ -1942,38 +1942,52 @@ export function redactBodyText(text) {
   // that has no parseable structure (an inline script, an HTML body, a partial fragment).
   const structured = redactJsonText(text);
   if (structured !== null) return structured;
+  // ANNOTATION SHAPE vs COMPARISON SHAPE (web-uplift-xwr, review-hardened). Two rules
+  // must not fight over the same text:
+  //   name: TYPE = VALUE   (a declaration — the VALUE after '=' is the secret, the TYPE
+  //                         is evidence and must survive; quoted names and `?` included)
+  //   name=VALUE === ...   (a form pair or comparison — the value right after the
+  //                         separator is the secret; a following '=' must NOT abort it)
+  // The first is handled by the dedicated annotation rule below; the generic passes then
+  // use per-separator policies: the COLON form skips a value when a single `=` follows
+  // later in the same segment (that is annotation residue the first rule already handled,
+  // or one it could not match — redacting the type token there would leave the real value
+  // behind), while the EQUALS form never skips. Residual, stated: an annotation whose
+  // type spans a newline or contains a quote/semicolon matches neither rule set and its
+  // value can survive — recorded rather than papered over.
+  const ANNOTATION_SKIP = '(?![^=;"\'\r\n]*=[^=])';
   return text
-    // TYPESCRIPT TYPE ANNOTATIONS (web-uplift-xwr): in `const apiKey: string = "secret"`
-    // the ':' after the key binds to the TYPE, not the value - the generic colon rule
-    // below redacted the type token and left the secret in the artifact. The annotated
-    // declaration is handled FIRST: keep `name: TYPE =` intact and redact the value
-    // after the '='. The type token is space-free except explicit `|`/`&` unions, so a
-    // paren or a comma-without-later-'=' ends it and `{ password: hash(x), y = 1 }`
-    // is NOT mistaken for an annotation.
+    // TypeScript-style annotated declaration: `const apiKey: Record<string, string> = "secret"`.
+    // The ':' binds to the TYPE, so the generic colon pass would redact the type token and
+    // leave the secret. Match the WHOLE declaration first — quoted or bare name, optional
+    // `?`, lazily-matched type (anything but '=', a quote, ';' or a newline, up to the
+    // first '=') — keep `name?: TYPE =` byte-identical and redact only the value after '='.
     .replace(
-      /([A-Za-z0-9_.\-]+)(\s*:\s*[A-Za-z0-9_.\-<>\[\]|,]+(?:\s*[|&]\s*[A-Za-z0-9_.\-<>\[\]|,]+)*\s*=\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
-      (match, name, mid) => (isCredentialName(name) ? `${name}${mid}"${REDACTED_HEADER_VALUE}"` : match),
+      /("[A-Za-z0-9_.\-]+"|[A-Za-z0-9_.\-]+)(\??\s*:\s*[^=;"'\r\n]+?\s*=\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
+      (match, name, mid) =>
+        isCredentialName(name.replace(/^"|"$/g, '')) ? `${name}${mid}"${REDACTED_HEADER_VALUE}"` : match,
     )
     // Quoted values, with ESCAPES handled: a naive `"[^"]*"` ends at the first quote even
     // when it is backslash-escaped, so a value containing \" was replaced only up to the
     // backslash and the credential after it stayed in the recorded body. The alternative
     // below consumes escaped characters properly, so the WHOLE string value is replaced.
+    // The annotation skip keeps a quoted KEY's type token visible (`"apiKey": string = …`).
     .replace(
-      /(["'])([A-Za-z0-9_.\-]+)\1(\s*[:=]\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
+      new RegExp(`(["'])([A-Za-z0-9_.\\-]+)\\1(\\s*[:=]\\s*)("(?:[^"\\\\]|\\\\[\\s\\S])*"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|[^&;,\\s}]+)${ANNOTATION_SKIP}`, 'g'),
       (match, q, name, sep) => (isCredentialName(name) ? `${q}${name}${q}${sep}"${REDACTED_HEADER_VALUE}"` : match),
     )
-    // Unquoted keys with either `=` (form-encoded, query) or `:` (JS/JSON-ish object
-    // literals in a recorded document body). The colon form is what a page's own inline
-    // script uses - `{ password: 'SECRET' }` - and it was reaching the artifact because the
-    // earlier scanner only understood `name=value`.
-    // Two web-uplift-xwr guards: the unquoted value must be consumed to its token end
-    // (maximal munch), and the whole match must NOT be followed by `\s*=` - that shape is
-    // an annotated declaration (`key: TYPE = value`), already handled above; without the
-    // guard this rule would redact the TYPE token of any annotation whose name is
-    // credential-shaped but whose declaration the rule above did not match (e.g. a
-    // union with spaces inside a container type), reproducing the original bypass.
+    // Unquoted keys, COLON form (JS/JSON-ish object literals in a recorded document
+    // body - `{ password: 'SECRET' }`). Skips annotation residue per ANNOTATION_SKIP.
     .replace(
-      /(^|[?&;,\s{([])([A-Za-z0-9_.\-]+)(\s*[:=]\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+(?![^&;,\s}]))(?!\s*=)/g,
+      new RegExp(`(^|[?&;,\\s{([])([A-Za-z0-9_.\\-]+)(\\s*:\\s*)("(?:[^"\\\\]|\\\\[\\s\\S])*"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|[^&;,\\s}]+)${ANNOTATION_SKIP}`, 'g'),
+      (match, pre, name, sep) => (isCredentialName(name) ? `${pre}${name}${sep}"${REDACTED_HEADER_VALUE}"` : match),
+    )
+    // Unquoted keys, EQUALS form (form-encoded bodies, query strings). NO skip: a
+    // credential value here must be redacted even when a comparison or second assignment
+    // follows (`password=secret === true`), which the combined-rule lookahead used to
+    // abort — a disclosure regression the review caught.
+    .replace(
+      /(^|[?&;,\s{([])([A-Za-z0-9_.\-]+)(\s*=\s*)("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^&;,\s}]+)/g,
       (match, pre, name, sep) => (isCredentialName(name) ? `${pre}${name}${sep}"${REDACTED_HEADER_VALUE}"` : match),
     );
 }

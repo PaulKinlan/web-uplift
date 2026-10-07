@@ -5326,6 +5326,31 @@ async function testCredentialRedactionHelpers() {
   assert(!tsNoSpace.includes(SECRET), `redaction: an annotation without spaces (${tsNoSpace})`);
   const tsUnion = redactBodyText(`const clientSecret: string | null = "${SECRET}";`);
   assert(!tsUnion.includes(SECRET), `redaction: a union-typed annotation (${tsUnion})`);
+  assert(tsUnion.includes('string | null'), `redaction: a union type must survive byte-identical (${tsUnion})`);
+  // The review's probes, pinned: container generics, nested spaced unions, the optional
+  // marker, and a QUOTED key with an annotation. Each of these survived the first
+  // revision of the fix (type token redacted, secret left) — they are fixtures now.
+  const tsContainer = redactBodyText(`const apiKey: Record<string, string> = "${SECRET}";`);
+  assert(!tsContainer.includes(SECRET), `redaction: a container-generic annotation must not leak the value (${tsContainer})`);
+  assert(tsContainer.includes('Record<string, string>'), `redaction: the container type must survive byte-identical (${tsContainer})`);
+  const tsNestedUnion = redactBodyText(`const apiKey: Map<string, string | null> = "${SECRET}";`);
+  assert(!tsNestedUnion.includes(SECRET) && tsNestedUnion.includes('Map<string, string | null>'),
+    `redaction: a spaced union inside a container type (${tsNestedUnion})`);
+  const tsOptional = redactBodyText(`const apiKey?: string = "${SECRET}";`);
+  assert(!tsOptional.includes(SECRET), `redaction: an optional-marker annotation (${tsOptional})`);
+  const tsQuotedKey = redactBodyText(`"apiKey": string = "${SECRET}"`);
+  assert(!tsQuotedKey.includes(SECRET), `redaction: a quoted key with an annotation (${tsQuotedKey})`);
+  assert(tsQuotedKey.includes('string'), `redaction: the quoted-key annotation's type must survive (${tsQuotedKey})`);
+
+  // 9. COMPARISON SHAPES MUST NOT ABORT THE EQUALS FORM (review P0). The first revision
+  //    guarded the generic rule with (?!\s*=), which skipped redaction whenever ANY '='
+  //    followed — so `password=secret === true` disclosed the secret. The equals form
+  //    never skips; only the colon form skips annotation residue.
+  const cmp1 = redactBodyText(`password=${SECRET} === true`);
+  assert(!cmp1.includes(SECRET), `redaction: a comparison after the value must not abort redaction (${cmp1})`);
+  assert(cmp1.includes('=== true'), `redaction: the comparison itself must survive (${cmp1})`);
+  const cmp2 = redactBodyText(`password=${SECRET} = 2`);
+  assert(!cmp2.includes(SECRET), `redaction: a second assignment after the value must not abort redaction (${cmp2})`);
 
   // 8. PLURALIZED CREDENTIAL NAMES (web-uplift-xwr). CREDENTIAL_WORDS carries singulars,
   //    so isCredentialName('secrets'|'tokens'|'apiKeys') was false and {"secrets":{...}}
