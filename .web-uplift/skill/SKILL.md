@@ -15,7 +15,9 @@ Audit `$ARGUMENTS`: a URL, plus optional flags:
 
 - `--out <dir>` - report directory (default `reports/<host>/`).
 - `--source <dir>` - path to the site's local source, so you can read the
-  authored HTML/CSS/JS, not just the rendered output.
+  authored HTML/CSS/JS, not just the rendered output. The tree is REDACTED
+  before it is inlined: credential-named field values become `[redacted]`, and
+  credential-named files are skipped unread (see the `dom` row below).
 - `--fix` - after auditing, apply fixes to local source and re-audit (requires
   `--source`). Without `--fix`, this is report mode (critique only).
 - `--findings <path>` - a pre-aggregated `report.json` to start fix mode from,
@@ -162,7 +164,7 @@ Primitives, all content- and tool-agnostic:
 | `video` | an MP4 of an interaction window, frames assembled with ffmpeg; `--interact "<js>"` triggers the transition/animation | Page.startScreencast |
 | `heap` | a readable heap summary (types/constructors by size); `--interact` to exercise first, for leak hunting. Take a baseline and a post-interaction snapshot and compare retained growth (the memory-tracer methodology) to judge `be-memory-efficient` | HeapProfiler.takeHeapSnapshot |
 | `layout` | layout metrics, a CLS/layout-shift observer, long tasks, overflow at the current viewport | Page.getLayoutMetrics + observers |
-| `dom` | DOM, computed styles for `--selector` list, page HTML/CSS, and (`--source <dir>`) the local source files | DOM/CSS/Runtime |
+| `dom` | DOM, computed styles for `--selector` list, page HTML/CSS, and (`--source <dir>`) the local source files. A `--source` read is REDACTED before it is inlined: the value of every credential-named field becomes `[redacted]` (the same names-based pass the HAR bodies use), and a file whose NAME says credential (`.env*`, `*credentials*`, `*secret*`, `*.pem`, `firebase.json`, `wrangler.toml`) is skipped unread and listed in `source.skippedFiles`. `source.redaction` records what was applied AND its residual: a secret that no credential-looking name carries still reaches the artifact, and a skipped file's contents are absent evidence. So a redacted source read is evidence, not ground truth about credential values. | DOM/CSS/Runtime |
 | `evaluate` | runs your own `--expr "<js>"` in the page: ad-hoc probes and static tests you write on the spot | Runtime.evaluate |
 | `trace` | a DevTools performance trace over the load (+ `--interact`): a devtools-loadable `trace.json` AND a compact `*-summary.json` (FCP/LCP, long tasks, total blocking time). Read the summary, never the raw trace | Tracing.start/end |
 | `har` | a valid HAR 1.2 of the network over the load (+ `--interact`/`--duration`; `--bodies` to include response bodies) AND a compact `*-summary.json` of network SIGNALS: totals + by-resource-type, first/third-party origins by bytes, render-blocking candidates (grounded in the CDP initiator + priority + renderBlockingStatus when exposed, each with a stated `basis`; confirm against the DOM), weight offenders (largest/slowest), and hygiene (uncompressed text, missing cache headers, redirects, HTTP errors). Read the HAR summary, never the raw HAR. Feeds be-fast-and-stable (request weight, render-blocking), be-sustainable (bytes over the wire), and be-private-and-secure (third parties) | Network domain |

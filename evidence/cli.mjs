@@ -24,7 +24,8 @@
 //                        (the model never reads the raw multi-MB snapshot)
 //   layout <url>         Page.getLayoutMetrics + layout-shift (CLS) + long tasks
 //   dom <url>            DOM tree, computed styles for a selector set, page HTML/CSS,
-//                        and (with --source <dir>) the local source files
+//                        and (with --source <dir>) the local source files, redacted
+//                        and with credential-named files skipped unread
 //   evaluate <url>       Runtime.evaluate of a model-supplied expression
 //                        (--expr "<js>" or --expr-file <path>); the model's
 //                        ad-hoc-probe / on-the-fly static-test escape hatch
@@ -549,7 +550,8 @@ async function layout(client, url, opts, log) {
 }
 
 // dom: serialise the DOM, computed styles for a set of selectors, the page's
-// outer HTML and collected CSS text, and (with --source) the local source tree.
+// outer HTML and collected CSS text, and (with --source) the local source tree,
+// redacted on the way in (see readSourceTree).
 async function dom(client, url, opts, log) {
   await navigate(client, url, {
     settleMs: opts.wait,
@@ -627,7 +629,13 @@ async function dom(client, url, opts, log) {
   if (opts.source) {
     const srcDir = resolve(opts.source);
     result.source = readSourceTree(srcDir);
-    log(`[evidence] read ${result.source.files.length} source file(s) from ${srcDir}`);
+    log(
+      `[evidence] read ${result.source.files.length} source file(s) from ${srcDir}` +
+        ` (redacted with the HAR names-based pass; ${result.source.redactedFiles} file(s) had a value replaced)` +
+        (result.source.skippedFiles.length
+          ? `; ${result.source.skippedFiles.length} credential-named file(s) skipped unread`
+          : ''),
+    );
   }
 
   return emit(opts, result, client);
@@ -636,23 +644,77 @@ async function dom(client, url, opts, log) {
 // Read a local source tree (text files) so the model can reason over the actual
 // authored HTML/CSS/JS, not just the rendered output. Skips node_modules, .git,
 // binaries, and very large files.
-function readSourceTree(dir, base = dir, acc = { files: [] }) {
-  const SKIP = new Set(['node_modules', '.git', 'reports', 'scratch', 'examples']);
-  const TEXT_EXT = /\.(html?|css|js|mjs|cjs|ts|tsx|jsx|json|svg|md|txt)$/i;
+//
+// Every file that IS read is REDACTED before it is inlined (web-uplift-obl). A
+// real source tree carries API keys, tokens and connection strings in its .json
+// and .js, and this result is written into run evidence that is committed and
+// republished (scorecard.html, evidence-out/), so a raw read is a disclosure
+// waiting to happen on the next publish. The pass is the SAME names-based one
+// the HAR path already applies to recorded bodies - redactBodyText - so the two
+// artifact paths cannot drift apart and no second redaction implementation
+// exists to keep in step.
+//
+// It is names-based, so it replaces the VALUE of a field whose NAME says
+// credential and copies every other byte through untouched. A secret that no
+// credential-looking name carries (an unlabelled 40-character string, a base64
+// blob) therefore still reaches the artifact, and that residual is stated in
+// `redaction.residual` rather than left for the reader to discover. Files whose
+// NAME says credential defeat an in-text pass entirely, so they are not read at
+// all and every skip is recorded in `skippedFiles` - never silent.
+const SOURCE_SKIP_DIRS = new Set(['node_modules', '.git', 'reports', 'scratch', 'examples']);
+const SOURCE_TEXT_EXT = /\.(html?|css|js|mjs|cjs|ts|tsx|jsx|json|svg|md|txt)$/i;
+const SOURCE_HIGH_RISK_NAMES = [
+  /^\.env(\..+)?$/i,
+  /credential/i,
+  /secret/i,
+  /\.pem$/i,
+  /^firebase\.json$/i,
+  /^wrangler\.toml$/i,
+];
+
+function isHighRiskSourceName(name) {
+  return SOURCE_HIGH_RISK_NAMES.some((re) => re.test(name));
+}
+
+// Recorded in every source-bearing artifact: what was applied, and what it does
+// NOT cover. A reader must be able to tell a redacted tree from a raw one, and a
+// redacted tree from a complete one.
+const SOURCE_REDACTION = {
+  applied: true,
+  method: 'redactBodyText',
+  basis:
+    'names-based, the same pass the HAR bodies use: the VALUE of every field whose NAME looks like a credential becomes "[redacted]"; every other byte is unchanged',
+  skippedNames: ['.env*', '*credentials*', '*secret*', '*.pem', 'firebase.json', 'wrangler.toml'],
+  residual:
+    'a secret that no credential-looking name carries (an unlabelled opaque string, a base64 blob) can still reach this artifact, and a credential-named file is skipped unread rather than redacted, so its contents are absent evidence. Treat a source read as sensitive whenever the tree handles credentials.',
+};
+
+export function readSourceTree(dir) {
+  const acc = { files: [], skippedFiles: [], redactedFiles: 0 };
+  walkSourceTree(resolve(dir), resolve(dir), acc);
+  return { ...acc, redaction: SOURCE_REDACTION };
+}
+
+function walkSourceTree(dir, base, acc) {
   for (const name of readdirSync(dir)) {
-    if (SKIP.has(name)) continue;
+    if (SOURCE_SKIP_DIRS.has(name)) continue;
     const full = join(dir, name);
+    const path = relative(base, full);
+    if (isHighRiskSourceName(name)) {
+      acc.skippedFiles.push({ path, reason: 'high-risk-name' });
+      continue;
+    }
     const st = statSync(full);
     if (st.isDirectory()) {
-      readSourceTree(full, base, acc);
-    } else if (TEXT_EXT.test(name) && st.size < 256 * 1024) {
-      acc.files.push({
-        path: relative(base, full),
-        content: readFileSync(full, 'utf8'),
-      });
+      walkSourceTree(full, base, acc);
+    } else if (SOURCE_TEXT_EXT.test(name) && st.size < 256 * 1024) {
+      const raw = readFileSync(full, 'utf8');
+      const content = redactBodyText(raw);
+      const redacted = content !== raw;
+      if (redacted) acc.redactedFiles += 1;
+      acc.files.push({ path, content, redacted });
     }
   }
-  return acc;
 }
 
 // evaluate: run a model-supplied expression in the page. The model's escape
@@ -3899,6 +3961,7 @@ async function main() {
         '         --cpu-throttle n --network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse\n' +
         '         --locale de-DE --timezone Asia/Tokyo\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f --interact-deadline ms\n' +
+        '         --source dir reads a local source tree: contents are redacted (names-based, as the HAR bodies) and credential-named files are skipped unread before anything is inlined\n' +
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies\n' +
         '         --cdp-deadline ms (bound every CDP attach/navigation wait; default 30000)\n' +
         '         --fetch-deadline ms (bound each raw-fetch exchange; default 30000)\n' +
