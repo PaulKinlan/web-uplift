@@ -59,6 +59,7 @@ try {
   await testLaunchAttributionForHungPrimitive();
   await testOperatorLaunchAttribution();
   await testAgentChildEnvAllowlist();
+  await testBatchIsolationGate();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -4775,7 +4776,7 @@ function testBatchWriteScope() {
         writeFileSync(bin, `#!/bin/sh\n${body}\n`);
         chmodSync(bin, 0o755);
       }
-      const res = run(process.execPath, [join(repoRoot, 'runner', 'run-batch.mjs'), ...args, '--agent', 'claude', ...extraArgs],
+      const res = run(process.execPath, [join(repoRoot, 'runner', 'run-batch.mjs'), ...args, '--agent', 'claude', '--isolation', 'test-suite', ...extraArgs],
         { cwd, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
       return res;
     };
@@ -5145,7 +5146,7 @@ function testBatchIntegrityGateAbortsOnTamperedExecutedTree() {
     const res = run(
       process.execPath,
       [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://i1.example/', 'https://i2.example/',
-        '--agent', 'claude', '--concurrency', '1', '--out', 'o1'],
+        '--agent', 'claude', '--isolation', 'test-suite', '--concurrency', '1', '--out', 'o1'],
       { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
     );
 
@@ -6359,7 +6360,7 @@ async function testAgentChildEnvAllowlist() {
     chmodSync(stubPath, 0o755);
     const run = await runAsync(
       process.execPath,
-      [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com', '--agent', 'claude', '--out', join(envTmp, 'reports')],
+      [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com', '--agent', 'claude', '--isolation', 'test-suite', '--out', join(envTmp, 'reports')],
       {
         env: {
           PATH: `${binDir}:${process.env.PATH}`,
@@ -6386,6 +6387,63 @@ async function testAgentChildEnvAllowlist() {
     rmSync(envTmp, { recursive: true, force: true });
   }
 }
+
+// The batch isolation gate (web-uplift-odx): the batch runner drives the SAME
+// write-capable, prompt-injectable agent as fix mode, so it must refuse to
+// spawn until the operator names a boundary - or explicitly acknowledges none -
+// exactly like the fixer. A stub agent on PATH proves whether a spawn happened.
+async function testBatchIsolationGate() {
+  const isoTmp = mkdtempSync(join(tmpdir(), 'web-uplift-isolation-'));
+  try {
+    const captureFile = join(isoTmp, 'spawned.txt');
+    const binDir = join(isoTmp, 'bin');
+    mkdirSync(binDir);
+    const stubPath = join(binDir, 'claude');
+    writeFileSync(stubPath, `#!/bin/sh\ntouch ${captureFile}\nexit 0\n`);
+    chmodSync(stubPath, 0o755);
+    const baseEnv = { PATH: `${binDir}:${process.env.PATH}`, HOME: isoTmp };
+    const driveBatch = (extra) =>
+      runAsync(process.execPath, [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com', '--agent', 'claude', ...extra], { env: baseEnv });
+
+    // 1. NO ASSERTION: refused BEFORE any spawn, exit 1, stderr names the
+    //    contract, the refusal is recorded, the stub never ran.
+    const refused = await driveBatch(['--out', join(isoTmp, 'r1')]);
+    assert(refused.status === 1, `no assertion must refuse with exit 1: ${refused.status} ${refused.stderr.slice(-200)}`);
+    assert(refused.stderr.includes('REFUSED') && refused.stderr.includes('--isolation'), `the refusal must name the flag: ${refused.stderr.slice(-300)}`);
+    assert(!existsSync(captureFile), 'a refused run must NOT spawn the agent');
+    const refusedRecord = JSON.parse(readFileSync(join(isoTmp, 'r1', 'run-security.json'), 'utf8'));
+    assert(refusedRecord.isolation === 'refused', `the refusal must be recorded: ${JSON.stringify(refusedRecord)}`);
+
+    // 2. AN ASSERTION: proceeds (the stub spawns), records operator-supplied +
+    //    UNVERIFIED, warns. The stub writes no report.json, so the run ends as
+    //    a reportless failure (exit 1) - what is asserted is that the GATE
+    //    passed: a spawn happened and no REFUSED was printed.
+    const asserted = await driveBatch(['--isolation', 'docker', '--out', join(isoTmp, 'r2')]);
+    assert(existsSync(captureFile), 'an asserted run must spawn the agent');
+    assert(!asserted.stderr.includes('REFUSED'), `an asserted run must not be refused: ${asserted.stderr.slice(-200)}`);
+    rmSync(captureFile);
+    const okRecord = JSON.parse(readFileSync(join(isoTmp, 'r2', 'run-security.json'), 'utf8'));
+    assert(
+      okRecord.isolation === 'operator-supplied:docker' && okRecord.unverified === true,
+      `the record must say operator-supplied and UNVERIFIED: ${JSON.stringify(okRecord)}`,
+    );
+    assert(asserted.stderr.includes('UNVERIFIED'), 'an asserted run must warn on stderr');
+
+    // 3. THE EXPLICIT ACKNOWLEDGEMENT: proceeds, recorded as acknowledged-none.
+    const acked = await driveBatch(['--i-know-this-is-unisolated', '--out', join(isoTmp, 'r3')]);
+    assert(existsSync(captureFile), 'an acknowledged run must spawn the agent');
+    assert(!acked.stderr.includes('REFUSED'), `an acknowledged run must not be refused: ${acked.stderr.slice(-200)}`);
+    const ackRecord = JSON.parse(readFileSync(join(isoTmp, 'r3', 'run-security.json'), 'utf8'));
+    assert(ackRecord.isolation === 'operator-acknowledged-none', `the acknowledgement must be recorded: ${JSON.stringify(ackRecord)}`);
+
+    // 4. DRY-RUN EXEMPTION: spawns nothing, so no assertion is required.
+    const dry = await driveBatch(['--dry-run', '--out', join(isoTmp, 'r4')]);
+    assert(dry.status === 0, `a dry run must not require the assertion: ${dry.status} ${dry.stderr.slice(-200)}`);
+  } finally {
+    rmSync(isoTmp, { recursive: true, force: true });
+  }
+}
+
 
 
 
