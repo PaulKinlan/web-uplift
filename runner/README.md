@@ -114,8 +114,8 @@ contract: one batch shares a project tree and a reports/ root across all URLs,
 so a compromised run sits beside the other sites' evidence.
 
 The agent child never inherits the operator's shell environment: it gets an
-explicit allowlist (PATH/HOME/locale/proxies, its own provider credential
-family, and WEB_UPLIFT_* tunables), withheld sensitive-looking variables are
+explicit allowlist (PATH/HOME/locale/proxies, only the targeted CLI's own
+provider credential family, and WEB_UPLIFT_* tunables), withheld sensitive-looking variables are
 warned about by name on stderr, and `--agent-env KEY=VALUE` is the explicit
 opt-in for anything else (web-uplift-l6d). The child keeps network egress, so
 scope whatever credential the agent CLI itself runs on.

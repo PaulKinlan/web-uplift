@@ -6313,7 +6313,8 @@ async function testAgentChildEnvAllowlist() {
   const warnings = [];
   const fakeEnv = {
     PATH: '/usr/bin', HOME: '/home/op', LANG: 'en_GB.UTF-8',
-    ANTHROPIC_API_KEY: 'sk-ant-secret', WEB_UPLIFT_FETCH_DEADLINE_MS: '5000',
+    ANTHROPIC_API_KEY: 'sk-ant-secret', OPENAI_API_KEY: 'sk-openai-secret', GEMINI_API_KEY: 'gemini-secret',
+    WEB_UPLIFT_FETCH_DEADLINE_MS: '5000',
     GITHUB_TOKEN: 'ghp_secret', AWS_SECRET_ACCESS_KEY: 'aws-secret',
     SSH_AUTH_SOCK: '/tmp/ssh-agent', NPM_TOKEN: 'npm-secret', RANDOM_NOISE: 'harmless',
   };
@@ -6333,6 +6334,20 @@ async function testAgentChildEnvAllowlist() {
     'the warning must name variables but NEVER carry their values',
   );
   assert(!warnings[0].includes('RANDOM_NOISE'), 'a harmless variable is dropped silently; only sensitive-looking ones are named');
+
+  // 1b. PROVIDER SCOPING (web-uplift-5ta): a claude run gets the ANTHROPIC_
+  //     family ONLY - an operator's OPENAI_/GEMINI_ keys are withheld from it;
+  //     no agentName falls back to the broad union so an unmapped CLI never
+  //     silently loses the credential it needs.
+  const claudeBuilt = buildAgentEnv({ agentName: 'claude', env: fakeEnv, warn: () => {} });
+  assert(claudeBuilt.ANTHROPIC_API_KEY === 'sk-ant-secret', 'a claude child keeps its own provider family');
+  assert(claudeBuilt.OPENAI_API_KEY === undefined, 'a claude child must NOT receive OPENAI_API_KEY');
+  assert(claudeBuilt.GEMINI_API_KEY === undefined, 'a claude child must NOT receive GEMINI_API_KEY');
+  const broadBuilt = buildAgentEnv({ env: fakeEnv, warn: () => {} });
+  assert(
+    broadBuilt.OPENAI_API_KEY === 'sk-openai-secret' && broadBuilt.GEMINI_API_KEY === 'gemini-secret',
+    'no agentName falls back to the broad provider union (the l6d behaviour)',
+  );
 
   // 2. --agent-env parsing: explicit additions win, values may contain '=', bad
   //    shapes are rejected loudly.
@@ -6367,6 +6382,7 @@ async function testAgentChildEnvAllowlist() {
           HOME: envTmp,
           GITHUB_TOKEN: 'ghp_parent_secret',
           ANTHROPIC_API_KEY: 'sk-ant-parent',
+          OPENAI_API_KEY: 'sk-openai-parent',
           SSH_AUTH_SOCK: '/tmp/ssh-parent',
         },
       },
@@ -6379,6 +6395,7 @@ async function testAgentChildEnvAllowlist() {
     for (const dropped of ['GITHUB_TOKEN', 'SSH_AUTH_SOCK']) {
       assert(!childKeys.includes(dropped), `the operator's ${dropped} must NOT reach the agent child`);
     }
+    assert(!childKeys.includes('OPENAI_API_KEY'), 'a claude spawn must NOT receive OPENAI_API_KEY (provider scoping, 5ta)');
     assert(
       run.stderr.includes('withheld') && run.stderr.includes('GITHUB_TOKEN'),
       `the runner must warn the withheld names on stderr: ${run.stderr.slice(-400)}`,

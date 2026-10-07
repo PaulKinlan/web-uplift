@@ -299,7 +299,8 @@ by the next URL.
 
 The agent child's environment is an explicit allowlist (runner/agents.mjs
 `buildAgentEnv`): PATH/HOME/locale/proxies, the child CLI's own provider
-credential (the ANTHROPIC_/OPENAI_/GEMINI_ families, GOOGLE_API_KEY), and
+credential (only the targeted CLI's own family - a claude run gets ANTHROPIC_*,
+never OPENAI_API_KEY), and
 WEB_UPLIFT_* tunables pass; everything else your shell carries - GITHUB_TOKEN,
 cloud keys, SSH agent sockets, registry tokens - is withheld, and the withheld
 sensitive-looking names (never values) are warned on. `--agent-env KEY=VALUE` is

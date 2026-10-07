@@ -91,9 +91,8 @@ export function headlessBashRules({ root } = {}) {
 //   - how to find binaries and where its own config/auth lives: PATH, HOME,
 //     TMPDIR, SHELL, USER/LOGNAME, TERM, locale/timezone, XDG dirs, proxies;
 //   - its OWN provider authentication when the operator authenticates the agent
-//     CLI by environment variable (the ANTHROPIC_/OPENAI_/GEMINI_ families and
-//     GOOGLE_API_KEY) - this is the single credential class the child must hold
-//     to function at all;
+//     CLI by environment variable - SCOPED to the CLI being spawned (a claude
+//     run receives the ANTHROPIC_ family, never OPENAI_API_KEY; web-uplift-5ta);
 //   - WEB_UPLIFT_* tunables, which the evidence-CLI grandchildren read.
 // Everything else the operator's shell happens to carry - GITHUB_TOKEN, cloud
 // keys, SSH agent sockets, registry tokens - stays out, and its NAME (never its
@@ -113,8 +112,22 @@ const AGENT_ENV_PASSTHROUGH = [
   'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_RUNTIME_DIR',
   'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
 ];
-const AGENT_ENV_PROVIDER_PREFIXES = ['ANTHROPIC_', 'OPENAI_', 'GEMINI_', 'WEB_UPLIFT_'];
-const AGENT_ENV_PROVIDER_NAMES = new Set(['GOOGLE_API_KEY']);
+const AGENT_ENV_ALWAYS_PREFIXES = ['WEB_UPLIFT_'];
+// Provider credential families, scoped to the CLI being spawned (5ta): an
+// operator with several provider keys in their shell exposes only the one the
+// targeted agent needs. A CLI with no entry - or no agentName given - gets the
+// BROAD union, the l6d behaviour, so an unmapped CLI never silently loses the
+// credential it needs. copilot maps to NONE on purpose: it authenticates from
+// its own config dir, and GITHUB_TOKEN stays withheld unless --agent-env adds
+// a deliberately scoped token.
+const AGENT_ENV_PROVIDER_BROAD = { prefixes: ['ANTHROPIC_', 'OPENAI_', 'GEMINI_'], names: ['GOOGLE_API_KEY'] };
+const AGENT_ENV_PROVIDER_FAMILIES = {
+  claude: { prefixes: ['ANTHROPIC_'], names: [] },
+  codex: { prefixes: ['OPENAI_'], names: [] },
+  gemini: { prefixes: ['GEMINI_'], names: ['GOOGLE_API_KEY'] },
+  antigravity: { prefixes: ['GEMINI_'], names: ['GOOGLE_API_KEY'] },
+  copilot: { prefixes: [], names: [] },
+};
 
 // A name reads as sensitive when it carries a credential-shaped token, or is a
 // known credential channel. Used ONLY to warn about withheld variables - the
@@ -125,14 +138,17 @@ const SENSITIVE_ENV_NAME = new RegExp(
     '|^(AWS|GITHUB|GH|NPM|DOCKER|STRIPE|TWILIO|SLACK|DIGITALOCEAN|HEROKU)_[A-Z]',
 );
 
-export function buildAgentEnv({ extra = {}, env = process.env, warn = (m) => console.error(m) } = {}) {
+export function buildAgentEnv({ agentName, extra = {}, env = process.env, warn = (m) => console.error(m) } = {}) {
   const out = {};
+  const family = (agentName && AGENT_ENV_PROVIDER_FAMILIES[agentName]) || AGENT_ENV_PROVIDER_BROAD;
+  const prefixes = [...AGENT_ENV_ALWAYS_PREFIXES, ...family.prefixes];
+  const names = new Set(family.names);
   for (const name of AGENT_ENV_PASSTHROUGH) {
     if (env[name] !== undefined) out[name] = env[name];
   }
   for (const [name, value] of Object.entries(env)) {
     if (out[name] !== undefined) continue;
-    if (AGENT_ENV_PROVIDER_PREFIXES.some((p) => name.startsWith(p)) || AGENT_ENV_PROVIDER_NAMES.has(name)) {
+    if (prefixes.some((p) => name.startsWith(p)) || names.has(name)) {
       out[name] = value;
     }
   }

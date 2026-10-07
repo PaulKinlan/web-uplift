@@ -59,7 +59,7 @@ const args = parseArgs(process.argv.slice(2));
 // once, here - never a process.env spread. See buildAgentEnv in runner/agents.mjs
 // for what passes (PATH/HOME/locale, the child's own provider auth, WEB_UPLIFT_*)
 // and what is withheld (warned by name).
-const agentEnv = buildAgentEnv({ extra: parseAgentEnvFlag(args['agent-env']) });
+const agentEnv = buildAgentEnv({ agentName: args.agent ?? 'claude', extra: parseAgentEnvFlag(args['agent-env']) });
 
 // --goal defines a SCORE target to hill-climb to, an alternative stop condition
 // to "every issue fixed". Same shape as the CI gate:
