@@ -128,6 +128,23 @@ for breaking skill/schema changes):
 
 ### Current release: v0.5.1
 
+Patch release cut on 2026-10-08 following Modern Web Guidance reanalysis:
+
+- **Modern Web Guidance upgraded to 0.0.193.** Principles, guidance docs, runner
+  permissions allowlist, and skills pinned in lockstep to `modern-web-guidance@0.0.193`.
+- **Full 177-guide coverage.** Principles catalog (`knowledge/principles.json`) covers
+  all 177 guides in Modern Web Guidance 0.0.193 with exact identifiers.
+- **Changed guidance reanalysis.** Encoded CSP reversals (mandatory `object-src 'none'`,
+  `frame-ancestors 'self'`, and `require-trusted-types-for 'script'` with direct
+  enforcement), HttpOnly session cookies, runtime probe for Firefox 129+ top-layer
+  animation, and async WebMCP `registerTool` with structured error return.
+- **Removed dead guide `prevent-text-wrapping` and updated `declarative-button-actions` to
+  `custom-button-actions`.**
+- **Updated report fixtures.** Playground fixtures migrated from legacy `user-experience`
+  taxonomy to current categories (`visual-design`, `css`).
+
+### v0.5.0
+
 Minor over v0.4.2, cut on 2026-10-06 from the same audit line. Three defects fixed,
 one record added, and the skill change that makes a release necessary at all:
 
