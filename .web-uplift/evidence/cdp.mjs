@@ -282,7 +282,7 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // in resilience the ServiceWorker.enable, the offline switch, the offline-reload navigate
 // and the online restore; in safeFetch the response-body reads. Bounded transitively:
 // applyConditions' six internals and sw.enable's internal enable (every caller wraps the
-// call). Bounded by their own deadlines: the fetch exchange (AbortSignal), the capped body
+// call). Bounded by their own deadlines: the fetch and pinnedFetch exchanges (AbortSignal), the capped body
 // reader, har's network-idle wait, --interact's poll, the headers docPromise timeout, and
 // resilience's offline load race. Bounded by pre-existing mechanisms: the launch endpoint
 // poll and its grace-bounded teardown, sleeps, withRetry around bounded calls, the gather

@@ -81,6 +81,9 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { BlockList, isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
+import http from 'node:http';
+import https from 'node:https';
+import { Readable } from 'node:stream';
 import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs, getCdpCallDeadlineMs, recordLaunch } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
@@ -2175,11 +2178,17 @@ export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin
   const host = normalizedHost(parsed.hostname);
   // Only the operator-selected ORIGIN is exempt: the same host on a different
   // port (another local service) is a different origin and must not inherit it.
-  if (targetOrigin && parsed.origin === targetOrigin) return parsed;
+  // The exemption ONLY applies to explicitly provided IP addresses, not names
+  // that resolve to private addresses.
+  if (targetOrigin && parsed.origin === targetOrigin && isIP(host)) {
+    parsed.pinnedAddress = host;
+    return parsed;
+  }
   if (isIP(host)) {
     if (isBlockedAddress(host)) {
       throw new Error(`refused: ${parsed.hostname} is a loopback, link-local or private address`);
     }
+    parsed.pinnedAddress = host;
     return parsed;
   }
   let addresses;
@@ -2194,7 +2203,57 @@ export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin
   if (blocked) {
     throw new Error(`refused: ${host} resolves to ${blocked.address}, a loopback, link-local or private address`);
   }
+  parsed.pinnedAddress = addresses[0].address;
   return parsed;
+}
+
+function pinnedFetch(urlObj, { headers, signal }) {
+  return new Promise((resolve, reject) => {
+    const isHttps = urlObj.protocol === 'https:';
+    const lib = isHttps ? https : http;
+    const reqOpts = {
+      method: 'GET',
+      headers,
+      signal,
+      lookup: urlObj.pinnedAddress ? (hostname, opts, cb) => {
+        if (typeof opts === 'function') {
+          cb = opts;
+          opts = {};
+        }
+        const family = urlObj.pinnedAddress.includes(':') ? 6 : 4;
+        console.log("PINNED FETCH LOOKUP CALLED FOR", hostname, urlObj.pinnedAddress);
+        if (opts.all) {
+          cb(null, [{ address: urlObj.pinnedAddress, family }]);
+        } else {
+          cb(null, urlObj.pinnedAddress, family);
+        }
+      } : undefined
+    };
+    
+    const req = lib.request(urlObj, reqOpts, (res) => {
+      const response = {
+        status: res.statusCode,
+        ok: res.statusCode >= 200 && res.statusCode < 300,
+        headers: {
+          get: (name) => {
+            const val = res.headers[name.toLowerCase()];
+            return Array.isArray(val) ? val.join(', ') : (val || null);
+          }
+        },
+        body: {
+          cancel: async () => { req.destroy(); },
+          getReader: () => {
+            const webStream = Readable.toWeb(res);
+            return webStream.getReader();
+          }
+        }
+      };
+      resolve(response);
+    });
+    
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 function concatChunks(chunks, total) {
@@ -2253,14 +2312,11 @@ export async function readBodyCapped(res, maxBytes, deadlineMs = fetchDeadlineMs
 // Follow redirects by hand. Node's fetch follows them internally, so validating
 // only the first URL is exactly the naive fix that a redirect defeats: here every
 // hop is validated before it is requested, the hop count is bounded, and the body
-// is capped. RESIDUAL LIMITATION, stated rather than papered over: the addresses
-// are validated as resolved, but global fetch gives no way to pin the address the
-// connection actually uses, so a name that re-resolves between this check and the
-// connect is not fully covered (DNS rebinding).
+// is capped. The validated address is pinned during connect to prevent DNS rebinding.
 export async function safeFetch(rawUrl, { base, targetOrigin, headers, maxBytes = FETCH_MAX_BYTES, deadlineMs = fetchDeadlineMsDefault } = {}) {
   let current = await assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin });
   for (let hop = 0; hop <= FETCH_MAX_REDIRECTS; hop++) {
-    const res = await fetch(current.href, { redirect: 'manual', headers, signal: AbortSignal.timeout(deadlineMs) });
+    const res = await pinnedFetch(current, { headers, signal: AbortSignal.timeout(deadlineMs) });
     const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
     if (location === null) {
       return { res, url: current.href, text: () => readBodyCapped(res, maxBytes, deadlineMs) };

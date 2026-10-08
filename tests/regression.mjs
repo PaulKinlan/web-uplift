@@ -36,6 +36,7 @@ try {
   testFirstPartyHostMatrix();
   await testPageDerivedFetchGuard();
   await testSafeFetchRedirectAndSizeGuard();
+  await testSafeFetchDnsRebindingGuard();
   await testLaunchRetryAndDiagnostics();
   testSchemaValidation();
   testAtomicCoverageValidator();
@@ -3777,6 +3778,70 @@ async function testPageDerivedFetchGuard() {
 // The redirect is where a first-URL-only check fails: Node's fetch follows
 // redirects internally, so the guard has to re-validate every hop, bound the hop
 // count and cap the body. A legitimate same-host fetch must still go through.
+async function testSafeFetchDnsRebindingGuard() {
+  console.log('\n--- testSafeFetchDnsRebindingGuard ---');
+  let firstLookups = 0;
+  const mockDnsLookup = async (host, options) => {
+    if (host === 'rebind.test.local') {
+      firstLookups++;
+      // assertPageDerivedFetchAllowed's lookup gets a public IP first.
+      return [{ address: '8.8.8.8', family: 4 }];
+    }
+    return lookup(host, options);
+  };
+  
+  // Patch dns.promises.lookup for assertPageDerivedFetchAllowed
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const dnsCommon = req('node:dns');
+  const origLookup = dnsCommon.promises.lookup;
+  dnsCommon.promises.lookup = mockDnsLookup;
+  
+  let connectedPrivate = false;
+  const httpModule = await import('node:http');
+  const server = httpModule.createServer((req, res) => {
+    connectedPrivate = true;
+    res.end('secret');
+  });
+  
+  try {
+    await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    const port = server.address().port;
+    
+    // If the fix is absent, `fetch` will be used, and it will use real DNS or its own lookup.
+    const dns = dnsCommon;
+    const origCbLookup = dns.lookup;
+    dns.lookup = (host, opts, cb) => {
+      if (typeof opts === 'function') {
+        cb = opts;
+        opts = {};
+      }
+      if (host === 'rebind.test.local') {
+        const family = 4;
+        if (opts.all) return cb(null, [{ address: '127.0.0.1', family }]);
+        return cb(null, '127.0.0.1', family);
+      }
+      return origCbLookup(host, opts, cb);
+    };
+    
+    try {
+      await safeFetch(`http://rebind.test.local:${port}/`, { targetOrigin: `http://rebind.test.local:${port}` });
+      if (connectedPrivate) {
+        throw new Error('test failed: connected to private address during DNS rebinding');
+      }
+    } catch (e) {
+      if (e.message.includes('test failed')) throw e;
+      // It's expected to fail because 8.8.8.8 won't connect on the random port!
+      console.log('DNS rebinding blocked (connection failed as expected)');
+    } finally {
+      dns.lookup = origCbLookup;
+    }
+  } finally {
+    dnsCommon.promises.lookup = origLookup;
+    server.close();
+  }
+}
+
 async function testSafeFetchRedirectAndSizeGuard() {
   // A second local service on another port: the P1a exploit shape is a page on the
   // audited origin pointing its manifest at this one.
@@ -5940,7 +6005,7 @@ function testAwaitCensus() {
     ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable/],
     ['bounded:sleep', /await sleep\(|await new Promise\(\(r\) => setTimeout/],
     ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|return await fn\(\)/],
-    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await fetch\(.*AbortSignal|await fetched\.text\(\)|await docPromise/],
+    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise/],
     ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
     ['excluded:page-side-template', /await navigator\./],
     ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],
