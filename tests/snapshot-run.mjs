@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// Focused guard for concurrent snapshot artifact copying in snapshotRun (web-uplift-9kz).
+// Focused guard for snapshot artifact copying in snapshotRun (web-uplift-9kz / web-uplift-lde).
 //
-// snapshotRun copies report.md and evidence/ into retained run directories.
-// Previously this ran sequentially in a for..of loop. It now parallelises
-// copying with Promise.all across the artifact list while preserving the
-// existsSync guard and best-effort error handling.
+// snapshotRun preserves report.json and copies optional auxiliary artifacts
+// (report.md and evidence/) into retained run directories. Auxiliary artifact
+// copying is best-effort and independent: missing or failed auxiliary copies
+// do not prevent report.json or other valid artifacts from being preserved.
 //
 // Run directly:
-//   node tests/snapshot-run.mjs
+//   timeout -k 30 15 node tests/snapshot-run.mjs
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -18,27 +18,74 @@ import { resolveLatest } from '../runner/run-history.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
-// Unit check 1: Structural code inspection of snapshotRun in fixer/fix.mjs
+// Unit check 1: Behavioural structure verification of snapshotRun in fixer/fix.mjs.
+// Asserts that partial auxiliary artifact sets (only report.md, or only evidence/)
+// structure the retained run directory correctly without cross-artifact dependencies.
 export function testSnapshotRunStructure() {
-  const code = readFileSync(join(repoRoot, 'fixer', 'fix.mjs'), 'utf8');
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-snapshot-struct-'));
+  try {
+    const baseReport = JSON.parse(readFileSync(join(repoRoot, 'examples', 'playground-report.json'), 'utf8'));
 
-  // Verify Promise.all is used for artifact copying in snapshotRun
-  assert(
-    code.includes('await Promise.all('),
-    'snapshotRun must use Promise.all to copy artifacts concurrently',
-  );
+    // Case A: source has only report.md (no evidence/ directory)
+    const srcA = join(root, 'src-a');
+    mkdirSync(srcA, { recursive: true });
+    writeFileSync(join(srcA, 'report.json'), JSON.stringify(baseReport, null, 2) + '\n');
+    writeFileSync(join(srcA, 'report.md'), '# Markdown only\n');
 
-  // Verify serial loop over artifacts is gone
-  assert(
-    !code.includes("for (const name of ['report.md', 'evidence'])"),
-    "snapshotRun must not copy ['report.md', 'evidence'] sequentially in a for..of loop",
-  );
+    const reportsA = join(root, 'reports-a');
+    spawnSync(
+      process.execPath,
+      [
+        join(repoRoot, 'fixer', 'fix.mjs'),
+        '--target', join(root, 'target-a'),
+        '--audit-url', 'http://example.test/',
+        '--findings', join(srcA, 'report.json'),
+        '--max-iterations', '0',
+        '--out', join(root, 'out-a'),
+        '--reports-root', reportsA,
+      ],
+      { encoding: 'utf8' },
+    );
 
-  // Verify the artifacts array is mapped
-  assert(
-    code.includes("['report.md', 'evidence'].map("),
-    "snapshotRun must map over ['report.md', 'evidence']",
-  );
+    const hostA = join(reportsA, 'example_test');
+    assert(existsSync(hostA), `Expected host dir ${hostA} to exist`);
+    const beforeA = join(hostA, readdirSync(hostA).find((d) => d.endsWith('-before')));
+    assert(existsSync(join(beforeA, 'report.json')), 'report.json must exist in run dir');
+    assert(existsSync(join(beforeA, 'report.md')), 'report.md must exist in run dir');
+    assert.equal(readFileSync(join(beforeA, 'report.md'), 'utf8'), '# Markdown only\n');
+    assert(!existsSync(join(beforeA, 'evidence')), 'evidence must not exist when absent in source');
+
+    // Case B: source has only evidence/ directory (no report.md)
+    const srcB = join(root, 'src-b');
+    mkdirSync(join(srcB, 'evidence'), { recursive: true });
+    writeFileSync(join(srcB, 'report.json'), JSON.stringify(baseReport, null, 2) + '\n');
+    writeFileSync(join(srcB, 'evidence', 'probe.txt'), 'probe-data');
+
+    const reportsB = join(root, 'reports-b');
+    spawnSync(
+      process.execPath,
+      [
+        join(repoRoot, 'fixer', 'fix.mjs'),
+        '--target', join(root, 'target-b'),
+        '--audit-url', 'http://example.test/',
+        '--findings', join(srcB, 'report.json'),
+        '--max-iterations', '0',
+        '--out', join(root, 'out-b'),
+        '--reports-root', reportsB,
+      ],
+      { encoding: 'utf8' },
+    );
+
+    const hostB = join(reportsB, 'example_test');
+    assert(existsSync(hostB), `Expected host dir ${hostB} to exist`);
+    const beforeB = join(hostB, readdirSync(hostB).find((d) => d.endsWith('-before')));
+    assert(existsSync(join(beforeB, 'report.json')), 'report.json must exist in run dir');
+    assert(existsSync(join(beforeB, 'evidence', 'probe.txt')), 'evidence/probe.txt must exist in run dir');
+    assert.equal(readFileSync(join(beforeB, 'evidence', 'probe.txt'), 'utf8'), 'probe-data');
+    assert(!existsSync(join(beforeB, 'report.md')), 'report.md must not exist when absent in source');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 // Unit check 2: Functional end-to-end execution of snapshotRun via fixer/fix.mjs
@@ -177,35 +224,60 @@ export function testSnapshotRunMissingArtifactsBestEffort() {
   }
 }
 
-// Unit check 4: Concurrency proof - tasks are dispatched concurrently via Promise.all
-export async function testConcurrentExecutionProof() {
-  const delays = [];
-  const start = Date.now();
-  await Promise.all(
-    ['report.md', 'evidence'].map(async (name) => {
-      const taskStart = Date.now();
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      delays.push({ name, startOffset: taskStart - start, elapsed: Date.now() - taskStart });
-    }),
-  );
-  const total = Date.now() - start;
+// Unit check 4: Auxiliary copy error tolerance (swallowed by design)
+export function testSnapshotRunCopyErrorTolerance() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-snapshot-err-'));
+  const lockedFile = join(root, 'source-report', 'evidence', 'locked.bin');
+  try {
+    const srcDir = join(root, 'source-report');
+    mkdirSync(join(srcDir, 'evidence'), { recursive: true });
 
-  // If serial, total would be >= 80ms. With Promise.all, both start at ~same time.
-  assert.equal(delays.length, 2, 'both copy tasks must run');
-  assert(
-    Math.abs(delays[0].startOffset - delays[1].startOffset) < 25,
-    `both tasks must start concurrently (offsets: ${delays[0].startOffset}ms, ${delays[1].startOffset}ms)`,
-  );
-  assert(
-    total < 75,
-    `concurrent execution should finish in ~40ms, not serial ~80ms (took ${total}ms)`,
-  );
+    const baseReport = JSON.parse(readFileSync(join(repoRoot, 'examples', 'playground-report.json'), 'utf8'));
+    writeFileSync(join(srcDir, 'report.json'), JSON.stringify(baseReport, null, 2) + '\n');
+    writeFileSync(join(srcDir, 'report.md'), '# Tolerant Report\n');
+    writeFileSync(lockedFile, 'unreadable');
+    chmodSync(lockedFile, 0o000);
+
+    const targetDir = join(root, 'target-src');
+    mkdirSync(targetDir, { recursive: true });
+    const outDir = join(root, 'out');
+    const reportsDir = join(root, 'reports');
+
+    spawnSync(
+      process.execPath,
+      [
+        join(repoRoot, 'fixer', 'fix.mjs'),
+        '--target', targetDir,
+        '--audit-url', 'http://example.test/',
+        '--findings', join(srcDir, 'report.json'),
+        '--max-iterations', '0',
+        '--out', outDir,
+        '--reports-root', reportsDir,
+      ],
+      { encoding: 'utf8' },
+    );
+
+    const hostDir = join(reportsDir, 'example_test');
+    assert(existsSync(hostDir), `Expected host dir ${hostDir} to exist`);
+    const runDirs = readdirSync(hostDir);
+    const beforeRunName = runDirs.find((d) => d.endsWith('-before'));
+    assert(beforeRunName, `Expected a -before run dir in ${JSON.stringify(runDirs)}`);
+    const beforeRunDir = join(hostDir, beforeRunName);
+
+    // report.json and report.md must be preserved despite evidence copy failure
+    assert(existsSync(join(beforeRunDir, 'report.json')), 'baseline run must contain report.json');
+    assert(existsSync(join(beforeRunDir, 'report.md')), 'report.md must still be copied despite evidence error');
+    assert.equal(readFileSync(join(beforeRunDir, 'report.md'), 'utf8'), '# Tolerant Report\n');
+  } finally {
+    try { chmodSync(lockedFile, 0o644); } catch {}
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   testSnapshotRunStructure();
   testSnapshotRunCopiesArtifacts();
   testSnapshotRunMissingArtifactsBestEffort();
-  await testConcurrentExecutionProof();
+  testSnapshotRunCopyErrorTolerance();
   console.log('snapshotRun unit tests: OK');
 }

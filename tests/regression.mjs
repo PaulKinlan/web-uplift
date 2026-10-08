@@ -24,6 +24,12 @@ import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
 import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
+import {
+  testSnapshotRunStructure,
+  testSnapshotRunCopiesArtifacts,
+  testSnapshotRunMissingArtifactsBestEffort,
+  testSnapshotRunCopyErrorTolerance,
+} from './snapshot-run.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -105,6 +111,10 @@ try {
   testFixModeScopeEdgeCases();
   testFixIsolationAssertion();
   testFixIsolatedRunPublishes();
+  testSnapshotRunStructure();
+  testSnapshotRunCopiesArtifacts();
+  testSnapshotRunMissingArtifactsBestEffort();
+  testSnapshotRunCopyErrorTolerance();
   testBatchWriteScope();
   testBatchResumeIsolation();
   testWriteScopeCoversExecutedTrees();

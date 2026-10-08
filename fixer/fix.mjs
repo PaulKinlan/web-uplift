@@ -690,6 +690,9 @@ function dirOf(reportPath) {
 
 // Copy a report dir's report.json + report.md + evidence/ into a retained run
 // dir so the comparison can reference the run's own before/after artifacts.
+// Writing report.json is mandatory and throws on failure; auxiliary artifacts
+// (report.md and evidence/) are copied best-effort so a failure copying auxiliary
+// files does not abort an otherwise successful fix run.
 async function snapshotRun(fromDir, toDir, report) {
   await mkdir(toDir, { recursive: true });
   await writeFile(join(toDir, 'report.json'), JSON.stringify(report, null, 2) + '\n');
