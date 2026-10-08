@@ -693,16 +693,18 @@ function dirOf(reportPath) {
 async function snapshotRun(fromDir, toDir, report) {
   await mkdir(toDir, { recursive: true });
   await writeFile(join(toDir, 'report.json'), JSON.stringify(report, null, 2) + '\n');
-  for (const name of ['report.md', 'evidence']) {
-    const src = join(fromDir, name);
-    if (existsSync(src)) {
-      try {
-        await cp(src, join(toDir, name), { recursive: true });
-      } catch {
-        /* best effort: artifacts may be elsewhere */
+  await Promise.all(
+    ['report.md', 'evidence'].map(async (name) => {
+      const src = join(fromDir, name);
+      if (existsSync(src)) {
+        try {
+          await cp(src, join(toDir, name), { recursive: true });
+        } catch {
+          /* best effort: artifacts may be elsewhere */
+        }
       }
-    }
-  }
+    }),
+  );
 }
 
 function slugify(s) {
