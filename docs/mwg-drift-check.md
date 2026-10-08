@@ -70,3 +70,78 @@ When exit code 2 fires (or an issue titled "MWG upstream moved: reanalysis neede
 - `web-uplift-0o6`: Implements the delta classifier (categorizing changes as NEW, CHANGED, or REVERSED guides) and consumes the trigger from this check.
 - `web-uplift-vbv`: The artefact fields (hash, canonicalisation, appliedRulesVersion) have landed in `knowledge/mwg-state.json` and the contract lives in `docs/mwg-train-consumer-contract.md`.
 - `web-uplift-6ov`: Extends the fixture catalog with reversal and positive-control fixtures used to test the delta classifier.
+
+## Delta Classification (NEW / CHANGED / REVERSED)
+
+When an upstream version delta is detected, `tests/mwg-drift-classify.mjs` categorizes differences into three deterministic classes:
+
+- **REVERSED**: An implemented rule's textual basis was modified or removed upstream. Because the implemented rule may now be incorrect or actively generating improper repairs, this class is reported first and loudest. Severity is determined by class, not guide count.
+- **CHANGED**: Upstream guide text moved, but all verbatim anchors for implemented rules remain intact, or an unregistered guide was modified or withdrawn.
+- **NEW**: A new guide ID was introduced upstream that was not present in the baseline.
+
+### Corpus Format and Reconstructability
+
+Corpora act as the normalized intermediate representation:
+
+```json
+{
+  "version": "x.y.z",
+  "guides": {
+    "<id>": "<full guide text>"
+  }
+}
+```
+
+Because published npm packages are immutable, both baseline and upstream corpora can be reconstructed deterministically at any time:
+
+1. Download and unpack the immutable npm package tarball:
+   ```sh
+   npm pack modern-web-guidance@<version>
+   tar -xzf modern-web-guidance-<version>.tgz
+   ```
+2. Extract the normalized corpus JSON:
+   ```sh
+   node tests/mwg-drift-classify.mjs --extract package --version <version> -o corpus-<version>.json
+   ```
+
+### Anchor-Based Reversal Rule
+
+Reversal detection is deterministic and anchor-based:
+
+`knowledge/mwg-rule-basis.json` stores verbatim anchor excerpts from the analyzed guide text that each implemented rule relies on. When guide text moves:
+
+- If every anchor of every implemented rule for that guide remains present as a verbatim substring in the new text, the delta is classified as **CHANGED** (the rule's factual premise holds).
+- If any anchor is missing, the delta is classified as **REVERSED**. The output explicitly identifies the affected rule IDs and lists the missing anchor substrings.
+
+### Withdrawn Guide Rule
+
+When a guide ID exists in the baseline corpus but is absent in the upstream corpus:
+
+- If the basis registry has any implemented rule referencing that guide, the delta is classified as **REVERSED** (reason: withdrawn while implemented rules depend on it).
+- If no implemented rules reference it, the delta is classified as **CHANGED** (reason: withdrawn, no implemented rules).
+
+### Empty Corpus Refusal (Sabotage Guard)
+
+If the new corpus has an empty `guides` object while the baseline corpus is non-empty, the classifier refuses to diff against nothing. It fails loudly with exit code 1. A blind or empty upstream unpack must never be interpreted as "all guides withdrawn".
+
+### Classifier Exit Codes
+
+`tests/mwg-drift-classify.mjs` enforces the following exit codes:
+
+- `0`: No delta detected between old and new corpora, or successful `--verify-basis` / `--extract` execution.
+- `1`: Classifier is blind or inputs are invalid: missing or unparseable files, invalid corpus schema, invalid semver strings, empty target corpus against non-empty baseline, zero guides extracted, or failed basis verification.
+- `2`: Version delta detected and classified (one or more REVERSED, CHANGED, or NEW guides).
+- `64`: Usage error (unknown flags, missing arguments, or incompatible mode options).
+
+### Maintaining the Rule Basis Registry
+
+The reanalysis lane maintains `knowledge/mwg-rule-basis.json` to keep reversal detection accurate:
+
+1. Whenever guidance is distilled into `knowledge/principles.json` check summaries or asserted in `tests/regression.mjs`, identify the source guide ID.
+2. Select 1 to 3 verbatim anchor excerpts from the guide text that back the implemented rule.
+3. Append the rule entry to `knowledge/mwg-rule-basis.json` (`id`, `guide`, `where`, and `anchors`).
+4. Run `--verify-basis` against the baseline corpus to confirm all anchors exist verbatim:
+   ```sh
+   node tests/mwg-drift-classify.mjs --verify-basis corpus-<version>.json
+   ```
+

@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "guides": {
+    "implemented-rule-guide": "Introduction to security headers. Always pin object-src to 'none' in the Content-Security-Policy header. This prevents legacy plugin execution.",
+    "plain-guide": "This is stable content for a plain guide that does not change between versions.",
+    "withdrawn-guide": "This guide covers legacy features and may be withdrawn in future versions."
+  }
+}

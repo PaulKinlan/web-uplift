@@ -58,6 +58,7 @@ try {
   testSkillWriteContractGuard();
   testMwgDriftCheckGuard();
   testMwgArtefactGuard();
+  testMwgDriftClassifierGuard();
   testRedactHeaderList();
   testInstalledEvidenceCli();
   testInstalledTreeRelativeImportsResolve();
@@ -4256,6 +4257,198 @@ function testMwgArtefactGuard() {
       updatedState.analysedVersion === state.analysedVersion,
       `mwg-artefact: case 7 analysedVersion must be preserved, got ${updatedState.analysedVersion}`
     );
+  }
+}
+
+function testMwgDriftClassifierGuard() {
+  const script = join(repoRoot, 'tests', 'mwg-drift-classify.mjs');
+  const fixDir = join(repoRoot, 'tests', 'fixtures', 'mwg-drift');
+  const corpusOld = join(fixDir, 'corpus-old.json');
+  const basisFixture = join(fixDir, 'basis-fixture.json');
+
+  const runClassifier = (args) => {
+    return spawnSync(process.execPath, [script, ...args], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+      },
+    });
+  };
+
+  const parseJsonLine = (stdout) => {
+    const lines = stdout.trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line.startsWith('{') && line.endsWith('}')) {
+        return JSON.parse(line);
+      }
+    }
+    throw new Error(`No JSON line found in stdout:\n${stdout}`);
+  };
+
+  // 1. old vs corpus-new-reversal -> exit 2; stdout has the REVERSED section and
+  // it appears BEFORE any CHANGED or NEW section heading; the JSON line lists
+  // implemented-rule-guide under reversed with the missing anchor.
+  {
+    const newCorpus = join(fixDir, 'corpus-new-reversal.json');
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', newCorpus,
+      '--basis', basisFixture,
+      '--json',
+    ]);
+    assert(res.status === 2, `mwg-drift-classify: case 1 must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const revIdx = res.stdout.indexOf('REVERSED');
+    const chgIdx = res.stdout.indexOf('CHANGED');
+    const newIdx = res.stdout.indexOf('NEW');
+    assert(revIdx !== -1, 'mwg-drift-classify: case 1 stdout must contain REVERSED section');
+    if (chgIdx !== -1) {
+      assert(revIdx < chgIdx, 'mwg-drift-classify: case 1 REVERSED section must precede CHANGED section');
+    }
+    if (newIdx !== -1) {
+      assert(revIdx < newIdx, 'mwg-drift-classify: case 1 REVERSED section must precede NEW section');
+    }
+    const json = parseJsonLine(res.stdout);
+    assert(json.reversed.length === 1, `mwg-drift-classify: case 1 expected 1 reversed guide, got ${json.reversed.length}`);
+    assert(json.reversed[0].guide === 'implemented-rule-guide', 'mwg-drift-classify: case 1 expected implemented-rule-guide under reversed');
+    assert(
+      json.reversed[0].missingAnchors.includes("Always pin object-src to 'none' in the Content-Security-Policy header."),
+      `mwg-drift-classify: case 1 missingAnchors must include object-src sentence, got: ${JSON.stringify(json.reversed[0].missingAnchors)}`
+    );
+  }
+
+  // 2. old vs corpus-new-cosmetic -> exit 2; zero reversed; implemented-rule-guide under changed.
+  {
+    const newCorpus = join(fixDir, 'corpus-new-cosmetic.json');
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', newCorpus,
+      '--basis', basisFixture,
+      '--json',
+    ]);
+    assert(res.status === 2, `mwg-drift-classify: case 2 must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const json = parseJsonLine(res.stdout);
+    assert(json.reversed.length === 0, `mwg-drift-classify: case 2 expected 0 reversed guides, got ${json.reversed.length}`);
+    assert(
+      json.changed.some((c) => c.guide === 'implemented-rule-guide'),
+      'mwg-drift-classify: case 2 expected implemented-rule-guide under changed'
+    );
+  }
+
+  // 3. old vs corpus-new-mixed -> exit 2 (positive control): brand-new-guide under new,
+  // implemented-rule-guide and withdrawn-guide under changed, zero reversed.
+  {
+    const newCorpus = join(fixDir, 'corpus-new-mixed.json');
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', newCorpus,
+      '--basis', basisFixture,
+      '--json',
+    ]);
+    assert(res.status === 2, `mwg-drift-classify: case 3 must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const json = parseJsonLine(res.stdout);
+    assert(json.reversed.length === 0, `mwg-drift-classify: case 3 expected 0 reversed guides, got ${json.reversed.length}`);
+    assert(
+      json.new.some((n) => n.guide === 'brand-new-guide'),
+      'mwg-drift-classify: case 3 expected brand-new-guide under new'
+    );
+    assert(
+      json.changed.some((c) => c.guide === 'implemented-rule-guide'),
+      'mwg-drift-classify: case 3 expected implemented-rule-guide under changed'
+    );
+    assert(
+      json.changed.some((c) => c.guide === 'withdrawn-guide'),
+      'mwg-drift-classify: case 3 expected withdrawn-guide under changed'
+    );
+  }
+
+  // 4. old vs corpus-new-withdrawn-implemented -> exit 2; implemented-rule-guide under reversed with a withdrawn reason.
+  {
+    const newCorpus = join(fixDir, 'corpus-new-withdrawn-implemented.json');
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', newCorpus,
+      '--basis', basisFixture,
+      '--json',
+    ]);
+    assert(res.status === 2, `mwg-drift-classify: case 4 must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const json = parseJsonLine(res.stdout);
+    assert(json.reversed.length === 1, `mwg-drift-classify: case 4 expected 1 reversed guide, got ${json.reversed.length}`);
+    assert(json.reversed[0].guide === 'implemented-rule-guide', 'mwg-drift-classify: case 4 expected implemented-rule-guide under reversed');
+    assert(
+      typeof json.reversed[0].reason === 'string' && /withdrawn/i.test(json.reversed[0].reason),
+      `mwg-drift-classify: case 4 reason must note withdrawal, got ${json.reversed[0].reason}`
+    );
+  }
+
+  // 5. old vs corpus-new-empty -> exit 1.
+  {
+    const newCorpus = join(fixDir, 'corpus-new-empty.json');
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', newCorpus,
+      '--basis', basisFixture,
+    ]);
+    assert(res.status === 1, `mwg-drift-classify: case 5 must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 6. old vs corpus-unparseable.txt -> exit 1.
+  {
+    const newCorpus = join(fixDir, 'corpus-unparseable.txt');
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', newCorpus,
+      '--basis', basisFixture,
+    ]);
+    assert(res.status === 1, `mwg-drift-classify: case 6 must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 7. missing --new-corpus file -> exit 1.
+  {
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', join(fixDir, 'does-not-exist.json'),
+      '--basis', basisFixture,
+    ]);
+    assert(res.status === 1, `mwg-drift-classify: case 7 must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 8. old vs old (identical) -> exit 0.
+  {
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', corpusOld,
+      '--basis', basisFixture,
+      '--json',
+    ]);
+    assert(res.status === 0, `mwg-drift-classify: case 8 must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const json = parseJsonLine(res.stdout);
+    assert(json.reversed.length === 0, 'mwg-drift-classify: case 8 expected 0 reversed');
+    assert(json.changed.length === 0, 'mwg-drift-classify: case 8 expected 0 changed');
+    assert(json.new.length === 0, 'mwg-drift-classify: case 8 expected 0 new');
+  }
+
+  // 9. sabotage the basis: tmp copy of basis-fixture.json with the anchor edited to a string absent from the corpus -> --verify-basis exits 1.
+  {
+    const copyPath = join(tmp, 'mwg-basis-sabotage.json');
+    const basis = JSON.parse(readFileSync(basisFixture, 'utf8'));
+    basis.rules[0].anchors = ['Sentence deliberately absent from baseline corpus for sabotage test'];
+    writeFileSync(copyPath, JSON.stringify(basis, null, 2) + '\n', 'utf8');
+
+    const res = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', copyPath,
+    ]);
+    assert(res.status === 1, `mwg-drift-classify: case 9 (sabotaged anchor) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 10. --verify-basis with basis-fixture.json against corpus-old.json -> exit 0.
+  {
+    const res = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', basisFixture,
+    ]);
+    assert(res.status === 0, `mwg-drift-classify: case 10 must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
   }
 }
 // A page controls the manifest href and the redirects the raw fetch follows, and

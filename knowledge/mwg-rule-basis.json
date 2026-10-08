@@ -1,0 +1,78 @@
+{
+  "$comment": "Registry of verbatim textual anchors from Modern Web Guidance guides backing implemented principles.json checks and regression assertions. Used by tests/mwg-drift-classify.mjs to detect upstream reversals.",
+  "catalogueVersion": "0.0.193",
+  "rules": [
+    {
+      "id": "secure-transport-and-headers-csp",
+      "guide": "security",
+      "where": "knowledge/principles.json: be-private-and-secure / secure-transport-and-headers; tests/regression.mjs: testPrinciplesMwgCatalogSyncAndChangedGuidance",
+      "anchors": [
+        "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; require-trusted-types-for 'script';",
+        "frame-ancestors 'self'"
+      ]
+    },
+    {
+      "id": "defensive-browser-policies-trusted-types",
+      "guide": "trusted-types",
+      "where": "knowledge/principles.json: be-private-and-secure / defensive-browser-policies; tests/regression.mjs: testPrinciplesMwgCatalogSyncAndChangedGuidance",
+      "anchors": [
+        "Content-Security-Policy: require-trusted-types-for 'script';",
+        "trustedTypes.createPolicy('my-no-pretzel-policy'"
+      ]
+    },
+    {
+      "id": "defensive-browser-policies-validate-origins",
+      "guide": "validate-origins",
+      "where": "knowledge/principles.json: be-private-and-secure / defensive-browser-policies; tests/regression.mjs: testPrinciplesMwgCatalogSyncAndChangedGuidance",
+      "anchors": [
+        "event.origin === 'https://trusted.example.com'",
+        "candidateUrl.origin !== 'null'"
+      ]
+    },
+    {
+      "id": "defensive-browser-policies-local-network-access",
+      "guide": "local-network-access",
+      "where": "knowledge/principles.json: be-private-and-secure / defensive-browser-policies; tests/regression.mjs: testPrinciplesMwgCatalogSyncAndChangedGuidance",
+      "anchors": [
+        "Local Network Access",
+        "targetAddressSpace"
+      ]
+    },
+    {
+      "id": "defensive-browser-policies-restrict-outbound-connections",
+      "guide": "restrict-outbound-connections",
+      "where": "knowledge/principles.json: be-private-and-secure / defensive-browser-policies; tests/regression.mjs: testPrinciplesMwgCatalogSyncAndChangedGuidance",
+      "anchors": [
+        "The `Connection-Allowlist` HTTP response header restricts a document or worker",
+        "Connection-Allowlist:"
+      ]
+    },
+    {
+      "id": "primary-flow-completion-custom-button-actions",
+      "guide": "custom-button-actions",
+      "where": "knowledge/principles.json: support-core-task-success / primary-flow-completion; tests/regression.mjs: testPrinciplesMwgCatalogSyncAndChangedGuidance",
+      "anchors": [
+        "Custom commands must be prefixed with a double dash (`--`) to avoid collisions",
+        "commandfor"
+      ]
+    },
+    {
+      "id": "physical-gestures-runtime-probe-element",
+      "guide": "animate-to-from-top-layer",
+      "where": "knowledge/principles.json: implement-natural-interactions / physical-gestures; tests/regression.mjs: testPrinciplesMwgCatalogSyncAndChangedGuidance",
+      "anchors": [
+        "probe whether a temporary element's computed `display` remains visible",
+        "const probe = document.createElement('div');"
+      ]
+    },
+    {
+      "id": "structured-agent-capabilities-tools",
+      "guide": "agentic-javascript-tools",
+      "where": "knowledge/principles.json: be-agent-ready / structured-agent-capabilities; tests/regression.mjs: testPrinciplesMwgCatalogSyncAndChangedGuidance",
+      "anchors": [
+        "await document.modelContext.registerTool({",
+        "return a structured error payload via the tool's normal return value"
+      ]
+    }
+  ]
+}

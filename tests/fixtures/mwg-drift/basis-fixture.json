@@ -1,0 +1,14 @@
+{
+  "$comment": "Test rule basis fixture for drift classifier tests",
+  "catalogueVersion": "1.0.0",
+  "rules": [
+    {
+      "id": "rule-csp-object-src",
+      "guide": "implemented-rule-guide",
+      "where": "tests/fixtures/mwg-drift",
+      "anchors": [
+        "Always pin object-src to 'none' in the Content-Security-Policy header."
+      ]
+    }
+  ]
+}
