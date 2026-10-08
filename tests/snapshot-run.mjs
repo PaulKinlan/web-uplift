@@ -268,6 +268,17 @@ export function testSnapshotRunCopyErrorTolerance() {
     assert(existsSync(join(beforeRunDir, 'report.json')), 'baseline run must contain report.json');
     assert(existsSync(join(beforeRunDir, 'report.md')), 'report.md must still be copied despite evidence error');
     assert.equal(readFileSync(join(beforeRunDir, 'report.md'), 'utf8'), '# Tolerant Report\n');
+
+    // The consequence of swallowing the auxiliary copy error is that the climb
+    // completes: the retained -after run and its before -> after comparison exist.
+    // If the error propagated, snapshotRun would throw on the baseline snapshot and
+    // the -after run (created only after it) would never be written.
+    const afterRunName = runDirs.find((d) => d.endsWith('-after'));
+    assert(afterRunName, `Expected a -after run dir in ${JSON.stringify(runDirs)}`);
+    assert(
+      existsSync(join(hostDir, afterRunName, 'compare.md')),
+      'the -after run must contain compare.md, proving the evidence copy error did not abort the climb',
+    );
   } finally {
     try { chmodSync(lockedFile, 0o644); } catch {}
     rmSync(root, { recursive: true, force: true });
