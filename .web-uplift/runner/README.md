@@ -109,8 +109,13 @@ the unattended case. `--isolation <mechanism>` (docker, bwrap, vm, ...) or the
 explicit `--i-know-this-is-unisolated` acknowledgement is recorded as
 UNVERIFIED in `<out>/run-security.json` and warned on stderr - the tool cannot
 check your boundary, it records what you assert. `--dry-run` spawns nothing and
-is exempt. The remaining asymmetry with fix mode is the threat surface, not the
-contract: one batch shares a project tree and a reports/ root across all URLs,
+is exempt. `--resume` is refused with `--i-know-this-is-unisolated`. Even with
+`--isolation`, cross-process `--resume` still trusts an unauthenticated
+agent-writable `<out>/<host>/latest` (or `latest.txt`) pointer: a planted pointer
+to a schema-valid forged report can skip a URL. The operator's actual isolation
+boundary must prevent the agent from writing those pointers; the runner does not
+verify that it does. The remaining asymmetry with fix mode is the threat surface,
+not the contract: one batch shares a project tree and a reports/ root across all URLs,
 so a compromised run sits beside the other sites' evidence.
 
 The agent child never inherits the operator's shell environment: it gets an
