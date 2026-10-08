@@ -3248,7 +3248,6 @@ function cleanStaleNpxRegressionTrees(currentTarball = '') {
   try {
     const npxDir = join(homedir(), '.npm', '_npx');
     if (!existsSync(npxDir)) return;
-    const currentName = currentTarball ? currentTarball.split('/').pop() : '';
     const worktreeId = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
     const worktreeTag = `web-uplift-pack-${worktreeId}`;
 
@@ -3259,13 +3258,17 @@ function cleanStaleNpxRegressionTrees(currentTarball = '') {
       try {
         const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
         const pkgs = pkg._npx?.packages || [];
-        const isOurWorktreeTree = pkgs.some(
-          (p) => typeof p === 'string' && p.includes(worktreeTag),
-        );
+        const dep = pkg.dependencies?.['web-uplift'] || '';
+        const isOurWorktreeTree =
+          pkgs.some((p) => typeof p === 'string' && p.includes(worktreeTag)) ||
+          dep.includes(worktreeTag);
         if (!isOurWorktreeTree) continue;
 
-        // Keep only the current active tarball hash for this worktree, sweep any older hashes
-        const isCurrent = currentName && pkgs.some((p) => typeof p === 'string' && p.includes(currentName));
+        // Keep only the current active tarball for this worktree, sweep any older hashes
+        const isCurrent =
+          currentTarball &&
+          (pkgs.some((p) => typeof p === 'string' && p.includes(currentTarball)) ||
+            dep.includes(currentTarball));
         if (!isCurrent) {
           rmSync(join(npxDir, entry.name), { recursive: true, force: true });
         }
@@ -3331,19 +3334,25 @@ function testNpxCacheDoesNotAccumulate() {
   ], { env: noUpdateEnv() });
   assert(first.status === 0, `initial stable exec failed: ${first.stderr || first.stdout}`);
 
+  function findWorktreeEntries(dirs) {
+    return dirs.filter((d) => {
+      try {
+        const p = JSON.parse(readFileSync(join(npxDir, d, 'package.json'), 'utf8'));
+        const pkgs = p._npx?.packages || [];
+        const dep = p.dependencies?.['web-uplift'] || '';
+        return (
+          pkgs.some((pkg) => typeof pkg === 'string' && pkg.includes(tarball)) ||
+          dep.includes(tarball)
+        );
+      } catch {
+        return false;
+      }
+    });
+  }
+
   const dirsBefore = readdirSync(npxDir);
-  const tarballName = tarball.split('/').pop();
-  const matched = dirsBefore.filter((d) => {
-    try {
-      const p = JSON.parse(readFileSync(join(npxDir, d, 'package.json'), 'utf8'));
-      return (p._npx?.packages || []).some(
-        (pkg) => typeof pkg === 'string' && pkg.includes(tarballName),
-      );
-    } catch {
-      return false;
-    }
-  });
-  assert(matched.length === 1, `expected exactly one matching npx cache entry, found ${matched.length}`);
+  const matched = findWorktreeEntries(dirsBefore);
+  assert(matched.length === 1, `expected exactly one matching npx cache entry for ${tarball}, found ${matched.length}`);
 
   // Re-pack and execute a second time with the same unchanged source
   const tarball2 = packTarball();
@@ -3360,10 +3369,10 @@ function testNpxCacheDoesNotAccumulate() {
   assert(second.status === 0, `repeated stable exec failed: ${second.stderr || second.stdout}`);
 
   const dirsAfter = readdirSync(npxDir);
-  const newDirs = dirsAfter.filter((d) => !dirsBefore.includes(d));
+  const matchedAfter = findWorktreeEntries(dirsAfter);
   assert(
-    newDirs.length === 0,
-    `repeated pack/exec must not accumulate new npx cache trees, created: ${JSON.stringify(newDirs)}`,
+    matchedAfter.length === 1 && matchedAfter[0] === matched[0],
+    `repeated pack/exec must reuse the existing cache entry without adding a new tree for ${tarball}: before=${JSON.stringify(matched)}, after=${JSON.stringify(matchedAfter)}`,
   );
 }
 
