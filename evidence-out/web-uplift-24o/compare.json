@@ -1,0 +1,369 @@
+{
+  "host": "paul_kinlan_me",
+  "runA": "2026-10-06T13-17-07-499Z",
+  "runB": "2026-10-08T14-10-00-000Z",
+  "before": {
+    "url": "https://paul.kinlan.me/",
+    "auditedAt": "2026-10-06T13:17:07.499Z",
+    "mode": "report",
+    "outstanding": 26,
+    "unconcluded": 0,
+    "coverage": {
+      "complete": true,
+      "reasons": [],
+      "unconcluded": 0
+    }
+  },
+  "after": {
+    "url": "https://paul.kinlan.me/",
+    "auditedAt": "2026-10-08T14:10:00.000Z",
+    "mode": "report",
+    "outstanding": 26,
+    "unconcluded": 0,
+    "coverage": {
+      "complete": true,
+      "reasons": [],
+      "unconcluded": 0
+    }
+  },
+  "summary": {
+    "outstandingBefore": 26,
+    "outstandingAfter": 26,
+    "unconcludedBefore": 0,
+    "unconcludedAfter": 0,
+    "resolved": 0,
+    "newlyIntroduced": 0,
+    "persisting": 26,
+    "principlesImproved": 0,
+    "principlesRegressed": 0
+  },
+  "principleChanges": [],
+  "findings": {
+    "resolved": [],
+    "added": [],
+    "persisting": [
+      {
+        "id": "F01",
+        "afterId": "F01",
+        "principleId": "support-core-task-success",
+        "principleCheckId": "primary-flow-completion",
+        "severity": "high",
+        "severityAfter": "high",
+        "summary": "The newest full post's eight demo videos, their posters and the demo embed script/stylesheet are all missing in production, so every demo renders as an empty grey box."
+      },
+      {
+        "id": "F02",
+        "afterId": "F02",
+        "principleId": "follow-best-practices",
+        "principleCheckId": "no-console-errors",
+        "severity": "high",
+        "severityAfter": "high",
+        "summary": "The article logs 19 console errors from first-party failed loads and strict-MIME refusals."
+      },
+      {
+        "id": "F03",
+        "afterId": "F03",
+        "principleId": "be-fast-and-stable",
+        "principleCheckId": "efficient-resource-delivery",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "Every page downloads the full Material Symbols variable font (1.14 MB) to draw four icons, behind two render-blocking cross-origin Google Fonts stylesheets."
+      },
+      {
+        "id": "F04",
+        "afterId": "F04",
+        "principleId": "be-sustainable",
+        "principleCheckId": "optimised-assets",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "Listing pages ship full-size legacy PNG/JPEG hero images with no srcset, no lazy loading and no dimensions."
+      },
+      {
+        "id": "F05",
+        "afterId": "F05",
+        "principleId": "be-fast-and-stable",
+        "principleCheckId": "efficient-main-thread",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "Analytics scripts dominate the main thread on mobile, producing ~1.4 s of Total Blocking Time on a static text page."
+      },
+      {
+        "id": "F06",
+        "afterId": "F06",
+        "principleId": "be-fast-and-stable",
+        "principleCheckId": "trim-unused-and-duplicate-code",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "A sunset Universal Analytics snippet (UA-114468-20) still loads and fires a pageview alongside GA4 and Vercel Insights on every page."
+      },
+      {
+        "id": "F07",
+        "afterId": "F07",
+        "principleId": "respect-user-preferences",
+        "principleCheckId": "respects-color-scheme",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "No dark mode: the site pins color-scheme: light and ignores prefers-color-scheme, while a non-standard meta tag claims 'light dark' support."
+      },
+      {
+        "id": "F08",
+        "afterId": "F08",
+        "principleId": "respect-user-preferences",
+        "principleCheckId": "respects-reduced-motion",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "Cross-document view transitions and the article's autoplaying looping videos ignore prefers-reduced-motion."
+      },
+      {
+        "id": "F09",
+        "afterId": "F09",
+        "principleId": "adapt-to-the-form-factor",
+        "principleCheckId": "responsive-no-horizontal-scroll",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "Long inline code runs push the article 221 px wider than a 360 px phone, so the whole post renders zoomed out on mobile."
+      },
+      {
+        "id": "F10",
+        "afterId": "F10",
+        "principleId": "adapt-to-the-form-factor",
+        "principleCheckId": "component-level-responsiveness",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "The post card is reused across the home feed, curated card, tag and project listings but only responds to viewport breakpoints."
+      },
+      {
+        "id": "F11",
+        "afterId": "F11",
+        "principleId": "be-inclusive",
+        "principleCheckId": "names-roles-labels",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "Icon-font ligature names are read aloud: links are announced as 'READ ARTICLE arrow_forward' and the footer announces 'alternate_email', 'rss_feed', 'mail'."
+      },
+      {
+        "id": "F12",
+        "afterId": "F12",
+        "principleId": "be-inclusive",
+        "principleCheckId": "structure-and-focus",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "Heading levels skip (H1 -> H3/H4) on home and article, and there is no skip-to-content link."
+      },
+      {
+        "id": "F13",
+        "afterId": "F13",
+        "principleId": "be-inclusive",
+        "principleCheckId": "zoom-reflow-targets-and-media",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "The article fails 320/360 px reflow and its eight looping autoplay videos have no pause control and no text alternative."
+      },
+      {
+        "id": "F14",
+        "afterId": "F14",
+        "principleId": "follow-best-practices",
+        "principleCheckId": "sound-document-and-assets",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "Listing images and the byline avatar lack intrinsic dimensions, and every <head> carries obsolete meta tags."
+      },
+      {
+        "id": "F15",
+        "afterId": "F15",
+        "principleId": "follow-best-practices",
+        "principleCheckId": "browser-platform-hygiene",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "The Permissions-Policy header lists unrecognised features, logging a warning on every page."
+      },
+      {
+        "id": "F16",
+        "afterId": "F16",
+        "principleId": "be-discoverable",
+        "principleCheckId": "title-and-description",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "Thousands of tag and section pages share one generic, outdated meta description."
+      },
+      {
+        "id": "F17",
+        "afterId": "F17",
+        "principleId": "be-discoverable",
+        "principleCheckId": "structured-and-shareable-metadata",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "The homepage describes itself as a NewsArticle, and listing pages expose no Blog/CollectionPage entity."
+      },
+      {
+        "id": "F18",
+        "afterId": "F18",
+        "principleId": "be-private-and-secure",
+        "principleCheckId": "secure-transport-and-headers",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "CSP allows 'unsafe-inline' scripts with a host allowlist, and analytics cookies are set without Secure."
+      },
+      {
+        "id": "F19",
+        "afterId": "F19",
+        "principleId": "be-private-and-secure",
+        "principleCheckId": "data-minimisation-and-third-parties",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "Three analytics systems track each visit, and Google Analytics sets 400-day identifiers on first load with no notice or consent."
+      },
+      {
+        "id": "F20",
+        "afterId": "F20",
+        "principleId": "support-core-task-success",
+        "principleCheckId": "clear-system-state-and-recovery",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "Dead links land on Vercel's generic 404 page with no way back into the site."
+      },
+      {
+        "id": "F21",
+        "afterId": "F21",
+        "principleId": "be-resilient",
+        "principleCheckId": "offline-and-installable",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "The manifest invites installation as a standalone app, but there is no service worker or offline fallback, so an installed copy opens to the browser's offline error."
+      },
+      {
+        "id": "F23",
+        "afterId": "F23",
+        "principleId": "be-internationalised",
+        "principleCheckId": "time-zone-correctness",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "Publication times are emitted without a time zone: <time> has no datetime and JSON-LD dates lack an offset."
+      },
+      {
+        "id": "F24",
+        "afterId": "F24",
+        "principleId": "be-trustworthy",
+        "principleCheckId": "trustworthy-input-assistance",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "The newsletter email field has no autocomplete token, so browsers will not reliably offer the user's address."
+      },
+      {
+        "id": "F25",
+        "afterId": "F25",
+        "principleId": "be-sustainable",
+        "principleCheckId": "third-party-and-media-budget",
+        "severity": "medium",
+        "severityAfter": "medium",
+        "summary": "96% of the homepage's bytes are third-party (fonts and analytics), and the article is built to autoplay eight looping videos at once."
+      },
+      {
+        "id": "F26",
+        "afterId": "F26",
+        "principleId": "be-sustainable",
+        "principleCheckId": "no-wasteful-work",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "Each page view does work that produces nothing: a hit to a discontinued UA property and a full cache/service-worker teardown."
+      },
+      {
+        "id": "F27",
+        "afterId": "F27",
+        "principleId": "provide-guided-navigation",
+        "principleCheckId": "scroll-state-aware-chrome",
+        "severity": "low",
+        "severityAfter": "low",
+        "summary": "A fixed reading-progress bar is shipped on every page but never moves."
+      }
+    ]
+  },
+  "metrics": [],
+  "network": null,
+  "screenshotPairs": [
+    {
+      "condition": "",
+      "caption": "Homepage, browser view (JS on)",
+      "before": "evidence/home-discoverability-rendered.png",
+      "after": "evidence/home-discoverability-rendered.png"
+    },
+    {
+      "condition": "",
+      "caption": "Homepage, crawler view (JS off): identical content",
+      "before": "evidence/home-discoverability-crawler.png",
+      "after": "evidence/home-discoverability-crawler.png"
+    },
+    {
+      "condition": "",
+      "caption": "Homepage reloaded offline: browser error page",
+      "before": "evidence/home-resilience-offline.png",
+      "after": null
+    },
+    {
+      "condition": "",
+      "caption": "Homepage first viewport, light (default)",
+      "before": "evidence/home-desktop.png",
+      "after": "evidence/home-desktop.png"
+    },
+    {
+      "condition": "",
+      "caption": "Homepage under prefers-color-scheme: dark - identical to the light capture",
+      "before": "evidence/home-dark.png",
+      "after": null
+    },
+    {
+      "condition": "",
+      "caption": "Homepage under forced-colors: active + prefers-contrast: more - text, links and borders survive",
+      "before": "evidence/home-forced-colors.png",
+      "after": null
+    },
+    {
+      "condition": "",
+      "caption": "Article at 360x800",
+      "before": "evidence/article-360.png",
+      "after": null
+    },
+    {
+      "condition": "",
+      "caption": "Article first viewport (draft disclaimer, byline)",
+      "before": "evidence/article-desktop.png",
+      "after": null
+    },
+    {
+      "condition": "",
+      "caption": "First demo figure on /replace-dont-diff/: empty grey box where the video should be",
+      "before": "evidence/article-broken-demo.png",
+      "after": null
+    },
+    {
+      "condition": "",
+      "caption": "Article, browser view (JS on)",
+      "before": "evidence/article-discoverability-rendered.png",
+      "after": null
+    },
+    {
+      "condition": "",
+      "caption": "Article, crawler view (JS off)",
+      "before": "evidence/article-discoverability-crawler.png",
+      "after": null
+    },
+    {
+      "condition": "",
+      "caption": "404 route: Vercel's generic 'This page doesn't exist' page with no site navigation, search or link home",
+      "before": "evidence/404.png",
+      "after": null
+    },
+    {
+      "condition": "",
+      "caption": "Homepage under prefers-color-scheme: dark - identical to the light capture",
+      "before": null,
+      "after": "evidence/home-dark.png"
+    },
+    {
+      "condition": "",
+      "caption": "Homepage reloaded offline: browser error page",
+      "before": null,
+      "after": "evidence/home-resilience-offline.png"
+    }
+  ]
+}

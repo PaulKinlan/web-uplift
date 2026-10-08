@@ -1,0 +1,53 @@
+{
+  "catalogVersion": "modern-web-guidance@0.0.193",
+  "evaluatedAt": "2026-10-08T13:58:46.366Z",
+  "targetUrl": "https://paul.kinlan.me/",
+  "rawCsp": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self' https://buttondown.email; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://cdn.commento.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com https://region1.google-analytics.com; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://buttondown.email; manifest-src 'self'; upgrade-insecure-requests",
+  "directives": {
+    "default-src": "'self'",
+    "base-uri": "'self'",
+    "object-src": "'none'",
+    "frame-ancestors": "'self'",
+    "form-action": "'self' https://buttondown.email",
+    "script-src": "'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://cdn.commento.io",
+    "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src": "'self' https://fonts.gstatic.com",
+    "img-src": "'self' data: https:",
+    "connect-src": "'self' https://www.google-analytics.com https://www.googletagmanager.com https://region1.google-analytics.com",
+    "frame-src": "https://www.youtube-nocookie.com https://www.youtube.com https://buttondown.email",
+    "manifest-src": "'self'",
+    "upgrade-insecure-requests": ""
+  },
+  "checksAgainst0_0_193": {
+    "object-src-none": {
+      "requirement": "Mandatory directive object-src 'none' to block legacy plugin/Flash/Java execution vectors.",
+      "observed": "object-src 'none'",
+      "status": "PASS",
+      "note": "Observed directive matches MWG 0.0.193 requirement exactly."
+    },
+    "frame-ancestors": {
+      "requirement": "Mandatory clickjacking defense via frame-ancestors 'self' or 'none', obsoleting X-Frame-Options.",
+      "observed": "frame-ancestors 'self'",
+      "status": "PASS",
+      "note": "Observed directive obsoletes missing X-Frame-Options per MWG 0.0.193."
+    },
+    "base-uri": {
+      "requirement": "Mandatory base-uri 'self' (or 'none') to prevent <base href> injection and relative script hijack.",
+      "observed": "base-uri 'self'",
+      "status": "PASS",
+      "note": "Observed base-uri 'self' satisfies MWG 0.0.193."
+    },
+    "require-trusted-types-for": {
+      "requirement": "require-trusted-types-for 'script' for DOM XSS prevention on modern web applications.",
+      "observed": null,
+      "status": "FINDING",
+      "note": "Header omits require-trusted-types-for 'script'; DOM sinks are not locked to Trusted Types."
+    },
+    "strict-script-src": {
+      "requirement": "Avoid 'unsafe-inline' / 'unsafe-eval'; prefer cryptographic nonces or hashes.",
+      "observed": "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://cdn.commento.io",
+      "status": "FINDING",
+      "note": "Includes 'unsafe-inline' and host allowlists, weakening XSS mitigation per MWG 0.0.193."
+    }
+  }
+}

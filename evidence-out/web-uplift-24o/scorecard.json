@@ -1,0 +1,22 @@
+{
+  "host": "paul_kinlan_me",
+  "generatedAt": "2026-10-08 13:59",
+  "runId": "2026-10-08T14-10-00-000Z",
+  "url": "https://paul.kinlan.me/",
+  "overall": 81,
+  "outcomes": {
+    "speed": 65,
+    "memory": 100,
+    "usability": 77,
+    "inclusive": 77,
+    "discoverable": 95,
+    "trust": 71
+  },
+  "findingsBySeverity": {
+    "critical": 0,
+    "high": 2,
+    "medium": 13,
+    "low": 11
+  },
+  "findingsTotal": 26
+}

@@ -1,0 +1,79 @@
+{
+  "primitive": "headers",
+  "url": "https://paul.kinlan.me/",
+  "scannedAt": "2026-10-08T13:56:32.918Z",
+  "securityHeaders": {
+    "content-security-policy": {
+      "present": true,
+      "empty": false,
+      "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self' https://buttondown.email; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://cdn.commento.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com https://region1.google-analytics.com; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://buttondown.email; manifest-src 'self'; upgrade-insecure-requests",
+      "issues": [
+        "unsafe-inline/unsafe-eval"
+      ]
+    },
+    "strict-transport-security": {
+      "present": true,
+      "empty": false,
+      "value": "max-age=63072000",
+      "issues": []
+    },
+    "x-content-type-options": {
+      "present": true,
+      "empty": false,
+      "value": "nosniff",
+      "issues": []
+    },
+    "x-frame-options": {
+      "present": false,
+      "empty": false,
+      "value": null,
+      "issues": [
+        "missing (check CSP frame-ancestors)"
+      ]
+    },
+    "referrer-policy": {
+      "present": true,
+      "empty": false,
+      "value": "strict-origin-when-cross-origin",
+      "issues": []
+    },
+    "permissions-policy": {
+      "present": true,
+      "empty": false,
+      "value": "camera=(), microphone=(), geolocation=(), browsing-topics=(), interest-cohort=()",
+      "issues": []
+    }
+  },
+  "https": true,
+  "note": "Descriptive signal. Judge against be-private-and-secure. A missing CSP/HSTS/X-Content-Type-Options is a security gap, and a header that is present but EMPTY is not a pass either: `present` says whether the response carried the header at all, `empty` says it carried no value, and `issues` names what is wrong with it. unsafe-inline/unsafe-eval weakens XSS protection.",
+  "console": {
+    "entryCount": 2,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 2,
+    "networkErrorCount": 0,
+    "browserLogErrorCount": 0,
+    "errorCount": 0,
+    "hasErrors": false,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "warning",
+        "source": "security",
+        "text": "Error with Permissions-Policy header: Unrecognized feature: 'browsing-topics'.",
+        "repeat": 1
+      },
+      {
+        "kind": "log",
+        "level": "warning",
+        "source": "security",
+        "text": "Error with Permissions-Policy header: Unrecognized feature: 'interest-cohort'.",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 2,
+    "entriesTruncated": false,
+    "ignoredMessageCount": 1,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}
