@@ -84,6 +84,7 @@ import { lookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
 import { Readable } from 'node:stream';
+import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
 import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs, getCdpCallDeadlineMs, recordLaunch } from './cdp.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
@@ -2211,9 +2212,13 @@ function pinnedFetch(urlObj, { headers, signal }) {
   return new Promise((resolve, reject) => {
     const isHttps = urlObj.protocol === 'https:';
     const lib = isHttps ? https : http;
+    const requestHeaders = { ...headers };
+    if (!Object.keys(requestHeaders).some((name) => name.toLowerCase() === 'accept-encoding')) {
+      requestHeaders['Accept-Encoding'] = 'gzip, deflate, br';
+    }
     const reqOpts = {
       method: 'GET',
-      headers,
+      headers: requestHeaders,
       signal,
       lookup: urlObj.pinnedAddress ? (hostname, opts, cb) => {
         if (typeof opts === 'function') {
@@ -2221,7 +2226,6 @@ function pinnedFetch(urlObj, { headers, signal }) {
           opts = {};
         }
         const family = urlObj.pinnedAddress.includes(':') ? 6 : 4;
-        console.log("PINNED FETCH LOOKUP CALLED FOR", hostname, urlObj.pinnedAddress);
         if (opts.all) {
           cb(null, [{ address: urlObj.pinnedAddress, family }]);
         } else {
@@ -2231,6 +2235,20 @@ function pinnedFetch(urlObj, { headers, signal }) {
     };
     
     const req = lib.request(urlObj, reqOpts, (res) => {
+      let bodyStream = res;
+      const encodings = String(res.headers['content-encoding'] || 'identity').split(',').map((value) => value.trim().toLowerCase());
+      for (const encoding of encodings.reverse()) {
+        if (encoding === 'identity') continue;
+        const decoder = encoding === 'gzip' ? createGunzip()
+          : encoding === 'deflate' ? createInflate()
+          : encoding === 'br' ? createBrotliDecompress() : null;
+        if (!decoder) {
+          res.destroy();
+          reject(new Error(`unsupported response Content-Encoding: ${encoding}`));
+          return;
+        }
+        bodyStream = bodyStream.pipe(decoder);
+      }
       const response = {
         status: res.statusCode,
         ok: res.statusCode >= 200 && res.statusCode < 300,
@@ -2243,7 +2261,7 @@ function pinnedFetch(urlObj, { headers, signal }) {
         body: {
           cancel: async () => { req.destroy(); },
           getReader: () => {
-            const webStream = Readable.toWeb(res);
+            const webStream = Readable.toWeb(bodyStream);
             return webStream.getReader();
           }
         }

@@ -23,6 +23,7 @@ import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/ag
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
+import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -37,6 +38,7 @@ try {
   await testPageDerivedFetchGuard();
   await testSafeFetchRedirectAndSizeGuard();
   await testSafeFetchDnsRebindingGuard();
+  await testSafeFetchContentDecoding();
   await testLaunchRetryAndDiagnostics();
   testSchemaValidation();
   testAtomicCoverageValidator();
@@ -3778,70 +3780,6 @@ async function testPageDerivedFetchGuard() {
 // The redirect is where a first-URL-only check fails: Node's fetch follows
 // redirects internally, so the guard has to re-validate every hop, bound the hop
 // count and cap the body. A legitimate same-host fetch must still go through.
-async function testSafeFetchDnsRebindingGuard() {
-  console.log('\n--- testSafeFetchDnsRebindingGuard ---');
-  let firstLookups = 0;
-  const mockDnsLookup = async (host, options) => {
-    if (host === 'rebind.test.local') {
-      firstLookups++;
-      // assertPageDerivedFetchAllowed's lookup gets a public IP first.
-      return [{ address: '8.8.8.8', family: 4 }];
-    }
-    return lookup(host, options);
-  };
-  
-  // Patch dns.promises.lookup for assertPageDerivedFetchAllowed
-  const { createRequire } = await import('node:module');
-  const req = createRequire(import.meta.url);
-  const dnsCommon = req('node:dns');
-  const origLookup = dnsCommon.promises.lookup;
-  dnsCommon.promises.lookup = mockDnsLookup;
-  
-  let connectedPrivate = false;
-  const httpModule = await import('node:http');
-  const server = httpModule.createServer((req, res) => {
-    connectedPrivate = true;
-    res.end('secret');
-  });
-  
-  try {
-    await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
-    const port = server.address().port;
-    
-    // If the fix is absent, `fetch` will be used, and it will use real DNS or its own lookup.
-    const dns = dnsCommon;
-    const origCbLookup = dns.lookup;
-    dns.lookup = (host, opts, cb) => {
-      if (typeof opts === 'function') {
-        cb = opts;
-        opts = {};
-      }
-      if (host === 'rebind.test.local') {
-        const family = 4;
-        if (opts.all) return cb(null, [{ address: '127.0.0.1', family }]);
-        return cb(null, '127.0.0.1', family);
-      }
-      return origCbLookup(host, opts, cb);
-    };
-    
-    try {
-      await safeFetch(`http://rebind.test.local:${port}/`, { targetOrigin: `http://rebind.test.local:${port}` });
-      if (connectedPrivate) {
-        throw new Error('test failed: connected to private address during DNS rebinding');
-      }
-    } catch (e) {
-      if (e.message.includes('test failed')) throw e;
-      // It's expected to fail because 8.8.8.8 won't connect on the random port!
-      console.log('DNS rebinding blocked (connection failed as expected)');
-    } finally {
-      dns.lookup = origCbLookup;
-    }
-  } finally {
-    dnsCommon.promises.lookup = origLookup;
-    server.close();
-  }
-}
-
 async function testSafeFetchRedirectAndSizeGuard() {
   // A second local service on another port: the P1a exploit shape is a page on the
   // audited origin pointing its manifest at this one.
