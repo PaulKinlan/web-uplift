@@ -4305,6 +4305,78 @@ function testMwgArtefactGuard() {
     });
     assert(res.status === 1, `mwg-artefact: case 9 (guideCount off by one) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
   }
+
+  // 10. sabotage: the catalog's own declared set identity disagrees with its
+  // guides array -> verify exits 1 (extractor defects fail closed).
+  {
+    const catCopy = join(tmp, 'mwg-catalog-sabotage-declared-count.json');
+    const catalog = JSON.parse(readFileSync(committedCatalog, 'utf8'));
+    catalog.guideCount = catalog.guides.length + 1;
+    writeFileSync(catCopy, JSON.stringify(catalog, null, 2) + '\n', 'utf8');
+    const res = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: committedState,
+      MWG_DRIFT_CATALOG: catCopy,
+    });
+    // catalogSha256 also changes because the catalog content changed; state
+    // mismatch alone already fails, so run update into a tmp state first to
+    // isolate the DECLARED-vs-DERIVED cross-check.
+    const stateCopy = join(tmp, 'mwg-state-for-declared-count.json');
+    writeFileSync(stateCopy, readFileSync(committedState, 'utf8'), 'utf8');
+    const upd = runArtefact(['update'], {
+      MWG_DRIFT_STATE: stateCopy,
+      MWG_DRIFT_CATALOG: catCopy,
+    });
+    assert(upd.status === 0, `mwg-artefact: case 10 update failed:\n${upd.stderr || upd.stdout}`);
+    const res2 = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: stateCopy,
+      MWG_DRIFT_CATALOG: catCopy,
+    });
+    assert(res.status === 1 && res2.status === 1, `mwg-artefact: case 10 (declared count disagrees with guides array) must exit 1, got ${res.status} and ${res2.status}`);
+  }
+
+  // 11. catalog declares a guideIdsSha256: wrong value -> exit 1; the correct
+  // derived value -> exit 0. (The committed catalog may not declare one yet;
+  // inject both forms into a tmp copy.)
+  {
+    const state = readJson('knowledge/mwg-state.json');
+    const catalog = JSON.parse(readFileSync(committedCatalog, 'utf8'));
+    catalog.guideIdsSha256 = state.guideIdsSha256;
+    const catGood = join(tmp, 'mwg-catalog-declared-ids-good.json');
+    writeFileSync(catGood, JSON.stringify(catalog, null, 2) + '\n', 'utf8');
+    const stateCopy = join(tmp, 'mwg-state-for-declared-ids.json');
+    writeFileSync(stateCopy, readFileSync(committedState, 'utf8'), 'utf8');
+    const upd = runArtefact(['update'], {
+      MWG_DRIFT_STATE: stateCopy,
+      MWG_DRIFT_CATALOG: catGood,
+    });
+    assert(upd.status === 0, `mwg-artefact: case 11 update failed:\n${upd.stderr || upd.stdout}`);
+    const good = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: stateCopy,
+      MWG_DRIFT_CATALOG: catGood,
+    });
+    assert(good.status === 0, `mwg-artefact: case 11 (declared guideIdsSha256 matches derived) must exit 0, got ${good.status}:\n${good.stderr || good.stdout}`);
+    catalog.guideIdsSha256 = (state.guideIdsSha256[0] === 'a' ? 'b' : 'a') + state.guideIdsSha256.slice(1);
+    const catBad = join(tmp, 'mwg-catalog-declared-ids-bad.json');
+    writeFileSync(catBad, JSON.stringify(catalog, null, 2) + '\n', 'utf8');
+    // Refresh the state against the bad catalog so catalogSha256 matches and
+    // only the declared-vs-derived cross-check can fail.
+    const stateCopyBad = join(tmp, 'mwg-state-for-declared-ids-bad.json');
+    writeFileSync(stateCopyBad, readFileSync(committedState, 'utf8'), 'utf8');
+    const updBad = runArtefact(['update'], {
+      MWG_DRIFT_STATE: stateCopyBad,
+      MWG_DRIFT_CATALOG: catBad,
+    });
+    assert(updBad.status === 0, `mwg-artefact: case 11 update (bad) failed:\n${updBad.stderr || updBad.stdout}`);
+    const bad = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: stateCopyBad,
+      MWG_DRIFT_CATALOG: catBad,
+    });
+    assert(bad.status === 1, `mwg-artefact: case 11 (declared guideIdsSha256 wrong) must exit 1, got ${bad.status}`);
+    assert(
+      (bad.stderr + bad.stdout).includes('guideIdsSha256 declaration'),
+      `mwg-artefact: case 11 must name the declared-vs-derived mismatch:\n${bad.stderr || bad.stdout}`
+    );
+  }
 }
 
 function testMwgDriftClassifierGuard() {

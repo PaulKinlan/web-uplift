@@ -102,16 +102,17 @@ node tests/mwg-artefact.mjs update
 When a new catalog version is analysed or catalog contents change:
 
 1. The `web-uplift` lane computes the canonical hash and updates `knowledge/mwg-state.json`.
-2. The `web-uplift` lane reports the new pin (artefact identifier, `catalogSha256`, `analysedVersion`, `appliedRulesVersion`) to `web-uplift-coord`.
+2. The `web-uplift` lane reports the new pin (artefact identifier, `catalogSha256`, `guideIdsSha256`, `guideCount`, `analysedVersion`, `appliedRulesVersion`) to `web-uplift-coord`.
 3. `web-uplift-coord` relays the pin to the hub.
 4. The hub coordinates and files/updates the corresponding downstream bead in `mwg-train`.
 5. The `mwg-train` side bead is NOT opened directly by this repository.
 
 ## Open Divergence (web-uplift-968)
 
-An open extractor divergence exists between `web-uplift` and `mwg-train`:
+A historical extractor SET divergence existed between `web-uplift` and `mwg-train` over the `prompt-api` guide:
 
-- Bead `web-uplift-968` records that `mwg-train`'s guidance extractor discovers 178 guides across 16 categories, whereas `web-uplift`'s catalog extractor records 177 guides (differing on the prompt-api guide).
-- This contract explicitly flags this divergence without attempting to resolve it or select a preferred count within this bead.
-- Until both extractors achieve consensus, the pin in `knowledge/mwg-state.json` covers `web-uplift`'s catalog exactly as committed in this repository.
-- Tracking and resolution remain assigned to bead `web-uplift-968`.
+- Bead `web-uplift-968` records that the two extractors disagreed on guide set membership: `mwg-train`'s set contained `prompt-api`, while `web-uplift`'s USE_CASES-derived catalog omitted it.
+- On the `web-uplift` side this is resolved by bead `web-uplift-ddf` (branch `fleet/mwg-catalog-fix`), which adds `prompt-api` to the catalog together with a top-level sorted `guideIds` array and the catalog's own `guideIdsSha256` declaration.
+- This contract compares SETS, not counts: `guideIdsSha256` (and the sorted `guideIds` list the catalog carries) is the identity. `tests/mwg-artefact.mjs verify` cross-checks any declared `guideIds`/`guideIdsSha256`/`guideCount` in the catalog against the values derived from its `guides` array and fails closed on disagreement, so a recurrence of this defect class is loud.
+- Until `web-uplift-ddf` lands, the pin in `knowledge/mwg-state.json` covers `web-uplift`'s catalog exactly as committed in this repository; when it lands, `tests/mwg-artefact.mjs update` refreshes the pin. No value is hardcoded to either side's count.
+- Cross-extractor consensus tracking remains assigned to bead `web-uplift-968`.

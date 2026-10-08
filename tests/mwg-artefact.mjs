@@ -194,6 +194,25 @@ if (isDirectRun) {
     if (ids.guideCount !== state.guideCount) {
       mismatches.push(`guideCount mismatch (state: ${state.guideCount}, computed: ${ids.guideCount})`);
     }
+
+    // If the catalog declares its own set identity, cross-check the declaration
+    // against the values derived from its guides array: a catalog whose declared
+    // set disagrees with its own guide entries is an extractor defect and must
+    // fail closed (the count-vs-set defect class behind web-uplift-968).
+    const derivedIds = catalog.guides.map((g) => g.id).sort();
+    if (catalog.guideIds !== undefined) {
+      const declared = catalog.guideIds;
+      const valid = Array.isArray(declared) && declared.every((x) => typeof x === 'string');
+      if (!valid || declared.length !== derivedIds.length || declared.some((v, i) => v !== derivedIds[i])) {
+        mismatches.push('catalog guideIds declaration does not match the sorted ids of its guides array');
+      }
+    }
+    if (catalog.guideIdsSha256 !== undefined && catalog.guideIdsSha256 !== ids.guideIdsSha256) {
+      mismatches.push(`catalog guideIdsSha256 declaration (${catalog.guideIdsSha256}) does not match the derived set hash (${ids.guideIdsSha256})`);
+    }
+    if (catalog.guideCount !== undefined && catalog.guideCount !== ids.guideCount) {
+      mismatches.push(`catalog guideCount declaration (${catalog.guideCount}) does not match its guides array length (${ids.guideCount})`);
+    }
     if (mismatches.length > 0) {
       for (const m of mismatches) console.error(`FAIL: ${m}`);
       process.exit(1);
