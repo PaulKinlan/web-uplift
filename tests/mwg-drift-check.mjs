@@ -1,0 +1,338 @@
+#!/usr/bin/env node
+// Recurring drift check for Modern Web Guidance (MWG).
+// Reads the current upstream npm version of modern-web-guidance and compares it
+// to the analysed version stored in knowledge/mwg-state.json (cross-checked
+// against knowledge/mwg-catalog.json).
+//
+// Dependency-free: Node builtins only (node:fs, node:path, node:url).
+//
+// Usage:
+//   node tests/mwg-drift-check.mjs [--write] [--json]
+//   node tests/mwg-drift-check.mjs --freshness-only [--max-age <duration>]
+//
+// Exit codes:
+//   0: Upstream version equals the analysed version (in sync), or (in freshness
+//      mode) the last check is fresh.
+//   1: The check itself failed loudly: state file missing/unparseable/invalid,
+//      state-vs-catalog version mismatch, upstream unreachable, or upstream
+//      response unparseable/empty/missing valid version string.
+//      This is the sabotage/absence signal: a blind check must never exit 0.
+//   2: Version delta detected (upstream != analysedVersion). Output notes whether
+//      upstream is newer or older. Triggers full reanalysis.
+//   3: Freshness guard failed (freshness mode only): lastCheckAt missing/null or
+//      older than --max-age. Never-run counts as stale.
+//  64: Usage error (unknown flags, invalid arguments).
+//
+// Environment variable overrides (fixtures, tests, offline runs):
+//   MWG_DRIFT_STATE: Path to state JSON (default: knowledge/mwg-state.json).
+//   MWG_DRIFT_CATALOG: Path to catalog JSON (default: knowledge/mwg-catalog.json).
+//   MWG_DRIFT_UPSTREAM_FILE: Local JSON file used instead of network fetch.
+//   MWG_DRIFT_REGISTRY_URL: Override npm registry URL (default: https://registry.npmjs.org/modern-web-guidance/latest).
+//   MWG_DRIFT_TIMEOUT_MS: Fetch timeout in milliseconds (default: 10000).
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+
+const VERSION_PATTERN = /^\d+\.\d+\.\d+/;
+
+function parseDuration(val) {
+  if (typeof val !== 'string' || val.trim().length === 0) return null;
+  const trimmed = val.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const n = Number(trimmed);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(trimmed);
+  if (!match) return null;
+  const num = Number(match[1]);
+  if (!Number.isFinite(num) || num < 0) return null;
+  const unit = match[2];
+  switch (unit) {
+    case 'ms': return Math.round(num);
+    case 's': return Math.round(num * 1000);
+    case 'm': return Math.round(num * 60 * 1000);
+    case 'h': return Math.round(num * 60 * 60 * 1000);
+    case 'd': return Math.round(num * 24 * 60 * 60 * 1000);
+    default: return null;
+  }
+}
+
+function formatDuration(ms) {
+  if (ms < 0) return '0s';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3600000) return `${(ms / 60000).toFixed(1)}m`;
+  const hours = ms / 3600000;
+  if (hours < 48) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+}
+
+function compareVersions(a, b) {
+  const [aMain, aPre] = a.split('-');
+  const [bMain, bPre] = b.split('-');
+  const aParts = aMain.split('.').map(Number);
+  const bParts = bMain.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const ai = aParts[i] ?? 0;
+    const bi = bParts[i] ?? 0;
+    if (ai !== bi) return ai - bi;
+  }
+  if (aPre === bPre) return 0;
+  if (aPre === undefined) return 1;
+  if (bPre === undefined) return -1;
+  return aPre < bPre ? -1 : 1;
+}
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+let writeState = false;
+let jsonMode = false;
+let freshnessOnly = false;
+let maxAgeArg = null;
+
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  if (arg === '--write') {
+    writeState = true;
+  } else if (arg === '--json') {
+    jsonMode = true;
+  } else if (arg === '--freshness-only') {
+    freshnessOnly = true;
+  } else if (arg === '--max-age') {
+    i++;
+    if (i >= args.length) {
+      console.error('FAIL: --max-age requires a duration argument (e.g. 90s, 30m, 26h, 7d)');
+      process.exit(64);
+    }
+    maxAgeArg = args[i];
+  } else {
+    console.error(`FAIL: unrecognized argument "${arg}"`);
+    console.error(
+      'Usage:\n' +
+      '  node tests/mwg-drift-check.mjs [--write] [--json]\n' +
+      '  node tests/mwg-drift-check.mjs --freshness-only [--max-age <duration>]'
+    );
+    process.exit(64);
+  }
+}
+
+if (freshnessOnly) {
+  if (writeState) {
+    console.error('FAIL: --write is not supported with --freshness-only');
+    process.exit(64);
+  }
+} else {
+  if (maxAgeArg !== null) {
+    console.error('FAIL: --max-age requires --freshness-only');
+    process.exit(64);
+  }
+}
+
+const statePath = process.env.MWG_DRIFT_STATE
+  ? resolve(process.cwd(), process.env.MWG_DRIFT_STATE)
+  : join(repoRoot, 'knowledge', 'mwg-state.json');
+
+const catalogPath = process.env.MWG_DRIFT_CATALOG
+  ? resolve(process.cwd(), process.env.MWG_DRIFT_CATALOG)
+  : join(repoRoot, 'knowledge', 'mwg-catalog.json');
+
+// Freshness mode
+if (freshnessOnly) {
+  let maxAgeMs = 26 * 60 * 60 * 1000; // default 26h
+  if (maxAgeArg !== null) {
+    const parsed = parseDuration(maxAgeArg);
+    if (parsed === null) {
+      console.error(`FAIL: invalid --max-age duration "${maxAgeArg}" (expected e.g. 90s, 30m, 26h, 7d or ms integer)`);
+      process.exit(64);
+    }
+    maxAgeMs = parsed;
+  }
+
+  let state;
+  try {
+    state = JSON.parse(readFileSync(statePath, 'utf8'));
+  } catch (err) {
+    console.error(`FAIL: cannot read or parse state file at ${statePath}: ${err.message}`);
+    process.exit(1);
+  }
+
+  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+    console.error(`FAIL: state file at ${statePath} is not a valid JSON object`);
+    process.exit(1);
+  }
+
+  if (!state.lastCheckAt || typeof state.lastCheckAt !== 'string') {
+    console.error(
+      `STALE: state file has no recorded check timestamp (lastCheckAt is ${JSON.stringify(state.lastCheckAt ?? null)}) (threshold: ${formatDuration(maxAgeMs)})`
+    );
+    process.exit(3);
+  }
+
+  const lastCheckTime = Date.parse(state.lastCheckAt);
+  if (Number.isNaN(lastCheckTime)) {
+    console.error(
+      `STALE: lastCheckAt in state file is not a valid timestamp: ${JSON.stringify(state.lastCheckAt)} (threshold: ${formatDuration(maxAgeMs)})`
+    );
+    process.exit(3);
+  }
+
+  const ageMs = Date.now() - lastCheckTime;
+  if (ageMs > maxAgeMs) {
+    console.error(
+      `STALE: last check was ${formatDuration(ageMs)} ago, exceeding max-age threshold of ${formatDuration(maxAgeMs)}`
+    );
+    process.exit(3);
+  }
+
+  console.log(
+    `FRESH: last check was ${formatDuration(ageMs)} ago (within max-age threshold of ${formatDuration(maxAgeMs)})`
+  );
+  process.exit(0);
+}
+
+// Normal mode
+let state;
+try {
+  state = JSON.parse(readFileSync(statePath, 'utf8'));
+} catch (err) {
+  console.error(`FAIL: cannot read or parse state file at ${statePath}: ${err.message}`);
+  process.exit(1);
+}
+
+if (!state || typeof state !== 'object' || Array.isArray(state)) {
+  console.error(`FAIL: state file at ${statePath} is not a valid JSON object`);
+  process.exit(1);
+}
+
+if (typeof state.analysedVersion !== 'string' || !VERSION_PATTERN.test(state.analysedVersion)) {
+  console.error(`FAIL: state file at ${statePath} has no valid analysedVersion (got ${JSON.stringify(state.analysedVersion)})`);
+  process.exit(1);
+}
+
+// Cross-check against catalog version
+let catalog;
+try {
+  catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
+} catch (err) {
+  console.error(`FAIL: cannot read or parse catalog at ${catalogPath}: ${err.message}`);
+  process.exit(1);
+}
+
+if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog) || typeof catalog.version !== 'string') {
+  console.error(`FAIL: catalog at ${catalogPath} has no valid version string`);
+  process.exit(1);
+}
+
+if (state.analysedVersion !== catalog.version) {
+  console.error(
+    `FAIL: state-vs-catalog version mismatch: state.analysedVersion (${state.analysedVersion}) !== catalog.version (${catalog.version})`
+  );
+  process.exit(1);
+}
+
+// Obtain upstream version
+let upstreamVersion;
+let source;
+
+if (process.env.MWG_DRIFT_UPSTREAM_FILE) {
+  const upstreamPath = resolve(process.cwd(), process.env.MWG_DRIFT_UPSTREAM_FILE);
+  source = upstreamPath;
+  let raw;
+  try {
+    raw = readFileSync(upstreamPath, 'utf8');
+  } catch (err) {
+    console.error(`FAIL: cannot read upstream fixture file at ${upstreamPath}: ${err.message}`);
+    process.exit(1);
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    console.error(`FAIL: upstream fixture file at ${upstreamPath} is not valid JSON: ${err.message}`);
+    process.exit(1);
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.version !== 'string' || !VERSION_PATTERN.test(data.version)) {
+    console.error(`FAIL: upstream fixture file at ${upstreamPath} has no valid version string (got ${JSON.stringify(data?.version)})`);
+    process.exit(1);
+  }
+  upstreamVersion = data.version;
+} else {
+  const registryUrl = process.env.MWG_DRIFT_REGISTRY_URL || 'https://registry.npmjs.org/modern-web-guidance/latest';
+  const timeoutMs = Number(process.env.MWG_DRIFT_TIMEOUT_MS) || 10000;
+  source = registryUrl;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let data;
+  try {
+    const response = await fetch(registryUrl, {
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      console.error(`FAIL: upstream registry returned HTTP ${response.status} ${response.statusText}`);
+      process.exit(1);
+    }
+    data = await response.json();
+  } catch (err) {
+    console.error(`FAIL: upstream registry request failed: ${err.message}`);
+    process.exit(1);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.version !== 'string' || !VERSION_PATTERN.test(data.version)) {
+    console.error(`FAIL: upstream response contains no valid version string (got ${JSON.stringify(data?.version)})`);
+    process.exit(1);
+  }
+  upstreamVersion = data.version;
+}
+
+const analysedVersion = state.analysedVersion;
+const checkedAt = new Date().toISOString();
+const cmp = compareVersions(upstreamVersion, analysedVersion);
+
+let result;
+let exitCode;
+let message;
+
+if (cmp === 0) {
+  result = 'in-sync';
+  exitCode = 0;
+  message = `IN-SYNC: upstream version ${upstreamVersion} matches analysed version ${analysedVersion}`;
+} else {
+  result = 'delta';
+  exitCode = 2;
+  const direction = cmp > 0 ? 'newer' : 'older';
+  message = `DELTA: upstream version ${upstreamVersion} is ${direction} than analysed version ${analysedVersion}`;
+}
+
+if (writeState) {
+  state.lastCheckAt = checkedAt;
+  state.lastCheckUpstreamVersion = upstreamVersion;
+  state.lastCheckSource = source;
+  state.lastCheckResult = result;
+  try {
+    writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n', 'utf8');
+  } catch (err) {
+    console.error(`FAIL: cannot write updated state to ${statePath}: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+console.log(message);
+if (jsonMode) {
+  console.log(JSON.stringify({
+    result,
+    analysedVersion,
+    upstreamVersion,
+    checkedAt,
+    source,
+  }));
+}
+
+process.exit(exitCode);

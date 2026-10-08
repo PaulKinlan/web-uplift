@@ -1,0 +1,170 @@
+name: mwg-drift
+
+# Recurring drift check for Modern Web Guidance (MWG).
+# Runs tests/mwg-drift-check.mjs every 6 hours to detect upstream package releases,
+# compare them against knowledge/mwg-state.json, and trigger reanalysis when needed.
+# Also runs a freshness heartbeat job asserting that the check ran within 30 hours.
+#
+# Known limitation: GitHub Actions disables scheduled workflows after approximately
+# 60 days of repository inactivity. Therefore, the authoritative total-absence
+# guard is the VM-level timer (fleet provisioning, escalated via the hub).
+
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: mwg-drift-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run drift check
+        id: run_check
+        run: |
+          set +e
+          output=$(node tests/mwg-drift-check.mjs --write --json 2>&1)
+          code=$?
+          echo "$output"
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          {
+            echo "check_output<<EOF"
+            echo "$output"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Persist check state
+        if: steps.run_check.outputs.exit_code == '0' || steps.run_check.outputs.exit_code == '2'
+        run: |
+          if ! git diff --quiet knowledge/mwg-state.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add knowledge/mwg-state.json
+            git commit -m "chore(mwg-drift): record scheduled upstream check [skip ci]"
+            git push
+          fi
+
+      - name: File reanalysis issue
+        if: steps.run_check.outputs.exit_code == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OPEN_COUNT=$(gh issue list --state open --search "in:title \"MWG upstream moved: reanalysis needed\"" --json title --jq length)
+          if [ "$OPEN_COUNT" = "0" ]; then
+            cat << 'EOF' > /tmp/issue-body.md
+          A version delta was detected between the analysed Modern Web Guidance catalog and upstream npm.
+
+          Check output:
+          ```
+          EOF
+            echo "${{ steps.run_check.outputs.check_output }}" >> /tmp/issue-body.md
+            cat << 'EOF' >> /tmp/issue-body.md
+          ```
+
+          Full reanalysis (catalog regeneration and principles coverage re-verification per knowledge/mwg-catalog.md and knowledge/guidance.md) must run and knowledge/mwg-state.json analysedVersion must be bumped.
+          EOF
+            gh issue create \
+              --title "MWG upstream moved: reanalysis needed" \
+              --body-file /tmp/issue-body.md
+          fi
+
+      - name: File check-failure issue
+        if: steps.run_check.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OPEN_COUNT=$(gh issue list --state open --search "in:title \"MWG drift check is failing\"" --json title --jq length)
+          if [ "$OPEN_COUNT" = "0" ]; then
+            cat << 'EOF' > /tmp/issue-body.md
+          The Modern Web Guidance drift check itself could not run (unreachable/empty/unparseable upstream or invalid state).
+
+          A silent 'no change' is exactly the failure mode this exists to catch.
+
+          Check output:
+          ```
+          EOF
+            echo "${{ steps.run_check.outputs.check_output }}" >> /tmp/issue-body.md
+            cat << 'EOF' >> /tmp/issue-body.md
+          ```
+          EOF
+            gh issue create \
+              --title "MWG drift check is failing" \
+              --body-file /tmp/issue-body.md
+          fi
+
+      - name: Run status
+        run: |
+          if [ "${{ steps.run_check.outputs.exit_code }}" = "0" ] || [ "${{ steps.run_check.outputs.exit_code }}" = "2" ]; then
+            exit 0
+          else
+            exit 1
+          fi
+
+  freshness:
+    # Runs after check so the drift check's state commit has landed; checks out
+    # the default branch HEAD (not the scheduled SHA) so it sees that commit.
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check freshness
+        id: run_freshness
+        run: |
+          set +e
+          output=$(node tests/mwg-drift-check.mjs --freshness-only --max-age 30h 2>&1)
+          code=$?
+          echo "$output"
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          {
+            echo "freshness_output<<EOF"
+            echo "$output"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: File stale heartbeat issue
+        if: steps.run_freshness.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OPEN_COUNT=$(gh issue list --state open --search "in:title \"MWG drift check heartbeat stale\"" --json title --jq length)
+          if [ "$OPEN_COUNT" = "0" ]; then
+            cat << 'EOF' > /tmp/issue-body.md
+          The Modern Web Guidance drift check heartbeat is stale (exceeded 30h max age).
+
+          Check output:
+          ```
+          EOF
+            echo "${{ steps.run_freshness.outputs.freshness_output }}" >> /tmp/issue-body.md
+            cat << 'EOF' >> /tmp/issue-body.md
+          ```
+          EOF
+            gh issue create \
+              --title "MWG drift check heartbeat stale" \
+              --body-file /tmp/issue-body.md
+          fi
+
+      - name: Freshness status
+        if: steps.run_freshness.outputs.exit_code != '0'
+        run: exit 1

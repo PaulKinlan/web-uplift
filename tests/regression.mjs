@@ -56,6 +56,7 @@ try {
   testHeadlessAllowlistIsScoped();
   testHeadlessAllowlistMatchesSkillContract();
   testSkillWriteContractGuard();
+  testMwgDriftCheckGuard();
   testRedactHeaderList();
   testInstalledEvidenceCli();
   testInstalledTreeRelativeImportsResolve();
@@ -3895,6 +3896,185 @@ function testHeadlessAllowlistIsScoped() {
 function testSkillWriteContractGuard() {
   const guard = spawnSync(process.execPath, [join(repoRoot, 'tests', 'skill-write-contract.mjs')], { encoding: 'utf8' });
   assert(guard.status === 0, `skill-write-contract guard must pass: ${guard.stderr || guard.stdout}`);
+}
+
+function testMwgDriftCheckGuard() {
+  const script = join(repoRoot, 'tests', 'mwg-drift-check.mjs');
+  const fixDir = join(repoRoot, 'tests', 'fixtures', 'mwg-drift');
+  const catalogFixture = join(fixDir, 'catalog-0.0.193.json');
+  const stateFixture = join(fixDir, 'state-in-sync.json');
+
+  const runCheck = (args, envOverrides) => {
+    return spawnSync(process.execPath, [script, ...args], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ...envOverrides,
+      },
+    });
+  };
+
+  // 1. in-sync fixture + upstream-same -> exit 0.
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+    });
+    assert(res.status === 0, `mwg-drift: case 1 (in-sync) failed:\n${res.stderr || res.stdout}`);
+  }
+
+  // 2. upstream-newer -> exit 2, stdout mentions the delta and "0.0.200".
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-newer.json'),
+    });
+    assert(res.status === 2, `mwg-drift: case 2 (upstream-newer) must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(res.stdout.includes('delta') || res.stdout.includes('DELTA'), `mwg-drift: case 2 stdout must mention delta:\n${res.stdout}`);
+    assert(res.stdout.includes('0.0.200'), `mwg-drift: case 2 stdout must mention "0.0.200":\n${res.stdout}`);
+  }
+
+  // 3. upstream-older -> exit 2.
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-older.json'),
+    });
+    assert(res.status === 2, `mwg-drift: case 3 (upstream-older) must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 4. upstream-unparseable -> exit 1 (never 0).
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-unparseable.txt'),
+    });
+    assert(res.status === 1, `mwg-drift: case 4 (upstream-unparseable) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 5. upstream-empty -> exit 1.
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-empty.json'),
+    });
+    assert(res.status === 1, `mwg-drift: case 5 (upstream-empty) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 6. upstream-no-version -> exit 1.
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-no-version.json'),
+    });
+    assert(res.status === 1, `mwg-drift: case 6 (upstream-no-version) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 7. MWG_DRIFT_UPSTREAM_FILE pointing at a nonexistent path -> exit 1.
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'nonexistent-upstream.json'),
+    });
+    assert(res.status === 1, `mwg-drift: case 7 (nonexistent upstream) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 8. MWG_DRIFT_STATE pointing at a nonexistent path -> exit 1.
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: join(fixDir, 'nonexistent-state.json'),
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+    });
+    assert(res.status === 1, `mwg-drift: case 8 (nonexistent state) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 9. state-in-sync + catalog-mismatch -> exit 1 (state/catalog drift is loud).
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: join(fixDir, 'catalog-mismatch.json'),
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+    });
+    assert(res.status === 1, `mwg-drift: case 9 (catalog mismatch) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 10. --write on a COPY of state-in-sync written into the suite tmp dir: run with upstream-newer, assert exit 2 AND the written state has lastCheckResult "delta", lastCheckUpstreamVersion "0.0.200", a non-null lastCheckAt, and preserved analysedVersion "0.0.193".
+  {
+    const copyPath = join(tmp, 'mwg-drift-state-write-copy.json');
+    writeFileSync(copyPath, readFileSync(stateFixture, 'utf8'), 'utf8');
+    const res = runCheck(['--write', '--json'], {
+      MWG_DRIFT_STATE: copyPath,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-newer.json'),
+    });
+    assert(res.status === 2, `mwg-drift: case 10 (--write) must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const written = JSON.parse(readFileSync(copyPath, 'utf8'));
+    assert(written.lastCheckResult === 'delta', `mwg-drift: case 10 lastCheckResult must be "delta", got ${written.lastCheckResult}`);
+    assert(written.lastCheckUpstreamVersion === '0.0.200', `mwg-drift: case 10 lastCheckUpstreamVersion must be "0.0.200", got ${written.lastCheckUpstreamVersion}`);
+    assert(typeof written.lastCheckAt === 'string' && written.lastCheckAt.length > 0, `mwg-drift: case 10 lastCheckAt must be non-null string, got ${written.lastCheckAt}`);
+    assert(written.analysedVersion === '0.0.193', `mwg-drift: case 10 analysedVersion must be preserved as "0.0.193", got ${written.analysedVersion}`);
+  }
+
+  // 11. freshness: write temp state with lastCheckAt = new Date().toISOString() -> --freshness-only exits 0; lastCheckAt = "2020-01-01T00:00:00.000Z" -> exits 3; the never-run fixture (lastCheckAt null) -> exits 3.
+  {
+    const freshPath = join(tmp, 'mwg-drift-state-freshness.json');
+    const baseState = JSON.parse(readFileSync(stateFixture, 'utf8'));
+
+    // Fresh
+    baseState.lastCheckAt = new Date().toISOString();
+    writeFileSync(freshPath, JSON.stringify(baseState), 'utf8');
+    const freshRes = runCheck(['--freshness-only'], {
+      MWG_DRIFT_STATE: freshPath,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+    });
+    assert(freshRes.status === 0, `mwg-drift: case 11 (fresh) must exit 0, got ${freshRes.status}:\n${freshRes.stderr || freshRes.stdout}`);
+
+    // Stale
+    baseState.lastCheckAt = '2020-01-01T00:00:00.000Z';
+    writeFileSync(freshPath, JSON.stringify(baseState), 'utf8');
+    const staleRes = runCheck(['--freshness-only'], {
+      MWG_DRIFT_STATE: freshPath,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+    });
+    assert(staleRes.status === 3, `mwg-drift: case 11 (stale) must exit 3, got ${staleRes.status}:\n${staleRes.stderr || staleRes.stdout}`);
+
+    // Never-run fixture (lastCheckAt is null)
+    const neverRunRes = runCheck(['--freshness-only'], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+    });
+    assert(neverRunRes.status === 3, `mwg-drift: case 11 (never-run) must exit 3, got ${neverRunRes.status}:\n${neverRunRes.stderr || neverRunRes.stdout}`);
+  }
+
+  // 12. The committed knowledge/mwg-state.json validates: analysedVersion === readJson('knowledge/mwg-catalog.json').version, analysedAt === catalog.retrievedAt, and lastCheckResult is one of "never-run","in-sync","delta".
+  {
+    const catalog = readJson('knowledge/mwg-catalog.json');
+    const committedState = readJson('knowledge/mwg-state.json');
+    assert(
+      committedState.analysedVersion === catalog.version,
+      `mwg-drift: case 12 analysedVersion (${committedState.analysedVersion}) must match catalog.version (${catalog.version})`
+    );
+    assert(
+      committedState.analysedAt === catalog.retrievedAt,
+      `mwg-drift: case 12 analysedAt (${committedState.analysedAt}) must match catalog.retrievedAt (${catalog.retrievedAt})`
+    );
+    const validResults = new Set(['never-run', 'in-sync', 'delta']);
+    assert(
+      validResults.has(committedState.lastCheckResult),
+      `mwg-drift: case 12 lastCheckResult (${committedState.lastCheckResult}) must be one of never-run, in-sync, delta`
+    );
+  }
 }
 // A page controls the manifest href and the redirects the raw fetch follows, and
 // both are fetched by the privileged Node process. The guard must refuse every

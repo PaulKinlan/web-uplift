@@ -1,0 +1,9 @@
+{
+  "$comment": "Fixture representing an analysed state file in sync with catalog.",
+  "analysedVersion": "0.0.193",
+  "analysedAt": "2026-10-08T12:14:38.532Z",
+  "lastCheckAt": null,
+  "lastCheckUpstreamVersion": null,
+  "lastCheckSource": null,
+  "lastCheckResult": "never-run"
+}
