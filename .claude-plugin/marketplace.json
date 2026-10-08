@@ -12,7 +12,7 @@
     {
       "name": "web-uplift",
       "source": "./",
-      "description": "Audit a URL for modern web quality and hill-climb guidance-backed fixes. The model is the auditor: it gathers raw-CDP evidence, judges 15 declarative principles against Modern Web Guidance, and writes fixes itself. Adds the /web-audit skill.",
+      "description": "Audit a URL for modern web quality and hill-climb guidance-backed fixes. The model is the auditor: it gathers raw-CDP evidence, judges 17 declarative principles against Modern Web Guidance, and writes fixes itself. Adds the /web-audit skill.",
       "category": "development",
       "keywords": [
         "web-quality",
