@@ -142,7 +142,6 @@ try {
   await testNoOrphanBrowser();
   console.log('tests OK');
 } finally {
-  cleanStaleNpxRegressionTrees();
   rmSync(tmp, { recursive: true, force: true });
 }
 
@@ -3250,6 +3249,9 @@ function cleanStaleNpxRegressionTrees(currentTarball = '') {
     const npxDir = join(homedir(), '.npm', '_npx');
     if (!existsSync(npxDir)) return;
     const currentName = currentTarball ? currentTarball.split('/').pop() : '';
+    const worktreeId = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
+    const worktreeTag = `web-uplift-pack-${worktreeId}`;
+
     for (const entry of readdirSync(npxDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const pkgJsonPath = join(npxDir, entry.name, 'package.json');
@@ -3257,12 +3259,12 @@ function cleanStaleNpxRegressionTrees(currentTarball = '') {
       try {
         const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
         const pkgs = pkg._npx?.packages || [];
-        const isWebUpliftTarball =
-          pkgs.some((p) => typeof p === 'string' && p.includes('web-uplift') && p.endsWith('.tgz')) ||
-          typeof pkg.dependencies?.['web-uplift'] === 'string';
-        if (!isWebUpliftTarball) continue;
+        const isOurWorktreeTree = pkgs.some(
+          (p) => typeof p === 'string' && p.includes(worktreeTag),
+        );
+        if (!isOurWorktreeTree) continue;
 
-        // If a current tarball name is provided, keep only the matching tree and sweep older hashes.
+        // Keep only the current active tarball hash for this worktree, sweep any older hashes
         const isCurrent = currentName && pkgs.some((p) => typeof p === 'string' && p.includes(currentName));
         if (!isCurrent) {
           rmSync(join(npxDir, entry.name), { recursive: true, force: true });
