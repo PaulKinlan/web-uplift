@@ -10,8 +10,8 @@
 // child run with an in-process server is safe there.
 import http from 'node:http';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -61,6 +61,7 @@ try {
   testMwgDriftClassifierGuard();
   testRedactHeaderList();
   testInstalledEvidenceCli();
+  testNpxCacheDoesNotAccumulate();
   testInstalledTreeRelativeImportsResolve();
   testUpdateDryRunReadsInstallManifest();
   testCachedUpdateWarning();
@@ -141,6 +142,7 @@ try {
   await testNoOrphanBrowser();
   console.log('tests OK');
 } finally {
+  cleanStaleNpxRegressionTrees();
   rmSync(tmp, { recursive: true, force: true });
 }
 
@@ -3243,14 +3245,97 @@ function testBatchFlowDryRun() {
   assert(result.stdout.includes('already replayed for you'.toLowerCase()) || result.stdout.includes('ALREADY replayed'), `batch --flow dry-run did not pass flow guidance to the agent:\n${result.stdout}`);
 }
 
+function cleanStaleNpxRegressionTrees() {
+  try {
+    const npxDir = join(homedir(), '.npm', '_npx');
+    if (!existsSync(npxDir)) return;
+    for (const entry of readdirSync(npxDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const pkgJsonPath = join(npxDir, entry.name, 'package.json');
+      if (!existsSync(pkgJsonPath)) continue;
+      try {
+        const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
+        const pkgs = pkg._npx?.packages || [];
+        const isStale = pkgs.some(
+          (p) => typeof p === 'string' && p.includes('web-uplift-regression-') && !p.includes('web-uplift-regression-pack'),
+        );
+        if (isStale) {
+          rmSync(join(npxDir, entry.name), { recursive: true, force: true });
+        }
+      } catch {
+        /* ignore unparseable packages */
+      }
+    }
+  } catch {
+    /* ignore sweep errors */
+  }
+}
+
 function packTarball() {
-  const packDir = join(tmp, 'pack');
+  // Use a stable directory across test runs so npm exec reuses its ~/.npm/_npx
+  // cache tree instead of creating a fresh ~42MB tree on every run (web-uplift-vvz).
+  const packDir = join(tmpdir(), 'web-uplift-regression-pack');
+  rmSync(packDir, { recursive: true, force: true });
   mkdirSync(packDir, { recursive: true });
+  cleanStaleNpxRegressionTrees();
   const result = run('npm', ['pack', '--quiet', '--pack-destination', packDir]);
   assert(result.status === 0, `npm pack failed:\n${result.stderr || result.stdout}`);
   const file = result.stdout.trim().split('\n').filter(Boolean).pop();
   assert(file, `npm pack did not print a tarball name:\n${result.stdout}`);
-  return join(packDir, file);
+  const stableTarball = join(packDir, 'web-uplift-test.tgz');
+  renameSync(join(packDir, file), stableTarball);
+  return stableTarball;
+}
+
+function testNpxCacheDoesNotAccumulate() {
+  const npxDir = join(homedir(), '.npm', '_npx');
+  if (!existsSync(npxDir)) return;
+
+  const tarball = packTarball();
+  // Ensure the stable npx cache directory is populated
+  const first = run('npm', [
+    'exec',
+    '--yes',
+    '--package',
+    tarball,
+    '--',
+    'web-uplift',
+    '--help',
+  ], { env: noUpdateEnv() });
+  assert(first.status === 0, `initial stable exec failed: ${first.stderr || first.stdout}`);
+
+  const dirsBefore = readdirSync(npxDir);
+  const matched = dirsBefore.filter((d) => {
+    try {
+      const p = JSON.parse(readFileSync(join(npxDir, d, 'package.json'), 'utf8'));
+      return (p._npx?.packages || []).some(
+        (pkg) => typeof pkg === 'string' && pkg.includes('web-uplift-regression-pack'),
+      );
+    } catch {
+      return false;
+    }
+  });
+  assert(matched.length === 1, `expected exactly one stable npx cache entry, found ${matched.length}`);
+
+  // Re-pack and execute a second time to the same stable path
+  const tarball2 = packTarball();
+  const second = run('npm', [
+    'exec',
+    '--yes',
+    '--package',
+    tarball2,
+    '--',
+    'web-uplift',
+    '--help',
+  ], { env: noUpdateEnv() });
+  assert(second.status === 0, `repeated stable exec failed: ${second.stderr || second.stdout}`);
+
+  const dirsAfter = readdirSync(npxDir);
+  const newDirs = dirsAfter.filter((d) => !dirsBefore.includes(d));
+  assert(
+    newDirs.length === 0,
+    `repeated pack/exec must not accumulate new npx cache trees, created: ${JSON.stringify(newDirs)}`,
+  );
 }
 
 function readJson(path) {
