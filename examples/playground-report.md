@@ -106,7 +106,7 @@ fixture findings would be dishonest, so the seeded ground truth stays at nine.
 ### F-001 (high) Surface ignores prefers-color-scheme: dark and stays a light card
 
 - **Principle:** respect-user-preferences / respects-color-scheme
-- **Guidance:** dark-mode (user-experience)
+- **Guidance:** dark-mode (visual-design)
 - **Evidence:** under emulated `prefers-color-scheme: dark`, a computed-style
   probe and a clipped screenshot of `.ndm-card` show background
   `rgb(255, 255, 255)`. The card hard-codes `#ffffff` with no `light-dark()`.
@@ -161,7 +161,7 @@ fixture findings would be dishonest, so the seeded ground truth stays at nine.
 ### F-006 (medium) Reused component does not adapt to its container
 
 - **Principle:** adapt-to-the-form-factor / component-level-responsiveness
-- **Guidance:** size-aware-styling (user-experience)
+- **Guidance:** size-aware-styling (css)
 - **Evidence:** an evaluate probe found `.cq-card` stays `flex-direction: row`
   inside the 240px `.cq-narrow` container, with no `@container`/`container-type`.
 - **Fix:** `container-type: inline-size` on the wrapper and a

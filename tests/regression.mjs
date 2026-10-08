@@ -50,6 +50,8 @@ try {
   testAtomicCoverageValidator();
   testGuidanceUsage();
   testGuidanceVersionPinnedInDocs();
+  testMwgCatalogRegenerateAgreement();
+  testPrinciplesMwgCatalogSyncAndChangedGuidance();
   testHeadlessAllowlistIsScoped();
   testHeadlessAllowlistMatchesSkillContract();
   testSkillWriteContractGuard();
@@ -172,6 +174,21 @@ function testGuidanceUsage() {
       `guidance: finding ${f.id} is missing a guidanceId (its fix is not backed by Modern Web Guidance)`);
     assert(consultedSet.has(f.guidanceId),
       `guidance: finding ${f.id} cites guidanceId "${f.guidanceId}" that is not in guidanceConsulted`);
+  }
+  // All findings citing guidanceCategory must use a valid Modern Web Guidance category (0.0.193 taxonomy).
+  const catalog = readJson('knowledge/mwg-catalog.json');
+  const validCategories = new Set(catalog.guides.map((g) => g.category));
+  for (const f of findings) {
+    if (f.guidanceCategory) {
+      assert(
+        validCategories.has(f.guidanceCategory),
+        `guidance: finding ${f.id} has invalid category "${f.guidanceCategory}" (must be in Modern Web Guidance catalog: ${[...validCategories].join(', ')})`,
+      );
+      assert(
+        f.guidanceCategory !== 'user-experience',
+        `guidance: finding ${f.id} uses removed category "user-experience"`,
+      );
+    }
   }
   // The clean/fixed report may have no findings, but if it lists guidance it must be an array.
   const fixed = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report-fixed.json'), 'utf8'));
@@ -3651,7 +3668,7 @@ function testGuidanceVersionPinnedInDocs() {
     assert(refs.length > 0, `${rel} must name the pinned guidance version (${pinned})`);
     for (const raw of refs) {
       // A permission rule can follow the version directly, e.g.
-      // `modern-web-guidance@0.0.172:*` in the headless allowlist docs, so strip
+      // `modern-web-guidance@0.0.193:*` in the headless allowlist docs, so strip
       // a trailing rule suffix before comparing. A genuinely different version
       // (or an @latest) still fails.
       const ref = raw.replace(/[:*)]+$/, '');
@@ -3661,6 +3678,103 @@ function testGuidanceVersionPinnedInDocs() {
       );
     }
   }
+}
+
+// Asserts that the extraction script inside knowledge/mwg-catalog.md and the
+// 'regenerate' property in knowledge/mwg-catalog.json agree, preventing
+// reintroduction of incorrect CLI flags (web-uplift-bxl).
+function testMwgCatalogRegenerateAgreement() {
+  const catalog = readJson('knowledge/mwg-catalog.json');
+  const md = readFileSync(join(repoRoot, 'knowledge/mwg-catalog.md'), 'utf8');
+  assert(
+    typeof catalog.regenerate === 'string' && catalog.regenerate.length > 0,
+    'knowledge/mwg-catalog.json must declare a regenerate field',
+  );
+  assert(
+    md.includes(catalog.regenerate.replace(/"/g, '\\"')) || md.includes(catalog.regenerate),
+    'knowledge/mwg-catalog.md must contain the regenerate instruction declared in knowledge/mwg-catalog.json',
+  );
+}
+
+// Validates that every guide in the current Modern Web Guidance catalog (0.0.193)
+// is covered by principles.json, dead/renamed ids are rejected, and changed-guidance
+// deltas (CSP object-src none, custom-button-actions, top-layer probe, etc.) are
+// actively asserted so regressions would fail.
+function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
+  const catalog = readJson('knowledge/mwg-catalog.json');
+  const principles = readJson('knowledge/principles.json');
+  const catalogIds = new Set(catalog.guides.map((g) => g.id));
+
+  // 1. Every catalog guide is covered by exact ID in principles.json
+  const coveredGuides = new Set();
+  const deadIds = ['prevent-text-wrapping', 'declarative-button-actions'];
+  for (const p of principles.principles) {
+    for (const c of p.checks) {
+      for (const g of c.guides || []) {
+        for (const dead of deadIds) {
+          assert(g !== dead, `principles.json check ${p.id}/${c.id} must not reference dead/renamed guide "${dead}"`);
+        }
+        if (catalogIds.has(g)) {
+          coveredGuides.add(g);
+        }
+      }
+    }
+  }
+  for (const id of catalogIds) {
+    assert(coveredGuides.has(id), `principles.json must cover catalog guide "${id}"`);
+  }
+
+  // 2. Changed-guidance behavioral deltas are encoded in principles
+  const secureHeaders = principles.principles
+    .find((p) => p.id === 'be-private-and-secure')
+    ?.checks.find((c) => c.id === 'secure-transport-and-headers');
+  assert(
+    secureHeaders?.summary.includes("object-src 'none'") &&
+      secureHeaders?.summary.includes("frame-ancestors 'self'") &&
+      secureHeaders?.summary.includes("require-trusted-types-for 'script'"),
+    'secure-transport-and-headers summary must encode mandatory object-src none, frame-ancestors self, require-trusted-types-for script',
+  );
+  assert(
+    !secureHeaders?.summary.includes('report-only violations near zero'),
+    'secure-transport-and-headers must not encode superseded report-only gate',
+  );
+
+  const defPolicies = principles.principles
+    .find((p) => p.id === 'be-private-and-secure')
+    ?.checks.find((c) => c.id === 'defensive-browser-policies');
+  assert(
+    defPolicies?.guides.includes('trusted-types') &&
+      defPolicies?.guides.includes('validate-origins') &&
+      defPolicies?.guides.includes('local-network-access') &&
+      defPolicies?.guides.includes('restrict-outbound-connections'),
+    'defensive-browser-policies must include new defensive security guides',
+  );
+
+  const primaryFlow = principles.principles
+    .find((p) => p.id === 'support-core-task-success')
+    ?.checks.find((c) => c.id === 'primary-flow-completion');
+  assert(
+    primaryFlow?.guides.includes('custom-button-actions') &&
+      !primaryFlow?.guides.includes('declarative-button-actions'),
+    'primary-flow-completion must reference custom-button-actions rather than declarative-button-actions',
+  );
+
+  const physicalGestures = principles.principles
+    .find((p) => p.id === 'implement-natural-interactions')
+    ?.checks.find((c) => c.id === 'physical-gestures');
+  assert(
+    physicalGestures?.detectableVia.includes('runtime probe element'),
+    'physical-gestures must note runtime probe element requirement for top-layer animation',
+  );
+
+  const agenticTools = principles.principles
+    .find((p) => p.id === 'be-agent-ready')
+    ?.checks.find((c) => c.id === 'structured-agent-capabilities');
+  assert(
+    agenticTools?.summary.includes('async (await registerTool)') &&
+      agenticTools?.summary.includes('returns structured errors rather than throwing'),
+    'structured-agent-capabilities must reflect async registerTool and structured error returns',
+  );
 }
 
 // The headless Claude allowlist must name the intended invocations, not the

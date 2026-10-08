@@ -182,7 +182,7 @@ to the repo.
 
 | Agent | Binary | Headless invocation | Tooling it needs |
 |---|---|---|---|
-| Claude Code | `claude` | `-p --output-format json --allowedTools …` | file tools (set by the runner) plus Bash rules DERIVED from `SKILL_REQUIRED_COMMANDS` in [agents.mjs](agents.mjs): the six node scripts the skill instructs, each in four spellings (repo-relative, vendored `.web-uplift/`, absolute under the spawn root, vendored absolute), the pinned guidance feed (`Bash(npx -y --ignore-scripts modern-web-guidance@0.0.172:*)`), `Bash(mkdir:*)`, `Bash(ffmpeg:*)` |
+| Claude Code | `claude` | `-p --output-format json --allowedTools …` | file tools (set by the runner) plus Bash rules DERIVED from `SKILL_REQUIRED_COMMANDS` in [agents.mjs](agents.mjs): the six node scripts the skill instructs, each in four spellings (repo-relative, vendored `.web-uplift/`, absolute under the spawn root, vendored absolute), the pinned guidance feed (`Bash(npx -y --ignore-scripts modern-web-guidance@0.0.193:*)`), `Bash(mkdir:*)`, `Bash(ffmpeg:*)` |
 | Codex CLI | `codex` | `exec --json --sandbox workspace-write` | node + npx + ffmpeg on PATH |
 | Gemini CLI | `gemini` | `-p --yolo --output-format json` | node + npx + ffmpeg on PATH |
 | Antigravity CLI | `agy` | `-p --dangerously-skip-permissions` | node + npx + ffmpeg on PATH |
@@ -197,7 +197,7 @@ and the audit works fine with it disabled. The host machine needs
 primitive.
 
 The agent also needs network access to query the Modern Web Guidance feed
-(`npx -y --ignore-scripts modern-web-guidance@0.0.172 …`, the version pinned as
+(`npx -y --ignore-scripts modern-web-guidance@0.0.193 …`, the version pinned as
 `guidanceCatalogVersion` in `knowledge/principles.json`). Claude's
 `--allowedTools` list is DERIVED from `SKILL_REQUIRED_COMMANDS` in
 [agents.mjs](agents.mjs) - the declared table of the node commands SKILL.md

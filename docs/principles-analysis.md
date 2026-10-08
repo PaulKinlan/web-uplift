@@ -23,8 +23,8 @@ Author: Paul Kinlan. Analysis assembled by Claude.
 
 ## TL;DR
 
-- The Modern Web Guidance (mwg) catalog has **137 guides across 12 categories**
-  (pinned: `modern-web-guidance@0.0.172`). Enumerated bottom-up, they cluster
+- The Modern Web Guidance (mwg) catalog has **177 guides across 16 categories**
+  (pinned: `modern-web-guidance@0.0.193`, bumped from 137 guides @ 0.0.172). Enumerated bottom-up, they cluster
   into ~13 themes.
 - The original 9 principles covered the bulk of the **user-experience**,
   **performance**, **accessibility**, **css/layout** and **html** clusters well.
@@ -107,7 +107,7 @@ affordance hints).
 `persistent-app-tours`, `navigation-drawer`, `interest-triggered-tooltips`,
 `interest-triggered-action-previews`, `position-aware-tooltips`,
 `anchor-positioning-tab-underline`, `resilient-context-menus-and-nested-dropdowns`,
-`declarative-button-actions`. -> Covered by **maximize-content-reduce-noise**
+`custom-button-actions`. -> Covered by **maximize-content-reduce-noise**
 (semantic dismissible primitives) and **provide-guided-navigation** (anchored
 positioning).
 
@@ -123,7 +123,7 @@ positioning).
 **respect-user-preferences**.
 
 **F. Typography, legibility, visual stability.** `improve-text-layout-and-legibility`,
-`precise-text-alignment`, `prevent-text-wrapping`, `visually-stable-font-fallbacks`,
+`precise-text-alignment`, `visually-stable-font-fallbacks`,
 `visually-stable-mixed-fonts`. -> Split between **be-accessible**/**be-fast-and-stable**
 (font-swap CLS) and a UX legibility concern that currently has no clean home.
 
@@ -426,7 +426,7 @@ frameworks (section 2) against the current 9.
 > `autofill-sign-up-form`, `autofill-highlight-inputs`,
 > `form-fields-automatically-fit-contents`, `search-hidden-content`
 > (deep-linkable, indexable hidden content = honest, no hidden-text tricks),
-> `declarative-button-actions` (predictable actions).
+> `custom-button-actions` (predictable actions).
 > Backed by: Nielsen heuristics (#3 user control, #5 error prevention, #9 error
 > recovery, #4 consistency); WCAG 2.2 Understandable; Deceptive Design / FTC
 > dark-patterns guidance.
@@ -568,7 +568,7 @@ SEC=be-private-and-secure (N1), RES=be-resilient (N2), I18N=be-internationalised
 - cross-document-transitions -> INI
 - customize-scrollbar-color-and-thickness -> MCR [RUP]
 - dark-mode -> RUP
-- declarative-button-actions -> TRUST [PGN]
+- custom-button-actions -> TRUST [PGN]
 - declarative-dialog-popover-control -> MCR
 - deliver-optimized-decorative-images -> SUS [FAST]
 - design-token-reactivity -> AFF
@@ -601,7 +601,7 @@ SEC=be-private-and-secure (N1), RES=be-resilient (N2), I18N=be-internationalised
 - platform-controls-dismiss-dialog -> MCR [RES]
 - position-aware-tooltips -> PGN
 - precise-text-alignment -> INC [MCR]
-- prevent-text-wrapping -> MCR [INC]
+- prevent-text-wrapping -> [REMOVED in 0.0.193]
 - pull-to-reveal -> INI [PGN]
 - reduce-style-repetition -> FBP
 - resilient-context-menus-and-nested-dropdowns -> RES [PGN]
@@ -717,7 +717,7 @@ Chrome DevTools MCP memory-leak guidance.
 ### Sources
 
 - Una Kravets, What's new in Web UI (Google I/O 2026): https://www.youtube.com/watch?v=uT7MVcCQ4rw
-- Modern Web Guidance catalog: `modern-web-guidance@0.0.172`
+- Modern Web Guidance catalog: `modern-web-guidance@0.0.193`
 - WCAG 2.2 / POUR: https://www.w3.org/TR/WCAG22/
 - Nielsen's 10 usability heuristics: https://www.nngroup.com/articles/ten-usability-heuristics/
 - Google RAIL: https://web.dev/articles/rail

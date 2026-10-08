@@ -27,7 +27,7 @@ Options you choose at inspection time: `--emulate-media k=v,..`, `--viewport WxH
 `--fetch-deadline <ms>`. You may also run any tool you judge useful, e.g.
 `npx -y lighthouse <url> --output=json --quiet` and the `axe` evidence
 primitive (vendored axe-core). Query Modern Web Guidance with
-`npx -y --ignore-scripts modern-web-guidance@0.0.172 search "<query>"` /
+`npx -y --ignore-scripts modern-web-guidance@0.0.193 search "<query>"` /
 `retrieve "<id>"` (the pinned version is `guidanceCatalogVersion` in
 [`knowledge/principles.json`](../knowledge/principles.json)).
 

@@ -49,7 +49,7 @@ try {
     source: "modern-web-guidance",
     version: ver,
     retrievedAt: new Date().toISOString(),
-    regenerate: `npx -y --ignore-scripts modern-web-guidance@${ver} list --json`,
+    regenerate: "See the \"How to Regenerate\" node extraction script in knowledge/mwg-catalog.md (extracts the USE_CASES table from the package's skills/modern-web-guidance/modern-web.mjs; the CLI `list` command does not emit featuresUsed/tokenCount)",
     guideCount: list.length,
     comment: `Catalog extracted from modern-web-guidance@${ver}. The package CLI list command outputs id, category, and description; the package USE_CASES table additionally provides featuresUsed and tokenCount.`,
     guides: list.map(g => ({

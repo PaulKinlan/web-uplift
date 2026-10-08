@@ -197,7 +197,7 @@ fallback.
   `follow-best-practices`, add `be-private-and-secure`, `be-resilient`,
   `be-internationalised`, `be-trustworthy`, `be-sustainable`, `be-agent-ready`),
   mapped all 137 mwg guides to per-check `guides` lists (none orphaned, pinned to
-  `modern-web-guidance@0.0.172`), added per-principle `applicability` guard
+  `modern-web-guidance@0.0.193`), added per-principle `applicability` guard
   criteria, a `web-uplift.json` project config + JSON schema for declared
   scope/opt-outs/intent, and the `not-applicable` / `opted-out` outcome
   reporting ("quality without shaming"). The eval ground truth was re-baselined
@@ -226,7 +226,7 @@ fallback.
 ## Open questions
 
 1. **Guidance feed caching / version pinning.** Version is now pinned to
-   `modern-web-guidance@0.0.172` in `principles.json` (`guidanceCatalogVersion`,
+   `modern-web-guidance@0.0.193` in `principles.json` (`guidanceCatalogVersion`,
    overridable via `web-uplift.json`). Still open: bump cadence and caching
    `list`/`retrieve` for offline batch runs.
 2. **Eval design for an agentic audit.** Scoring the seeded scenarios joins on

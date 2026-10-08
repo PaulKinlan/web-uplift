@@ -286,7 +286,7 @@
           },
           "guidanceCategory": {
             "type": "string",
-            "description": "Guidance category (e.g. user-experience, performance, accessibility, css, forms)."
+            "description": "Guidance category (e.g. accessibility, css, forms, performance, security, ui-components, visual-design)."
           },
           "severity": {
             "type": "string",

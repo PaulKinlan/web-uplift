@@ -77,7 +77,7 @@ inputs and one generic capability:
    this repo, or `../knowledge/guidance.md` when installed: `search`
    to find the recommended approach, `retrieve` to get the fix detail. Pin the
    catalog version in `principles.json` (`guidanceCatalogVersion`, currently
-   `modern-web-guidance@0.0.172`) unless `web-uplift.json` overrides it.
+   `modern-web-guidance@0.0.193`) unless `web-uplift.json` overrides it.
 3. **Evidence primitives** - [evidence/cli.mjs](../../../evidence/cli.mjs): a
    generic, judgement-free CLI you call to gather evidence. It launches the
    system Chrome and drives it over raw CDP (chrome-remote-interface). It returns

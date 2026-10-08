@@ -56,7 +56,7 @@ export const SKILL_REQUIRED_COMMANDS = [
 // The pinned Modern Web Guidance feed. The literal is tied to
 // guidanceCatalogVersion in knowledge/principles.json by
 // testGuidanceVersionPinnedInDocs and the contract test; bump them together.
-const GUIDANCE_NPX_PREFIX = 'npx -y --ignore-scripts modern-web-guidance@0.0.172';
+const GUIDANCE_NPX_PREFIX = 'npx -y --ignore-scripts modern-web-guidance@0.0.193';
 
 // Derive the headless Bash permission rules from SKILL_REQUIRED_COMMANDS.
 // `root` is the directory the agent is spawned with as cwd (both runners pass
@@ -217,9 +217,9 @@ export const AGENTS = {
       // form `Bash(git *)` as well, but the binary is compiled and the exact
       // matcher could not be determined locally, so this list assumes the
       // conservative PREFIX reading. That shapes what is safe to write here:
-      //   - The guidance prefix ends at `modern-web-guidance@0.0.172`, so a
+      //   - The guidance prefix ends at `modern-web-guidance@0.0.193`, so a
       //     lookalike package (`modern-web-guidance-evil`) does NOT match it, and
-      //     `modern-web-guidance@0.0.1721` is not a published version. The pin is
+      //     `modern-web-guidance@0.0.1931` is not a published version. The pin is
       //     guidanceCatalogVersion in knowledge/principles.json and is asserted by
       //     tests/regression.mjs.
       //   - A bare tool name would NOT be safe: `Bash(npx -y lighthouse:*)` is a
