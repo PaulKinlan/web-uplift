@@ -14,6 +14,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSyn
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
@@ -4135,6 +4136,17 @@ function testMwgArtefactGuard() {
     assert(
       typeof state.guideIdsSha256 === 'string' && /^[0-9a-f]{64}$/.test(state.guideIdsSha256),
       `mwg-artefact: case 2 guideIdsSha256 must match /^[0-9a-f]{64}$/, got ${state.guideIdsSha256}`
+    );
+    // Pin the exact set-hash construction (sha256, UTF-8 hex, of the sorted
+    // guide ids joined by single LF newlines with no trailing newline) so the
+    // artefact and the catalog's own guideIdsSha256 declaration can never drift
+    // into two constructions claiming to identify the same set.
+    const expectedIdsHash = createHash('sha256')
+      .update(new TextEncoder().encode(liveCatalog.guides.map((g) => g.id).sort().join('\n')))
+      .digest('hex');
+    assert(
+      state.guideIdsSha256 === expectedIdsHash,
+      `mwg-artefact: case 2 guideIdsSha256 (${state.guideIdsSha256}) must equal the newline-joined sorted-id construction (${expectedIdsHash})`
     );
     assert(
       Object.prototype.hasOwnProperty.call(state, 'analysedVersion') &&

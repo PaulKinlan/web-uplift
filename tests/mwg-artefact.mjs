@@ -20,9 +20,10 @@
 //       exits 0 when it cannot verify.
 //   64: Usage error (unknown command, invalid argument count).
 //
-// Set identity: alongside catalogSha256 the artefact carries guideIdsSha256 (the
-// sha256 of the canonicalised JSON array of guide ids sorted lexicographically)
-// and guideCount, because a count is not an identity: consumers compare SETS.
+// Set identity: alongside catalogSha256 the artefact carries guideIdsSha256
+// (sha256 of the sorted guide ids joined by single LF newlines, UTF-8, hex;
+// the same construction the catalog itself declares) and guideCount, because
+// a count is not an identity: consumers compare SETS.
 //
 // Environment variable overrides:
 //   MWG_DRIFT_STATE: Path to state JSON (default: knowledge/mwg-state.json).
@@ -61,12 +62,16 @@ export function computeSha256(data) {
   return createHash('sha256').update(encoded).digest('hex');
 }
 
-// Set identity, not just a count: the sha256 of the canonicalised JSON array of
-// the catalog's guide ids sorted lexicographically. A count alone cannot tell
-// "same set" from "same size" (the 177-vs-178 prompt-api divergence, web-uplift-968).
+// Set identity, not just a count: the sha256 (UTF-8, hex) of the catalog's
+// guide ids sorted lexicographically and joined by single LF newlines (no
+// trailing newline). This is the SAME construction as the catalog's own
+// guideIdsSha256 declaration: one construction, one hash, no competing
+// set-hashes. A count alone cannot tell "same set" from "same size" (the
+// count-vs-set defect behind web-uplift-968).
 export function computeGuideIds(catalog) {
   const ids = catalog.guides.map((g) => g.id).sort();
-  return { guideIdsSha256: computeSha256(ids), guideCount: ids.length };
+  const joined = new TextEncoder().encode(ids.join('\n'));
+  return { guideIdsSha256: createHash('sha256').update(joined).digest('hex'), guideCount: ids.length };
 }
 
 function readCatalogFile(path) {
