@@ -2,7 +2,7 @@
   "source": "modern-web-guidance",
   "version": "0.0.193",
   "retrievedAt": "2026-10-08T12:14:38.532Z",
-  "regenerate": "npx -y --ignore-scripts modern-web-guidance@0.0.193 list --json",
+  "regenerate": "See the \"How to Regenerate\" node extraction script in knowledge/mwg-catalog.md (extracts the USE_CASES table from the package's skills/modern-web-guidance/modern-web.mjs; the CLI `list` command does not emit featuresUsed/tokenCount)",
   "guideCount": 177,
   "comment": "Catalog extracted from modern-web-guidance@0.0.193. The package CLI list command outputs id, category, and description; the package USE_CASES table additionally provides featuresUsed and tokenCount.",
   "guides": [
