@@ -111,6 +111,7 @@ Because published npm packages are immutable, both baseline and upstream corpora
    ```sh
    node tests/mwg-drift-classify.mjs --extract package --version <version> -o corpus-<version>.json
    ```
+   Extraction parses the package's USE_CASES table declaratively (never evaluates package code) and UNIONs it with a scan of the package's guides directories, so a guide file that lacks a table entry (the prompt-api defect class, web-uplift-968) is still included; extraction of 0.0.193 yields the same 178-id set as knowledge/mwg-catalog.json. Extraction fails loud (exit 1) when no guide text is found at all.
 
 ### Anchor-Based Reversal Rule
 

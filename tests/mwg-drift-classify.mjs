@@ -186,39 +186,44 @@ function extractFromPackage(packageDir, versionStr) {
     }
   }
 
-  // Fallback: scan for markdown files if USE_CASES did not populate guides
-  if (Object.keys(guides).length === 0) {
-    const scanCandidates = [
-      join(packageDir, 'skills', 'modern-web-guidance', 'guides'),
-      join(packageDir, 'guides'),
-      packageDir,
-    ];
-    const targetDir = scanCandidates.find((d) => existsSync(d));
-    if (targetDir) {
-      function scanDir(dir) {
-        let entries = [];
-        try {
-          entries = readdirSync(dir, { withFileTypes: true });
-        } catch {
-          return;
-        }
-        for (const ent of entries) {
-          const full = join(dir, ent.name);
-          if (ent.isDirectory()) {
-            scanDir(full);
-          } else if (ent.isFile() && ent.name.endsWith('.md')) {
-            const name = ent.name.slice(0, -3);
-            const upper = name.toUpperCase();
-            if (!['README', 'CONTRIBUTING', 'SKILL', 'THIRD_PARTY_NOTICES', 'LICENSE'].includes(upper)) {
-              if (!guides[name]) {
-                guides[name] = readFileSync(full, 'utf8');
-              }
-            }
+  // Supplement, not just fallback: a guide file can exist without a USE_CASES
+  // entry (prompt-api in 0.0.193, the 177-vs-178 defect of web-uplift-968), so
+  // scanning only when the table yielded nothing would silently drop unlisted
+  // guides. Always scan the dedicated guides directories and add anything the
+  // table missed. The package root is scanned ONLY as a last resort, when no
+  // guides directory exists at all.
+  const guidesDirCandidates = [
+    join(packageDir, 'skills', 'modern-web-guidance', 'guides'),
+    join(packageDir, 'guides'),
+  ];
+  const scanRoots = guidesDirCandidates.filter((d) => existsSync(d));
+  if (scanRoots.length === 0 && existsSync(packageDir)) {
+    scanRoots.push(packageDir);
+  }
+  function scanDir(dir) {
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      const full = join(dir, ent.name);
+      if (ent.isDirectory()) {
+        scanDir(full);
+      } else if (ent.isFile() && ent.name.endsWith('.md')) {
+        const name = ent.name.slice(0, -3);
+        const upper = name.toUpperCase();
+        if (!['README', 'CONTRIBUTING', 'SKILL', 'THIRD_PARTY_NOTICES', 'LICENSE'].includes(upper)) {
+          if (!guides[name]) {
+            guides[name] = readFileSync(full, 'utf8');
           }
         }
       }
-      scanDir(targetDir);
     }
+  }
+  for (const root of scanRoots) {
+    scanDir(root);
   }
 
   const guideIds = Object.keys(guides).sort();

@@ -4601,9 +4601,15 @@ function testMwgDriftClassifierGuard() {
       typeof corpus.guides['beta-guide'] === 'string' && corpus.guides['beta-guide'].includes('Fixture text for beta-guide'),
       'mwg-drift-classify: case 11 beta-guide text must come from its category path'
     );
+    // The union scan must pick up a guide file that has NO USE_CASES entry
+    // (the prompt-api defect class: present on disk, absent from the table).
     assert(
-      Object.keys(corpus.guides).length === 2,
-      `mwg-drift-classify: case 11 must extract exactly 2 guides, got ${Object.keys(corpus.guides).length}`
+      typeof corpus.guides['gamma-guide'] === 'string' && corpus.guides['gamma-guide'].includes('NO USE_CASES entry'),
+      'mwg-drift-classify: case 11 gamma-guide (unlisted in USE_CASES) must be extracted by the union scan'
+    );
+    assert(
+      Object.keys(corpus.guides).length === 3,
+      `mwg-drift-classify: case 11 must extract exactly 3 guides, got ${Object.keys(corpus.guides).length}`
     );
   }
 
