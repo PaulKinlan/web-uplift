@@ -6,10 +6,10 @@
   "analysedVersion": "0.0.193",
   "appliedRulesVersion": "0.0.193",
   "analysedAt": "2026-10-08T14:19:37.712Z",
-  "lastCheckAt": null,
-  "lastCheckUpstreamVersion": null,
-  "lastCheckSource": null,
-  "lastCheckResult": "never-run",
+  "lastCheckAt": "2026-10-08T18:41:10.317Z",
+  "lastCheckUpstreamVersion": "0.0.193",
+  "lastCheckSource": "https://registry.npmjs.org/modern-web-guidance/latest",
+  "lastCheckResult": "in-sync",
   "guideIdsSha256": "bc041692e3d9631a997427252ce2e54d8a5a0dd7e28387b4dcae6a4b9d3d5ab2",
   "guideCount": 178
 }
