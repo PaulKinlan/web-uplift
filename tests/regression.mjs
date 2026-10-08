@@ -4077,6 +4077,40 @@ function testMwgDriftCheckGuard() {
       `mwg-drift: case 12 lastCheckResult (${committedState.lastCheckResult}) must be one of never-run, in-sync, delta`
     );
   }
+
+  // 13. upstream version with a trailing newline -> exit 1 (JS `$` matches
+  // before a final newline; the validator must reject whitespace explicitly).
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-newline.json'),
+    });
+    assert(res.status === 1, `mwg-drift: case 13 (newline version) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 14. distinct versions must never compare equal: two integers straddling
+  // 2^53 collapse under Number(), so equality is exact-string only.
+  {
+    const hugeState = join(tmp, 'mwg-drift-state-huge.json');
+    const hugeCatalog = join(tmp, 'mwg-drift-catalog-huge.json');
+    const hugeUpstream = join(tmp, 'mwg-drift-upstream-huge.json');
+    const s = JSON.parse(readFileSync(stateFixture, 'utf8'));
+    s.analysedVersion = '9007199254740992.0.0';
+    writeFileSync(hugeState, JSON.stringify(s), 'utf8');
+    writeFileSync(hugeCatalog, JSON.stringify({ source: 'modern-web-guidance', version: '9007199254740992.0.0', retrievedAt: '2026-10-08T00:00:00.000Z', guides: [] }), 'utf8');
+    writeFileSync(hugeUpstream, JSON.stringify({ version: '9007199254740993.0.0' }), 'utf8');
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: hugeState,
+      MWG_DRIFT_CATALOG: hugeCatalog,
+      MWG_DRIFT_UPSTREAM_FILE: hugeUpstream,
+    });
+    assert(res.status === 2, `mwg-drift: case 14 (distinct huge versions) must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(
+      res.stdout.includes('DELTA'),
+      `mwg-drift: case 14 must report a delta, got:\n${res.stdout}`
+    );
+  }
 }
 
 function testMwgArtefactGuard() {
@@ -4621,6 +4655,59 @@ function testMwgDriftClassifierGuard() {
       '--version', '1.0.0',
     ]);
     assert(res.status === 1, `mwg-drift-classify: case 12 extract of an empty package must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 13. corpus version with a trailing newline -> exit 1 (JS `$` matches
+  // before a final newline; validation must reject whitespace explicitly).
+  {
+    const nlCorpus = join(tmp, 'mwg-corpus-newline-version.json');
+    const c = JSON.parse(readFileSync(corpusOld, 'utf8'));
+    c.version = '1.0.0\n';
+    writeFileSync(nlCorpus, JSON.stringify(c), 'utf8');
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', nlCorpus,
+      '--basis', basisFixture,
+    ]);
+    assert(res.status === 1, `mwg-drift-classify: case 13 (newline version) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 14. an empty baseline corpus is not a baseline: exit 1 whether or not the
+  // target is also empty (two empty corpora must never report success).
+  {
+    const emptyOld = join(fixDir, 'corpus-old-empty.json');
+    const resA = runClassifier([
+      '--old-corpus', emptyOld,
+      '--new-corpus', join(fixDir, 'corpus-new-cosmetic.json'),
+      '--basis', basisFixture,
+    ]);
+    assert(resA.status === 1, `mwg-drift-classify: case 14a (empty baseline) must exit 1, got ${resA.status}`);
+    const resB = runClassifier([
+      '--old-corpus', emptyOld,
+      '--new-corpus', join(fixDir, 'corpus-new-empty.json'),
+      '--basis', basisFixture,
+    ]);
+    assert(resB.status === 1, `mwg-drift-classify: case 14b (both corpora empty) must exit 1, got ${resB.status}`);
+  }
+
+  // 15. --extract on a package whose USE_CASES table carries a traversal id:
+  // the escape target exists on disk but must NOT be read; only the
+  // legitimate guide is extracted.
+  {
+    const outPath = join(tmp, 'mwg-extract-evil-corpus.json');
+    const res = runClassifier([
+      '--extract', join(fixDir, 'pkg-evil'),
+      '--version', '1.0.0',
+      '-o', outPath,
+    ]);
+    assert(res.status === 0, `mwg-drift-classify: case 15 extract must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const corpus = JSON.parse(readFileSync(outPath, 'utf8'));
+    const ids = Object.keys(corpus.guides);
+    assert(ids.length === 1 && ids[0] === 'legit-guide', `mwg-drift-classify: case 15 must extract only legit-guide, got ${JSON.stringify(ids)}`);
+    assert(
+      !Object.values(corpus.guides).some((t) => t.includes('ESCAPE-MARKER')),
+      'mwg-drift-classify: case 15 traversal target must never be read'
+    );
   }
 }
 // A page controls the manifest href and the redirects the raw fetch follows, and

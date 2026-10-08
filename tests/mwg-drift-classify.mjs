@@ -7,7 +7,9 @@
 //             or an unregistered guide was changed or withdrawn.
 //   NEW:      Guide introduced upstream that was not present in the baseline.
 //
-// Dependency-free: Node builtins only (node:fs, node:path, node:url, node:vm).
+// Dependency-free: Node builtins only (node:fs, node:path, node:url).
+// The USE_CASES table is parsed declaratively with regexes; package code is
+// NEVER evaluated (an eval here once ran downloaded code in-process).
 //
 // Corpus format:
 //   { "version": "x.y.z", "guides": { "<id>": "<full guide text>" } }
@@ -36,6 +38,10 @@ const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 // Anchored: a version is the whole string, so a payload smuggling a newline or
 // extra text cannot pass validation.
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+function isValidVersion(v) {
+  // JS `$` still matches before a final newline, so reject whitespace explicitly.
+  return typeof v === 'string' && VERSION_PATTERN.test(v) && !/\s/.test(v);
+}
 
 function printUsageAndExit(code = 64) {
   const msg = `Usage:
@@ -84,7 +90,7 @@ function validateCorpus(corpus, label) {
     console.error(`FAIL: ${label} is not a valid JSON object`);
     process.exit(1);
   }
-  if (typeof corpus.version !== 'string' || !VERSION_PATTERN.test(corpus.version)) {
+  if (!isValidVersion(corpus.version)) {
     console.error(`FAIL: ${label} has invalid or missing version string: ${JSON.stringify(corpus.version)}`);
     process.exit(1);
   }
@@ -166,19 +172,31 @@ function extractFromPackage(packageDir, versionStr) {
       // malformed package must never get code execution in this lane tool.
       const table = match[1];
       const idMatches = [...table.matchAll(/"id"\s*:\s*"([^"\n]+)"/g)];
+      // Guide ids and categories are slugs; anything else (notably `..`) is a
+      // hostile or corrupt table entry and must never become a path segment.
+      const SLUG = /^[a-z0-9][a-z0-9-]*$/i;
+      const packageRoot = resolve(packageDir);
       for (let k = 0; k < idMatches.length; k++) {
         const id = idMatches[k][1];
         const windowEnd = k + 1 < idMatches.length ? idMatches[k + 1].index : table.length;
         const windowText = table.slice(idMatches[k].index, windowEnd);
         const catMatch = windowText.match(/"category"\s*:\s*"([^"\n]+)"/);
         const category = catMatch ? catMatch[1] : '';
+        if (!SLUG.test(id) || (category !== '' && !SLUG.test(category))) {
+          continue;
+        }
         const fileCandidates = [
           join(packageDir, 'skills', 'modern-web-guidance', 'guides', category, `${id}.md`),
           join(packageDir, 'guides', category, `${id}.md`),
           join(packageDir, 'skills', 'modern-web-guidance', 'guides', `${id}.md`),
           join(packageDir, `${id}.md`),
         ];
-        const foundPath = fileCandidates.find((p) => existsSync(p));
+        // Belt and braces: even with slug validation, never read outside the
+        // unpacked package directory.
+        const foundPath = fileCandidates.find((p) => {
+          const r = resolve(p);
+          return (r === packageRoot || r.startsWith(packageRoot + '/')) && existsSync(r);
+        });
         if (foundPath) {
           guides[id] = readFileSync(foundPath, 'utf8');
         }
@@ -286,8 +304,15 @@ function classifyDelta(oldCorpusPath, newCorpusPath, basisPath, jsonMode) {
   const oldKeys = Object.keys(oldCorpus.guides);
   const newKeys = Object.keys(newCorpus.guides);
 
-  // A blind check refusing rule: diffing against an empty new corpus when old is non-empty
-  if (newKeys.length === 0 && oldKeys.length > 0) {
+  // A blind check refusing rule: an empty baseline is not a valid baseline
+  // (there is nothing to classify against), and an empty target against a
+  // non-empty baseline means the extractor saw nothing; diffing against
+  // nothing is never "all guides withdrawn". Refuse both, loud.
+  if (oldKeys.length === 0) {
+    console.error('FAIL: baseline corpus has no guides; refusing to classify without a baseline');
+    process.exit(1);
+  }
+  if (newKeys.length === 0) {
     console.error('FAIL: new corpus has empty guides while old corpus is non-empty; refusing to classify against empty corpus');
     process.exit(1);
   }
@@ -541,7 +566,7 @@ if (mode === 'extract') {
     console.error('FAIL: --extract requires --version <x.y.z>');
     process.exit(64);
   }
-  if (!VERSION_PATTERN.test(versionArg)) {
+  if (!isValidVersion(versionArg)) {
     console.error(`FAIL: invalid version string: ${JSON.stringify(versionArg)}`);
     process.exit(1);
   }

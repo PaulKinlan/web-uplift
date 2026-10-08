@@ -17,8 +17,9 @@ var USE_CASES = [
     "category": "beta",
     "featuresUsed": [],
     "tokenCount": 20
-  }
+  },
+  // TRIPWIRE: this element sits INSIDE the captured table slice. Any extractor
+  // that evaluates the table (eval, node:vm, Function) executes it and dies
+  // with this exact message, failing suite case 11 loudly. A parser ignores it.
+  (function(){ throw new Error('EXTRACTOR-EVALUATED-THE-TABLE'); })()
 ];
-
-// An eval-based extractor would run this; a parser must not.
-globalThis.EXTRACTOR_EVALED = true;

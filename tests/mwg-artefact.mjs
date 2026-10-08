@@ -5,8 +5,10 @@
 //
 // Dependency-free: Node builtins only (node:fs, node:crypto, node:path, node:url).
 //
-// Canonicalisation rule:
-//   "json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex"
+//
+// Canonicalisation rule: see CANONICALISATION_RULE below (the single source of
+// truth; the same string is recorded in knowledge/mwg-state.json and quoted in
+// docs/mwg-train-consumer-contract.md).
 //
 // Usage:
 //   node tests/mwg-artefact.mjs compute    # print a JSON object {catalogSha256, guideIdsSha256, guideCount}

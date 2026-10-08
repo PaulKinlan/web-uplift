@@ -38,8 +38,12 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 // Anchored: a version is the whole string, so a payload smuggling a newline or
-// extra text cannot pass validation.
+// extra text cannot pass validation. Note JS `$` still matches before a final
+// newline, so whitespace is rejected explicitly.
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+function isValidVersion(v) {
+  return typeof v === 'string' && VERSION_PATTERN.test(v) && !/\s/.test(v);
+}
 
 function parseDuration(val) {
   if (typeof val !== 'string' || val.trim().length === 0) return null;
@@ -87,6 +91,16 @@ function compareVersions(a, b) {
   if (aPre === undefined) return 1;
   if (bPre === undefined) return -1;
   return aPre < bPre ? -1 : 1;
+}
+
+// Direction is informational only and MUST never decide equality: Number()
+// collapses integers beyond 2^53 and returns NaN for build metadata, so a
+// numeric compare can call two distinct version strings equal. Return null
+// when the versions are not safely comparable.
+function compareVersionsSafe(a, b) {
+  const numOk = (v) => v.split('-')[0].split('.').every((p) => /^\d+$/.test(p) && Number(p) <= Number.MAX_SAFE_INTEGER);
+  if (!numOk(a) || !numOk(b)) return null;
+  return compareVersions(a, b);
 }
 
 // Parse command line arguments
@@ -218,7 +232,7 @@ if (!state || typeof state !== 'object' || Array.isArray(state)) {
   process.exit(1);
 }
 
-if (typeof state.analysedVersion !== 'string' || !VERSION_PATTERN.test(state.analysedVersion)) {
+if (!isValidVersion(state.analysedVersion)) {
   console.error(`FAIL: state file at ${statePath} has no valid analysedVersion (got ${JSON.stringify(state.analysedVersion)})`);
   process.exit(1);
 }
@@ -265,7 +279,7 @@ if (process.env.MWG_DRIFT_UPSTREAM_FILE) {
     console.error(`FAIL: upstream fixture file at ${upstreamPath} is not valid JSON: ${err.message}`);
     process.exit(1);
   }
-  if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.version !== 'string' || !VERSION_PATTERN.test(data.version)) {
+  if (!data || typeof data !== 'object' || Array.isArray(data) || !isValidVersion(data.version)) {
     console.error(`FAIL: upstream fixture file at ${upstreamPath} has no valid version string (got ${JSON.stringify(data?.version)})`);
     process.exit(1);
   }
@@ -296,7 +310,7 @@ if (process.env.MWG_DRIFT_UPSTREAM_FILE) {
     clearTimeout(timer);
   }
 
-  if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.version !== 'string' || !VERSION_PATTERN.test(data.version)) {
+  if (!data || typeof data !== 'object' || Array.isArray(data) || !isValidVersion(data.version)) {
     console.error(`FAIL: upstream response contains no valid version string (got ${JSON.stringify(data?.version)})`);
     process.exit(1);
   }
@@ -305,21 +319,23 @@ if (process.env.MWG_DRIFT_UPSTREAM_FILE) {
 
 const analysedVersion = state.analysedVersion;
 const checkedAt = new Date().toISOString();
-const cmp = compareVersions(upstreamVersion, analysedVersion);
+// Equality is EXACT-STRING only; the numeric compare is used solely to
+// describe the direction of an already-established delta.
+const cmp = compareVersionsSafe(upstreamVersion, analysedVersion);
 
 let result;
 let exitCode;
 let message;
 
-if (cmp === 0) {
+if (upstreamVersion === analysedVersion) {
   result = 'in-sync';
   exitCode = 0;
   message = `IN-SYNC: upstream version ${upstreamVersion} matches analysed version ${analysedVersion}`;
 } else {
   result = 'delta';
   exitCode = 2;
-  const direction = cmp > 0 ? 'newer' : 'older';
-  message = `DELTA: upstream version ${upstreamVersion} is ${direction} than analysed version ${analysedVersion}`;
+  const direction = cmp === null ? 'different from' : cmp > 0 ? 'newer than' : cmp < 0 ? 'older than' : 'distinct but numerically equal to';
+  message = `DELTA: upstream version ${upstreamVersion} is ${direction} analysed version ${analysedVersion}`;
 }
 
 if (writeState) {
