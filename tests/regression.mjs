@@ -4765,17 +4765,20 @@ function testMwgDriftClassifierGuard() {
       'mwg-drift-classify: case 11 gamma-guide (unlisted in USE_CASES) must be extracted by the union scan'
     );
     assert(
-      Object.keys(corpus.guides).length === 3,
-      `mwg-drift-classify: case 11 must extract exactly 3 guides, got ${Object.keys(corpus.guides).length}`
+      Object.keys(corpus.guides).length === 4,
+      `mwg-drift-classify: case 11 must extract exactly 4 guides, got ${Object.keys(corpus.guides).length}`
     );
     // Extraction provenance: table-located guides are use_cases, the unlisted
-    // gamma-guide is scan.
+    // gamma-guide is scan. The delta-guide file is intentionally EMPTY: it must
+    // keep use_cases provenance (own-property presence, not truthiness).
     assert(
       corpus.provenance &&
       corpus.provenance['alpha-guide'] === 'use_cases' &&
       corpus.provenance['beta-guide'] === 'use_cases' &&
+      corpus.provenance['delta-guide'] === 'use_cases' &&
+      corpus.guides['delta-guide'] === '' &&
       corpus.provenance['gamma-guide'] === 'scan',
-      `mwg-drift-classify: case 11 provenance must be use_cases/use_cases/scan, got ${JSON.stringify(corpus.provenance)}`
+      `mwg-drift-classify: case 11 provenance must be use_cases x3 (incl. empty delta-guide) + scan, got ${JSON.stringify(corpus.provenance)}`
     );
   }
 
@@ -4898,9 +4901,50 @@ function testMwgDriftClassifierGuard() {
       '--catalog', wrongVerCatalog,
     ]);
     assert(verRes.status === 1, `mwg-drift-classify: case 17c (registry version != catalog version) must exit 1, got ${verRes.status}`);
+
+    // The two id representations must agree: a stale guideIds declaration
+    // cannot mask a registry guide removed from the guides array.
+    const staleDeclCatalog = join(tmp, 'mwg-catalog-stale-decl.json');
+    const c3 = JSON.parse(readFileSync(catalogFixture, 'utf8'));
+    c3.guides = c3.guides.filter((g) => g.id !== 'implemented-rule-guide');
+    writeFileSync(staleDeclCatalog, JSON.stringify(c3), 'utf8');
+    const declRes = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', basisFixture,
+      '--catalog', staleDeclCatalog,
+    ]);
+    assert(declRes.status === 1, `mwg-drift-classify: case 17d (guideIds vs guides[] disagreement) must exit 1, got ${declRes.status}`);
+
+    // An empty --catalog value is a usage error, never a skipped validation.
+    const emptyRes = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', basisFixture,
+      '--catalog', '',
+    ]);
+    assert(emptyRes.status === 64, `mwg-drift-classify: case 17e (empty --catalog) must exit 64, got ${emptyRes.status}`);
   }
 
-  // 18. The committed registry stays honest against the committed catalog
+  // 19. A registry WITHOUT catalogueVersion fails validation: the binding
+  // cannot be disabled by deleting the field.
+  {
+    const noVerBasis = join(tmp, 'mwg-basis-no-version.json');
+    const b = JSON.parse(readFileSync(basisFixture, 'utf8'));
+    delete b.catalogueVersion;
+    writeFileSync(noVerBasis, JSON.stringify(b), 'utf8');
+    const res = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', noVerBasis,
+    ]);
+    assert(res.status === 1, `mwg-drift-classify: case 19 (missing catalogueVersion) must exit 1, got ${res.status}`);
+    const resC = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', join(fixDir, 'corpus-new-cosmetic.json'),
+      '--basis', noVerBasis,
+    ]);
+    assert(resC.status === 1, `mwg-drift-classify: case 19b (classify, missing catalogueVersion) must exit 1, got ${resC.status}`);
+  }
+
+  // 20. The committed registry stays honest against the committed catalog
   // (in-process, no spawn): every registered guide id is in the catalog's
   // guideIds and the registry catalogueVersion matches the catalog version.
   {
@@ -4910,12 +4954,12 @@ function testMwgDriftClassifierGuard() {
     for (const rule of basis.rules) {
       assert(
         catalogIds.has(rule.guide),
-        `mwg-drift-classify: case 18 registry rule "${rule.id}" references guide "${rule.guide}" absent from catalog guideIds`
+        `mwg-drift-classify: case 20 registry rule "${rule.id}" references guide "${rule.guide}" absent from catalog guideIds`
       );
     }
     assert(
       basis.catalogueVersion === catalog.version,
-      `mwg-drift-classify: case 18 registry catalogueVersion (${basis.catalogueVersion}) must match catalog version (${catalog.version})`
+      `mwg-drift-classify: case 20 registry catalogueVersion (${basis.catalogueVersion}) must match catalog version (${catalog.version})`
     );
   }
 }

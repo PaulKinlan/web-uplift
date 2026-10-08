@@ -147,6 +147,12 @@ function validateBasis(basis, label) {
       }
     }
   }
+  // The registry is version-bound; a missing or malformed catalogueVersion
+  // must fail validation, not silently disable the binding checks.
+  if (!isValidVersion(basis.catalogueVersion)) {
+    console.error(`FAIL: ${label} has missing or invalid catalogueVersion (got ${JSON.stringify(basis.catalogueVersion ?? null)})`);
+    process.exit(1);
+  }
   return basis;
 }
 
@@ -254,7 +260,9 @@ function extractFromPackage(packageDir, versionStr) {
         const name = ent.name.slice(0, -3);
         const upper = name.toUpperCase();
         if (!['README', 'CONTRIBUTING', 'SKILL', 'THIRD_PARTY_NOTICES', 'LICENSE'].includes(upper)) {
-          if (!guides[name]) {
+          // Own-property check, not truthiness: a table-located guide whose
+          // file is EMPTY must keep its use_cases provenance.
+          if (!Object.prototype.hasOwnProperty.call(guides, name)) {
             guides[name] = readFileSync(full, 'utf8');
             provenance[name] = 'scan';
           }
@@ -294,7 +302,7 @@ function extractFromPackage(packageDir, versionStr) {
 // across a version boundary without re-verification silently disables reversal
 // detection for guides that moved. Returns an error string or null.
 function basisVersionBindingError(basis, version, what) {
-  if (basis.catalogueVersion !== undefined && basis.catalogueVersion !== version) {
+  if (basis.catalogueVersion !== version) {
     return `basis registry catalogueVersion (${basis.catalogueVersion}) does not match ${what} (${version}); re-verify the registry against this catalog version`;
   }
   return null;
@@ -305,9 +313,26 @@ function basisVersionBindingError(basis, version, what) {
 // reversal detection for that rule. Returns violation strings.
 function basisCatalogViolations(basis, catalog) {
   const violations = [];
-  const ids = Array.isArray(catalog.guideIds)
-    ? catalog.guideIds
-    : (Array.isArray(catalog.guides) ? catalog.guides.map((g) => g && g.id) : []);
+  if (!isValidVersion(catalog.version)) {
+    violations.push(`catalog has missing or invalid version (got ${JSON.stringify(catalog.version ?? null)})`);
+  } else if (basis.catalogueVersion !== catalog.version) {
+    violations.push(`basis registry catalogueVersion (${basis.catalogueVersion}) does not match catalog version (${catalog.version})`);
+  }
+  const declaredIds = Array.isArray(catalog.guideIds) ? catalog.guideIds : null;
+  const derivedIds = Array.isArray(catalog.guides) ? catalog.guides.map((g) => g && g.id) : null;
+  // When the catalog carries both representations they must agree; trusting
+  // one over the other would let a stale declaration mask registry drift.
+  let ids;
+  if (declaredIds && derivedIds) {
+    const sortedDeclared = [...declaredIds].sort();
+    const sortedDerived = [...derivedIds].sort();
+    if (sortedDeclared.length !== sortedDerived.length || sortedDeclared.some((v, i) => v !== sortedDerived[i])) {
+      violations.push('catalog guideIds declaration does not match the ids of its guides array');
+    }
+    ids = declaredIds;
+  } else {
+    ids = declaredIds || derivedIds || [];
+  }
   if (ids.length === 0) {
     violations.push('catalog has no guide ids to validate against');
     return violations;
@@ -318,10 +343,6 @@ function basisCatalogViolations(basis, catalog) {
       violations.push(`Rule "${rule.id}": registered guide "${rule.guide}" is absent from the catalog guide set`);
     }
   }
-  const bindErr = basis.catalogueVersion !== undefined && typeof catalog.version === 'string' && basis.catalogueVersion !== catalog.version
-    ? `basis registry catalogueVersion (${basis.catalogueVersion}) does not match catalog version (${catalog.version})`
-    : null;
-  if (bindErr) violations.push(bindErr);
   return violations;
 }
 
@@ -649,6 +670,10 @@ for (let i = 0; i < rawArgs.length; i++) {
       process.exit(64);
     }
     catalogArg = rawArgs[i];
+    if (catalogArg.length === 0) {
+      console.error('FAIL: --catalog requires a non-empty path');
+      process.exit(64);
+    }
   } else if (arg === '--json') {
     jsonArg = true;
   } else {
@@ -658,7 +683,7 @@ for (let i = 0; i < rawArgs.length; i++) {
 }
 
 if (mode === 'extract') {
-  if (catalogArg) {
+  if (catalogArg !== null) {
     console.error('FAIL: --catalog is only valid with --verify-basis');
     process.exit(64);
   }
@@ -686,7 +711,7 @@ if (mode === 'extract') {
 } else if (mode === 'verify_basis') {
   verifyBasisAgainstCorpus(verifyCorpusArg, basisArg, catalogArg);
 } else if (mode === 'classify') {
-  if (catalogArg) {
+  if (catalogArg !== null) {
     console.error('FAIL: --catalog is only valid with --verify-basis');
     process.exit(64);
   }

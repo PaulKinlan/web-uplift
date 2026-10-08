@@ -18,6 +18,13 @@ var USE_CASES = [
     "featuresUsed": [],
     "tokenCount": 20
   },
+  {
+    "id": "delta-guide",
+    "description": "Guide whose file is intentionally empty (provenance must stay use_cases).",
+    "category": "delta",
+    "featuresUsed": [],
+    "tokenCount": 0
+  },
   // TRIPWIRE: this element sits INSIDE the captured table slice. Any extractor
   // that evaluates the table (eval, node:vm, Function) executes it and dies
   // with this exact message, failing suite case 11 loudly. A parser ignores it.
