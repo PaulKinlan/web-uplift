@@ -126,7 +126,7 @@ for breaking skill/schema changes):
    installer imports, per the `files` allowlist).
 6. `git tag v<VERSION> && git push && git push --tags`.
 
-### Current release: v0.5.0
+### Current release: v0.5.1
 
 Minor over v0.4.2, cut on 2026-10-06 from the same audit line. Three defects fixed,
 one record added, and the skill change that makes a release necessary at all:

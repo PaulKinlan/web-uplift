@@ -1,6 +1,6 @@
 {
   "package": "web-uplift",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "installedAt": "2026-10-08T06:04:54.301Z",
   "agents": [
     "claude",

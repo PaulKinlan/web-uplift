@@ -3690,9 +3690,17 @@ function testMwgCatalogRegenerateAgreement() {
     typeof catalog.regenerate === 'string' && catalog.regenerate.length > 0,
     'knowledge/mwg-catalog.json must declare a regenerate field',
   );
+  const match = md.match(/regenerate:\s*(['"`][\s\S]*?['"`]),/);
+  assert(match, 'knowledge/mwg-catalog.md must define a regenerate assignment in its script');
+  let scriptRegenerate;
+  try {
+    scriptRegenerate = eval(match[1]);
+  } catch (e) {
+    assert.fail(`knowledge/mwg-catalog.md script regenerate expression failed to parse: ${e.message}`);
+  }
   assert(
-    md.includes(catalog.regenerate.replace(/"/g, '\\"')) || md.includes(catalog.regenerate),
-    'knowledge/mwg-catalog.md must contain the regenerate instruction declared in knowledge/mwg-catalog.json',
+    scriptRegenerate === catalog.regenerate,
+    `knowledge/mwg-catalog.md script generates '${scriptRegenerate}', but knowledge/mwg-catalog.json has '${catalog.regenerate}'`,
   );
 }
 
@@ -3705,7 +3713,13 @@ function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
   const principles = readJson('knowledge/principles.json');
   const catalogIds = new Set(catalog.guides.map((g) => g.id));
 
-  // 1. Every catalog guide is covered by exact ID in principles.json
+  // Assert catalog version and principles pinned version match
+  assert(
+    principles.guidanceCatalogVersion === `modern-web-guidance@${catalog.version}`,
+    `principles.json guidanceCatalogVersion (${principles.guidanceCatalogVersion}) must match mwg-catalog.json version (modern-web-guidance@${catalog.version})`,
+  );
+
+  // 1. Every catalog guide is covered by exact ID in principles.json, and no unknown guide IDs exist
   const coveredGuides = new Set();
   const deadIds = ['prevent-text-wrapping', 'declarative-button-actions'];
   for (const p of principles.principles) {
@@ -3713,6 +3727,13 @@ function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
       for (const g of c.guides || []) {
         for (const dead of deadIds) {
           assert(g !== dead, `principles.json check ${p.id}/${c.id} must not reference dead/renamed guide "${dead}"`);
+        }
+        // If a guide pointer does not have spaces, it is a discrete guide ID and MUST exist in catalog
+        if (!g.includes(' ')) {
+          assert(
+            catalogIds.has(g),
+            `principles.json check ${p.id}/${c.id} references unknown or dead guide ID "${g}"`,
+          );
         }
         if (catalogIds.has(g)) {
           coveredGuides.add(g);
