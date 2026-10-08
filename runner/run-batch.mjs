@@ -114,6 +114,10 @@ if (isolationAssertion) {
     reason: 'declared by the operator; the tool did not and cannot verify it',
   };
 } else if (args['i-know-this-is-unisolated'] === true) {
+  if (args.resume) {
+    console.error('REFUSED: --resume cannot be used with --i-know-this-is-unisolated. The resume pointer is unauthenticated and agent-writable, so a compromised agent could skip URLs or promote fabricated reports. Use an isolation boundary to secure the pointer.');
+    process.exit(1);
+  }
   isolationRecord = {
     isolation: 'operator-acknowledged-none',
     unverified: true,
