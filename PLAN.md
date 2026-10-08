@@ -65,18 +65,18 @@ Why, explicitly:
   accepts emulated conditions (media features, viewport) the model chooses. They
   return data/artifacts and make no decisions.
 - **Principles** ([knowledge/principles.json](knowledge/principles.json)) -
-  sixteen principles: Una Kravets' five modern-UX principles; the Lighthouse
-  dimensions with `be-accessible` widened to `be-inclusive` and
-  `follow-best-practices` narrowed (`be-fast-and-stable`, `be-discoverable`
-  unchanged); six framework-derived principles (`be-private-and-secure`,
-  `be-resilient`, `be-internationalised`, `be-trustworthy`, `be-sustainable`,
-  `be-agent-ready`); and `be-memory-efficient` (derived from the sibling
-  `memory-tracer` leak-audit methodology: baseline heap snapshot -> repeat a
-  representative interaction ~10x -> post snapshot -> compare retained growth via
-  the `heap` primitive; read the summary, never the raw snapshot). Each check is
-  an outcome with a `detectableVia` HINT and a
-  `guides` list of mwg pointers; each principle has an `applicability` block
-  (default vs contextual). Expansion adopted 2026-06-13 per
+  seventeen principles: Una Kravets' five modern-UX principles;
+  `support-core-task-success`; the Lighthouse dimensions with `be-accessible`
+  widened to `be-inclusive` and `follow-best-practices` narrowed
+  (`be-fast-and-stable`, `be-discoverable` unchanged); six framework-derived
+  principles (`be-private-and-secure`, `be-resilient`, `be-internationalised`,
+  `be-trustworthy`, `be-sustainable`, `be-agent-ready`); and
+  `be-memory-efficient` (derived from the sibling `memory-tracer` leak-audit
+  methodology: baseline heap snapshot -> repeat a representative interaction
+  ~10x -> post snapshot -> compare retained growth via the `heap` primitive;
+  read the summary, never the raw snapshot). Each check is an outcome with a
+  `detectableVia` HINT and a `guides` list of mwg pointers; each principle has an
+  `applicability` block (default vs contextual). Expansion adopted 2026-06-13 per
   [docs/principles-analysis.md](docs/principles-analysis.md); all 137 mwg guides
   are mapped (none orphaned; `be-memory-efficient` carries empty `guides` lists
   because the mwg catalog has no memory-hygiene guides yet, so it orphans none).
@@ -202,7 +202,11 @@ fallback.
   scope/opt-outs/intent, and the `not-applicable` / `opted-out` outcome
   reporting ("quality without shaming"). The eval ground truth was re-baselined
   against the wider principles.
-- **Added `be-memory-efficient` (16th principle, 2026-06-13).** Adopted the
+- **Added `support-core-task-success` (2026-06-13).** Adopted core task success
+  per [docs/principles-analysis.md](docs/principles-analysis.md) so the model
+  judges whether users can understand the purpose, find the primary action,
+  complete the main flow, and recover from blocked states.
+- **Added `be-memory-efficient` (17th principle, 2026-06-13).** Adopted the
   sibling `memory-tracer` leak-audit methodology as a principle: the page should
   not leak memory or grow its footprint without bound, especially under repeated
   interaction. Three outcome checks (no-leak-under-repeated-interaction,
