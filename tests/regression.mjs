@@ -4768,6 +4768,15 @@ function testMwgDriftClassifierGuard() {
       Object.keys(corpus.guides).length === 3,
       `mwg-drift-classify: case 11 must extract exactly 3 guides, got ${Object.keys(corpus.guides).length}`
     );
+    // Extraction provenance: table-located guides are use_cases, the unlisted
+    // gamma-guide is scan.
+    assert(
+      corpus.provenance &&
+      corpus.provenance['alpha-guide'] === 'use_cases' &&
+      corpus.provenance['beta-guide'] === 'use_cases' &&
+      corpus.provenance['gamma-guide'] === 'scan',
+      `mwg-drift-classify: case 11 provenance must be use_cases/use_cases/scan, got ${JSON.stringify(corpus.provenance)}`
+    );
   }
 
   // 12. --extract on an empty package dir must fail loud (exit 1), never emit
@@ -4831,6 +4840,82 @@ function testMwgDriftClassifierGuard() {
     assert(
       !Object.values(corpus.guides).some((t) => t.includes('ESCAPE-MARKER')),
       'mwg-drift-classify: case 15 traversal target must never be read'
+    );
+  }
+
+  // 16. registry/catalogueVersion binding: a basis registry written against a
+  // different catalog version than the baseline corpus fails loud (exit 1),
+  // never silently classifies with a stale registry.
+  {
+    const staleBasis = join(tmp, 'mwg-basis-wrong-version.json');
+    const b = JSON.parse(readFileSync(basisFixture, 'utf8'));
+    b.catalogueVersion = '9.9.9';
+    writeFileSync(staleBasis, JSON.stringify(b), 'utf8');
+    const res = runClassifier([
+      '--old-corpus', corpusOld,
+      '--new-corpus', join(fixDir, 'corpus-new-cosmetic.json'),
+      '--basis', staleBasis,
+    ]);
+    assert(res.status === 1, `mwg-drift-classify: case 16 (stale registry version) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const resV = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', staleBasis,
+    ]);
+    assert(resV.status === 1, `mwg-drift-classify: case 16b (verify-basis, stale registry version) must exit 1, got ${resV.status}`);
+  }
+
+  // 17. --catalog validation: every registered guide id must exist in the
+  // catalog's guide set and the registry catalogueVersion must match the
+  // catalog version.
+  {
+    const catalogFixture = join(fixDir, 'catalog-fixture-set.json');
+    const okRes = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', basisFixture,
+      '--catalog', catalogFixture,
+    ]);
+    assert(okRes.status === 0, `mwg-drift-classify: case 17a (catalog consistent) must exit 0, got ${okRes.status}:\n${okRes.stderr || okRes.stdout}`);
+
+    const missingIdCatalog = join(tmp, 'mwg-catalog-missing-id.json');
+    const c1 = JSON.parse(readFileSync(catalogFixture, 'utf8'));
+    c1.guideIds = c1.guideIds.filter((x) => x !== 'implemented-rule-guide');
+    c1.guides = c1.guides.filter((g) => g.id !== 'implemented-rule-guide');
+    writeFileSync(missingIdCatalog, JSON.stringify(c1), 'utf8');
+    const missRes = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', basisFixture,
+      '--catalog', missingIdCatalog,
+    ]);
+    assert(missRes.status === 1, `mwg-drift-classify: case 17b (registry guide absent from catalog) must exit 1, got ${missRes.status}`);
+
+    const wrongVerCatalog = join(tmp, 'mwg-catalog-wrong-version.json');
+    const c2 = JSON.parse(readFileSync(catalogFixture, 'utf8'));
+    c2.version = '9.9.9';
+    writeFileSync(wrongVerCatalog, JSON.stringify(c2), 'utf8');
+    const verRes = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', basisFixture,
+      '--catalog', wrongVerCatalog,
+    ]);
+    assert(verRes.status === 1, `mwg-drift-classify: case 17c (registry version != catalog version) must exit 1, got ${verRes.status}`);
+  }
+
+  // 18. The committed registry stays honest against the committed catalog
+  // (in-process, no spawn): every registered guide id is in the catalog's
+  // guideIds and the registry catalogueVersion matches the catalog version.
+  {
+    const basis = readJson('knowledge/mwg-rule-basis.json');
+    const catalog = readJson('knowledge/mwg-catalog.json');
+    const catalogIds = new Set(catalog.guideIds || catalog.guides.map((g) => g.id));
+    for (const rule of basis.rules) {
+      assert(
+        catalogIds.has(rule.guide),
+        `mwg-drift-classify: case 18 registry rule "${rule.id}" references guide "${rule.guide}" absent from catalog guideIds`
+      );
+    }
+    assert(
+      basis.catalogueVersion === catalog.version,
+      `mwg-drift-classify: case 18 registry catalogueVersion (${basis.catalogueVersion}) must match catalog version (${catalog.version})`
     );
   }
 }

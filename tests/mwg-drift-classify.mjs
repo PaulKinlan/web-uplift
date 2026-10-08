@@ -12,12 +12,15 @@
 // NEVER evaluated (an eval here once ran downloaded code in-process).
 //
 // Corpus format:
-//   { "version": "x.y.z", "guides": { "<id>": "<full guide text>" } }
+//   { "version": "x.y.z", "guides": { "<id>": "<full guide text>" },
+//     "provenance": { "<id>": "use_cases" | "scan" } }
+// (provenance is present on extracted corpora; older corpora without it are
+// still valid).
 //
 // Usage:
 //   node tests/mwg-drift-classify.mjs --old-corpus <file> --new-corpus <file> [--basis <file>] [--json]
 //   node tests/mwg-drift-classify.mjs --extract <package-dir> --version <x.y.z> [-o <file>]
-//   node tests/mwg-drift-classify.mjs --verify-basis <corpus-file> [--basis <file>]
+//   node tests/mwg-drift-classify.mjs --verify-basis <corpus-file> [--basis <file>] [--catalog <file>]
 //
 // Exit codes:
 //    0: No delta between old and new corpora, or successful extraction/verification.
@@ -47,7 +50,7 @@ function printUsageAndExit(code = 64) {
   const msg = `Usage:
   node tests/mwg-drift-classify.mjs --old-corpus <file> --new-corpus <file> [--basis <file>] [--json]
   node tests/mwg-drift-classify.mjs --extract <package-dir> --version <x.y.z> [-o <file>]
-  node tests/mwg-drift-classify.mjs --verify-basis <corpus-file> [--basis <file>]
+  node tests/mwg-drift-classify.mjs --verify-basis <corpus-file> [--basis <file>] [--catalog <file>]
 
 Options:
   --old-corpus <file>      Path to baseline corpus JSON
@@ -58,6 +61,9 @@ Options:
   --version <x.y.z>        Version tag to record in extracted corpus
   -o, --out <file>         Destination file for extracted corpus (default: stdout)
   --verify-basis <file>    Verify all basis registry anchors against given corpus JSON
+  --catalog <file>         With --verify-basis: also validate that every registered
+                           guide id exists in the catalog's guide set and that the
+                           registry catalogueVersion matches the catalog version
 `;
   if (code === 0) {
     console.log(msg);
@@ -151,6 +157,10 @@ function extractFromPackage(packageDir, versionStr) {
   }
 
   const guides = {};
+  // Per-guide provenance: "use_cases" when the guide was located through the
+  // package's USE_CASES table, "scan" when only the disk scan found it (the
+  // table has no entry for it, the prompt-api defect class of web-uplift-968).
+  const provenance = {};
   const modernWebCandidates = [
     join(packageDir, 'skills', 'modern-web-guidance', 'modern-web.mjs'),
     join(packageDir, 'modern-web.mjs'),
@@ -209,6 +219,7 @@ function extractFromPackage(packageDir, versionStr) {
         });
         if (foundPath) {
           guides[id] = readFileSync(foundPath, 'utf8');
+          provenance[id] = 'use_cases';
         }
       }
     }
@@ -245,6 +256,7 @@ function extractFromPackage(packageDir, versionStr) {
         if (!['README', 'CONTRIBUTING', 'SKILL', 'THIRD_PARTY_NOTICES', 'LICENSE'].includes(upper)) {
           if (!guides[name]) {
             guides[name] = readFileSync(full, 'utf8');
+            provenance[name] = 'scan';
           }
         }
       }
@@ -261,21 +273,81 @@ function extractFromPackage(packageDir, versionStr) {
   }
 
   const sortedGuides = {};
+  const sortedProvenance = {};
   for (const id of guideIds) {
     sortedGuides[id] = guides[id];
+    sortedProvenance[id] = provenance[id];
   }
+
+  const useCasesCount = Object.values(provenance).filter((p) => p === 'use_cases').length;
+  const scanCount = Object.values(provenance).filter((p) => p === 'scan').length;
+  console.error(`extracted ${guideIds.length} guides (${useCasesCount} via USE_CASES, ${scanCount} via scan only)`);
 
   return {
     version: versionStr,
     guides: sortedGuides,
+    provenance: sortedProvenance,
   };
 }
 
-function verifyBasisAgainstCorpus(corpusPath, basisPath) {
+// The registry is written against ONE catalog version; a registry carried
+// across a version boundary without re-verification silently disables reversal
+// detection for guides that moved. Returns an error string or null.
+function basisVersionBindingError(basis, version, what) {
+  if (basis.catalogueVersion !== undefined && basis.catalogueVersion !== version) {
+    return `basis registry catalogueVersion (${basis.catalogueVersion}) does not match ${what} (${version}); re-verify the registry against this catalog version`;
+  }
+  return null;
+}
+
+// A registered guide id absent from the catalog's guide set means the registry
+// and catalog have drifted apart; fail loud rather than silently skipping
+// reversal detection for that rule. Returns violation strings.
+function basisCatalogViolations(basis, catalog) {
+  const violations = [];
+  const ids = Array.isArray(catalog.guideIds)
+    ? catalog.guideIds
+    : (Array.isArray(catalog.guides) ? catalog.guides.map((g) => g && g.id) : []);
+  if (ids.length === 0) {
+    violations.push('catalog has no guide ids to validate against');
+    return violations;
+  }
+  const set = new Set(ids);
+  for (const rule of basis.rules) {
+    if (!set.has(rule.guide)) {
+      violations.push(`Rule "${rule.id}": registered guide "${rule.guide}" is absent from the catalog guide set`);
+    }
+  }
+  const bindErr = basis.catalogueVersion !== undefined && typeof catalog.version === 'string' && basis.catalogueVersion !== catalog.version
+    ? `basis registry catalogueVersion (${basis.catalogueVersion}) does not match catalog version (${catalog.version})`
+    : null;
+  if (bindErr) violations.push(bindErr);
+  return violations;
+}
+
+function verifyBasisAgainstCorpus(corpusPath, basisPath, catalogPath) {
   const corpusRaw = readJsonFile(corpusPath, 'corpus file');
   const corpus = validateCorpus(corpusRaw, 'corpus file');
   const basisRaw = readJsonFile(basisPath, 'basis registry file');
   const basis = validateBasis(basisRaw, 'basis registry file');
+
+  const bindErr = basisVersionBindingError(basis, corpus.version, 'the corpus version');
+  if (bindErr) {
+    console.error(`FAIL: ${bindErr}`);
+    process.exit(1);
+  }
+
+  if (catalogPath) {
+    const catalog = readJsonFile(catalogPath, 'catalog file');
+    const catViolations = basisCatalogViolations(basis, catalog);
+    if (catViolations.length > 0) {
+      console.error(`FAIL: ${catViolations.length} basis-vs-catalog violation(s):`);
+      for (const v of catViolations) {
+        console.error(`  - ${v}`);
+      }
+      process.exit(1);
+    }
+  }
 
   const violations = [];
   for (const rule of basis.rules) {
@@ -310,6 +382,12 @@ function classifyDelta(oldCorpusPath, newCorpusPath, basisPath, jsonMode) {
   const newCorpus = validateCorpus(newRaw, 'new corpus');
   const basisRaw = readJsonFile(basisPath, 'basis registry');
   const basis = validateBasis(basisRaw, 'basis registry');
+
+  const bindErr = basisVersionBindingError(basis, oldCorpus.version, 'the baseline corpus version');
+  if (bindErr) {
+    console.error(`FAIL: ${bindErr}`);
+    process.exit(1);
+  }
 
   const oldKeys = Object.keys(oldCorpus.guides);
   const newKeys = Object.keys(newCorpus.guides);
@@ -485,6 +563,7 @@ let mode = null;
 let oldCorpusArg = null;
 let newCorpusArg = null;
 let basisArg = defaultBasisPath;
+let catalogArg = null;
 let jsonArg = false;
 let extractDirArg = null;
 let versionArg = null;
@@ -563,6 +642,13 @@ for (let i = 0; i < rawArgs.length; i++) {
       process.exit(64);
     }
     basisArg = rawArgs[i];
+  } else if (arg === '--catalog') {
+    i++;
+    if (i >= rawArgs.length) {
+      console.error('FAIL: --catalog requires <file> argument');
+      process.exit(64);
+    }
+    catalogArg = rawArgs[i];
   } else if (arg === '--json') {
     jsonArg = true;
   } else {
@@ -572,6 +658,10 @@ for (let i = 0; i < rawArgs.length; i++) {
 }
 
 if (mode === 'extract') {
+  if (catalogArg) {
+    console.error('FAIL: --catalog is only valid with --verify-basis');
+    process.exit(64);
+  }
   if (!versionArg) {
     console.error('FAIL: --extract requires --version <x.y.z>');
     process.exit(64);
@@ -594,8 +684,12 @@ if (mode === 'extract') {
   }
   process.exit(0);
 } else if (mode === 'verify_basis') {
-  verifyBasisAgainstCorpus(verifyCorpusArg, basisArg);
+  verifyBasisAgainstCorpus(verifyCorpusArg, basisArg, catalogArg);
 } else if (mode === 'classify') {
+  if (catalogArg) {
+    console.error('FAIL: --catalog is only valid with --verify-basis');
+    process.exit(64);
+  }
   if (!oldCorpusArg || !newCorpusArg) {
     console.error('FAIL: classification mode requires both --old-corpus and --new-corpus');
     process.exit(64);

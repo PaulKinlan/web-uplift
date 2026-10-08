@@ -111,7 +111,7 @@ Because published npm packages are immutable, both baseline and upstream corpora
    ```sh
    node tests/mwg-drift-classify.mjs --extract package --version <version> -o corpus-<version>.json
    ```
-   Extraction parses the package's USE_CASES table declaratively (never evaluates package code) and UNIONs it with a scan of the package's guides directories, so a guide file that lacks a table entry (the prompt-api defect class, web-uplift-968) is still included; extraction of 0.0.193 yields the same 178-id set as knowledge/mwg-catalog.json. Extraction fails loud (exit 1) when no guide text is found at all.
+   Extraction parses the package's USE_CASES table declaratively (never evaluates package code) and UNIONs it with a scan of the package's guides directories, so a guide file that lacks a table entry (the prompt-api defect class, web-uplift-968) is still included. Extraction of 0.0.193 yields the same 178-id set as knowledge/mwg-catalog.json, but the divergence is now EXPLICIT rather than implicit: the corpus JSON carries a per-guide `provenance` map (`use_cases` when the table located the guide, `scan` when only the disk scan found it), and `--extract` prints the split to stderr. For the current upstream version that split is 177 via USE_CASES plus 1 via scan only (`prompt-api`), totalling 178. Extraction fails loud (exit 1) when no guide text is found at all.
 
 ### Anchor-Based Reversal Rule
 
@@ -149,8 +149,9 @@ The reanalysis lane maintains `knowledge/mwg-rule-basis.json` to keep reversal d
 1. Whenever guidance is distilled into `knowledge/principles.json` check summaries or asserted in `tests/regression.mjs`, identify the source guide ID.
 2. Select 1 to 3 verbatim anchor excerpts from the guide text that back the implemented rule.
 3. Append the rule entry to `knowledge/mwg-rule-basis.json` (`id`, `guide`, `where`, and `anchors`).
-4. Run `--verify-basis` against the baseline corpus to confirm all anchors exist verbatim:
+4. Run `--verify-basis` against the baseline corpus AND the committed catalog to confirm all anchors exist verbatim, every registered guide id exists in the catalog's guide set, and the registry's `catalogueVersion` matches both the corpus and the catalog version:
    ```sh
-   node tests/mwg-drift-classify.mjs --verify-basis corpus-<version>.json
+   node tests/mwg-drift-classify.mjs --verify-basis corpus-<version>.json --catalog knowledge/mwg-catalog.json
    ```
+   The registry is bound to one catalog version: classifying or verifying with a registry whose `catalogueVersion` differs from the baseline corpus version fails loud (exit 1), so a stale registry can never silently disable reversal detection. On a version bump, set `catalogueVersion` to the new catalog version as part of the reanalysis commit.
 
