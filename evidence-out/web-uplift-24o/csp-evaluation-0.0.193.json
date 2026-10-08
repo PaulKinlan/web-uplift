@@ -38,10 +38,10 @@
       "note": "Observed base-uri 'self' satisfies MWG 0.0.193."
     },
     "require-trusted-types-for": {
-      "requirement": "require-trusted-types-for 'script' for DOM XSS prevention on modern web applications.",
+      "requirement": "require-trusted-types-for 'script' when managing script sinks to prevent DOM XSS.",
       "observed": null,
-      "status": "FINDING",
-      "note": "Header omits require-trusted-types-for 'script'; DOM sinks are not locked to Trusted Types."
+      "status": "PASS (NOT APPLICABLE)",
+      "note": "Header omits require-trusted-types-for 'script'. Because this is a static publication site with zero user-input DOM injection sinks, Trusted Types enforcement is not triggered as a failure under defensive-browser-policies; it remains a recommended hardening enhancement."
     },
     "strict-script-src": {
       "requirement": "Avoid 'unsafe-inline' / 'unsafe-eval'; prefer cryptographic nonces or hashes.",

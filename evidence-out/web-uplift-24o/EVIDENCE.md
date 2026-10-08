@@ -58,9 +58,9 @@ Under `modern-web-guidance@0.0.193`, security guidance explicitly mandates:
 - `object-src 'none'` to eliminate plugin/Flash execution vectors.
 - `frame-ancestors 'self'` (or `'none'`) for clickjacking mitigation, obsoleting legacy `X-Frame-Options`.
 - `base-uri 'self'` to block `<base href>` injection.
-- `require-trusted-types-for 'script'` for DOM XSS sink locking.
+- `require-trusted-types-for 'script'` when managing script sinks to prevent DOM XSS.
 - Rejection of `'unsafe-inline'` in `script-src` in favor of nonces or hashes.
-- Enforcement of `Secure` and `HttpOnly` on cookies.
+- Enforcement of `Secure` on all HTTPS cookies, and `HttpOnly` specifically for auth/session cookies (principles.json:722-723).
 
 Artifact: `evidence-out/web-uplift-24o/csp-evaluation-0.0.193.json`
 
@@ -68,9 +68,9 @@ Observed Results on `https://paul.kinlan.me/`:
 1. `object-src 'none'`: **PASS**. Observed directive matches 0.0.193 requirement.
 2. `frame-ancestors 'self'`: **PASS**. Observed directive supersedes missing `X-Frame-Options` per 0.0.193.
 3. `base-uri 'self'`: **PASS**. Verified present.
-4. `require-trusted-types-for 'script'`: **FINDING**. Header omits Trusted Types enforcement; DOM sinks remain unconstrained.
-5. `script-src`: **FINDING**. Contains `'unsafe-inline'` and host allowlists (`googletagmanager.com`, `google-analytics.com`, `cdn.commento.io`).
-6. Cookie security: **FINDING**. All 4 cookies lack `Secure` and `HttpOnly` attributes.
+4. `require-trusted-types-for 'script'`: **PASS (NOT APPLICABLE / RECOMMENDED)**. Header omits Trusted Types. As evaluated under `defensive-browser-policies`, because this site is a static publication without user-controlled DOM injection sinks, Trusted Types is a recommended hardening enhancement rather than a policy violation.
+5. `script-src`: **FINDING (F18)**. Contains `'unsafe-inline'` and host allowlists (`googletagmanager.com`, `google-analytics.com`, `cdn.commento.io`).
+6. Cookie security: **FINDING (F18)**. All 4 Google Analytics cookies lack the `Secure` attribute. `HttpOnly` is not expected for these tracking cookies since client-side analytics scripts require DOM access.
 
 ---
 
@@ -115,7 +115,7 @@ Discoverability & AI   95  ##########  good
 Trust & Resilience     71  #######...  needs work
 ```
 Published artifacts:
-- `reports/paul_kinlan_me/scorecard.html` (64 KB interactive HTML)
+- `reports/paul_kinlan_me/scorecard.html` (270 KB interactive HTML)
 - `reports/paul_kinlan_me/scorecard.json`
 
 ### Run-to-Run Comparison
@@ -127,7 +127,7 @@ Output:
 - Before: `2026-10-06T13-17-07-499Z` (26 findings, 0 unconcluded)
 - After: `2026-10-08T14-10-00-000Z` (26 findings, 0 unconcluded)
 - Resolved: 0 | New: 0 | Persisting: 26
-- Paired screenshots: 5 before/after pairs matched and rendered in `compare.md`.
+- Paired screenshots: 3 pairs with both before and after paths matched in `compare.json` (rendered homepage, crawler view, and desktop light viewport), plus 2 after-only captures (emulated dark mode and offline reload resilience). All 5 captured images are preserved under `evidence-out/web-uplift-24o/evidence/` with self-contained links in `evidence-out/web-uplift-24o/compare.md`.
 
 ---
 

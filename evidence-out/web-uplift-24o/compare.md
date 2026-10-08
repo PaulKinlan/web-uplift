@@ -1,7 +1,7 @@
 # web-uplift compare: paul_kinlan_me
 
-- **Before:** 2026-10-06T13-17-07-499Z (report mode, 26 outstanding)
-- **After:** 2026-10-08T14-10-00-000Z (report mode, 26 outstanding)
+- **Before:** 2026-10-06T13-17-07-499Z (baseline run under modern-web-guidance@0.0.172)
+- **After:** 2026-10-08T14-10-00-000Z (post-reanalysis run under modern-web-guidance@0.0.193)
 - **Outstanding issue-findings:** 26 -> 26 (0)
 - **Unconcluded checks (blocked/not-run):** 0 -> 0 (0)
 - **Resolved:** 0 | **New:** 0 | **Persisting:** 26
@@ -44,89 +44,14 @@ _No principle status changed between the two runs._
 - F26 (low) Each page view does work that produces nothing: a hit to a discontinued UA property and a full cache/service-worker teardown. _[no-wasteful-work]_
 - F27 (low) A fixed reading-progress bar is shipped on every page but never moves. _[scroll-state-aware-chrome]_
 
-## Before / after screenshots
+## Captured screenshots (run 2026-10-08T14-10-00-000Z)
 
-**Homepage, browser view (JS on)**
+All images below are preserved locally under `evidence-out/web-uplift-24o/evidence/`:
 
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/home-discoverability-rendered.png) | ![after](evidence/home-discoverability-rendered.png) |
-
-**Homepage, crawler view (JS off): identical content**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/home-discoverability-crawler.png) | ![after](evidence/home-discoverability-crawler.png) |
-
-**Homepage reloaded offline: browser error page**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/home-resilience-offline.png) | _n/a_ |
-
-**Homepage first viewport, light (default)**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/home-desktop.png) | ![after](evidence/home-desktop.png) |
-
-**Homepage under prefers-color-scheme: dark - identical to the light capture**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/home-dark.png) | _n/a_ |
-
-**Homepage under forced-colors: active + prefers-contrast: more - text, links and borders survive**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/home-forced-colors.png) | _n/a_ |
-
-**Article at 360x800**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/article-360.png) | _n/a_ |
-
-**Article first viewport (draft disclaimer, byline)**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/article-desktop.png) | _n/a_ |
-
-**First demo figure on /replace-dont-diff/: empty grey box where the video should be**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/article-broken-demo.png) | _n/a_ |
-
-**Article, browser view (JS on)**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/article-discoverability-rendered.png) | _n/a_ |
-
-**Article, crawler view (JS off)**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/article-discoverability-crawler.png) | _n/a_ |
-
-**404 route: Vercel's generic 'This page doesn't exist' page with no site navigation, search or link home**
-
-| Before | After |
-|---|---|
-| ![before](../2026-10-06T13-17-07-499Z/evidence/404.png) | _n/a_ |
-
-**Homepage under prefers-color-scheme: dark - identical to the light capture**
-
-| Before | After |
-|---|---|
-| _n/a_ | ![after](evidence/home-dark.png) |
-
-**Homepage reloaded offline: browser error page**
-
-| Before | After |
-|---|---|
-| _n/a_ | ![after](evidence/home-resilience-offline.png) |
-
+| View | Mode / Condition | Image |
+| --- | --- | --- |
+| Homepage (rendered) | Desktop viewport (1280x900) | ![rendered](evidence/home-discoverability-rendered.png) |
+| Homepage (crawler view) | JavaScript disabled | ![crawler](evidence/home-discoverability-crawler.png) |
+| Homepage (first viewport) | Light default (1280x900) | ![desktop](evidence/home-desktop.png) |
+| Homepage (dark mode) | prefers-color-scheme: dark | ![dark](evidence/home-dark.png) |
+| Homepage (offline resilience) | Network offline reload | ![offline](evidence/home-resilience-offline.png) |
