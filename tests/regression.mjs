@@ -3245,10 +3245,11 @@ function testBatchFlowDryRun() {
   assert(result.stdout.includes('already replayed for you'.toLowerCase()) || result.stdout.includes('ALREADY replayed'), `batch --flow dry-run did not pass flow guidance to the agent:\n${result.stdout}`);
 }
 
-function cleanStaleNpxRegressionTrees() {
+function cleanStaleNpxRegressionTrees(currentTarball = '') {
   try {
     const npxDir = join(homedir(), '.npm', '_npx');
     if (!existsSync(npxDir)) return;
+    const currentName = currentTarball ? currentTarball.split('/').pop() : '';
     for (const entry of readdirSync(npxDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const pkgJsonPath = join(npxDir, entry.name, 'package.json');
@@ -3256,10 +3257,14 @@ function cleanStaleNpxRegressionTrees() {
       try {
         const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
         const pkgs = pkg._npx?.packages || [];
-        const isStale = pkgs.some(
-          (p) => typeof p === 'string' && p.includes('web-uplift-regression-') && !p.includes('web-uplift-regression-pack'),
-        );
-        if (isStale) {
+        const isWebUpliftTarball =
+          pkgs.some((p) => typeof p === 'string' && p.includes('web-uplift') && p.endsWith('.tgz')) ||
+          typeof pkg.dependencies?.['web-uplift'] === 'string';
+        if (!isWebUpliftTarball) continue;
+
+        // If a current tarball name is provided, keep only the matching tree and sweep older hashes.
+        const isCurrent = currentName && pkgs.some((p) => typeof p === 'string' && p.includes(currentName));
+        if (!isCurrent) {
           rmSync(join(npxDir, entry.name), { recursive: true, force: true });
         }
       } catch {
@@ -3272,18 +3277,38 @@ function cleanStaleNpxRegressionTrees() {
 }
 
 function packTarball() {
-  // Use a stable directory across test runs so npm exec reuses its ~/.npm/_npx
-  // cache tree instead of creating a fresh ~42MB tree on every run (web-uplift-vvz).
-  const packDir = join(tmpdir(), 'web-uplift-regression-pack');
-  rmSync(packDir, { recursive: true, force: true });
+  // Use a content-hashed tarball path scoped to the worktree so npm exec
+  // reuses its ~/.npm/_npx cache tree when source is unchanged (saving ~42MB and
+  // execution time), while automatically invalidating when the source changes
+  // to avoid stale-package false passes (web-uplift-vvz).
+  const worktreeId = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
+  const packDir = join(tmpdir(), `web-uplift-pack-${worktreeId}`);
   mkdirSync(packDir, { recursive: true });
-  cleanStaleNpxRegressionTrees();
+
   const result = run('npm', ['pack', '--quiet', '--pack-destination', packDir]);
   assert(result.status === 0, `npm pack failed:\n${result.stderr || result.stdout}`);
   const file = result.stdout.trim().split('\n').filter(Boolean).pop();
   assert(file, `npm pack did not print a tarball name:\n${result.stdout}`);
-  const stableTarball = join(packDir, 'web-uplift-test.tgz');
-  renameSync(join(packDir, file), stableTarball);
+
+  const rawPath = join(packDir, file);
+  const content = readFileSync(rawPath);
+  const contentHash = createHash('sha256').update(content).digest('hex').slice(0, 16);
+  const stableTarball = join(packDir, `web-uplift-${contentHash}.tgz`);
+
+  if (!existsSync(stableTarball)) {
+    renameSync(rawPath, stableTarball);
+  } else if (rawPath !== stableTarball) {
+    rmSync(rawPath, { force: true });
+  }
+
+  // Remove older builds for this worktree to prevent pack directory bloat
+  for (const f of readdirSync(packDir)) {
+    if (f !== `web-uplift-${contentHash}.tgz`) {
+      rmSync(join(packDir, f), { force: true });
+    }
+  }
+
+  cleanStaleNpxRegressionTrees(stableTarball);
   return stableTarball;
 }
 
@@ -3292,7 +3317,7 @@ function testNpxCacheDoesNotAccumulate() {
   if (!existsSync(npxDir)) return;
 
   const tarball = packTarball();
-  // Ensure the stable npx cache directory is populated
+  // Ensure the content-addressed npx cache directory is populated
   const first = run('npm', [
     'exec',
     '--yes',
@@ -3305,20 +3330,22 @@ function testNpxCacheDoesNotAccumulate() {
   assert(first.status === 0, `initial stable exec failed: ${first.stderr || first.stdout}`);
 
   const dirsBefore = readdirSync(npxDir);
+  const tarballName = tarball.split('/').pop();
   const matched = dirsBefore.filter((d) => {
     try {
       const p = JSON.parse(readFileSync(join(npxDir, d, 'package.json'), 'utf8'));
       return (p._npx?.packages || []).some(
-        (pkg) => typeof pkg === 'string' && pkg.includes('web-uplift-regression-pack'),
+        (pkg) => typeof pkg === 'string' && pkg.includes(tarballName),
       );
     } catch {
       return false;
     }
   });
-  assert(matched.length === 1, `expected exactly one stable npx cache entry, found ${matched.length}`);
+  assert(matched.length === 1, `expected exactly one matching npx cache entry, found ${matched.length}`);
 
-  // Re-pack and execute a second time to the same stable path
+  // Re-pack and execute a second time with the same unchanged source
   const tarball2 = packTarball();
+  assert(tarball2 === tarball, `content-addressed tarball path must be stable when source is unchanged: ${tarball2} !== ${tarball}`);
   const second = run('npm', [
     'exec',
     '--yes',
