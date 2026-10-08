@@ -5,6 +5,10 @@
  *   npm run batch -- [urls...] [--urls <file>] [--agent claude]
  *                    [--concurrency 2] [--out reports] [--flow <flow.json>] [--resume]
  *                    [--max-turns 80] [--dry-run] [--verbose]
+ * --resume is refused with --i-know-this-is-unisolated. With --isolation it
+ * still trusts an unauthenticated agent-writable <out>/<host>/latest pointer;
+ * the operator's actual isolation boundary must prevent the agent from writing
+ * that pointer. This runner records assertions but does not verify isolation.
  *
  * URLs come from positional arguments, a --urls file, or both. Invalid URLs are
  * warned about and skipped; ending up with zero URLs is an error.
@@ -115,7 +119,12 @@ if (isolationAssertion) {
   };
 } else if (args['i-know-this-is-unisolated'] === true) {
   if (args.resume) {
-    console.error('REFUSED: --resume cannot be used with --i-know-this-is-unisolated. The resume pointer is unauthenticated and agent-writable, so a compromised agent could skip URLs or promote fabricated reports. Use an isolation boundary to secure the pointer.');
+    console.error(
+      'REFUSED: --resume cannot be used with --i-know-this-is-unisolated. ' +
+      'Even with --isolation, --resume still trusts an unauthenticated agent-writable <out>/<host>/latest pointer; ' +
+      'the operator\'s actual isolation boundary must prevent the agent from writing that pointer. ' +
+      'This runner does not verify the asserted boundary.',
+    );
     process.exit(1);
   }
   isolationRecord = {
@@ -487,13 +496,13 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
 //    in-memory set that no file can influence. That is a precedence rule about what this
 //    process already knows it did, NOT a blanket statement that a batch run's completion is
 //    decided in memory: a URL that is not in the set is still looked up below.
-//  * EVERY OTHER resume lookup has only disk to read - the pointer this tool wrote, or
-//    latest.txt - and that disk is writable by the agent being audited. A planted pointer
-//    naming a run whose report looks valid can therefore make a later --resume skip that
-//    URL. That is a REAL RESIDUAL, not a guarantee: the honest boundary for it is
-//    operator-provided external isolation (the --isolation assertion this runner
-//    shares with fix mode - asserted, recorded as unverified, never checked), because a tool that shares a writable tree with its
-//    adversary cannot authenticate what it reads from that tree.
+//  * Even WITH --isolation, every cross-process --resume lookup still trusts an
+//    unauthenticated agent-writable <out>/<host>/latest (or latest.txt) pointer.
+//    A planted pointer naming a schema-valid forged report can make --resume skip
+//    the URL. The assertion is UNVERIFIED: the operator's actual isolation boundary
+//    must prevent the audited agent from writing <out>/<host>/latest and latest.txt.
+//    Refusing --resume with --i-know-this-is-unisolated does not fix this path.
+//    This runner cannot authenticate a pointer in a tree writable by its adversary.
 //    resolveLatest() in run-history.mjs now contains the pointer's TARGET, so it cannot name
 //    a directory outside the host root; that bounds WHERE a pointer points and cannot
 //    authenticate WHICH run it names, which is exactly why this residual stands.

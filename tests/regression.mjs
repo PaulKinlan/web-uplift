@@ -21,6 +21,7 @@ import { testSourceTreeSkipsSymlinkFileEscape, testSourceTreeSkipsSymlinkDirEsca
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
+import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -98,6 +99,7 @@ try {
   testFixIsolationAssertion();
   testFixIsolatedRunPublishes();
   testBatchWriteScope();
+  testBatchResumeIsolation();
   testWriteScopeCoversExecutedTrees();
   testBatchIntegrityGateAbortsOnTamperedExecutedTree();
   await testCompareReportsUnconcludedChecks();
@@ -5048,26 +5050,6 @@ function testBatchWriteScope() {
         chmodSync(dupOut, 0o755);
       } catch { /* best effort */ }
     }
-
-    // 12. web-uplift-4m2: --resume must be refused in an unisolated run because the pointer is
-    // unauthenticated and agent-writable. A forged pointer is ignored (rejected) because --resume
-    // itself fails, while a genuine published run from an isolated run is still honoured (tested above).
-    const forgedOut = join(root, 'forged-out');
-    mkdirSync(forgedOut, { recursive: true });
-    // Plant a fake pointer that would normally pass validation.
-    const forgedHostDir = join(forgedOut, 'forged.example');
-    const forgedRunDir = join(forgedHostDir, 'run-fake');
-    mkdirSync(forgedRunDir, { recursive: true });
-    writeFileSync(join(forgedHostDir, 'latest.txt'), 'run-fake');
-    writeFileSync(join(forgedRunDir, 'report.json'), readFileSync(findings));
-
-    const unisoResume = run(
-      process.execPath,
-      [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://forged.example/', '--out', forgedOut, '--resume', '--agent', 'claude', '--concurrency', '1', '--i-know-this-is-unisolated'],
-      { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } }
-    );
-    assert(unisoResume.status !== 0, `batch resume unisolated: MUST fail because the pointer is agent-writable (got ${unisoResume.status})`);
-    assert(/REFUSED: --resume cannot be used with --i-know-this-is-unisolated/.test(unisoResume.stderr), `batch resume unisolated: must complain about the pointer being unauthenticated:\n${unisoResume.stderr}`);
 
   } finally {
     rmSync(root, { recursive: true, force: true });
