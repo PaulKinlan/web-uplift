@@ -54,11 +54,11 @@ Process hygiene: Every primitive closed its Chrome instance immediately; 0 orpha
 
 ## 3. Dedicated Probe of Changed & Reversed Guidance (CSP & Security)
 
-Under `modern-web-guidance@0.0.193`, security guidance explicitly mandates:
+Under `modern-web-guidance@0.0.193` and `knowledge/principles.json` (lines 723, 760), security guidance explicitly mandates:
 - `object-src 'none'` to eliminate plugin/Flash execution vectors.
 - `frame-ancestors 'self'` (or `'none'`) for clickjacking mitigation, obsoleting legacy `X-Frame-Options`.
 - `base-uri 'self'` to block `<base href>` injection.
-- `require-trusted-types-for 'script'` when managing script sinks to prevent DOM XSS.
+- `require-trusted-types-for 'script'` in Content-Security-Policy to enforce Trusted Types against DOM XSS.
 - Rejection of `'unsafe-inline'` in `script-src` in favor of nonces or hashes.
 - Enforcement of `Secure` on all HTTPS cookies, and `HttpOnly` specifically for auth/session cookies (principles.json:722-723).
 
@@ -68,7 +68,7 @@ Observed Results on `https://paul.kinlan.me/`:
 1. `object-src 'none'`: **PASS**. Observed directive matches 0.0.193 requirement.
 2. `frame-ancestors 'self'`: **PASS**. Observed directive supersedes missing `X-Frame-Options` per 0.0.193.
 3. `base-uri 'self'`: **PASS**. Verified present.
-4. `require-trusted-types-for 'script'`: **PASS (NOT APPLICABLE / RECOMMENDED)**. Header omits Trusted Types. As evaluated under `defensive-browser-policies`, because this site is a static publication without user-controlled DOM injection sinks, Trusted Types is a recommended hardening enhancement rather than a policy violation.
+4. `require-trusted-types-for 'script'`: **FINDING (F18)**. Header omits mandatory Trusted Types enforcement directive (principles.json:723, 760); DOM sinks remain unconstrained. Flagged as an issue under both `secure-transport-and-headers` and `defensive-browser-policies`.
 5. `script-src`: **FINDING (F18)**. Contains `'unsafe-inline'` and host allowlists (`googletagmanager.com`, `google-analytics.com`, `cdn.commento.io`).
 6. Cookie security: **FINDING (F18)**. All 4 Google Analytics cookies lack the `Secure` attribute. `HttpOnly` is not expected for these tracking cookies since client-side analytics scripts require DOM access.
 
