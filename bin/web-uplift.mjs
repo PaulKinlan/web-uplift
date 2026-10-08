@@ -36,10 +36,10 @@ import {
   writeFileSync,
   existsSync,
   readdirSync,
-  statSync,
+  lstatSync,
 } from 'node:fs';
 import { AGENT_NAMES } from '../runner/agents.mjs';
-import { VENDORED_DIRS, VENDORED_FILES } from '../install-surface.mjs';
+import { VENDORED_DIRS, VENDORED_FILES, VENDORED_DEPENDENCIES } from '../install-surface.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -246,7 +246,7 @@ agent session (uses your subscription).`);
   // project names those packages or their versions, they stay invisible to the
   // consumer's own dependency audit, and two installs of one tool version can
   // carry different code (web-uplift-92b).
-  const dependencyPlan = dependencyCopySteps(['chrome-remote-interface', 'web-features'], join(vendorRoot, 'node_modules'));
+  const dependencyPlan = dependencyCopySteps(VENDORED_DEPENDENCIES, join(vendorRoot, 'node_modules'));
   plan.push(...dependencyPlan.steps);
   for (const file of VENDORED_FILES) {
     plan.push({ action: 'copy-file', from: join(PKG_ROOT, file.source), to: join(vendorRoot, file.dest), what: file.what });
@@ -282,6 +282,11 @@ agent session (uses your subscription).`);
     }
     applyStep(step);
     console.log(`  ${step.action.padEnd(9)} ${relTo}   (${step.what})`);
+    if (step.skippedFiles && step.skippedFiles.length > 0) {
+      for (const skip of step.skippedFiles) {
+        console.log(`    skipped ${skip.path} (${skip.reason})`);
+      }
+    }
   }
   if (!dryRun) {
     const verb = mode === 'update' ? 'Updated' : 'Installed';
@@ -340,7 +345,8 @@ function printExistingInstallNotice(vendorRoot, pkg) {
 
 function applyStep(step) {
   if (step.action === 'copy-dir') {
-    copyDir(step.from, step.to);
+    const acc = copyDir(step.from, step.to);
+    step.skippedFiles = acc.skippedFiles;
   } else if (step.action === 'copy-file') {
     mkdirSync(dirname(step.to), { recursive: true });
     copyFileSync(step.from, step.to);
@@ -355,14 +361,24 @@ function applyStep(step) {
   }
 }
 
-function copyDir(from, to) {
+function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1) {
+  if (depth > 64) {
+    acc.skippedFiles.push({ path: from, reason: 'depth-limit' });
+    return acc;
+  }
   mkdirSync(to, { recursive: true });
   for (const name of readdirSync(from)) {
     const src = join(from, name);
     const dst = join(to, name);
-    if (statSync(src).isDirectory()) copyDir(src, dst);
+    const st = lstatSync(src);
+    if (st.isSymbolicLink()) {
+      acc.skippedFiles.push({ path: src, reason: 'symlink' });
+      continue;
+    }
+    if (st.isDirectory()) copyDir(src, dst, acc, depth + 1);
     else copyFileSync(src, dst);
   }
+  return acc;
 }
 
 function dependencyCopySteps(rootNames, destNodeModules) {

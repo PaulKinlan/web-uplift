@@ -32,6 +32,15 @@ export const TRACKED_COPY_FILES = [
   { source: '.claude/skills/web-audit/SKILL.md', dest: '.pi/skills/web-audit/SKILL.md' },
 ];
 
+// Top-level runtime dependencies the installer vendors into
+// `.web-uplift/node_modules/` by walking each package's `dependencies` to copy the
+// full transitive closure. The closure is recorded name+version in the install
+// manifest as `vendoredDependencies` and verified for completeness by
+// tests/install-copy-symlink.mjs; it is NOT a byte-identity pair in
+// tests/cdp-copy-sync.mjs because `.web-uplift/node_modules/` is generated at
+// install time, not a tracked repo file (there is no in-repo copy to compare).
+export const VENDORED_DEPENDENCIES = ['chrome-remote-interface', 'web-features'];
+
 // Deliberately NOT part of this surface, with the reason:
 //
 //   `.web-uplift/node_modules`  packages copied out of this package's own dependency
