@@ -68,5 +68,5 @@ When exit code 2 fires (or an issue titled "MWG upstream moved: reanalysis neede
 ## Relationship to Sibling Beads
 
 - `web-uplift-0o6`: Implements the delta classifier (categorizing changes as NEW, CHANGED, or REVERSED guides) and consumes the trigger from this check.
-- `web-uplift-vbv`: Extends `knowledge/mwg-state.json` with contract fields (`hash`, `canonicalisation`, `appliedRulesVersion`) for `mwg-train` artifact lineage.
+- `web-uplift-vbv`: The artefact fields (hash, canonicalisation, appliedRulesVersion) have landed in `knowledge/mwg-state.json` and the contract lives in `docs/mwg-train-consumer-contract.md`.
 - `web-uplift-6ov`: Extends the fixture catalog with reversal and positive-control fixtures used to test the delta classifier.

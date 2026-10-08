@@ -57,6 +57,7 @@ try {
   testHeadlessAllowlistMatchesSkillContract();
   testSkillWriteContractGuard();
   testMwgDriftCheckGuard();
+  testMwgArtefactGuard();
   testRedactHeaderList();
   testInstalledEvidenceCli();
   testInstalledTreeRelativeImportsResolve();
@@ -4073,6 +4074,187 @@ function testMwgDriftCheckGuard() {
     assert(
       validResults.has(committedState.lastCheckResult),
       `mwg-drift: case 12 lastCheckResult (${committedState.lastCheckResult}) must be one of never-run, in-sync, delta`
+    );
+  }
+}
+
+function testMwgArtefactGuard() {
+  const script = join(repoRoot, 'tests', 'mwg-artefact.mjs');
+  const fixDir = join(repoRoot, 'tests', 'fixtures', 'mwg-drift');
+  const committedCatalog = join(repoRoot, 'knowledge', 'mwg-catalog.json');
+  const committedState = join(repoRoot, 'knowledge', 'mwg-state.json');
+
+  const runArtefact = (args, envOverrides) => {
+    return spawnSync(process.execPath, [script, ...args], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ...envOverrides,
+      },
+    });
+  };
+
+  // 1. verify against the committed state + catalog exits 0.
+  {
+    const res = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: committedState,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(res.status === 0, `mwg-artefact: case 1 (verify committed) must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 2. committed state shape: artifactId === "web-uplift/mwg-catalog", catalogSha256 matches /^[0-9a-f]{64}$/, canonicalisation is the exact rule string, appliedRulesVersion === "0.0.193", and analysedVersion and appliedRulesVersion are both present as distinct fields.
+  {
+    const state = readJson('knowledge/mwg-state.json');
+    assert(
+      state.artifactId === 'web-uplift/mwg-catalog',
+      `mwg-artefact: case 2 artifactId must be "web-uplift/mwg-catalog", got ${state.artifactId}`
+    );
+    assert(
+      typeof state.catalogSha256 === 'string' && /^[0-9a-f]{64}$/.test(state.catalogSha256),
+      `mwg-artefact: case 2 catalogSha256 must match /^[0-9a-f]{64}$/, got ${state.catalogSha256}`
+    );
+    const expectedCanon =
+      'json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex';
+    assert(
+      state.canonicalisation === expectedCanon,
+      `mwg-artefact: case 2 canonicalisation mismatch:\nexpected: ${expectedCanon}\ngot:      ${state.canonicalisation}`
+    );
+    assert(
+      state.appliedRulesVersion === '0.0.193',
+      `mwg-artefact: case 2 appliedRulesVersion must be "0.0.193", got ${state.appliedRulesVersion}`
+    );
+    assert(
+      Object.prototype.hasOwnProperty.call(state, 'analysedVersion') &&
+      Object.prototype.hasOwnProperty.call(state, 'appliedRulesVersion') &&
+      state.analysedVersion !== undefined &&
+      state.appliedRulesVersion !== undefined,
+      'mwg-artefact: case 2 analysedVersion and appliedRulesVersion must both be present as distinct fields'
+    );
+  }
+
+  // 3. sabotage: copy the state into tmp, flip one hex char of catalogSha256, verify exits 1.
+  {
+    const copyPath = join(tmp, 'mwg-state-sabotage-flip.json');
+    const state = JSON.parse(readFileSync(committedState, 'utf8'));
+    const originalHash = state.catalogSha256;
+    const flippedChar = originalHash[0] === 'a' ? 'b' : 'a';
+    state.catalogSha256 = flippedChar + originalHash.slice(1);
+    writeFileSync(copyPath, JSON.stringify(state, null, 2) + '\n', 'utf8');
+
+    const res = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: copyPath,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(res.status === 1, `mwg-artefact: case 3 (flipped hash) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 4. sabotage: state copy with catalogSha256 removed -> verify exits 1.
+  {
+    const copyPath = join(tmp, 'mwg-state-sabotage-missing-hash.json');
+    const state = JSON.parse(readFileSync(committedState, 'utf8'));
+    delete state.catalogSha256;
+    writeFileSync(copyPath, JSON.stringify(state, null, 2) + '\n', 'utf8');
+
+    const res = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: copyPath,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(res.status === 1, `mwg-artefact: case 4 (missing hash) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 5. sabotage: catalog copy (in tmp) with one guide description string changed -> compute on it differs from the committed hash.
+  {
+    const copyPath = join(tmp, 'mwg-catalog-sabotage-desc.json');
+    const catalog = JSON.parse(readFileSync(committedCatalog, 'utf8'));
+    catalog.guides[0].description += ' modified for sabotage test';
+    writeFileSync(copyPath, JSON.stringify(catalog, null, 2) + '\n', 'utf8');
+
+    const committedStateObj = readJson('knowledge/mwg-state.json');
+    const res = runArtefact(['compute'], {
+      MWG_DRIFT_STATE: committedState,
+      MWG_DRIFT_CATALOG: copyPath,
+    });
+    assert(res.status === 0, `mwg-artefact: case 5 compute must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const computedHash = res.stdout.trim();
+    assert(
+      computedHash !== committedStateObj.catalogSha256,
+      `mwg-artefact: case 5 modified catalog hash (${computedHash}) must differ from committed (${committedStateObj.catalogSha256})`
+    );
+  }
+
+  // 6. canonicalisation determinism: compute on canon-a.json equals compute on canon-b.json; compute on canon-c.json differs from canon-a.json.
+  {
+    const canonA = join(fixDir, 'canon-a.json');
+    const canonB = join(fixDir, 'canon-b.json');
+    const canonC = join(fixDir, 'canon-c.json');
+
+    const resA = runArtefact(['compute'], {
+      MWG_DRIFT_STATE: committedState,
+      MWG_DRIFT_CATALOG: canonA,
+    });
+    assert(resA.status === 0, `mwg-artefact: case 6 compute canon-a failed:\n${resA.stderr || resA.stdout}`);
+    const hashA = resA.stdout.trim();
+
+    const resB = runArtefact(['compute'], {
+      MWG_DRIFT_STATE: committedState,
+      MWG_DRIFT_CATALOG: canonB,
+    });
+    assert(resB.status === 0, `mwg-artefact: case 6 compute canon-b failed:\n${resB.stderr || resB.stdout}`);
+    const hashB = resB.stdout.trim();
+
+    const resC = runArtefact(['compute'], {
+      MWG_DRIFT_STATE: committedState,
+      MWG_DRIFT_CATALOG: canonC,
+    });
+    assert(resC.status === 0, `mwg-artefact: case 6 compute canon-c failed:\n${resC.stderr || resC.stdout}`);
+    const hashC = resC.stdout.trim();
+
+    assert(hashA === hashB, `mwg-artefact: case 6 canon-a hash (${hashA}) must equal canon-b hash (${hashB})`);
+    assert(hashA !== hashC, `mwg-artefact: case 6 canon-c hash (${hashC}) must differ from canon-a hash (${hashA})`);
+  }
+
+  // 7. update on a tmp state copy writes the hash that compute prints (round trip), preserves unrelated keys, and ends the file with a trailing newline.
+  {
+    const copyPath = join(tmp, 'mwg-state-update-roundtrip.json');
+    const originalContent = readFileSync(committedState, 'utf8');
+    const state = JSON.parse(originalContent);
+    state.catalogSha256 = '0000000000000000000000000000000000000000000000000000000000000000';
+    state.unrelatedKey = 'preserved-value';
+    writeFileSync(copyPath, JSON.stringify(state, null, 2) + '\n', 'utf8');
+
+    const computeRes = runArtefact(['compute'], {
+      MWG_DRIFT_STATE: copyPath,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(computeRes.status === 0, `mwg-artefact: case 7 compute failed:\n${computeRes.stderr || computeRes.stdout}`);
+    const expectedHash = computeRes.stdout.trim();
+
+    const updateRes = runArtefact(['update'], {
+      MWG_DRIFT_STATE: copyPath,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(updateRes.status === 0, `mwg-artefact: case 7 update failed:\n${updateRes.stderr || updateRes.stdout}`);
+
+    const rawAfterUpdate = readFileSync(copyPath, 'utf8');
+    assert(rawAfterUpdate.endsWith('\n'), 'mwg-artefact: case 7 updated state file must end with trailing newline');
+
+    const updatedState = JSON.parse(rawAfterUpdate);
+    assert(
+      updatedState.catalogSha256 === expectedHash,
+      `mwg-artefact: case 7 catalogSha256 must match computed hash (${expectedHash}), got ${updatedState.catalogSha256}`
+    );
+    assert(
+      updatedState.unrelatedKey === 'preserved-value',
+      `mwg-artefact: case 7 unrelatedKey must be preserved, got ${updatedState.unrelatedKey}`
+    );
+    assert(
+      updatedState.artifactId === state.artifactId,
+      `mwg-artefact: case 7 artifactId must be preserved, got ${updatedState.artifactId}`
+    );
+    assert(
+      updatedState.analysedVersion === state.analysedVersion,
+      `mwg-artefact: case 7 analysedVersion must be preserved, got ${updatedState.analysedVersion}`
     );
   }
 }

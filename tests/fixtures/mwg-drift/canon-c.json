@@ -1,0 +1,12 @@
+{
+  "alpha": "first",
+  "nested": {
+    "zebra": 1,
+    "apple": 2
+  },
+  "tags": [
+    "beta",
+    "alpha"
+  ],
+  "title": "fixture"
+}
