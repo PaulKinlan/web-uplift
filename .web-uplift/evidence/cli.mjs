@@ -71,6 +71,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  lstatSync,
   existsSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -695,11 +696,24 @@ const SOURCE_REDACTION = {
 
 export function readSourceTree(dir) {
   const acc = { files: [], skippedFiles: [], redactedFiles: 0 };
-  walkSourceTree(resolve(dir), resolve(dir), acc);
+  walkSourceTree(resolve(dir), resolve(dir), acc, 0);
   return { ...acc, redaction: SOURCE_REDACTION };
 }
 
-function walkSourceTree(dir, base, acc) {
+// A symlink escapes the tree by definition unless it is resolved and checked
+// against the root, so the fail-closed decision is to never follow one: an
+// innocuous-named link (notes.txt -> ~/.ssh/id_rsa) is recorded as skipped
+// evidence loss, not read; a link to a directory (vendor -> /etc) is not
+// recursed; and a self-referential link loop can therefore never recurse.
+const SOURCE_MAX_DEPTH = 64;
+
+function walkSourceTree(dir, base, acc, depth) {
+  if (depth > SOURCE_MAX_DEPTH) {
+    // A cycle that survived the symlink skip (or an absurdly deep real tree) is
+    // refused here, never recursed unboundedly.
+    acc.skippedFiles.push({ path: relative(base, dir), reason: 'depth-limit' });
+    return;
+  }
   for (const name of readdirSync(dir)) {
     if (SOURCE_SKIP_DIRS.has(name)) continue;
     const full = join(dir, name);
@@ -708,9 +722,13 @@ function walkSourceTree(dir, base, acc) {
       acc.skippedFiles.push({ path, reason: 'high-risk-name' });
       continue;
     }
-    const st = statSync(full);
+    const st = lstatSync(full);
+    if (st.isSymbolicLink()) {
+      acc.skippedFiles.push({ path, reason: 'symlink' });
+      continue;
+    }
     if (st.isDirectory()) {
-      walkSourceTree(full, base, acc);
+      walkSourceTree(full, base, acc, depth + 1);
     } else if (SOURCE_TEXT_EXT.test(name) && st.size < 256 * 1024) {
       const raw = readFileSync(full, 'utf8');
       const content = redactBodyText(raw);

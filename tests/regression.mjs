@@ -17,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, readSourceTree, redactHeaderList, safeFetch, scanTextForSecrets, waitForInteractEvidence } from '../evidence/cli.mjs';
+import { testSourceTreeSkipsSymlinkFileEscape, testSourceTreeSkipsSymlinkDirEscape, testSourceTreeSkipsSymlinkCycle, testSourceTreeDepthGuard } from './source-tree-symlink.mjs';
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
@@ -76,6 +77,10 @@ try {
   await testSecretsArtifactDoesNotPersistMatches();
   testSecretsScanDoesNotPersistMatchCharacters();
   testSourceTreeRedactsBeforeInlining();
+  testSourceTreeSkipsSymlinkFileEscape();
+  testSourceTreeSkipsSymlinkDirEscape();
+  testSourceTreeSkipsSymlinkCycle();
+  testSourceTreeDepthGuard();
   await testDomSourceArtifactIsRedacted();
   await testEvidenceTruncationReporting();
   await testConsoleEvidence();
