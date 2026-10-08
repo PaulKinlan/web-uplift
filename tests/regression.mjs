@@ -9,6 +9,7 @@
 // argument-validation tests are the exception: they exit before any browser launches, so a
 // child run with an in-process server is safe there.
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -3719,6 +3720,45 @@ function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
     principles.guidanceCatalogVersion === `modern-web-guidance@${catalog.version}`,
     `principles.json guidanceCatalogVersion (${principles.guidanceCatalogVersion}) must match mwg-catalog.json version (modern-web-guidance@${catalog.version})`,
   );
+
+  // Assert canonical catalog has 178 guides, includes prompt-api, and has a sorted guideIds list
+  assert(
+    catalog.guideCount === 178,
+    `mwg-catalog.json guideCount must be 178, got ${catalog.guideCount}`,
+  );
+  assert(
+    catalog.guides.length === 178,
+    `mwg-catalog.json guides array must contain 178 entries, got ${catalog.guides.length}`,
+  );
+  assert(
+    catalogIds.has('prompt-api'),
+    'mwg-catalog.json must contain "prompt-api"',
+  );
+  const promptApi = catalog.guides.find((g) => g.id === 'prompt-api');
+  assert(
+    promptApi?.category === 'built-in-ai',
+    `prompt-api category must be built-in-ai, got ${promptApi?.category}`,
+  );
+  assert(
+    Array.isArray(catalog.guideIds) && catalog.guideIds.length === 178,
+    'mwg-catalog.json must declare a sorted guideIds array of 178 items',
+  );
+  assert(
+    catalog.guideIds.includes('prompt-api'),
+    'mwg-catalog.json guideIds must include prompt-api',
+  );
+  const sortedIds = [...catalog.guideIds].sort();
+  assert(
+    JSON.stringify(catalog.guideIds) === JSON.stringify(sortedIds),
+    'mwg-catalog.json guideIds must be sorted ascending',
+  );
+  if (catalog.guideIdsSha256) {
+    const computedHash = createHash('sha256').update(catalog.guideIds.join('\n')).digest('hex');
+    assert(
+      catalog.guideIdsSha256 === computedHash,
+      `mwg-catalog.json guideIdsSha256 must match sha256 of newline-joined guideIds (expected ${computedHash}, got ${catalog.guideIdsSha256})`,
+    );
+  }
 
   // 1. Every catalog guide is covered by exact ID in principles.json, and no unknown guide IDs exist
   const coveredGuides = new Set();

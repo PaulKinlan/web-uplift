@@ -1024,6 +1024,7 @@
           "detectableVia": "HINT: source inspection for built-in AI (language model / summariser) usage. The model chooses.",
           "guides": [
             "language-model",
+            "prompt-api",
             "summarizer",
             "on-device built-in ai language model summarizer"
           ]
