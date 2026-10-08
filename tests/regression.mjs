@@ -4690,9 +4690,10 @@ function testMwgDriftClassifierGuard() {
     assert(resB.status === 1, `mwg-drift-classify: case 14b (both corpora empty) must exit 1, got ${resB.status}`);
   }
 
-  // 15. --extract on a package whose USE_CASES table carries a traversal id:
-  // the escape target exists on disk but must NOT be read; only the
-  // legitimate guide is extracted.
+  // 15. --extract on a package whose USE_CASES table carries a traversal id
+  // and a slug-valid entry whose guide file is an escaping symlink: the escape
+  // target exists on disk but must NOT be read; only the legitimate guide is
+  // extracted.
   {
     const outPath = join(tmp, 'mwg-extract-evil-corpus.json');
     const res = runClassifier([

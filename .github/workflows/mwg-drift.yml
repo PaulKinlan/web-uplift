@@ -59,7 +59,8 @@ jobs:
           fi
 
       - name: File reanalysis issue
-        if: steps.run_check.outputs.exit_code == '2'
+        # always(): a failed state push must not suppress the delta alert.
+        if: always() && steps.run_check.outputs.exit_code == '2'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHECK_OUTPUT: ${{ steps.run_check.outputs.check_output }}
@@ -84,7 +85,8 @@ jobs:
           fi
 
       - name: File check-failure issue
-        if: steps.run_check.outputs.exit_code == '1'
+        # always(): a failed state push must not suppress the failure alert.
+        if: always() && steps.run_check.outputs.exit_code == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHECK_OUTPUT: ${{ steps.run_check.outputs.check_output }}
@@ -109,6 +111,7 @@ jobs:
           fi
 
       - name: Run status
+        if: always()
         run: |
           if [ "${{ steps.run_check.outputs.exit_code }}" = "0" ] || [ "${{ steps.run_check.outputs.exit_code }}" = "2" ]; then
             exit 0

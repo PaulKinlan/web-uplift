@@ -30,7 +30,7 @@
 // Environment variable overrides:
 //   MWG_DRIFT_BASIS: Path to rule basis JSON (default: knowledge/mwg-rule-basis.json).
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -192,10 +192,20 @@ function extractFromPackage(packageDir, versionStr) {
           join(packageDir, `${id}.md`),
         ];
         // Belt and braces: even with slug validation, never read outside the
-        // unpacked package directory.
+        // unpacked package directory, and never through a symlink (resolve()
+        // checks the spelling; realpathSync() checks the truth).
         const foundPath = fileCandidates.find((p) => {
-          const r = resolve(p);
-          return (r === packageRoot || r.startsWith(packageRoot + '/')) && existsSync(r);
+          const spelled = resolve(p);
+          if (!(spelled === packageRoot || spelled.startsWith(packageRoot + '/')) || !existsSync(spelled)) {
+            return false;
+          }
+          let real;
+          try {
+            real = realpathSync(spelled);
+          } catch {
+            return false;
+          }
+          return real === packageRoot || real.startsWith(packageRoot + '/');
         });
         if (foundPath) {
           guides[id] = readFileSync(foundPath, 'utf8');
