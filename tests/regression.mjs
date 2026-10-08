@@ -2971,8 +2971,9 @@ async function testThrottlingConditions() {
       `throttle: mobile-lighthouse must imply 4x CPU + 150ms RTT: ${JSON.stringify(mobile.conditions)}`);
 
     // The shaping must be REAL, not just recorded: a slow-3g RTT of 2000ms
-    // shows up in a fetch the page makes.
-    const probe = { quiet: true, wait: 100, expr: '(async()=>{const t=performance.now(); await fetch("/p"); return performance.now()-t;})()' };
+    // shows up in a fetch the page makes (warm up the socket first so cold-start
+    // socket setup on a loaded VM does not inflate plain latency).
+    const probe = { quiet: true, wait: 100, expr: '(async()=>{await fetch("/p"); const t=performance.now(); await fetch("/p"); return performance.now()-t;})()' };
     const plain = await gather('evaluate', base, probe);
     const throttled = await gather('evaluate', base, { ...probe, network: 'slow-3g' });
     assert(throttled > plain + 1000,
