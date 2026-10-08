@@ -62,6 +62,7 @@ jobs:
         if: steps.run_check.outputs.exit_code == '2'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_OUTPUT: ${{ steps.run_check.outputs.check_output }}
         run: |
           OPEN_COUNT=$(gh issue list --state open --search "in:title \"MWG upstream moved: reanalysis needed\"" --json title --jq length)
           if [ "$OPEN_COUNT" = "0" ]; then
@@ -71,7 +72,7 @@ jobs:
           Check output:
           ```
           EOF
-            echo "${{ steps.run_check.outputs.check_output }}" >> /tmp/issue-body.md
+            printf '%s\n' "$CHECK_OUTPUT" >> /tmp/issue-body.md
             cat << 'EOF' >> /tmp/issue-body.md
           ```
 
@@ -86,6 +87,7 @@ jobs:
         if: steps.run_check.outputs.exit_code == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_OUTPUT: ${{ steps.run_check.outputs.check_output }}
         run: |
           OPEN_COUNT=$(gh issue list --state open --search "in:title \"MWG drift check is failing\"" --json title --jq length)
           if [ "$OPEN_COUNT" = "0" ]; then
@@ -97,7 +99,7 @@ jobs:
           Check output:
           ```
           EOF
-            echo "${{ steps.run_check.outputs.check_output }}" >> /tmp/issue-body.md
+            printf '%s\n' "$CHECK_OUTPUT" >> /tmp/issue-body.md
             cat << 'EOF' >> /tmp/issue-body.md
           ```
           EOF
@@ -147,6 +149,7 @@ jobs:
         if: steps.run_freshness.outputs.exit_code != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRESHNESS_OUTPUT: ${{ steps.run_freshness.outputs.freshness_output }}
         run: |
           OPEN_COUNT=$(gh issue list --state open --search "in:title \"MWG drift check heartbeat stale\"" --json title --jq length)
           if [ "$OPEN_COUNT" = "0" ]; then
@@ -156,7 +159,7 @@ jobs:
           Check output:
           ```
           EOF
-            echo "${{ steps.run_freshness.outputs.freshness_output }}" >> /tmp/issue-body.md
+            printf '%s\n' "$FRESHNESS_OUTPUT" >> /tmp/issue-body.md
             cat << 'EOF' >> /tmp/issue-body.md
           ```
           EOF

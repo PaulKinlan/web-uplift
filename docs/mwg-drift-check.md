@@ -24,7 +24,7 @@ The state file tracks both the last in-depth analysis and recurring upstream che
 - `lastCheckSource` (string or null): URL or file path queried during the last check run (for example, the npm registry URL or a local fixture path).
 - `lastCheckResult` (string): Outcome of the last check run. One of `"never-run"`, `"in-sync"`, or `"delta"`.
 
-Note: the artefact fields (`artifactId`, `catalogSha256`, `guideIdsSha256`, `guideCount`, `canonicalisation`, `appliedRulesVersion`) landed in web-uplift-vbv and are maintained by `tests/mwg-artefact.mjs update` at reanalysis time.
+Note: the artefact fields (`artifactId`, `catalogSha256`, `guideIdsSha256`, `guideCount`, `canonicalisation`, `appliedRulesVersion`) landed in web-uplift-vbv; the three derived values (`catalogSha256`, `guideIdsSha256`, `guideCount`) are refreshed by `tests/mwg-artefact.mjs update` at reanalysis time.
 
 ## Exit Code Contract
 
@@ -33,7 +33,7 @@ Note: the artefact fields (`artifactId`, `catalogSha256`, `guideIdsSha256`, `gui
 - `0`: In sync (upstream version matches `analysedVersion`), or (in `--freshness-only` mode) the recorded heartbeat is fresh.
 - `1`: Check failure (loud sabotage/absence signal). The check itself could not run or sanity checks failed: state file missing/unparseable, catalog missing/unparseable, state `analysedVersion` does not match catalog `version`, upstream registry unreachable or timed out, or upstream payload empty/unparseable/missing a semver string. A blind check must never exit 0.
 - `2`: Version delta detected (upstream version differs from `analysedVersion`). Output indicates whether upstream is newer or older. This exit code serves as the signal to trigger full reanalysis.
-- `3`: Freshness guard failed (`--freshness-only` mode only): `lastCheckAt` is missing, null, or older than `--max-age`. A never-run state counts as stale.
+- `3`: Freshness guard failed (`--freshness-only` mode only): `lastCheckAt` is missing, null, unparseable, implausibly future-dated, or older than `--max-age`. A never-run state counts as stale.
 - `64`: Usage error (unrecognized CLI flags or invalid duration formats).
 
 ## The Trigger: Delta-Gated, Not Clock-Driven
@@ -60,7 +60,7 @@ Documented limitation: GitHub Actions automatically disables scheduled workflows
 A recurring monitor must never fail silently. The total-absence guard uses a two-layer defense:
 
 1. Loud failure on blind checks (Exit code 1): If network requests fail, registry responses are malformed, or the state file drifts from `knowledge/mwg-catalog.json`, the script immediately exits 1 without updating `lastCheckAt`. A failing check never appears fresh.
-2. Heartbeat persistence and freshness verification (Exit code 3): When running with `--write`, successful checks (exit codes 0 and 2) write `lastCheckAt = now` to `knowledge/mwg-state.json`, which CI commits back to the repository. The companion freshness job inspects `lastCheckAt`. If scheduled executions stop running (due to workflow disabling, infrastructure outages, or sabotage), the heartbeat expires and triggers an alert.
+2. Heartbeat persistence and freshness verification (Exit code 3): When running with `--write`, successful checks (exit codes 0 and 2) write `lastCheckAt = now` to `knowledge/mwg-state.json`, which CI commits back to the repository. The companion freshness job inspects `lastCheckAt`. Its detection scope is precise: because the freshness job runs after the check job in the same workflow (and the check job has just refreshed `lastCheckAt` when it succeeds), it catches a heartbeat that stops advancing while the check itself keeps succeeding (for example `--write` being dropped, state commits failing, or a hand-edited/future-dated timestamp). A wholly dead schedule (GitHub disabling the cron after ~60 days of repo inactivity) is exactly what CI cannot self-detect, which is why the VM-level timer is the authoritative absence guard.
 
 ## Responding to an Upstream Delta
 
@@ -118,7 +118,7 @@ Reversal detection is deterministic and anchor-based:
 
 `knowledge/mwg-rule-basis.json` stores verbatim anchor excerpts from the analyzed guide text that each implemented rule relies on. When guide text moves:
 
-- If every anchor of every implemented rule for that guide remains present as a verbatim substring in the new text, the delta is classified as **CHANGED** (the rule's factual premise holds).
+- If every anchor of every implemented rule for that guide remains present as a verbatim substring in the new text, the delta is classified as **CHANGED** (the rule's verbatim anchor basis is intact; substring presence is a floor, and a human still reads the changed text during the reanalysis).
 - If any anchor is missing, the delta is classified as **REVERSED**. The output explicitly identifies the affected rule IDs and lists the missing anchor substrings.
 
 ### Withdrawn Guide Rule

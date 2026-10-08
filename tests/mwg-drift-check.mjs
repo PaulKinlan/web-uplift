@@ -19,8 +19,9 @@
 //      This is the sabotage/absence signal: a blind check must never exit 0.
 //   2: Version delta detected (upstream != analysedVersion). Output notes whether
 //      upstream is newer or older. Triggers full reanalysis.
-//   3: Freshness guard failed (freshness mode only): lastCheckAt missing/null or
-//      older than --max-age. Never-run counts as stale.
+//   3: Freshness guard failed (freshness mode only): lastCheckAt missing/null,
+//      unparseable, implausibly future-dated, or older than --max-age.
+//      Never-run counts as stale.
 //  64: Usage error (unknown flags, invalid arguments).
 //
 // Environment variable overrides (fixtures, tests, offline runs):
@@ -36,7 +37,9 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
-const VERSION_PATTERN = /^\d+\.\d+\.\d+/;
+// Anchored: a version is the whole string, so a payload smuggling a newline or
+// extra text cannot pass validation.
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 function parseDuration(val) {
   if (typeof val !== 'string' || val.trim().length === 0) return null;
@@ -180,6 +183,14 @@ if (freshnessOnly) {
   }
 
   const ageMs = Date.now() - lastCheckTime;
+  // A future-dated lastCheckAt (hand-edit, skewed writer) must not read as
+  // fresh indefinitely; allow only small clock skew.
+  if (ageMs < -5 * 60 * 1000) {
+    console.error(
+      `STALE: lastCheckAt is ${formatDuration(-ageMs)} in the FUTURE (hand-edit or clock skew); refusing to treat it as fresh`
+    );
+    process.exit(3);
+  }
   if (ageMs > maxAgeMs) {
     console.error(
       `STALE: last check was ${formatDuration(ageMs)} ago, exceeding max-age threshold of ${formatDuration(maxAgeMs)}`

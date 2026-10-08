@@ -39,7 +39,7 @@ const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 export const CANONICALISATION_RULE =
-  'json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex';
+  'json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation';
 
 export function canonicalise(val) {
   if (val === null || typeof val !== 'object') {
@@ -122,7 +122,28 @@ function readStateFile(path) {
   return parsed;
 }
 
-// Only execute CLI runner when invoked directly
+// A catalog may declare its own set identity (guideIds / guideIdsSha256 /
+// guideCount). The declarations must match the values derived from its guides
+// array; disagreement is an extractor defect and must fail closed (the
+// count-vs-set defect class behind web-uplift-968). Returns mismatch strings.
+function declarationMismatches(catalog, derivedIds, ids) {
+  const mismatches = [];
+  if (catalog.guideIds !== undefined) {
+    const declared = catalog.guideIds;
+    const valid = Array.isArray(declared) && declared.every((x) => typeof x === 'string');
+    if (!valid || declared.length !== derivedIds.length || declared.some((v, i) => v !== derivedIds[i])) {
+      mismatches.push('catalog guideIds declaration does not match the sorted ids of its guides array');
+    }
+  }
+  if (catalog.guideIdsSha256 !== undefined && catalog.guideIdsSha256 !== ids.guideIdsSha256) {
+    mismatches.push(`catalog guideIdsSha256 declaration (${catalog.guideIdsSha256}) does not match the derived set hash (${ids.guideIdsSha256})`);
+  }
+  if (catalog.guideCount !== undefined && catalog.guideCount !== ids.guideCount) {
+    mismatches.push(`catalog guideCount declaration (${catalog.guideCount}) does not match its guides array length (${ids.guideCount})`);
+  }
+  return mismatches;
+}
+
 const isDirectRun = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 
 if (isDirectRun) {
@@ -201,23 +222,9 @@ if (isDirectRun) {
     }
 
     // If the catalog declares its own set identity, cross-check the declaration
-    // against the values derived from its guides array: a catalog whose declared
-    // set disagrees with its own guide entries is an extractor defect and must
-    // fail closed (the count-vs-set defect class behind web-uplift-968).
+    // against the values derived from its guides array.
     const derivedIds = catalog.guides.map((g) => g.id).sort();
-    if (catalog.guideIds !== undefined) {
-      const declared = catalog.guideIds;
-      const valid = Array.isArray(declared) && declared.every((x) => typeof x === 'string');
-      if (!valid || declared.length !== derivedIds.length || declared.some((v, i) => v !== derivedIds[i])) {
-        mismatches.push('catalog guideIds declaration does not match the sorted ids of its guides array');
-      }
-    }
-    if (catalog.guideIdsSha256 !== undefined && catalog.guideIdsSha256 !== ids.guideIdsSha256) {
-      mismatches.push(`catalog guideIdsSha256 declaration (${catalog.guideIdsSha256}) does not match the derived set hash (${ids.guideIdsSha256})`);
-    }
-    if (catalog.guideCount !== undefined && catalog.guideCount !== ids.guideCount) {
-      mismatches.push(`catalog guideCount declaration (${catalog.guideCount}) does not match its guides array length (${ids.guideCount})`);
-    }
+    mismatches.push(...declarationMismatches(catalog, derivedIds, ids));
     if (mismatches.length > 0) {
       for (const m of mismatches) console.error(`FAIL: ${m}`);
       process.exit(1);
@@ -232,6 +239,16 @@ if (isDirectRun) {
     const state = readStateFile(statePath);
     const computed = computeSha256(catalog);
     const ids = computeGuideIds(catalog);
+
+    // Never write a state that verify would then reject: refuse to update from
+    // a catalog whose own declared set identity disagrees with its guides array.
+    const derivedIds = catalog.guides.map((g) => g.id).sort();
+    const declMismatches = declarationMismatches(catalog, derivedIds, ids);
+    if (declMismatches.length > 0) {
+      for (const m of declMismatches) console.error(`FAIL: ${m}`);
+      console.error('FAIL: refusing to update the state from a catalog whose declarations are inconsistent');
+      process.exit(1);
+    }
 
     state.catalogSha256 = computed;
     state.guideIdsSha256 = ids.guideIdsSha256;

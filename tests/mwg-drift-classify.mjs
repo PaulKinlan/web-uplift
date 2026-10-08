@@ -31,10 +31,11 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const VERSION_PATTERN = /^\d+\.\d+\.\d+/;
+// Anchored: a version is the whole string, so a payload smuggling a newline or
+// extra text cannot pass validation.
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 function printUsageAndExit(code = 64) {
   const msg = `Usage:
@@ -160,26 +161,26 @@ function extractFromPackage(packageDir, versionStr) {
     }
     const match = src.match(/var USE_CASES\s*=\s*(\[[\s\S]*?\n\];)/);
     if (match) {
-      let list = null;
-      try {
-        list = vm.runInNewContext(match[1]);
-      } catch (err) {
-        console.error(`FAIL: cannot evaluate USE_CASES table: ${err.message}`);
-        process.exit(1);
-      }
-      if (Array.isArray(list)) {
-        for (const u of list) {
-          if (!u || !u.id) continue;
-          const fileCandidates = [
-            join(packageDir, 'skills', 'modern-web-guidance', 'guides', u.category || '', `${u.id}.md`),
-            join(packageDir, 'guides', u.category || '', `${u.id}.md`),
-            join(packageDir, 'skills', 'modern-web-guidance', 'guides', `${u.id}.md`),
-            join(packageDir, `${u.id}.md`),
-          ];
-          const foundPath = fileCandidates.find((p) => existsSync(p));
-          if (foundPath) {
-            guides[u.id] = readFileSync(foundPath, 'utf8');
-          }
+      // Parse, never eval: the table is not pure JSON (single-quoted literals),
+      // so pull each entry's id and category declaratively. A hostile or
+      // malformed package must never get code execution in this lane tool.
+      const table = match[1];
+      const idMatches = [...table.matchAll(/"id"\s*:\s*"([^"\n]+)"/g)];
+      for (let k = 0; k < idMatches.length; k++) {
+        const id = idMatches[k][1];
+        const windowEnd = k + 1 < idMatches.length ? idMatches[k + 1].index : table.length;
+        const windowText = table.slice(idMatches[k].index, windowEnd);
+        const catMatch = windowText.match(/"category"\s*:\s*"([^"\n]+)"/);
+        const category = catMatch ? catMatch[1] : '';
+        const fileCandidates = [
+          join(packageDir, 'skills', 'modern-web-guidance', 'guides', category, `${id}.md`),
+          join(packageDir, 'guides', category, `${id}.md`),
+          join(packageDir, 'skills', 'modern-web-guidance', 'guides', `${id}.md`),
+          join(packageDir, `${id}.md`),
+        ];
+        const foundPath = fileCandidates.find((p) => existsSync(p));
+        if (foundPath) {
+          guides[id] = readFileSync(foundPath, 'utf8');
         }
       }
     }

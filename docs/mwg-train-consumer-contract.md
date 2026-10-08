@@ -14,7 +14,7 @@ The artefact interface consists of:
 - `artifactId`: The canonical artefact identifier (`"web-uplift/mwg-catalog"`).
 - `catalogSha256`: The full 64-character lowercase hex SHA-256 digest of the canonicalised catalog (`knowledge/mwg-catalog.json`).
 - `canonicalisation`: The exact deterministic canonicalisation rule string:
-  `"json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex"`.
+  `"json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation"`.
 - `analysedVersion`: The upstream package version analysed during the snapshot (matching the version pinned in knowledge/principles.json).
 - `appliedRulesVersion`: The upstream package version that the rules actually applied correspond to.
 
@@ -77,7 +77,7 @@ To verify the catalog against the pin, the consumer executes the following canon
 2. Canonicalise the data structure recursively:
    - For primitive values (strings, numbers, booleans, null), keep value as-is.
    - For arrays, preserve element order and recursively canonicalise each element.
-   - For objects, sort all own property keys lexicographically, recursively canonicalise each value, and construct the sorted key-value mapping.
+   - For objects, sort all own property keys lexicographically, recursively canonicalise each value, and construct the sorted key-value mapping. Note the normative refinement in the rule string: object keys are emitted in JS property-enumeration order, so integer-like keys sort ascending numeric rather than lexicographic; `tests/mwg-artefact.mjs` is the normative implementation.
 3. Serialize to compact JSON without indentation or whitespace between tokens (`JSON.stringify(canon)`).
 4. Encode the serialized JSON string as UTF-8 bytes.
 5. Compute the SHA-256 cryptographic digest of the UTF-8 bytes and format as 64 lowercase hexadecimal characters.

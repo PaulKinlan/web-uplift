@@ -4116,7 +4116,7 @@ function testMwgArtefactGuard() {
       `mwg-artefact: case 2 catalogSha256 must match /^[0-9a-f]{64}$/, got ${state.catalogSha256}`
     );
     const expectedCanon =
-      'json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex';
+      'json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation';
     assert(
       state.canonicalisation === expectedCanon,
       `mwg-artefact: case 2 canonicalisation mismatch:\nexpected: ${expectedCanon}\ngot:      ${state.canonicalisation}`
@@ -4318,7 +4318,8 @@ function testMwgArtefactGuard() {
   }
 
   // 10. sabotage: the catalog's own declared set identity disagrees with its
-  // guides array -> verify exits 1 (extractor defects fail closed).
+  // guides array -> update REFUSES to write (never write a state verify would
+  // reject) and verify exits 1 (extractor defects fail closed).
   {
     const catCopy = join(tmp, 'mwg-catalog-sabotage-declared-count.json');
     const catalog = JSON.parse(readFileSync(committedCatalog, 'utf8'));
@@ -4328,21 +4329,19 @@ function testMwgArtefactGuard() {
       MWG_DRIFT_STATE: committedState,
       MWG_DRIFT_CATALOG: catCopy,
     });
-    // catalogSha256 also changes because the catalog content changed; state
-    // mismatch alone already fails, so run update into a tmp state first to
-    // isolate the DECLARED-vs-DERIVED cross-check.
     const stateCopy = join(tmp, 'mwg-state-for-declared-count.json');
     writeFileSync(stateCopy, readFileSync(committedState, 'utf8'), 'utf8');
     const upd = runArtefact(['update'], {
       MWG_DRIFT_STATE: stateCopy,
       MWG_DRIFT_CATALOG: catCopy,
     });
-    assert(upd.status === 0, `mwg-artefact: case 10 update failed:\n${upd.stderr || upd.stdout}`);
-    const res2 = runArtefact(['verify'], {
-      MWG_DRIFT_STATE: stateCopy,
-      MWG_DRIFT_CATALOG: catCopy,
-    });
-    assert(res.status === 1 && res2.status === 1, `mwg-artefact: case 10 (declared count disagrees with guides array) must exit 1, got ${res.status} and ${res2.status}`);
+    assert(upd.status === 1, `mwg-artefact: case 10 update must REFUSE a catalog with inconsistent declarations, got ${upd.status}:\n${upd.stderr || upd.stdout}`);
+    const untouched = JSON.parse(readFileSync(stateCopy, 'utf8'));
+    assert(
+      untouched.catalogSha256 === readJson('knowledge/mwg-state.json').catalogSha256,
+      'mwg-artefact: case 10 refused update must leave the state file untouched'
+    );
+    assert(res.status === 1, `mwg-artefact: case 10 verify must exit 1, got ${res.status}`);
   }
 
   // 11. catalog declares a guideIdsSha256: wrong value -> exit 1; the correct
@@ -4369,24 +4368,24 @@ function testMwgArtefactGuard() {
     catalog.guideIdsSha256 = (state.guideIdsSha256[0] === 'a' ? 'b' : 'a') + state.guideIdsSha256.slice(1);
     const catBad = join(tmp, 'mwg-catalog-declared-ids-bad.json');
     writeFileSync(catBad, JSON.stringify(catalog, null, 2) + '\n', 'utf8');
-    // Refresh the state against the bad catalog so catalogSha256 matches and
-    // only the declared-vs-derived cross-check can fail.
+    // update refuses to write from a catalog whose declaration disagrees with
+    // its guides array, and names the declared-vs-derived mismatch.
     const stateCopyBad = join(tmp, 'mwg-state-for-declared-ids-bad.json');
     writeFileSync(stateCopyBad, readFileSync(committedState, 'utf8'), 'utf8');
     const updBad = runArtefact(['update'], {
       MWG_DRIFT_STATE: stateCopyBad,
       MWG_DRIFT_CATALOG: catBad,
     });
-    assert(updBad.status === 0, `mwg-artefact: case 11 update (bad) failed:\n${updBad.stderr || updBad.stdout}`);
+    assert(updBad.status === 1, `mwg-artefact: case 11 update must refuse the bad declaration, got ${updBad.status}`);
+    assert(
+      (updBad.stderr + updBad.stdout).includes('guideIdsSha256 declaration'),
+      `mwg-artefact: case 11 must name the declared-vs-derived mismatch:\n${updBad.stderr || updBad.stdout}`
+    );
     const bad = runArtefact(['verify'], {
       MWG_DRIFT_STATE: stateCopyBad,
       MWG_DRIFT_CATALOG: catBad,
     });
     assert(bad.status === 1, `mwg-artefact: case 11 (declared guideIdsSha256 wrong) must exit 1, got ${bad.status}`);
-    assert(
-      (bad.stderr + bad.stdout).includes('guideIdsSha256 declaration'),
-      `mwg-artefact: case 11 must name the declared-vs-derived mismatch:\n${bad.stderr || bad.stdout}`
-    );
   }
 }
 
@@ -4579,6 +4578,43 @@ function testMwgDriftClassifierGuard() {
       '--basis', basisFixture,
     ]);
     assert(res.status === 0, `mwg-drift-classify: case 10 must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 11. --extract on the fixture package: the USE_CASES table is parsed
+  // declaratively (it is deliberately not pure JSON), both guides are found
+  // through their category paths, and extraction exits 0.
+  {
+    const outPath = join(tmp, 'mwg-extract-fixture-corpus.json');
+    const res = runClassifier([
+      '--extract', join(fixDir, 'pkg-ok'),
+      '--version', '1.0.0',
+      '-o', outPath,
+    ]);
+    assert(res.status === 0, `mwg-drift-classify: case 11 extract must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
+    const corpus = JSON.parse(readFileSync(outPath, 'utf8'));
+    assert(corpus.version === '1.0.0', `mwg-drift-classify: case 11 corpus version must be 1.0.0, got ${corpus.version}`);
+    assert(
+      typeof corpus.guides['alpha-guide'] === 'string' && corpus.guides['alpha-guide'].includes('Fixture text for alpha-guide'),
+      'mwg-drift-classify: case 11 alpha-guide text must come from its category path'
+    );
+    assert(
+      typeof corpus.guides['beta-guide'] === 'string' && corpus.guides['beta-guide'].includes('Fixture text for beta-guide'),
+      'mwg-drift-classify: case 11 beta-guide text must come from its category path'
+    );
+    assert(
+      Object.keys(corpus.guides).length === 2,
+      `mwg-drift-classify: case 11 must extract exactly 2 guides, got ${Object.keys(corpus.guides).length}`
+    );
+  }
+
+  // 12. --extract on an empty package dir must fail loud (exit 1), never emit
+  // an empty corpus silently.
+  {
+    const res = runClassifier([
+      '--extract', join(fixDir, 'pkg-empty'),
+      '--version', '1.0.0',
+    ]);
+    assert(res.status === 1, `mwg-drift-classify: case 12 extract of an empty package must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
   }
 }
 // A page controls the manifest href and the redirects the raw fetch follows, and

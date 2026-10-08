@@ -2,7 +2,7 @@
   "$comment": "Tracks the Modern Web Guidance catalog drift state for web-uplift. tests/mwg-drift-check.mjs maintains the lastCheck* fields across recurring upstream checks. analysedVersion and analysedAt describe the last full reanalysis and must move together with knowledge/mwg-catalog.json version and retrievedAt. Downstream mwg-train artefact fields (artifactId, catalogSha256, canonicalisation, appliedRulesVersion) define the versioned artefact contract (see docs/mwg-train-consumer-contract.md).",
   "artifactId": "web-uplift/mwg-catalog",
   "catalogSha256": "7931ac35543010450272fadebb5d3904ea041f91cd5a0d2695de5fac41da021f",
-  "canonicalisation": "json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex",
+  "canonicalisation": "json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation",
   "analysedVersion": "0.0.193",
   "appliedRulesVersion": "0.0.193",
   "analysedAt": "2026-10-08T14:19:37.712Z",
