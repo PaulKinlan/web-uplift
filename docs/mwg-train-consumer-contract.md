@@ -38,7 +38,10 @@ The contract explicitly distinguishes `analysedVersion` from `appliedRulesVersio
 Downstream consumer `mwg-train` must observe the following operational constraints:
 
 ### Pinning Discipline
-`mwg-train` pins `catalogSha256`, `analysedVersion`, and `appliedRulesVersion`. The catalog snapshot and the state descriptor are committed directly in the consumer repository.
+`mwg-train` pins `catalogSha256`, `guideIdsSha256`, `guideCount`, `analysedVersion`, and `appliedRulesVersion`. The catalog snapshot and the state descriptor are committed directly in the consumer repository.
+
+### Set Identity, Not Count
+A guide count is not an identity: two catalog versions can share a count while holding different guide sets (this exact defect hid the `prompt-api` divergence tracked in `web-uplift-968`). The artefact therefore carries `guideIdsSha256`, the sha256 of the canonicalised JSON array of the catalog's guide ids sorted lexicographically, alongside `guideCount`. Consumers must compare SETS: recompute `guideIdsSha256` from the committed catalog snapshot and fail closed on any mismatch, then use the catalog's own `guides[].id` list as the set to diff against their extractor's set. Never accept a bare count match as proof of identity.
 
 ### No Live Cross-VM Coupling
 There is NO live cross-VM coupling:
@@ -50,7 +53,7 @@ The artefact file and its hash are transferred solely at pin-update time through
 
 ### Fail-Closed Execution
 `mwg-train` must FAIL CLOSED:
-- If `catalogSha256` does not match the recomputed hash of the catalog, the pipeline STOPS immediately. It must never proceed with a warning or fallback.
+- If `catalogSha256` or `guideIdsSha256` does not match the recomputed hashes of the catalog, or `guideCount` does not match its guide array length, the pipeline STOPS immediately. It must never proceed with a warning or fallback.
 - If the artefact file is missing, empty, or unparseable, the pipeline STOPS immediately.
 - A blind or unverified execution is an audit failure.
 
@@ -58,6 +61,8 @@ This mirrors `mwg-train`'s existing pattern in `docs/eval/rules.json` (`rule_set
 ```json
 {
   "sha256": "<64-character-hex-digest>",
+  "guideIdsSha256": "<64-character-hex-digest>",
+  "guideCount": 0,
   "analysedVersion": "<version-string>",
   "appliedRulesVersion": "<version-string>",
   "url": "<provenance-reference-or-local-path>"

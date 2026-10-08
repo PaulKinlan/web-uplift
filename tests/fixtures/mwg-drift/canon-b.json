@@ -1,1 +1,13 @@
-{"title":"fixture","tags":["alpha","beta"],"nested":{"apple":2,"zebra":1},"alpha":"first"}
+{
+  "title": "fixture",
+  "tags": [
+    "alpha",
+    "beta"
+  ],
+  "nested": {
+    "apple": 2,
+    "zebra": 1
+  },
+  "alpha": "first",
+  "guides": []
+}

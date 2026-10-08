@@ -9,15 +9,20 @@
 //   "json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex"
 //
 // Usage:
-//   node tests/mwg-artefact.mjs compute    # print the full sha256 hex of the canonicalised catalog
-//   node tests/mwg-artefact.mjs verify     # recompute and compare to catalogSha256 in the state file
-//   node tests/mwg-artefact.mjs update     # recompute and write catalogSha256 into the state file (2-space pretty JSON + trailing newline, preserving other keys)
+//   node tests/mwg-artefact.mjs compute    # print a JSON object {catalogSha256, guideIdsSha256, guideCount}
+//   node tests/mwg-artefact.mjs verify     # recompute all three and compare to the state file
+//   node tests/mwg-artefact.mjs update     # recompute and write all three into the state file (2-space pretty JSON + trailing newline, preserving other keys)
 //
 // Exit codes:
 //    0: Success (exact match on verify, successful compute, successful update).
 //    1: Failure (verify mismatch, unreadable/unparseable files, missing or invalid
-//       catalogSha256 in state). Fail-closed: never exits 0 when it cannot verify.
+//       catalogSha256/guideIdsSha256/guideCount in state). Fail-closed: never
+//       exits 0 when it cannot verify.
 //   64: Usage error (unknown command, invalid argument count).
+//
+// Set identity: alongside catalogSha256 the artefact carries guideIdsSha256 (the
+// sha256 of the canonicalised JSON array of guide ids sorted lexicographically)
+// and guideCount, because a count is not an identity: consumers compare SETS.
 //
 // Environment variable overrides:
 //   MWG_DRIFT_STATE: Path to state JSON (default: knowledge/mwg-state.json).
@@ -56,6 +61,14 @@ export function computeSha256(data) {
   return createHash('sha256').update(encoded).digest('hex');
 }
 
+// Set identity, not just a count: the sha256 of the canonicalised JSON array of
+// the catalog's guide ids sorted lexicographically. A count alone cannot tell
+// "same set" from "same size" (the 177-vs-178 prompt-api divergence, web-uplift-968).
+export function computeGuideIds(catalog) {
+  const ids = catalog.guides.map((g) => g.id).sort();
+  return { guideIdsSha256: computeSha256(ids), guideCount: ids.length };
+}
+
 function readCatalogFile(path) {
   let raw;
   try {
@@ -71,8 +84,12 @@ function readCatalogFile(path) {
     console.error(`FAIL: cannot parse catalog at ${path}: ${err.message}`);
     process.exit(1);
   }
-  if (parsed === null || typeof parsed !== 'object') {
-    console.error(`FAIL: catalog at ${path} is not a valid JSON object or array`);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    console.error(`FAIL: catalog at ${path} is not a valid JSON object`);
+    process.exit(1);
+  }
+  if (!Array.isArray(parsed.guides) || parsed.guides.some((g) => !g || typeof g.id !== 'string')) {
+    console.error(`FAIL: catalog at ${path} has no valid guides array (every entry needs a string id)`);
     process.exit(1);
   }
   return parsed;
@@ -138,8 +155,7 @@ if (isDirectRun) {
 
   if (command === 'compute') {
     const catalog = readCatalogFile(catalogPath);
-    const hash = computeSha256(catalog);
-    console.log(hash);
+    console.log(JSON.stringify({ catalogSha256: computeSha256(catalog), ...computeGuideIds(catalog) }));
     process.exit(0);
   }
 
@@ -151,18 +167,39 @@ if (isDirectRun) {
       );
       process.exit(1);
     }
-
-    const catalog = readCatalogFile(catalogPath);
-    const computed = computeSha256(catalog);
-
-    if (computed !== state.catalogSha256) {
+    if (typeof state.guideIdsSha256 !== 'string' || !SHA256_PATTERN.test(state.guideIdsSha256)) {
       console.error(
-        `FAIL: catalogSha256 mismatch (state: ${state.catalogSha256}, computed: ${computed})`
+        `FAIL: state file at ${statePath} has missing or invalid guideIdsSha256 (expected 64-char hex, got ${JSON.stringify(state.guideIdsSha256 ?? null)})`
+      );
+      process.exit(1);
+    }
+    if (!Number.isInteger(state.guideCount) || state.guideCount < 0) {
+      console.error(
+        `FAIL: state file at ${statePath} has missing or invalid guideCount (got ${JSON.stringify(state.guideCount ?? null)})`
       );
       process.exit(1);
     }
 
-    console.log(`OK: catalogSha256 matches (${computed})`);
+    const catalog = readCatalogFile(catalogPath);
+    const computed = computeSha256(catalog);
+    const ids = computeGuideIds(catalog);
+
+    const mismatches = [];
+    if (computed !== state.catalogSha256) {
+      mismatches.push(`catalogSha256 mismatch (state: ${state.catalogSha256}, computed: ${computed})`);
+    }
+    if (ids.guideIdsSha256 !== state.guideIdsSha256) {
+      mismatches.push(`guideIdsSha256 mismatch (state: ${state.guideIdsSha256}, computed: ${ids.guideIdsSha256})`);
+    }
+    if (ids.guideCount !== state.guideCount) {
+      mismatches.push(`guideCount mismatch (state: ${state.guideCount}, computed: ${ids.guideCount})`);
+    }
+    if (mismatches.length > 0) {
+      for (const m of mismatches) console.error(`FAIL: ${m}`);
+      process.exit(1);
+    }
+
+    console.log(`OK: catalogSha256, guideIdsSha256 and guideCount match (${computed}, ${ids.guideCount} guides)`);
     process.exit(0);
   }
 
@@ -170,8 +207,11 @@ if (isDirectRun) {
     const catalog = readCatalogFile(catalogPath);
     const state = readStateFile(statePath);
     const computed = computeSha256(catalog);
+    const ids = computeGuideIds(catalog);
 
     state.catalogSha256 = computed;
+    state.guideIdsSha256 = ids.guideIdsSha256;
+    state.guideCount = ids.guideCount;
 
     try {
       writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n', 'utf8');
@@ -180,7 +220,7 @@ if (isDirectRun) {
       process.exit(1);
     }
 
-    console.log(`OK: updated catalogSha256 in ${statePath} (${computed})`);
+    console.log(`OK: updated catalogSha256, guideIdsSha256 and guideCount in ${statePath} (${computed}, ${ids.guideCount} guides)`);
     process.exit(0);
   }
 }

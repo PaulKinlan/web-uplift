@@ -11,6 +11,12 @@ The drift check (`tests/mwg-drift-check.mjs`) is a lightweight, recurring, depen
 The state file tracks both the last in-depth analysis and recurring upstream checks:
 
 - `$comment` (string): Description of the state file role and coordination rules.
+- `artifactId` (string): Stable artefact name, `web-uplift/mwg-catalog`.
+- `catalogSha256` (string): Full 64-character sha256 of the canonicalised catalog (see `canonicalisation`).
+- `guideIdsSha256` (string): sha256 of the canonicalised JSON array of the catalog's guide ids sorted lexicographically. Set identity: a count alone is not an identity, so consumers compare sets via this hash plus the catalog's guide list.
+- `guideCount` (integer): Number of guides in the catalog. Derived from `knowledge/mwg-catalog.json`, never hardcoded.
+- `canonicalisation` (string): The exact canonicalisation rule the hashes are computed with.
+- `appliedRulesVersion` (string): The upstream version the APPLIED rules correspond to. Kept distinct from `analysedVersion` (see `docs/mwg-train-consumer-contract.md`).
 - `analysedVersion` (string): Semantic version of `modern-web-guidance` from the last full catalog reanalysis. Must match `version` in `knowledge/mwg-catalog.json` and the version pinned in `knowledge/principles.json`.
 - `analysedAt` (string, ISO 8601): Timestamp of the last full reanalysis. Must match `retrievedAt` in `knowledge/mwg-catalog.json`.
 - `lastCheckAt` (string or null, ISO 8601): Timestamp of the most recent drift check execution that ran with `--write`. Null before the first check run.
@@ -18,7 +24,7 @@ The state file tracks both the last in-depth analysis and recurring upstream che
 - `lastCheckSource` (string or null): URL or file path queried during the last check run (for example, the npm registry URL or a local fixture path).
 - `lastCheckResult` (string): Outcome of the last check run. One of `"never-run"`, `"in-sync"`, or `"delta"`.
 
-Note: Additional fields (`hash`, `canonicalisation`, `appliedRulesVersion`) for downstream `mwg-train` artifacts are appended by sibling bead web-uplift-vbv.
+Note: the artefact fields (`artifactId`, `catalogSha256`, `guideIdsSha256`, `guideCount`, `canonicalisation`, `appliedRulesVersion`) landed in web-uplift-vbv and are maintained by `tests/mwg-artefact.mjs update` at reanalysis time.
 
 ## Exit Code Contract
 
@@ -62,8 +68,10 @@ When exit code 2 fires (or an issue titled "MWG upstream moved: reanalysis neede
 
 1. Regenerate catalog: Follow the extraction script in `knowledge/mwg-catalog.md` ("How to Regenerate") to extract the new guidance taxonomy and update `knowledge/mwg-catalog.json`.
 2. Re-verify principles coverage: Check `docs/principles-analysis.md` and `knowledge/principles.json` against the updated catalog (ensure all new or changed guides are mapped to principles and retired guides are reconciled).
-3. Update state file: Bump `analysedVersion` and `analysedAt` in `knowledge/mwg-state.json` to match the newly regenerated `knowledge/mwg-catalog.json`.
+3. Update state file: Bump `analysedVersion` and `analysedAt` in `knowledge/mwg-state.json` to match the newly regenerated `knowledge/mwg-catalog.json`, then run `node tests/mwg-artefact.mjs update` to refresh `catalogSha256`, `guideIdsSha256` and `guideCount`.
 4. Run regression suite: Verify all guards pass and commit the reanalysed baseline.
+
+Reanalysis is agentic and bead-triggered, never run by CI: the scheduled workflow only DETECTS the delta and files the issue; a coordinator turns that into a bead and a lane performs the reanalysis.
 
 ## Relationship to Sibling Beads
 

@@ -9,5 +9,7 @@
   "lastCheckAt": null,
   "lastCheckUpstreamVersion": null,
   "lastCheckSource": null,
-  "lastCheckResult": "never-run"
+  "lastCheckResult": "never-run",
+  "guideIdsSha256": "2ea55e422656ac34480534a916db7e5ad211659e00d71a0e968037061a5a2fd7",
+  "guideCount": 177
 }

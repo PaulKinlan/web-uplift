@@ -4125,6 +4125,17 @@ function testMwgArtefactGuard() {
       state.appliedRulesVersion === '0.0.193',
       `mwg-artefact: case 2 appliedRulesVersion must be "0.0.193", got ${state.appliedRulesVersion}`
     );
+    // Set identity fields: derived from the live catalog, never a hardcoded count
+    // (the catalog set may gain prompt-api via web-uplift-968's fix bead).
+    const liveCatalog = readJson('knowledge/mwg-catalog.json');
+    assert(
+      state.guideCount === liveCatalog.guides.length,
+      `mwg-artefact: case 2 guideCount (${state.guideCount}) must equal the live catalog guide count (${liveCatalog.guides.length})`
+    );
+    assert(
+      typeof state.guideIdsSha256 === 'string' && /^[0-9a-f]{64}$/.test(state.guideIdsSha256),
+      `mwg-artefact: case 2 guideIdsSha256 must match /^[0-9a-f]{64}$/, got ${state.guideIdsSha256}`
+    );
     assert(
       Object.prototype.hasOwnProperty.call(state, 'analysedVersion') &&
       Object.prototype.hasOwnProperty.call(state, 'appliedRulesVersion') &&
@@ -4177,7 +4188,11 @@ function testMwgArtefactGuard() {
       MWG_DRIFT_CATALOG: copyPath,
     });
     assert(res.status === 0, `mwg-artefact: case 5 compute must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
-    const computedHash = res.stdout.trim();
+    const computedHash = JSON.parse(res.stdout.trim()).catalogSha256;
+    assert(
+      typeof computedHash === 'string' && /^[0-9a-f]{64}$/.test(computedHash),
+      `mwg-artefact: case 5 compute must print a JSON object with a 64-char catalogSha256, got: ${res.stdout}`
+    );
     assert(
       computedHash !== committedStateObj.catalogSha256,
       `mwg-artefact: case 5 modified catalog hash (${computedHash}) must differ from committed (${committedStateObj.catalogSha256})`
@@ -4229,7 +4244,7 @@ function testMwgArtefactGuard() {
       MWG_DRIFT_CATALOG: committedCatalog,
     });
     assert(computeRes.status === 0, `mwg-artefact: case 7 compute failed:\n${computeRes.stderr || computeRes.stdout}`);
-    const expectedHash = computeRes.stdout.trim();
+    const expectedHash = JSON.parse(computeRes.stdout.trim()).catalogSha256;
 
     const updateRes = runArtefact(['update'], {
       MWG_DRIFT_STATE: copyPath,
@@ -4257,6 +4272,38 @@ function testMwgArtefactGuard() {
       updatedState.analysedVersion === state.analysedVersion,
       `mwg-artefact: case 7 analysedVersion must be preserved, got ${updatedState.analysedVersion}`
     );
+    assert(
+      typeof updatedState.guideIdsSha256 === 'string' && /^[0-9a-f]{64}$/.test(updatedState.guideIdsSha256) &&
+      updatedState.guideCount === readJson('knowledge/mwg-catalog.json').guides.length,
+      'mwg-artefact: case 7 update must also write guideIdsSha256 and the live guideCount'
+    );
+  }
+
+  // 8. sabotage: flip one hex char of guideIdsSha256 -> verify exits 1.
+  {
+    const copyPath = join(tmp, 'mwg-state-sabotage-flip-ids.json');
+    const state = JSON.parse(readFileSync(committedState, 'utf8'));
+    const original = state.guideIdsSha256;
+    state.guideIdsSha256 = (original[0] === 'a' ? 'b' : 'a') + original.slice(1);
+    writeFileSync(copyPath, JSON.stringify(state, null, 2) + '\n', 'utf8');
+    const res = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: copyPath,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(res.status === 1, `mwg-artefact: case 8 (flipped guideIdsSha256) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+  }
+
+  // 9. sabotage: guideCount off by one -> verify exits 1 (a count is checked, but never alone).
+  {
+    const copyPath = join(tmp, 'mwg-state-sabotage-count.json');
+    const state = JSON.parse(readFileSync(committedState, 'utf8'));
+    state.guideCount = state.guideCount + 1;
+    writeFileSync(copyPath, JSON.stringify(state, null, 2) + '\n', 'utf8');
+    const res = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: copyPath,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(res.status === 1, `mwg-artefact: case 9 (guideCount off by one) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
   }
 }
 
