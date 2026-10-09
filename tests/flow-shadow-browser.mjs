@@ -79,8 +79,11 @@ export async function testFlowPierceShadowRootBrowser() {
   const url = `http://127.0.0.1:${server.address().port}/`;
   const log = () => {};
 
-  const chrome = await launchChrome({ log });
+  // Chrome launch sits INSIDE the try so a launch failure (missing binary,
+  // startup crash) still closes the http server rather than leaving it open.
+  let chrome;
   try {
+    chrome = await launchChrome({ log });
     const session = await newSession(chrome.port, { log });
     try {
       const client = session.client;
@@ -153,7 +156,7 @@ export async function testFlowPierceShadowRootBrowser() {
       await session.close();
     }
   } finally {
-    await chrome.close();
+    if (chrome) await chrome.close();
     await new Promise((done) => server.close(done));
   }
 }
