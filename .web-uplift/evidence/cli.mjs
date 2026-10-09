@@ -2730,6 +2730,16 @@ export function classifyScriptFetch({ httpOk, status, contentType, hasStream, de
   return { ok: true };
 }
 
+// One shape for "this script was not read", used by BOTH failure paths - the
+// in-page verdict and a failed evaluate - so the credential redaction cannot be
+// forgotten on one of them (6fe review). A page-selected script URL can carry a
+// credential in its query, and both land in the artifact.
+export function scriptFetchFailure(rawUrl, reason, rawFinalUrl) {
+  const failure = { url: redactUrlCredentialValues(rawUrl), reason };
+  if (rawFinalUrl && rawFinalUrl !== rawUrl) failure.finalUrl = redactUrlCredentialValues(rawFinalUrl);
+  return failure;
+}
+
 async function secrets(client, url, opts, log) {
   log('[secrets] scanning ' + url);
   await navigate(client, url, { settleMs: opts.wait || 3000, log });
@@ -2811,9 +2821,7 @@ async function secrets(client, url, opts, log) {
       })()`, { awaitPromise: true });
       if (!got || got.ok !== true) {
         const reason = (got && got.error) || 'the in-page fetch returned no result';
-        const failure = { url: redactUrlCredentialValues(su), reason };
-        if (got && got.finalUrl && got.finalUrl !== su) failure.finalUrl = redactUrlCredentialValues(got.finalUrl);
-        scriptFailures.push(failure);
+        scriptFailures.push(scriptFetchFailure(su, reason, got && got.finalUrl));
         log(`[secrets] external JS NOT scanned (${reason}): ${scriptLabel}`);
         continue;
       }
@@ -2826,9 +2834,10 @@ async function secrets(client, url, opts, log) {
       if (js) findings.push(...scanTextForSecrets(js, 'external JS: ' + scriptLabel, seen));
     } catch (e) {
       // The evaluate itself failing (a page that navigated away, a CDP error) is
-      // also an unread script, not a silent skip.
+      // also an unread script, not a silent skip - and it goes through the SAME
+      // redacting record builder as the in-page verdict (6fe review).
       const reason = 'in-page fetch could not be evaluated: ' + ((e && e.message) || String(e));
-      scriptFailures.push({ url: su, reason });
+      scriptFailures.push(scriptFetchFailure(su, reason));
       log(`[secrets] external JS NOT scanned (${reason}): ${scriptLabel}`);
     }
   }

@@ -20,7 +20,7 @@ function assert(condition, message) {
 }
 
 export async function testSecretsCoverageClassification() {
-  const { classifyScriptFetch } = await import('../evidence/cli.mjs');
+  const { classifyScriptFetch, scriptFetchFailure } = await import('../evidence/cli.mjs');
 
   const verdict = (args) => classifyScriptFetch({
     httpOk: true, status: 200, contentType: 'text/javascript; charset=utf-8',
@@ -70,6 +70,22 @@ export async function testSecretsCoverageClassification() {
     'the serialized copy must refuse a streamless body the same way');
   assert(serialized({ httpOk: true, hasStream: true, contentType: 'text/javascript' }).ok === true,
     'the serialized copy must accept a streamed script the same way');
+
+  // BOTH failure paths (the in-page verdict and a failed evaluate) build their
+  // record with scriptFetchFailure, so the credential redaction cannot be applied
+  // to one and forgotten on the other (6fe review P1).
+  const secret = 'NOTAREALKEY_FIXTURE_URLQUERY1234567890';
+  const failing = scriptFetchFailure(`https://x.test/missing.js?api_key=${secret}`, 'HTTP 404');
+  assert(!JSON.stringify(failing).includes(secret),
+    `a credential in a failed script URL must not reach the failure record: ${JSON.stringify(failing)}`);
+  assert(/api_key=%5Bredacted%5D/.test(failing.url),
+    `the failed URL must keep its shape with the value redacted: ${JSON.stringify(failing)}`);
+  assert(failing.finalUrl === undefined, 'a record with no distinct final URL must not invent one');
+  const redirected = scriptFetchFailure(`https://x.test/a.js?api_key=${secret}`, 'HTML response', 'https://x.test/error.html?token=abc123');
+  assert(!JSON.stringify(redirected).includes(secret) && !JSON.stringify(redirected).includes('abc123'),
+    `a redirected failure must redact both URLs: ${JSON.stringify(redirected)}`);
+  assert(redirected.finalUrl === 'https://x.test/error.html?token=%5Bredacted%5D',
+    `the final URL must be reported, redacted: ${JSON.stringify(redirected)}`);
 }
 
 // Run directly (node tests/secrets-coverage.mjs), not when imported by the

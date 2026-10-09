@@ -5592,8 +5592,15 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
       return;
     }
     if (path === '/notjs.js') {
-      // A redirect chain that ends on an HTML error page: res.ok is true, but this
-      // is not JavaScript and the browser would refuse to execute it (6fe review).
+      // A real redirect: the browser follows it to an HTML error page, so res.ok is
+      // true while the body is not JavaScript and res.url differs from the request
+      // (6fe review: the previous fixture served HTML directly and so never
+      // exercised the redirect/finalUrl path).
+      res.writeHead(302, { Location: '/error.html' });
+      res.end();
+      return;
+    }
+    if (path === '/error.html') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end('<!doctype html><title>error</title><p>not a script</p>');
       return;
@@ -5655,9 +5662,16 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
       `each failure must name its cause: ${JSON.stringify(reasons)}`
     );
     assert(
-      (result.externalScriptFailures || []).every((f) => typeof f.url === 'string' && f.url.includes('.js')),
+      (result.externalScriptFailures || []).every((f) => typeof f.url === 'string' && (f.url.includes('.js') || f.url.includes('error.html'))),
       `each failure must name the URL it could not read: ${JSON.stringify(result.externalScriptFailures)}`
     );
+    // The redirecting script must report where it actually ended up, redacted like
+    // every other artifact URL - and the HTML body must be the reason, not the 200.
+    const redirected = (result.externalScriptFailures || []).find((f) => f.url.includes('/notjs.js'));
+    assert(redirected && /HTML/.test(redirected.reason),
+      `a redirected script must be reported as HTML, not counted as read: ${JSON.stringify(redirected)}`);
+    assert(redirected.finalUrl && redirected.finalUrl.includes('/error.html'),
+      `the final (redirected) URL must be recorded: ${JSON.stringify(redirected)}`);
     assert(
       result.note.includes('NOT scanned'),
       'the artifact note must warn that an unread script is not coverage'
