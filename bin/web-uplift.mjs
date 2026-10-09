@@ -581,7 +581,7 @@ HEADLESS / CI path (uses API tokens):
   web-uplift scorecard <host|url> [--out <file>]             Interactive scorecard.html + scorecard.json from a host's runs.
   web-uplift validate <report.json>                           Enforce exact principles.json check coverage before scoring/publication.
      CI gate: [--min-overall n] [--min <outcome>=n] [--max-critical n] [--max-high n]  (exits non-zero on failure)
-  web-uplift flow record <url> [--out <flow.json>]           Record a user journey (headed browser + on-page overlay).
+  web-uplift flow record <url> [--out <flow.json>] [--capture-hidden] Record a user journey (headed browser + on-page overlay).
   web-uplift flow replay <flow.json> [--url <start>] [--out <dir>]  Replay a journey (or Chrome Recorder JSON), screenshot per step.
   web-uplift evidence <primitive> <url> [options]            Raw-CDP evidence primitives.
   web-uplift baseline <query> [--json]                       Query Baseline support status from web-features.

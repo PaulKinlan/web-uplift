@@ -355,6 +355,9 @@ the audit covers the pages a user actually reaches.
 ```sh
 # Record a journey. Opens a headed browser with a small "Recording... Done"
 # overlay - just click through your journey and press Done. No DevTools needed.
+# By default, passwords, hidden inputs, payment details, and credential/PII-shaped
+# fields are sanitized/redacted from flow.json. Use --capture-hidden to explicitly
+# retain hidden inputs when needed for replay.
 web-uplift flow record https://example.com --out checkout.json
 
 # Replay it (or a Chrome DevTools Recorder export, or a hand-authored flow.json),

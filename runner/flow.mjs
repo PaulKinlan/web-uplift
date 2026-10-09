@@ -1,7 +1,7 @@
 // User-flow record + replay: audit a real JOURNEY (checkout, signup, search),
 // not just a landing page, for MPA and SPA sites.
 //
-//   web-uplift flow record <url> [--out flow.json]   capture a journey (we drive)
+//   web-uplift flow record <url> [--out flow.json] [--capture-hidden]   capture a journey (we drive)
 //   web-uplift flow replay <flow.json> [--url <start>] [--out <dir>]   replay + shots
 //
 // The flow format IS Chrome DevTools' Recorder JSON ({ title, steps: [...] }), so
@@ -216,8 +216,9 @@ async function main() {
     }
   } else if (sub === 'record') {
     const url = positional[0];
-    if (!url) throw new Error('Usage: web-uplift flow record <url> [--out <flow.json>]');
+    if (!url) throw new Error('Usage: web-uplift flow record <url> [--out <flow.json>] [--capture-hidden]');
     const outPath = opt('out') || `flow-${Date.now()}.json`;
+    const captureHidden = rest.includes('--capture-hidden');
     const log = (m) => console.error(m);
     const { recordFlow } = await import('./flow-record.mjs');
     const chrome = await launchChrome({ log, headless: false });
@@ -226,7 +227,7 @@ async function main() {
     try {
       const session = await newSession(chrome.port, { log });
       try {
-        const flow = await recordFlow(session.client, url, { log });
+        const flow = await recordFlow(session.client, url, { log, captureHidden });
         writeFileSync(outPath, JSON.stringify(flow, null, 2) + '\n');
         console.error(`[flow] recorded ${flow.steps.length} step(s) -> ${outPath}`);
       } finally {

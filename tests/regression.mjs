@@ -143,6 +143,7 @@ try {
   await testA11yTreePrimitive();
   await testBaselineOracle();
   await testFlowNormalize();
+  await testFlowRecordSensitiveRedaction();
   await testLaunchSessionLoop();
   await testNoOrphanBrowser();
   console.log('tests OK');
@@ -1866,6 +1867,50 @@ async function testFlowNormalize() {
   let threw = false;
   try { normalizeFlow({ nope: true }); } catch { threw = true; }
   assert(threw, 'flow: an object without steps[] must throw');
+}
+
+async function testFlowRecordSensitiveRedaction() {
+  const { isSensitiveField, makeCaptureJs } = await import('../runner/flow-record.mjs');
+
+  // 1. Password inputs are always sensitive.
+  assert(isSensitiveField({ type: 'password', name: 'pwd' }), 'password field must be sensitive');
+  assert(isSensitiveField({ type: 'password' }), 'unnamed password field must be sensitive');
+
+  // 2. Hidden inputs: sensitive by default (captureHidden=false), not sensitive when captureHidden=true.
+  assert(isSensitiveField({ type: 'hidden', name: 'csrf_token' }, { captureHidden: false }), 'hidden input must be sensitive by default');
+  assert(!isSensitiveField({ type: 'hidden', name: 'returnUrl' }, { captureHidden: true }), 'innocent hidden input must be allowed when captureHidden=true');
+
+  // 3. Autocomplete sensitive tokens.
+  assert(isSensitiveField({ type: 'text', name: 'card', autocomplete: 'cc-number' }), 'cc-number autocomplete must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'code', autocomplete: 'one-time-code' }), 'one-time-code autocomplete must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'pw', autocomplete: 'current-password' }), 'current-password autocomplete must be sensitive');
+
+  // 4. Credential-shaped names, IDs, labels, placeholders.
+  assert(isSensitiveField({ type: 'text', name: 'apiKey' }), 'apiKey name must be sensitive');
+  assert(isSensitiveField({ type: 'text', id: 'user_session' }), 'user_session ID must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'authToken' }), 'authToken name must be sensitive');
+  assert(isSensitiveField({ type: 'text', ariaLabel: 'Account Secret' }), 'secret aria-label must be sensitive');
+  assert(isSensitiveField({ type: 'text', placeholder: 'Enter JWT bearer token' }), 'jwt placeholder must be sensitive');
+  assert(isSensitiveField({ type: 'text', label: 'Client Secret Key' }), 'secret label must be sensitive');
+
+  // 5. Payment and sensitive PII names.
+  assert(isSensitiveField({ type: 'text', name: 'cardCvc' }), 'cvc must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'creditCard' }), 'creditCard must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'ssn' }), 'ssn must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'socialSecurityNumber' }), 'socialSecurityNumber must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'taxId' }), 'taxId must be sensitive');
+
+  // 6. Innocent fields must not be sensitive.
+  assert(!isSensitiveField({ type: 'text', name: 'search' }), 'search must not be sensitive');
+  assert(!isSensitiveField({ type: 'text', name: 'city' }), 'city must not be sensitive');
+  assert(!isSensitiveField({ type: 'number', name: 'quantity' }), 'quantity must not be sensitive');
+  assert(!isSensitiveField({ type: 'text', name: 'comment' }), 'comment must not be sensitive');
+
+  // 7. makeCaptureJs source embeds the captureHidden flag.
+  const srcDefault = makeCaptureJs();
+  assert(srcDefault.includes('CAPTURE_HIDDEN = false;'), 'default capture script must disable hidden capture');
+  const srcOptIn = makeCaptureJs({ captureHidden: true });
+  assert(srcOptIn.includes('CAPTURE_HIDDEN = true;'), 'opt-in capture script must enable hidden capture');
 }
 
 function run(command, args, opts = {}) {
