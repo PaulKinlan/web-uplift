@@ -209,7 +209,7 @@ export function classifyClickControl(node) {
   // relative target, or a query verb (?action=delete), anchored on both sides so that
   // /deleted-items and /reset-password/<tok> stay reads (review finding 3).
   const WRITE_VERBS = ['delete', 'remove', 'destroy', 'purge', 'trash', 'wipe', 'logout', 'signout', 'sign-out',
-    'unsubscribe', 'revoke', 'deactivate', 'disable', 'unlink', 'cancel', 'archive'];
+    'log-out', 'log out', 'unsubscribe', 'revoke', 'deactivate', 'disable', 'unlink', 'cancel', 'archive'];
   const verbs = WRITE_VERBS.join('|');
   // ...and a verb may carry a kebab/snake tail: /delete-account, /remove-item and
   // /delete_account are as much a write as /delete. `deleted` is not `delete`, so
@@ -269,7 +269,7 @@ export function findMutatingControl(node) {
 // and a dry run must be able to follow the journey. A CLICK on such a link is
 // still gated - that is classifyClickControl's writeHref, the arm that acts.
 const WRITE_URL_SEGMENTS = new Set(['delete', 'remove', 'destroy', 'purge', 'logout', 'signout', 'sign-out',
-  'unsubscribe', 'revoke', 'deactivate', 'disable', 'unlink']);
+  'log-out', 'unsubscribe', 'revoke', 'deactivate', 'disable', 'unlink']);
 export function isWriteUrl(raw) {
   if (!raw || typeof raw !== 'string') return false;
   let u;

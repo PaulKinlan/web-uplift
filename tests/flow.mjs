@@ -783,6 +783,18 @@ export async function testFlowReplayMutationGate() {
   }
   assert(!classifyClickControl(mk({ tagName: 'A', textContent: 'go', getAttribute: (k) => (k === 'href' ? '/deleted-items' : null) })).gated,
     '/deleted-items is still not a write (deleted != delete)');
+  // Review note: the hyphenated sign-out was covered but not the hyphenated log-out,
+  // so <a href="/log-out"><svg/></a> escaped both arms.
+  for (const href of ['/log-out', '/account/log-out']) {
+    const link = mk({ tagName: 'A', textContent: '', getAttribute: (k) => (k === 'href' ? href : null) });
+    assert(classifyClickControl(link).gated, `an unlabelled icon link to ${href} must be gated`);
+  }
+  assert(isWriteUrl('https://example.test/log-out'), '/log-out is a write');
+  // The conservative direction the review accepted: a page whose slug merely STARTS
+  // with a destructive verb is refused too (/logout-help, /delete-faq). Over-gating a
+  // read is the safe failure here; --allow-mutations is the explicit way past it.
+  assert(classifyClickControl(mk({ tagName: 'A', textContent: 'Help', getAttribute: (k) => (k === 'href' ? '/logout-help' : null) })).gated,
+    'a link to /logout-help is refused (conservative, documented)');
   for (const url of ['https://example.test/delete-account', 'https://example.test/remove_item', 'https://example.test/account/destroy-account']) {
     assert(isWriteUrl(url), `a compound action slug in a navigation is a write: ${url}`);
   }
