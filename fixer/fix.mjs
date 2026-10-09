@@ -52,6 +52,16 @@ import { countOutstanding, completionState, remaining } from '../runner/remainin
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
+import { redactUrlCredentialValues } from '../evidence/cli.mjs';
+
+// Every place this tool PRINTS the audit URL goes through shownAuditUrl (web-uplift-s0x):
+// the URL appears in the dry-run plan, in the baseline-audit line and inside the echoed
+// per-iteration command, and a fix log lands in CI artifacts. The URL keeps its shape, so
+// a line is still usable for finding the run, and the audit itself uses the URL as given.
+// This reuses the HAR redactor's one table rather than growing a third copy - when
+// evidence/credential-terms.mjs lands (web-uplift-glar) every redactor shares it.
+const shownAuditUrl = () => (typeof auditUrl === 'string' && auditUrl ? redactUrlCredentialValues(auditUrl) : '<audit-url>');
+const shownCommand = (command) => (typeof auditUrl === 'string' && auditUrl ? command.split(auditUrl).join(shownAuditUrl()) : command);
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -194,7 +204,7 @@ function iterationPrompt(findingsPath, iteration) {
 if (dryRun) {
   console.log(`fix hill-climb (dry-run) via ${agentName}, max ${maxIterations} iteration(s)`);
   console.log(`target source : ${target ?? '<target>'}`);
-  console.log(`audit url     : ${auditUrl ?? '<audit-url>'}`);
+  console.log(`audit url     : ${shownAuditUrl()}`);
   console.log(`report out    : ${outDir}`);
   console.log(`write scope   : ${scopeRoot ?? '<target>'} (a change outside this refuses the run)`);
   if (allowWrite.length) console.log(`also allowed  : ${allowWrite.join(', ')}`);
@@ -204,14 +214,14 @@ if (dryRun) {
   for (let i = 1; i <= maxIterations; i++) {
     const prompt = iterationPrompt(args.findings, i);
     const cliArgs = agent.args(prompt, { maxTurns: 120 });
-    console.log(`  [iter ${i}] ${agent.bin} ${cliArgs.join(' ')}`);
+    console.log(`  [iter ${i}] ${agent.bin} ${shownCommand(cliArgs.join(' '))}`);
   }
   console.log('');
   console.log('Equivalent commands for every agent (so adding one stays one entry):');
   for (const name of AGENT_NAMES) {
     const a = AGENTS[name];
     const prompt = a.prompt(auditUrl ?? '<audit-url>', outDir, fixExtra(args.findings ?? '<findings>', 1));
-    console.log(`  ${name.padEnd(12)} ${a.bin} ${a.args(prompt, { maxTurns: 120 }).join(' ')}`);
+    console.log(`  ${name.padEnd(12)} ${a.bin} ${shownCommand(a.args(prompt, { maxTurns: 120 }).join(' '))}`);
   }
   process.exit(0);
 }
@@ -308,7 +318,7 @@ if (args.findings) {
 // would write unmonitored AND be baked into iteration 1's "clean" baseline.
 let findingsPath = args.findings;
 if (!findingsPath) {
-  console.log(`No --findings supplied; running a baseline audit of ${auditUrl} first.`);
+  console.log(`No --findings supplied; running a baseline audit of ${shownAuditUrl()} first.`);
   findingsPath = await baselineAudit();
 }
 if (escapedOutsideScope) {

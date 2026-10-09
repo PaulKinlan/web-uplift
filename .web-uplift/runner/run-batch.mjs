@@ -52,6 +52,18 @@ import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
+import { redactUrlCredentialValues } from '../evidence/cli.mjs';
+
+// Every target URL this runner PRINTS goes through shownUrl (web-uplift-b9p): a batch
+// log lands in CI artifacts and gets pasted into issues, and a target URL can carry a
+// credential in its query (?api_key=, ?token=). The URL keeps its shape, so a line is
+// still usable for finding the run, and the audit itself uses the URL as given.
+// This reuses the HAR redactor's one table rather than growing a third copy of the
+// word list - when evidence/credential-terms.mjs lands (web-uplift-glar) every
+// redactor shares that single table.
+function shownUrl(raw) {
+  return typeof raw === 'string' && raw ? redactUrlCredentialValues(raw) : raw;
+}
 
 const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -277,7 +289,7 @@ await Promise.all(Array.from({ length: concurrency }, worker));
 
 console.log(`Done. ${failures.length} failure(s).`);
 if (failures.length) {
-  console.log(failures.map((f) => `  ${f.url}: ${f.reason}`).join('\n'));
+  console.log(failures.map((f) => `  ${shownUrl(f.url)}: ${f.reason}`).join('\n'));
   process.exitCode = 1;
 }
 
@@ -289,11 +301,11 @@ async function worker() {
     // line, and the batch still exits non-zero.
     if (integrityAbort) {
       failures.push({ url, reason: 'skipped: batch aborted after an executable-tree integrity failure' });
-      console.error(`skipped        ${url}: batch aborted after an executable-tree integrity failure`);
+      console.error(`skipped        ${shownUrl(url)}: batch aborted after an executable-tree integrity failure`);
       continue;
     }
     if (args.resume && hasCompletedLatest(url)) {
-      console.log(`resume skip    ${url} (latest report passed atomic coverage)`);
+      console.log(`resume skip    ${shownUrl(url)} (latest report passed atomic coverage)`);
       continue;
     }
     let planned;
@@ -305,7 +317,7 @@ async function worker() {
       // Preparing the next URL used to sit outside the per-URL guard, so a failure here
       // aborted the whole batch. Fold it in: one URL cannot take the others down.
       failures.push({ url, reason: `could not prepare a run directory: ${err.message}` });
-      console.error(`failed         ${url}: ${err.message}`);
+      console.error(`failed         ${shownUrl(url)}: ${err.message}`);
       continue;
     }
 
@@ -313,12 +325,19 @@ async function worker() {
       const extra = flow ? flowExtra(siteDir) : '';
       const prompt = agent.prompt(url, siteDir, extra);
       if (flow) console.log(`would replay   flow "${flow.title}" (${flow.steps.length} steps) into ${join(siteDir, 'evidence', 'flow')}`);
-      console.log(`would run      ${agent.bin} ${agent.args(prompt, { maxTurns }).join(' ')}`);
+      // The prompt embeds the target URL, so the echoed command is redacted the same way
+      // (display only - the run uses the URL as given).
+      const realCommand = agent.args(prompt, { maxTurns }).join(' ');
+      const shownCommand = realCommand.split(url).join(shownUrl(url));
+      console.log(`would run      ${agent.bin} ${shownCommand}`);
+      if (shownCommand !== realCommand) {
+        console.log('note:           credential-bearing query values in the target URL are redacted above');
+      }
       continue;
     }
 
     await mkdir(siteDir, { recursive: true });
-    console.log(`auditing       ${url}`);
+    console.log(`auditing       ${shownUrl(url)}`);
     // ONE scope window at a time (see withScopeWindow): the snapshot, the spawn and
     // the diff are a single critical section, so no other worker's writes can land
     // inside this window and refuse a clean URL. The diff is still computed when the
@@ -343,7 +362,7 @@ async function worker() {
           const blocked = res.steps.filter((s) => s.mutationBlocked).length;
           console.log(`flow replayed  ${res.steps.length} step(s), ${failed} failed${blocked > 0 ? ', ' + blocked + ' mutating step(s) blocked (dry-run)' : ''}`);
           if (blocked > 0) {
-            console.warn(`[run-batch] WARNING: ${blocked} mutating step(s) blocked in dry-run mode for ${url} (pass --allow-mutations to execute)`);
+            console.warn(`[run-batch] WARNING: ${blocked} mutating step(s) blocked in dry-run mode for ${shownUrl(url)} (pass --allow-mutations to execute)`);
           }
           extra = flowExtra(siteDir);
         }
@@ -359,7 +378,7 @@ async function worker() {
       const shown = integrityDrift.slice(0, 8).join(', ') + (integrityDrift.length > 8 ? ', ...' : '');
       failures.push({ url, reason: `executable tree changed since batch start: ${shown}` });
       console.error(
-        `INTEGRITY FAILURE ${url}: the executed tree changed since the batch started:\n  ${integrityDrift.join('\n  ')}\n` +
+        `INTEGRITY FAILURE ${shownUrl(url)}: the executed tree changed since the batch started:\n  ${integrityDrift.join('\n  ')}\n` +
         'Every audit runs code from these paths (the agent spawns the evidence CLI per primitive; the runner\n' +
         'spawns the schema validator), so every remaining URL would execute attacker-influenced code. Refusing\n' +
         'to spawn this agent and aborting the remaining URLs. Nothing is reverted automatically; review the\n' +
@@ -381,7 +400,7 @@ async function worker() {
       // security-relevant fact and must not be hidden by a bookkeeping failure.
       recordFailed = true;
       failures.push({ url, reason: `run directory unusable when the scope record was written: ${err.code || err.message}` });
-      console.error(`record failed  ${url}: ${err.message}`);
+      console.error(`record failed  ${shownUrl(url)}: ${err.message}`);
     }
     console.log(`  changed: ${summariseChanges(scope.changed)}`);
     if (scope.escapedOutsideScope.length) {
@@ -395,7 +414,7 @@ async function worker() {
       const quarantineProblem = await quarantineRefusedRun(siteDir, { url, escapedOutsideScope: scope.escapedOutsideScope });
       if (quarantineProblem) failures.push({ url, reason: quarantineProblem });
       console.error(
-        `CONFINEMENT FAILURE ${url}: this audit changed ${scope.escapedOutsideScope.length} path(s) outside ` +
+        `CONFINEMENT FAILURE ${shownUrl(url)}: this audit changed ${scope.escapedOutsideScope.length} path(s) outside ` +
         `${outRoot}:\n  ${scope.escapedOutsideScope.join('\n  ')}\n` +
         'The agent auditing an untrusted page held write tools, so this is a refusal, not a warning. Nothing is ' +
         `reverted automatically; review ${join(siteDir, 'write-scope.json')}.`,
@@ -404,7 +423,7 @@ async function worker() {
     }
     if (agentError) {
       failures.push({ url, reason: String(agentError) });
-      console.error(`failed         ${url}: ${agentError}`);
+      console.error(`failed         ${shownUrl(url)}: ${agentError}`);
       continue;
     }
     if (recordFailed) {
@@ -426,22 +445,22 @@ async function worker() {
             // set before this point meant a DUPLICATE url later in the same resume batch
             // was skipped even though nothing was ever published for it.
             failures.push({ url, reason: `completion could not be published: ${err.message}` });
-            console.error(`failed         ${url}: could not publish completion: ${err.message}`);
+            console.error(`failed         ${shownUrl(url)}: could not publish completion: ${err.message}`);
             continue;
           }
           completedThisBatch.add(url);
-          console.log(`done (coverage complete)     ${url}`);
+          console.log(`done (coverage complete)     ${shownUrl(url)}`);
         } else {
           failures.push({ url, reason: `atomic coverage validation failed: ${validation.detail}` });
-          console.error(`INVALID REPORT ${url}: ${validation.detail}`);
+          console.error(`INVALID REPORT ${shownUrl(url)}: ${validation.detail}`);
         }
       } else {
-        console.log(`NO REPORT     ${url}`);
+        console.log(`NO REPORT     ${shownUrl(url)}`);
         failures.push({ url, reason: 'finished without report.json' });
       }
     } catch (err) {
       failures.push({ url, reason: String(err) });
-      console.error(`failed         ${url}: ${err}`);
+      console.error(`failed         ${shownUrl(url)}: ${err}`);
     }
   }
 }

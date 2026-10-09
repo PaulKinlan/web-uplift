@@ -35,6 +35,7 @@ import { testFlowNormalize, testFlowRecordSensitiveRedaction, testFlowReplayMuta
 import { testFlowPierceShadowRootBrowser } from './flow-shadow-browser.mjs';
 import { testCredentialRedactorsAgree } from './credential-redaction.mjs';
 import { testSecretsCoverageClassification } from './secrets-coverage.mjs';
+import { testLogUrlRedaction } from './log-redaction.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -149,6 +150,9 @@ try {
   await testFlowNormalize();
   await testFlowRecordSensitiveRedaction();
   await testFlowReplayMutationGate();
+  // b9p/s0x: a target URL printed by the batch runner or the fixer must not carry a
+  // credential query value into a log/CI artifact (behaviour + a census over the files).
+  await testLogUrlRedaction();
   // pai: the pierce/ shadow walk against REAL open shadow roots in headless
   // Chrome, because the stub above can only agree with itself.
   await testFlowPierceShadowRootBrowser();
