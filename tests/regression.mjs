@@ -7320,7 +7320,7 @@ function testAwaitCensus() {
     ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|return await fn\(\)/],
     ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise/],
     ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
-    ['excluded:page-side-template', /await navigator\./],
+    ['excluded:page-side-template', /await navigator\.|await fetch\(\$\{JSON\.stringify\(su\)\}, \{ signal: controller\.signal \}\)|const t = await res\.text\(\);/],
     ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],
   ];
   const expected = {
@@ -7338,8 +7338,8 @@ function testAwaitCensus() {
       'bounded:sleep': 22,
       'bounded:own-deadline': 8,
       'bounded:gather-spine': 6,
-      'excluded:primitive-probe': 61,
-      'excluded:page-side-template': 1,
+      'excluded:primitive-probe': 63,
+      'excluded:page-side-template': 3,
     },
   };
   for (const [file, expect] of Object.entries(expected)) {

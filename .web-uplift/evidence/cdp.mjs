@@ -289,9 +289,12 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // spine. EXCLUDED WITH REASON: the per-primitive content probes after or outside the shared
 // spine (evaluate() probes, screenshots, getResponseBody, screencast, heap, axe, a11y and
 // friends) - a wedge there hangs ONE primitive's evidence, not the CLI's ability to reach
-// or leave a page, and several carry their own bounds - plus ONE page-side await inside an
-// evaluate template (not a host await at all), and the evaluate() helper's own
-// Runtime.evaluate, which is the content-probe mechanism itself.
+// or leave a page, and several carry their own bounds - plus THREE page-side awaits inside
+// evaluate templates (not host awaits at all): the navigator.locks probe, and the secrets
+// primitive's in-page fetch of a page-selected script URL and its res.text() fallback
+// (web-uplift-61i: both carry their own in-page AbortController deadline and 2 MiB byte
+// cap, the same containment values as the Node-side safeFetch), and the evaluate()
+// helper's own Runtime.evaluate, which is the content-probe mechanism itself.
 //
 // THE WARNING for the next primitive: an await added to either file fails testAwaitCensus
 // until it is classified, so an omission is LOUD now rather than silent. A NEW primitive
