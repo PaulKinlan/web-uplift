@@ -397,6 +397,27 @@ function describeLaunchFailure({ attempts, reasons, detail }) {
   );
 }
 
+// Chrome's OS sandbox is ON by default (web-uplift-d2l). Every primitive
+// navigates pages the operator does not control, so a renderer exploit must not
+// land as code execution in the operator's own account. '--no-sandbox' is
+// therefore opt-in, and only two things turn it on: an explicit operator opt-out,
+// or a uid where Chrome cannot start its sandbox at all. Returns the reason the
+// sandbox is being disabled, or null to keep it on.
+//
+//   WEB_UPLIFT_NO_SANDBOX=1   - operator opt-out, for environments where the
+//                               sandbox cannot start (restricted container,
+//                               no unprivileged user namespaces).
+//   uid 0                     - Chrome refuses to start its sandbox as root, so
+//                               auto-disabling is the difference between a
+//                               working launch and three failed attempts.
+//
+export function sandboxDisableReason({ env = process.env, uid = process.getuid?.() } = {}) {
+  const requested = String(env.WEB_UPLIFT_NO_SANDBOX ?? '').trim();
+  if (/^(1|true|yes)$/i.test(requested)) return 'requested via WEB_UPLIFT_NO_SANDBOX';
+  if (uid === 0) return 'running as root (uid 0), where Chrome cannot start its OS sandbox';
+  return null;
+}
+
 // One launch attempt: a fresh profile dir, a spawn, and a bounded wait for the
 // "DevTools listening on ws://..." line Chrome prints to stderr
 // (remote-debugging-port=0 picks a free port). Returns { ok: true, handle } or
@@ -404,7 +425,11 @@ function describeLaunchFailure({ attempts, reasons, detail }) {
 // attempt and report every reason it failed.
 async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'web-uplift-cdp-'));
-  log(`[browser] launching ${chromePath} (${headless ? 'headless' : 'headed'}, profile ${userDataDir})`);
+  const sandboxReason = sandboxDisableReason();
+  log(
+    `[browser] launching ${chromePath} (${headless ? 'headless' : 'headed'}, profile ${userDataDir})` +
+      (sandboxReason ? ` [OS sandbox DISABLED: ${sandboxReason}]` : ''),
+  );
 
   let proc;
   try {
@@ -414,7 +439,8 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs }
         // Headed for `flow record` (the user interacts); headless everywhere else.
         ...(headless ? ['--headless=new'] : []),
         '--remote-debugging-port=0',
-        '--no-sandbox',
+        // Absent unless the operator opted out or Chrome cannot sandbox here.
+        ...(sandboxReason ? ['--no-sandbox'] : []),
         `--user-data-dir=${userDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',

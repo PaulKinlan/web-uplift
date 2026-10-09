@@ -120,6 +120,28 @@ The machine running the audit needs:
 No Playwright, Puppeteer, or browser-automation MCP server is required.
 web-uplift drives Chrome directly over the Chrome DevTools Protocol.
 
+### Chrome's OS sandbox is on by default
+
+Every evidence primitive navigates a page you do not control, so web-uplift
+launches Chrome with its **OS sandbox enabled**: renderers run in their own user
+namespace, and a renderer exploit reached through an audited page is not
+automatic code execution as you.
+
+`--no-sandbox` is passed in exactly two cases:
+
+- **`WEB_UPLIFT_NO_SANDBOX=1`** - you explicitly opted out, for an environment
+  where the sandbox genuinely cannot start (a container without unprivileged
+  user namespaces, a restricted seccomp profile).
+- **You are running as root (uid 0)** - Chrome refuses to start its sandbox as
+  root, so the flag is added automatically rather than failing every launch.
+
+Any other value (`0`, empty, unset) keeps the sandbox on. A launch with the
+sandbox disabled says so on stderr:
+`[browser] launching ... [OS sandbox DISABLED: <reason>]`. The trade-off is
+real in both directions: with the sandbox off, a hostile page that exploits the
+renderer holds your account; with it on, an environment that cannot start it
+reports three failed launches and no evidence.
+
 ## Agent Install Matrix
 
 `web-uplift install` copies the one canonical audit skill plus the raw-CDP

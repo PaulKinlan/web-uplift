@@ -21,7 +21,7 @@ import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost,
 import { testSourceTreeSkipsSymlinkFileEscape, testSourceTreeSkipsSymlinkDirEscape, testSourceTreeSkipsSymlinkCycle, testSourceTreeDepthGuard } from './source-tree-symlink.mjs';
 import { testInstallSkipsSymlinksInVendoredSource, testInstallCopyDepthGuard, testInstallVendorsCompleteClosure } from './install-copy-symlink.mjs';
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
-import { launchChrome, resolveChromePath } from '../evidence/cdp.mjs';
+import { launchChrome, resolveChromePath, sandboxDisableReason } from '../evidence/cdp.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
 import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
@@ -47,6 +47,7 @@ try {
   await testSafeFetchDnsRebindingGuard();
   await testSafeFetchContentDecoding();
   await testLaunchRetryAndDiagnostics();
+  await testChromeSandboxPolicy();
   testSchemaValidation();
   testAtomicCoverageValidator();
   testGuidanceUsage();
@@ -3617,6 +3618,65 @@ async function testLaunchRetryAndDiagnostics() {
   } finally {
     if (savedBin === undefined) delete process.env.CHROME_BIN;
     else process.env.CHROME_BIN = savedBin;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// web-uplift-d2l: every primitive navigates a page the operator does not control,
+// so Chrome's OS sandbox must be ON unless the operator explicitly opts out or
+// Chrome cannot start it at all (root). The claim is about the ARGUMENTS the
+// browser is spawned with, so it is asserted from a fake CHROME_BIN that records
+// its own argv - not from launchChrome's own logging, which could describe an
+// intent the argv does not carry.
+async function testChromeSandboxPolicy() {
+  // The decision itself: unset, empty and false-y all keep the sandbox on.
+  assert(sandboxDisableReason({ env: {}, uid: 1000 }) === null, 'an unset WEB_UPLIFT_NO_SANDBOX must keep the sandbox on');
+  assert(sandboxDisableReason({ env: { WEB_UPLIFT_NO_SANDBOX: '0' }, uid: 1000 }) === null, 'WEB_UPLIFT_NO_SANDBOX=0 must keep the sandbox on');
+  assert(sandboxDisableReason({ env: { WEB_UPLIFT_NO_SANDBOX: '1' }, uid: 1000 }) !== null, 'WEB_UPLIFT_NO_SANDBOX=1 must disable the sandbox');
+  assert(sandboxDisableReason({ env: {}, uid: 0 }) !== null, 'running as root must disable the sandbox (Chrome cannot start it as uid 0)');
+
+  const savedBin = process.env.CHROME_BIN;
+  const savedOptOut = process.env.WEB_UPLIFT_NO_SANDBOX;
+  const dir = mkdtempSync(join(tmpdir(), 'web-uplift-sandbox-'));
+  try {
+    const argvFile = join(dir, 'argv');
+    const fake = join(dir, 'chrome');
+    // Records the arguments, announces the DevTools line so the launch succeeds,
+    // then stays alive for close() to tear down (the same shape the retry test
+    // uses above).
+    writeFileSync(
+      fake,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\necho "DevTools listening on ws://127.0.0.1:9223/" 1>&2\nsleep 30\n`,
+      { mode: 0o755 },
+    );
+    process.env.CHROME_BIN = fake;
+
+    delete process.env.WEB_UPLIFT_NO_SANDBOX;
+    const byDefault = await launchChrome({ log: () => {} });
+    await byDefault.close();
+    const defaultArgs = readFileSync(argvFile, 'utf8').split('\n').filter(Boolean);
+    // The policy verdict for THIS process (a suite run as root is the one case
+    // where the ambient launch is legitimately the disabled one) - the argv must
+    // match it rather than silently disagreeing with the logged reason.
+    const ambientReason = sandboxDisableReason();
+    assert(
+      defaultArgs.includes('--no-sandbox') === (ambientReason !== null),
+      `the default launch must keep Chrome's OS sandbox on unless the policy says otherwise (policy says ${ambientReason ?? 'sandbox on'}), argv: ${JSON.stringify(defaultArgs)}`,
+    );
+
+    process.env.WEB_UPLIFT_NO_SANDBOX = '1';
+    const optedOut = await launchChrome({ log: () => {} });
+    await optedOut.close();
+    const optedOutArgs = readFileSync(argvFile, 'utf8').split('\n').filter(Boolean);
+    assert(
+      optedOutArgs.includes('--no-sandbox'),
+      `WEB_UPLIFT_NO_SANDBOX=1 must pass --no-sandbox, argv: ${JSON.stringify(optedOutArgs)}`,
+    );
+  } finally {
+    if (savedBin === undefined) delete process.env.CHROME_BIN;
+    else process.env.CHROME_BIN = savedBin;
+    if (savedOptOut === undefined) delete process.env.WEB_UPLIFT_NO_SANDBOX;
+    else process.env.WEB_UPLIFT_NO_SANDBOX = savedOptOut;
     rmSync(dir, { recursive: true, force: true });
   }
 }
