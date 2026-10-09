@@ -187,14 +187,10 @@ export function sanitizeNavUrl(raw) {
         modified = true;
       }
     }
-    // Path segments carry values too: /user/alice@example.com/orders persists the
-    // email unless the segment is redacted, and /token/abc123 persists the token
-    // because a segment right after a sensitive marker IS a value even with no
-    // PII shape of its own. Otherwise value-shape only (no key heuristics) so
-    // routes like /settings/security are left alone.
-    if (u.pathname && u.pathname !== '/') {
+    const sanitizePath = (pathname) => {
+      if (!pathname || pathname === '/') return { modified: false, pathname };
       let pathModified = false;
-      const rawSegs = u.pathname.split('/');
+      const rawSegs = pathname.split('/');
       const segs = rawSegs.map((seg, i) => {
         if (!seg) return seg;
         let decoded = seg;
@@ -207,19 +203,39 @@ export function sanitizeNavUrl(raw) {
         }
         return seg;
       });
-      if (pathModified) {
-        u.pathname = segs.join('/');
+      return { modified: pathModified, pathname: segs.join('/') };
+    };
+
+    if (u.pathname && u.pathname !== '/') {
+      const pathRes = sanitizePath(u.pathname);
+      if (pathRes.modified) {
+        u.pathname = pathRes.pathname;
         modified = true;
       }
     }
-    // Fragments can be query-like (#email=...&tab=2) or a bare PII value.
+    // Fragments can be query-like (#email=...&tab=2), route-like (#/token/abc123?tab=2), or a bare PII value.
     if (u.hash && u.hash.length > 1) {
       const frag = u.hash.slice(1);
-      let decoded = frag;
-      try { decoded = decodeURIComponent(frag); } catch { /* keep raw */ }
-      if (decoded.includes('=')) {
-        const params = new URLSearchParams(decoded);
-        let fragModified = false;
+      let fragPath = frag;
+      let fragSearch = '';
+      const qIdx = frag.indexOf('?');
+      if (qIdx !== -1) {
+        fragPath = frag.slice(0, qIdx);
+        fragSearch = frag.slice(qIdx);
+      } else if (frag.includes('=') && !frag.startsWith('/')) {
+        fragSearch = '?' + frag;
+        fragPath = '';
+      }
+
+      let fragModified = false;
+      if (fragPath) {
+        const res = sanitizePath(fragPath);
+        if (res.modified) { fragPath = res.pathname; fragModified = true; }
+      }
+      
+      if (fragSearch) {
+        const params = new URLSearchParams(fragSearch.slice(1));
+        let searchModified = false;
         for (const [k, v] of [...params.entries()]) {
           // SPA router fragments hide the value in the parameter KEY:
           // #/user/alice@example.com?tab=2 parses as key
@@ -227,21 +243,30 @@ export function sanitizeNavUrl(raw) {
           // value-shape cannot be value-redacted, so the parameter is omitted.
           if (isSensitiveNavValue(k)) {
             params.delete(k);
-            fragModified = true;
+            searchModified = true;
             continue;
           }
           if (!v) continue;
           if (hasSensitiveWord(k) || isSensitiveNavValue(v, k)) {
             params.set(k, '[redacted]');
-            fragModified = true;
+            searchModified = true;
           }
         }
-        if (fragModified) {
-          u.hash = params.toString();
-          modified = true;
+        if (searchModified) {
+          const newSearch = params.toString();
+          fragSearch = newSearch ? '?' + newSearch : '';
+          fragModified = true;
         }
-      } else if (isSensitiveNavValue(decoded)) {
-        u.hash = '[redacted]';
+      }
+      
+      if (fragModified) {
+        let newHash = fragPath;
+        if (!fragPath && qIdx === -1 && fragSearch.startsWith('?')) {
+          newHash = fragSearch.slice(1);
+        } else {
+          newHash = fragPath + fragSearch;
+        }
+        u.hash = newHash;
         modified = true;
       }
     }

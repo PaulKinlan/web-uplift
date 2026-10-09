@@ -255,13 +255,11 @@ export async function testFlowRecordSensitiveRedaction() {
   const anchorFrag = sanitizeNavUrl('https://example.com/app#/dashboard');
   assert(anchorFrag === 'https://example.com/app#/dashboard', `innocent fragment must be preserved: ${anchorFrag}`);
 
-  // 10e. SPA ROUTER FRAGMENTS hide the value in the parameter KEY
-  // (#/user/alice@example.com?tab=2 parses as key "/user/alice@example.com?tab"),
-  // and a PATH segment right after a sensitive marker (/token/abc123) is a value
-  // even with no PII shape of its own. Both leaked verbatim before this fix.
+  // 10e. SPA ROUTER FRAGMENTS may contain PII in the route segments or queries.
+  // Both bare values and path segments after markers must be redacted.
   const fragKeyNav = sanitizeNavUrl('https://example.com/app#/user/alice@example.com?tab=2');
-  assert(fragKeyNav === 'https://example.com/app' && !fragKeyNav.includes('alice@example.com'),
-    `a PII-bearing fragment KEY must be omitted: ${fragKeyNav}`);
+  assert(fragKeyNav === 'https://example.com/app#/user/[redacted]?tab=2' && !fragKeyNav.includes('alice@example.com'),
+    `a PII-bearing fragment route must be redacted: ${fragKeyNav}`);
   const markerPath = sanitizeNavUrl('https://example.com/token/abc123');
   assert(markerPath === 'https://example.com/token/[redacted]',
     `a path segment after a sensitive marker must be redacted: ${markerPath}`);
@@ -302,7 +300,8 @@ export async function testFlowRecordSensitiveRedaction() {
   for (const fn of frameNavListeners) {
     fn({ frame: { parentId: null, url: 'https://example.com/checkout?step=2&token=sec123&postalCode=90210&user_email=alice@test.com' } });
     fn({ frame: { parentId: null, url: 'https://example.com/app#/user/alice@example.com?tab=2' } });
-    fn({ frame: { parentId: null, url: 'https://example.com/token/abc123' } });
+    fn({ frame: { parentId: null, url: 'https://example.com/app#/token/abc123' } });
+    fn({ frame: { parentId: null, url: 'https://example.com/app#/token/xyz890?tab=2' } });
   }
   for (const fn of bindingListeners) {
     fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#email']], value: '', redacted: true }) });
@@ -311,21 +310,24 @@ export async function testFlowRecordSensitiveRedaction() {
   }
   const flow = await flowPromise;
   assert(flow.title === 'Recorded flow (example.com)', 'flow title matches host');
-  assert(flow.steps.length === 6, 'flow contains 6 steps (viewport, 3 navs, 2 changes)');
+  assert(flow.steps.length === 7, 'flow contains 7 steps (viewport, 4 navs, 2 changes)');
   assert(flow.steps[1].type === 'navigate' && flow.steps[1].url.includes('token=%5Bredacted%5D'), 'flow nav step redacts token');
   assert(flow.steps[1].url.includes('postalCode=90210'), 'flow nav step preserves postalCode');
-  assert(flow.steps[2].type === 'navigate' && flow.steps[2].url === 'https://example.com/app',
-    `flow nav step omits the PII-bearing fragment key: ${flow.steps[2].url}`);
-  assert(flow.steps[3].type === 'navigate' && flow.steps[3].url === 'https://example.com/token/[redacted]',
-    `flow nav step redacts the token path segment: ${flow.steps[3].url}`);
-  assert(flow.steps[4].redacted === true && flow.steps[4].value === '', 'flow email step is redacted');
-  assert(flow.steps[5].value === 'winter boots', 'flow search step preserves value');
+  assert(flow.steps[2].type === 'navigate' && flow.steps[2].url === 'https://example.com/app#/user/[redacted]?tab=2',
+    `flow nav step redacts the PII-bearing fragment route: ${flow.steps[2].url}`);
+  assert(flow.steps[3].type === 'navigate' && flow.steps[3].url === 'https://example.com/app#/token/[redacted]',
+    `flow nav step redacts the token fragment route: ${flow.steps[3].url}`);
+  assert(flow.steps[4].type === 'navigate' && flow.steps[4].url === 'https://example.com/app#/token/[redacted]?tab=2',
+    `flow nav step redacts the token fragment route with query: ${flow.steps[4].url}`);
+  assert(flow.steps[5].redacted === true && flow.steps[5].value === '', 'flow email step is redacted');
+  assert(flow.steps[6].value === 'winter boots', 'flow search step preserves value');
 
   const serialized = JSON.stringify(flow);
   assert(!serialized.includes('sec123'), 'serialized flow must not leak token');
   assert(!serialized.includes('alice@test.com'), 'serialized flow must not leak email');
   assert(!serialized.includes('alice@example.com'), 'serialized flow must not leak the fragment-key email');
-  assert(!serialized.includes('abc123'), 'serialized flow must not leak the token path value');
+  assert(!serialized.includes('abc123'), 'serialized flow must not leak the token fragment value');
+  assert(!serialized.includes('xyz890'), 'serialized flow must not leak the token fragment query value');
 
   // 12. End-to-end recordFlow execution with opt-in flags (captureHidden, captureSensitive).
   const bindingListenersOpt = [];
@@ -436,9 +438,15 @@ export async function testFlowReplayMutationGate() {
   // a host's shadowRoot, invisible to a document-level querySelector. A
   // light-DOM match still wins before the shadow walk.
   const shadowTarget = { tagName: 'BUTTON', nodeType: 1, textContent: 'Shadow' };
+  const nestedTarget = { tagName: 'BUTTON', nodeType: 1, textContent: 'Nested' };
+  const nestedRootStub = {
+    querySelector: (sel) => (sel === '#nestedBtn' ? nestedTarget : null),
+    querySelectorAll: () => [],
+  };
+  const nestedHost = { tagName: 'DIV', nodeType: 1, shadowRoot: nestedRootStub };
   const shadowRootStub = {
     querySelector: (sel) => (sel === '#shadowBtn' ? shadowTarget : null),
-    querySelectorAll: () => [],
+    querySelectorAll: (sel) => (sel === '*' ? [nestedHost] : []),
   };
   const shadowHost = { tagName: 'DIV', nodeType: 1, shadowRoot: shadowRootStub };
   const shadowDoc = {
@@ -447,6 +455,8 @@ export async function testFlowReplayMutationGate() {
   };
   assert(resolveSelectorCandidate('pierce/#shadowBtn', shadowDoc) === shadowTarget,
     'pierce/ must resolve a target inside an open shadow root');
+  assert(resolveSelectorCandidate('pierce/#nestedBtn', shadowDoc) === nestedTarget,
+    'pierce/ must resolve a target inside a NESTED open shadow root');
   const lightFirstDoc = {
     querySelector: (sel) => (sel === '#shadowBtn' ? aboutLink : null),
     querySelectorAll: (sel) => (sel === '*' ? [shadowHost] : []),
@@ -498,14 +508,19 @@ export async function testFlowReplayMutationGate() {
       getAttribute: (k) => (k === 'onclick' ? 'deleteItem()' : null),
       click() { clicks.push('deleteAnchor'); },
     });
-    const byId = { '#childSpan': spanChildEl, '#about': aboutLinkEl, '#deleteLink': deleteAnchorEl };
+    const moreAnchorEl = stubEl({
+      tagName: 'A', textContent: 'More',
+      getAttribute: (k) => (k === 'onclick' ? 'loadMore()' : null),
+      click() { clicks.push('moreAnchor'); },
+    });
+    const byId = { '#childSpan': spanChildEl, '#about': aboutLinkEl, '#deleteLink': deleteAnchorEl, '#moreLink': moreAnchorEl };
     const documentStub = {
       activeElement: active,
       querySelector: (sel) => byId[sel] ?? null,
       querySelectorAll: (sel) => {
-        if (sel === '*') return [deleteAnchorEl, aboutLinkEl, spanChildEl];
+        if (sel === '*') return [deleteAnchorEl, aboutLinkEl, spanChildEl, moreAnchorEl];
         if (sel === '[aria-label]') return [];
-        return [submitBtnEl, aboutLinkEl, deleteAnchorEl];
+        return [submitBtnEl, aboutLinkEl, deleteAnchorEl, moreAnchorEl];
       },
       evaluate: () => { throw new Error('xpath unsupported in stub'); },
     };
@@ -540,6 +555,7 @@ export async function testFlowReplayMutationGate() {
       { type: 'change', selectors: [['#pwd']], value: '', redacted: true },
       { type: 'click', selectors: [['#childSpan']], target: 'main' },
       { type: 'click', selectors: [['#deleteLink']], target: 'main' },
+      { type: 'click', selectors: [['#moreLink']], target: 'main' },
       { type: 'click', selectors: [['#about']], target: 'main' },
       { type: 'click', selectors: [['.stale-css'], ['text/About Us']], target: 'main' },
       { type: 'keyDown', key: 'Enter', target: 'main' },
@@ -555,11 +571,13 @@ export async function testFlowReplayMutationGate() {
   assert(resDefault.steps[1].mutationBlocked === true, 'click on child of mutating control blocked in dry-run');
   assert(resDefault.steps[1].detail.includes('dry-run'), `blocked click explains itself: ${resDefault.steps[1].detail}`);
   assert(resDefault.steps[2].mutationBlocked === true, 'click on <a onclick>Delete</a> blocked in dry-run');
-  assert(resDefault.steps[3].ok === true && !resDefault.steps[3].mutationBlocked, 'innocent link click allowed in dry-run');
-  assert(resDefault.steps[3].detail.includes('A About Us'), `innocent click ran against the anchor: ${resDefault.steps[3].detail}`);
-  assert(resDefault.steps[4].ok === true && !resDefault.steps[4].mutationBlocked,
-    'stale CSS candidate must fall back to text/ and resolve: ' + resDefault.steps[4].detail);
-  assert(resDefault.steps[5].mutationBlocked === true, 'Enter submission blocked in dry-run');
+  assert(resDefault.steps[3].mutationBlocked === true, 'click on innocuously labelled <a onclick>More</a> blocked in dry-run');
+  assert(!dryClient.clicks.includes('moreAnchor'), '<a onclick>More</a> handler NOT called in dry-run');
+  assert(resDefault.steps[4].ok === true && !resDefault.steps[4].mutationBlocked, 'innocent link click allowed in dry-run');
+  assert(resDefault.steps[4].detail.includes('A About Us'), `innocent click ran against the anchor: ${resDefault.steps[4].detail}`);
+  assert(resDefault.steps[5].ok === true && !resDefault.steps[5].mutationBlocked,
+    'stale CSS candidate must fall back to text/ and resolve: ' + resDefault.steps[5].detail);
+  assert(resDefault.steps[6].mutationBlocked === true, 'Enter submission blocked in dry-run');
   assert(dryClient.clicks.length === 2 && dryClient.clicks.every((c) => c === 'aboutLink'),
     `dry-run must click ONLY the innocent links, got: ${JSON.stringify(dryClient.clicks)}`);
   assert(dryClient.submits.length === 0, 'dry-run must never submit a form');
@@ -578,9 +596,10 @@ export async function testFlowReplayMutationGate() {
   const resAllow = await replayFlow(allowClient, flow, { allowMutations: true, settleMs: 1 });
   assert(resAllow.steps[1].ok === true && !resAllow.steps[1].mutationBlocked, 'allowed click on submit child executes');
   assert(resAllow.steps[2].ok === true && !resAllow.steps[2].mutationBlocked, 'allowed click on delete anchor executes');
-  assert(resAllow.steps[5].ok === true && resAllow.steps[5].detail.includes('submitted form'),
-    `allowed Enter submits the form: ${resAllow.steps[5].detail}`);
-  assert(allowClient.clicks.includes('spanChild') && allowClient.clicks.includes('deleteAnchor'),
+  assert(resAllow.steps[3].ok === true && !resAllow.steps[3].mutationBlocked, 'allowed click on more anchor executes');
+  assert(resAllow.steps[6].ok === true && resAllow.steps[6].detail.includes('submitted form'),
+    `allowed Enter submits the form: ${resAllow.steps[6].detail}`);
+  assert(allowClient.clicks.includes('spanChild') && allowClient.clicks.includes('deleteAnchor') && allowClient.clicks.includes('moreAnchor'),
     `allowed run clicks every control: ${JSON.stringify(allowClient.clicks)}`);
   assert(allowClient.submits.length === 1, 'allowed run submits the form exactly once');
 }
