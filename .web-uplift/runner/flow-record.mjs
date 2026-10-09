@@ -81,9 +81,22 @@ import { randomUUID } from 'node:crypto';
 // page-side emitter can only produce clicks and changes; the replayer's other step types
 // (navigate, keyDown, setViewport, ...) are produced by the RECORDER itself, not by the
 // page, so a page-supplied step of one of those types is refused and reported.
+//
+// Replay meaning guard (web-uplift-g8yf):
+// Selectors recorded from a page are bounded in syntax and length, but at replay
+// time the page DOM could steer those selectors to target a different control
+// (e.g. an attacker-controlled link or form submit aliased to the same ID or
+// aria label). To guard against cross-element steering, the recorder captures an
+// element descriptor (tag, type, role, text snippet) and replay rejects any
+// resolved element whose tag does not match the recorded descriptor.
+//
+// Residual risk: within elements sharing the same tag, role, and text on the same
+// page, DOM order manipulation or dynamic script binding could still steer replay
+// between indistinguishable controls. Eliminating this residual completely would
+// require full DOM sub-tree hashing or visual confirmation.
 const RECORDED_STEP_FIELDS = {
-  click: ['selectors', 'target'],
-  change: ['selectors', 'value', 'target', 'redacted'],
+  click: ['selectors', 'target', 'descriptor'],
+  change: ['selectors', 'value', 'target', 'redacted', 'descriptor'],
 };
 const MAX_STEP_SELECTOR_GROUPS = 32;
 const MAX_STEP_SELECTORS_PER_GROUP = 8;
@@ -139,6 +152,39 @@ export function validateRecordedStep(raw) {
   if (raw.target !== undefined) {
     if (typeof raw.target !== 'string' || raw.target.length > 64) return { ok: false, reason: 'target must be a string of at most 64 characters' };
     step.target = raw.target;
+  }
+  if (raw.descriptor !== undefined) {
+    if (!raw.descriptor || typeof raw.descriptor !== 'object' || Array.isArray(raw.descriptor)) {
+      return { ok: false, reason: 'descriptor must be an object' };
+    }
+    const cleanDesc = {};
+    if (raw.descriptor.tag !== undefined) {
+      if (typeof raw.descriptor.tag !== 'string' || !/^[a-zA-Z0-9-]+$/.test(raw.descriptor.tag) || raw.descriptor.tag.length > 32) {
+        return { ok: false, reason: 'descriptor.tag must be an alphanumeric string of at most 32 characters' };
+      }
+      cleanDesc.tag = raw.descriptor.tag.toLowerCase();
+    }
+    if (raw.descriptor.type !== undefined) {
+      if (typeof raw.descriptor.type !== 'string' || raw.descriptor.type.length > 32) {
+        return { ok: false, reason: 'descriptor.type must be a string of at most 32 characters' };
+      }
+      cleanDesc.type = raw.descriptor.type.toLowerCase();
+    }
+    if (raw.descriptor.role !== undefined) {
+      if (typeof raw.descriptor.role !== 'string' || raw.descriptor.role.length > 32) {
+        return { ok: false, reason: 'descriptor.role must be a string of at most 32 characters' };
+      }
+      cleanDesc.role = raw.descriptor.role.toLowerCase();
+    }
+    if (raw.descriptor.text !== undefined) {
+      if (typeof raw.descriptor.text !== 'string' || raw.descriptor.text.length > 64) {
+        return { ok: false, reason: 'descriptor.text must be a string of at most 64 characters' };
+      }
+      cleanDesc.text = raw.descriptor.text;
+    }
+    if (Object.keys(cleanDesc).length > 0) {
+      step.descriptor = cleanDesc;
+    }
   }
   return { ok: true, step };
 }
@@ -514,13 +560,29 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
     const alts = [];
     if (el.id) alts.push(['#' + CSS.escape(el.id)]);
     const tid = el.getAttribute('data-testid') || el.getAttribute('data-test-id');
-    if (tid) alts.push(['[data-testid="' + tid + '"]']);
+    if (tid && typeof CSS !== 'undefined' && CSS.escape) {
+      alts.push(['[data-testid="' + CSS.escape(tid) + '"]']);
+    } else if (tid && !tid.includes('"') && !tid.includes('\\\\')) {
+      alts.push(['[data-testid="' + tid + '"]']);
+    }
     const aria = el.getAttribute('aria-label');
     if (aria) alts.push(['aria/' + aria]);
     const txt = (el.textContent || '').trim();
     if (txt && txt.length <= 40 && ['A', 'BUTTON', 'SUMMARY', 'LABEL'].includes(el.tagName)) alts.push(['aria/' + txt]);
     alts.push([cssPath(el)]);
     return alts;
+  };
+
+  const descriptorFor = (el) => {
+    if (!el || el.nodeType !== 1) return undefined;
+    const desc = { tag: (el.tagName || '').toLowerCase() };
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (type && type.length <= 32) desc.type = type;
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    if (role && role.length <= 32) desc.role = role;
+    const txt = (el.textContent || '').trim().slice(0, 40);
+    if (txt) desc.text = txt;
+    return desc;
   };
 
   // Layer 3: only an event the user agent produced is recordable. A page can dispatch a
@@ -532,7 +594,10 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
     if (!e.isTrusted) return;
     const el = e.target.closest('a,button,[role=button],input[type=submit],input[type=button],summary,[onclick]') || e.target;
     if (el && el.id === '__wu_done') return; // the Done control itself
-    send({ type: 'click', selectors: selectorsFor(el), target: 'main' });
+    const step = { type: 'click', selectors: selectorsFor(el), target: 'main' };
+    const desc = descriptorFor(el);
+    if (desc) step.descriptor = desc;
+    send(step);
   }, true);
 
   document.addEventListener('change', (e) => {
@@ -550,6 +615,8 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
     if (sensitive) {
       step.redacted = true;
     }
+    const desc = descriptorFor(el);
+    if (desc) step.descriptor = desc;
     send(step);
   }, true);
 

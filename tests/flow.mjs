@@ -269,6 +269,8 @@ export async function testFlowRecordSensitiveRedaction() {
   assert(clickSession.steps.length === 1 && clickSession.steps[0].type === 'click' && clickSession.steps[0].selectors.length >= 1,
     `a legitimate click must still be recorded: ${JSON.stringify(clickSession.steps)}`);
   assert(clickSession.tokens[0] === clickSession.token, 'the click payload must be authenticated too');
+  assert(clickSession.steps[0].descriptor && clickSession.steps[0].descriptor.tag === 'button',
+    'click step must attach element descriptor (web-uplift-g8yf)');
 
   // web-uplift-q7s6: overlay removal detection notifies Node so recording does not hang
   const overlaySession = testCaptureSession({ captureHidden: false, captureSensitive: false });
@@ -321,6 +323,24 @@ export async function testFlowRecordSensitiveRedaction() {
     '32 selector groups are within the bound');
   assert(validateRecordedStep({ type: 'click', selectors: [Array.from({ length: 8 }, (_, i) => `text/x${i}`)], target: 'main' }).ok,
     '8 alternatives inside a selector group are within the bound');
+
+  // web-uplift-g8yf: descriptor validation
+  const okDescClick = validateRecordedStep({
+    type: 'click',
+    selectors: [['#go']],
+    target: 'main',
+    descriptor: { tag: 'BUTTON', type: 'submit', role: 'button', text: 'Go' },
+  });
+  assert(okDescClick.ok && okDescClick.step.descriptor && okDescClick.step.descriptor.tag === 'button',
+    'a well-formed descriptor validates with lowercased tag');
+  const badDescVerdict = validateRecordedStep({
+    type: 'click',
+    selectors: [['#go']],
+    target: 'main',
+    descriptor: { tag: '<invalid>' },
+  });
+  assert(!badDescVerdict.ok && badDescVerdict.reason.includes('descriptor.tag'),
+    'an invalid descriptor.tag is refused');
 
   // A2. The injected page-side classifier and the Node-side one must agree. The
   // page script's word DATA is generated from evidence/credential-terms.mjs, but
@@ -1078,7 +1098,7 @@ export async function testFlowReplayMutationGate() {
     };
   }
 
-  function makeVmReplayClient({ activeElement } = {}) {
+  function makeVmReplayClient({ activeElement, extraById = {} } = {}) {
     const clicks = [];
     const submits = [];
     const typed = [];
@@ -1130,7 +1150,7 @@ export async function testFlowReplayMutationGate() {
       click() { clicks.push('spanInDeleteAnchor'); },
     });
     const creditsLink = stubEl({ tagName: 'A', textContent: 'Site Credits', getAttribute: (k) => (k === 'href' ? '/credits' : null), click() { clicks.push('creditsLink'); } });
-    Object.assign(byId, { '#deleteSpan': spanInDeleteAnchorEl, '#credits': creditsLink });
+    Object.assign(byId, { '#deleteSpan': spanInDeleteAnchorEl, '#credits': creditsLink }, extraById);
     const documentStub = {
       activeElement: active,
       querySelector: (sel) => byId[sel] ?? null,
@@ -1285,6 +1305,48 @@ export async function testFlowReplayMutationGate() {
     `allowed password step types the value, got: ${JSON.stringify(allowClient.typed)}`);
   assert(resAllow.steps[13].ok === true && !resAllow.steps[13].mutationBlocked && allowClient.clicks.includes('spanInDeleteAnchor'),
     'allowed run clicks through to the delete link when explicitly authorized');
+
+  // 15. Replay meaning guard (web-uplift-g8yf): element descriptor prevents steering to a mismatched element
+  let clickedRight = false;
+  const wrongAnchor = stubEl({ tagName: 'A', textContent: 'Wrong Target' });
+  const rightButton = stubEl({
+    tagName: 'BUTTON',
+    textContent: 'Right Target',
+    click() { clickedRight = true; },
+  });
+  const steeredClient = makeVmReplayClient({
+    extraById: { '#wrongAnchor': wrongAnchor, '#rightButton': rightButton },
+  });
+
+  const descMismatchFlow = {
+    title: 'Steered target test',
+    steps: [
+      {
+        type: 'click',
+        selectors: [['#wrongAnchor']],
+        descriptor: { tag: 'button' },
+      },
+    ],
+  };
+  const resSteered = await replayFlow(steeredClient, descMismatchFlow, { allowMutations: true, settleMs: 1 });
+  assert(resSteered.steps[0].ok === false, 'click must fail when resolved element tag does not match descriptor');
+  assert(resSteered.steps[0].detail.includes('expected recorded <button>'),
+    `failure detail must explain tag mismatch: ${resSteered.steps[0].detail}`);
+
+  // Fallback to secondary selector candidate that matches descriptor
+  const descFallbackFlow = {
+    title: 'Candidate fallback test',
+    steps: [
+      {
+        type: 'click',
+        selectors: [['#wrongAnchor'], ['#rightButton']],
+        descriptor: { tag: 'button' },
+      },
+    ],
+  };
+  const resFallback = await replayFlow(steeredClient, descFallbackFlow, { allowMutations: true, settleMs: 1 });
+  assert(resFallback.steps[0].ok === true, 'replay must pick candidate that matches recorded descriptor');
+  assert(clickedRight === true, 'the button matching descriptor must be clicked');
 }
 
 // Run directly (node tests/flow.mjs), not when imported by the regression

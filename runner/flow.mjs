@@ -109,17 +109,35 @@ export function resolveSelectorCandidate(s, doc) {
   try { return doc.querySelector(s); } catch { return null; }
 }
 
-async function pageAction(client, selectorList, actionJs) {
+async function pageAction(client, selectorList, actionJs, descriptor = null) {
   const list = Array.isArray(selectorList) ? selectorList : [selectorList].filter(Boolean);
   const jsonList = JSON.stringify(list);
+  const jsonDesc = JSON.stringify(descriptor || null);
   const expr = `(() => {
     const list = ${jsonList};
+    const desc = ${jsonDesc};
     const __wuResolveOne = ${resolveSelectorCandidate.toString()};
     const resolve = (cand) => __wuResolveOne(Array.isArray(cand) ? cand[0] : cand, document);
     let el = null;
+    let fallback = null;
     for (const cand of list) {
-      el = resolve(cand);
-      if (el) break;
+      const candEl = resolve(cand);
+      if (!candEl) continue;
+      // Replay meaning guard (web-uplift-g8yf): if a recorded descriptor exists, ensure
+      // the candidate resolves to an element matching the recorded tag. If it does not,
+      // keep looking for another candidate in the list that does match.
+      if (desc && desc.tag) {
+        const candTag = (candEl.tagName || '').toLowerCase();
+        if (candTag !== desc.tag.toLowerCase()) {
+          if (!fallback) fallback = candEl;
+          continue;
+        }
+      }
+      el = candEl;
+      break;
+    }
+    if (!el && fallback && desc && desc.tag) {
+      return { ok: false, detail: 'selector resolved to <' + (fallback.tagName || '').toLowerCase() + '>, expected recorded <' + desc.tag + '>' };
     }
     if (!el) return { ok: false, detail: 'no selector resolved' };
     try {
@@ -366,7 +384,7 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
             el.scrollIntoView({block:'center'});
             el.click();
             return { ok: true, detail: (el.tagName + ' ' + (el.textContent || '').trim().slice(0, 40)) };
-          `);
+          `, step.descriptor);
           await sleep(settleMs);
           break;
         case 'change':
@@ -402,7 +420,7 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
             if('value' in el){ el.value=v; }
             el.dispatchEvent(new Event('input',{bubbles:true}));
             el.dispatchEvent(new Event('change',{bubbles:true}));
-            return { ok:true, detail:'typed '+JSON.stringify(v) };`);
+            return { ok:true, detail:'typed '+JSON.stringify(v) };`, step.descriptor);
           break;
         case 'keyDown':
           if ((step.key || '').toLowerCase() === 'enter') {
@@ -443,7 +461,7 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
         case 'waitForElement':
           outcome = { ok: false, detail: 'element did not appear' };
           for (let t = 0; t < 20; t++) {
-            const r = await pageAction(client, step.selectors, `return { ok:true };`);
+            const r = await pageAction(client, step.selectors, `return { ok:true };`, step.descriptor);
             if (r.ok) { outcome = { ok: true, detail: 'appeared' }; break; }
             await sleep(250);
           }
