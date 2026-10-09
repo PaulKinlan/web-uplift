@@ -289,12 +289,15 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // spine. EXCLUDED WITH REASON: the per-primitive content probes after or outside the shared
 // spine (evaluate() probes, screenshots, getResponseBody, screencast, heap, axe, a11y and
 // friends) - a wedge there hangs ONE primitive's evidence, not the CLI's ability to reach
-// or leave a page, and several carry their own bounds - plus THREE page-side awaits inside
+// or leave a page, and several carry their own bounds - plus TWO page-side awaits inside
 // evaluate templates (not host awaits at all): the navigator.locks probe, and the secrets
-// primitive's in-page fetch of a page-selected script URL and its res.text() fallback
-// (web-uplift-61i: both carry their own in-page AbortController deadline and 2 MiB byte
-// cap, the same containment values as the Node-side safeFetch), and the evaluate()
-// helper's own Runtime.evaluate, which is the content-probe mechanism itself.
+// primitive's in-page fetch of a page-selected script URL (web-uplift-61i: it carries its own
+// in-page AbortController deadline and a 2 MiB byte cap, the same containment values as the
+// Node-side safeFetch). The former res.text() fallback for a body with no readable stream is
+// GONE rather than merely bounded (web-uplift-6fe): a streamless body is now refused before any
+// read, so there is no third page-side await to classify. The evaluate()
+// helper's own Runtime.evaluate, which is the content-probe mechanism itself, is in the
+// primitive-probe bucket.
 //
 // THE WARNING for the next primitive: an await added to either file fails testAwaitCensus
 // until it is classified, so an omission is LOUD now rather than silent. A NEW primitive

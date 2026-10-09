@@ -7546,7 +7546,10 @@ function testAwaitCensus() {
       'bounded:own-deadline': 8,
       'bounded:gather-spine': 6,
       'excluded:primitive-probe': 63,
-      'excluded:page-side-template': 3,
+      // 2, not 3: web-uplift-6fe removed the in-page res.text() fallback for a body with
+      // no readable stream (it is refused before any read now), so the page-side-template
+      // bucket is the navigator.locks probe and the in-page fetch, nothing else.
+      'excluded:page-side-template': 2,
     },
   };
   for (const [file, expect] of Object.entries(expected)) {
