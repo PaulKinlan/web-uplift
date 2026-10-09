@@ -32,6 +32,7 @@ import {
   testSnapshotRunCopyErrorTolerance,
 } from './snapshot-run.mjs';
 import { testFlowNormalize, testFlowRecordSensitiveRedaction, testFlowReplayMutationGate } from './flow.mjs';
+import { testFlowPierceShadowRootBrowser } from './flow-shadow-browser.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -146,6 +147,9 @@ try {
   await testFlowNormalize();
   await testFlowRecordSensitiveRedaction();
   await testFlowReplayMutationGate();
+  // pai: the pierce/ shadow walk against REAL open shadow roots in headless
+  // Chrome, because the stub above can only agree with itself.
+  await testFlowPierceShadowRootBrowser();
   await testLaunchSessionLoop();
   await testNoOrphanBrowser();
   console.log('tests OK');
