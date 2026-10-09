@@ -299,9 +299,10 @@ export async function testFlowRecordSensitiveRedaction() {
 
   for (const fn of frameNavListeners) {
     fn({ frame: { parentId: null, url: 'https://example.com/checkout?step=2&token=sec123&postalCode=90210&user_email=alice@test.com' } });
+    fn({ frame: { parentId: null, url: 'https://example.com/settings/security' } });
     fn({ frame: { parentId: null, url: 'https://example.com/app#/user/alice@example.com?tab=2' } });
     fn({ frame: { parentId: null, url: 'https://example.com/app#/token/abc123' } });
-    fn({ frame: { parentId: null, url: 'https://example.com/app#/token/xyz890?tab=2' } });
+    fn({ frame: { parentId: null, url: 'https://example.com/app#/token/abc123?tab=2' } });
   }
   for (const fn of bindingListeners) {
     fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#email']], value: '', redacted: true }) });
@@ -310,24 +311,25 @@ export async function testFlowRecordSensitiveRedaction() {
   }
   const flow = await flowPromise;
   assert(flow.title === 'Recorded flow (example.com)', 'flow title matches host');
-  assert(flow.steps.length === 7, 'flow contains 7 steps (viewport, 4 navs, 2 changes)');
+  assert(flow.steps.length === 8, 'flow contains 8 steps (viewport, 5 navs, 2 changes)');
   assert(flow.steps[1].type === 'navigate' && flow.steps[1].url.includes('token=%5Bredacted%5D'), 'flow nav step redacts token');
   assert(flow.steps[1].url.includes('postalCode=90210'), 'flow nav step preserves postalCode');
-  assert(flow.steps[2].type === 'navigate' && flow.steps[2].url === 'https://example.com/app#/user/[redacted]?tab=2',
-    `flow nav step redacts the PII-bearing fragment route: ${flow.steps[2].url}`);
-  assert(flow.steps[3].type === 'navigate' && flow.steps[3].url === 'https://example.com/app#/token/[redacted]',
-    `flow nav step redacts the token fragment route: ${flow.steps[3].url}`);
-  assert(flow.steps[4].type === 'navigate' && flow.steps[4].url === 'https://example.com/app#/token/[redacted]?tab=2',
-    `flow nav step redacts the token fragment route with query: ${flow.steps[4].url}`);
-  assert(flow.steps[5].redacted === true && flow.steps[5].value === '', 'flow email step is redacted');
-  assert(flow.steps[6].value === 'winter boots', 'flow search step preserves value');
+  assert(flow.steps[2].type === 'navigate' && flow.steps[2].url === 'https://example.com/settings/security', 'flow nav step preserves exact /settings/security');
+  assert(flow.steps[3].type === 'navigate' && flow.steps[3].url === 'https://example.com/app#/user/[redacted]?tab=2',
+    `flow nav step redacts the PII-bearing fragment route: ${flow.steps[3].url}`);
+  assert(flow.steps[4].type === 'navigate' && flow.steps[4].url === 'https://example.com/app#/token/[redacted]',
+    `flow nav step redacts the token fragment route: ${flow.steps[4].url}`);
+  assert(flow.steps[5].type === 'navigate' && flow.steps[5].url === 'https://example.com/app#/token/[redacted]?tab=2',
+    `flow nav step redacts the token fragment route with query: ${flow.steps[5].url}`);
+  assert(flow.steps[6].redacted === true && flow.steps[6].value === '', 'flow email step is redacted');
+  assert(flow.steps[7].value === 'winter boots', 'flow search step preserves value');
 
   const serialized = JSON.stringify(flow);
+  assert(serialized.includes('https://example.com/settings/security'), 'serialized flow must preserve exact /settings/security route');
   assert(!serialized.includes('sec123'), 'serialized flow must not leak token');
   assert(!serialized.includes('alice@test.com'), 'serialized flow must not leak email');
   assert(!serialized.includes('alice@example.com'), 'serialized flow must not leak the fragment-key email');
-  assert(!serialized.includes('abc123'), 'serialized flow must not leak the token fragment value');
-  assert(!serialized.includes('xyz890'), 'serialized flow must not leak the token fragment query value');
+  assert(!serialized.includes('abc123'), 'serialized flow must not leak the token fragment value (bare or queried)');
 
   // 12. End-to-end recordFlow execution with opt-in flags (captureHidden, captureSensitive).
   const bindingListenersOpt = [];
@@ -437,22 +439,87 @@ export async function testFlowReplayMutationGate() {
   // pierce/ crosses OPEN shadow roots (Recorder semantics): the target lives in
   // a host's shadowRoot, invisible to a document-level querySelector. A
   // light-DOM match still wins before the shadow walk.
-  const shadowTarget = { tagName: 'BUTTON', nodeType: 1, textContent: 'Shadow' };
-  const nestedTarget = { tagName: 'BUTTON', nodeType: 1, textContent: 'Nested' };
-  const nestedRootStub = {
-    querySelector: (sel) => (sel === '#nestedBtn' ? nestedTarget : null),
-    querySelectorAll: () => [],
-  };
-  const nestedHost = { tagName: 'DIV', nodeType: 1, shadowRoot: nestedRootStub };
-  const shadowRootStub = {
-    querySelector: (sel) => (sel === '#shadowBtn' ? shadowTarget : null),
-    querySelectorAll: (sel) => (sel === '*' ? [nestedHost] : []),
-  };
-  const shadowHost = { tagName: 'DIV', nodeType: 1, shadowRoot: shadowRootStub };
-  const shadowDoc = {
-    querySelector: () => null,
-    querySelectorAll: (sel) => (sel === '*' ? [shadowHost] : []),
-  };
+  class MiniElement {
+    constructor(tagName, id = null, textContent = '') {
+      this.tagName = tagName;
+      this.id = id;
+      this.textContent = textContent;
+      this.nodeType = 1;
+      this.children = [];
+      this.shadowRoot = null;
+    }
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    }
+    attachShadow(init) {
+      this.shadowRoot = new MiniDocumentFragment();
+      this.shadowRoot.mode = init.mode;
+      return this.shadowRoot;
+    }
+    querySelector(sel) {
+      if (sel.startsWith('#') && this.id === sel.slice(1)) return this;
+      for (const child of this.children) {
+        const match = child.querySelector(sel);
+        if (match) return match;
+      }
+      return null;
+    }
+    querySelectorAll(sel) {
+      const res = [];
+      if (sel === '*') {
+        res.push(this);
+        for (const child of this.children) {
+          res.push(...child.querySelectorAll(sel));
+        }
+      }
+      return res;
+    }
+    get childElementCount() { return this.children.length; }
+    getAttribute() { return null; }
+    closest() { return null; }
+  }
+
+  class MiniDocumentFragment {
+    constructor() {
+      this.children = [];
+      this.mode = 'open';
+    }
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    }
+    querySelector(sel) {
+      for (const child of this.children) {
+        const match = child.querySelector(sel);
+        if (match) return match;
+      }
+      return null;
+    }
+    querySelectorAll(sel) {
+      const res = [];
+      for (const child of this.children) {
+        res.push(...child.querySelectorAll(sel));
+      }
+      return res;
+    }
+  }
+
+  const shadowTarget = new MiniElement('BUTTON', 'shadowBtn', 'Shadow');
+  const nestedTarget = new MiniElement('BUTTON', 'nestedBtn', 'Nested');
+  
+  const shadowHost = new MiniElement('DIV');
+  const shadowRoot = shadowHost.attachShadow({ mode: 'open' });
+  shadowRoot.appendChild(shadowTarget);
+  
+  const nestedHost = new MiniElement('DIV');
+  const nestedRoot = nestedHost.attachShadow({ mode: 'open' });
+  nestedRoot.appendChild(nestedTarget);
+  shadowRoot.appendChild(nestedHost);
+
+  const shadowDoc = new MiniDocumentFragment();
+  shadowDoc.appendChild(shadowHost);
+
   assert(resolveSelectorCandidate('pierce/#shadowBtn', shadowDoc) === shadowTarget,
     'pierce/ must resolve a target inside an open shadow root');
   assert(resolveSelectorCandidate('pierce/#nestedBtn', shadowDoc) === nestedTarget,
