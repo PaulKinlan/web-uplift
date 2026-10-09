@@ -676,6 +676,20 @@ export async function testFlowReplayMutationGate() {
     assert(classifyClickControl(mk({ tagName: 'BUTTON', textContent: label })).gated,
       `a button labelled "${label}" must be gated in dry-run`);
   }
+  // The reconciliation pinned in the unit suite: an EXPLICIT type=button has no default
+  // action and may be followed in a dry run (the landed shadow-root test
+  // tests/flow-shadow-browser.mjs requires exactly this for a "Details" toggle, web-uplift-pai),
+  // while a bare <button> is type=submit and a destructive label still decides.
+  assert(!classifyClickControl(mk({ tagName: 'BUTTON', type: 'button', textContent: 'Details' })).gated,
+    'an explicitly typed type=button control is not a write and must be followed');
+  assert(classifyClickControl(mk({ tagName: 'BUTTON', type: 'submit', textContent: 'Details' })).gated,
+    'type=submit is still refused even with a harmless label');
+  assert(classifyClickControl(mk({ tagName: 'BUTTON', type: 'button', textContent: 'Delete account' })).gated,
+    'a type=button whose label names a write is still refused');
+  for (const bare of ['Details', 'Show more']) {
+    assert(classifyClickControl(mk({ tagName: 'BUTTON', textContent: bare })).gated,
+      `a bare <button> (type defaults to submit) must stay refused, whatever it says: ${bare}`);
+  }
   const menuItem = mk({
     tagName: 'DIV', role: 'menuitem', textContent: 'Rename',
     getAttribute: (k) => (k === 'onclick' ? 'renameItem()' : k === 'role' ? 'menuitem' : null),

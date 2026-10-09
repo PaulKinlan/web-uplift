@@ -152,8 +152,10 @@ async function screenshot(client, outDir, index, label, log) {
 // "Apply" / "Continue" SPA control was clicked for REAL in a dry run. The gate is
 // now default-deny for every interactive control, with one allowlist: read-only
 // navigation (an <a>/[role=link] with no inline handler and no javascript:/data:
-// href) and client-side disclosure (summary, [role=tab]), plus controls that can
-// only take focus (a text field click focuses it and writes nothing). A label that
+// href), client-side disclosure (summary, [role=tab]), an explicitly typed
+// type="button" (no default action: a bare <button> is type=submit and stays
+// refused), and controls that can only take focus (a text field click focuses it
+// and writes nothing). A label that
 // names a write is still REPORTED in the reason, but it is no longer what decides:
 // substring matching on labels refused ordinary links ("Site Credits" contains
 // "edit", "Our Address" contains "add"), so a label only ever DECIDES for a link
@@ -203,6 +205,14 @@ export function classifyClickControl(node) {
   if (control.form || at(control, 'form')) return DENY(`a control owned by a form${namedDetail}`);
   if (inline) return DENY(`an inline event handler${namedDetail}`);
 
+  // A DESTRUCTIVE verb as a whole word, from a short list that is not also ordinary
+  // navigation nouns, so that <a>Delete</a> with no href and no handler is still refused
+  // while "Site Credits", "Read Post", "Product Updates", "Order History" and "How to
+  // Apply" are not. Shared by the link arm and the button arm, so the two cannot drift.
+  const DESTRUCTIVE_WORDS = ['delete', 'remove', 'destroy', 'purge', 'trash', 'wipe', 'revoke', 'deactivate',
+    'unsubscribe', 'unlink', 'logout', 'signout', 'sign out', 'sign-out', 'log out'];
+  const namesDestructive = DESTRUCTIVE_WORDS.some((word) => wordMatch(label, word));
+
   const codeHref = /^\s*(javascript|data|blob|vbscript):/i.test(href);
   // A link whose URL names a write is a write too: <a href="/account/delete"> is a GET
   // that deletes. The verb may be a whole segment with an optional extension, a bare
@@ -217,13 +227,7 @@ export function classifyClickControl(node) {
   const writeHref = new RegExp(`(^|/)(${verbs})([-_][a-z0-9]+)*(\\.[a-z0-9]+)?(/|$|[?#])|[?&](action|op|method|_method|do)=(${verbs})(&|$)`, 'i').test(href);
   if (codeHref) return DENY('a javascript:/data: link');
   if (tag === 'A' || role === 'link') {
-    // The one prose signal kept for links: a DESTRUCTIVE verb as a whole word, from a
-    // short list that is not also ordinary navigation nouns, so that <a>Delete</a> with
-    // no href and no handler is still refused while "Site Credits", "Read Post",
-    // "Product Updates", "Order History" and "How to Apply" are not.
-    const DESTRUCTIVE_WORDS = ['delete', 'remove', 'destroy', 'purge', 'trash', 'wipe', 'revoke', 'deactivate',
-      'unsubscribe', 'unlink', 'logout', 'signout', 'sign out', 'sign-out', 'log out'];
-    if (DESTRUCTIVE_WORDS.some((word) => wordMatch(label, word))) {
+    if (namesDestructive) {
       return DENY(`a link whose label names a write${namedDetail}`);
     }
     if (writeHref) return DENY(`a link to a URL that names a write (${href.slice(0, 40)})`);
@@ -239,7 +243,23 @@ export function classifyClickControl(node) {
     return ALLOW('a text field: a click only focuses it');
   }
   if (tag === 'TEXTAREA') return ALLOW('a text field: a click only focuses it');
-  if (tag === 'BUTTON') return DENY(`a button that may write${namedDetail}`);
+  if (tag === 'BUTTON') {
+    // An explicitly typed type="button" has NO default action: it is a client-side control
+    // unless its own code writes, which from here is unknowable. It is refused only on the
+    // evidence that survives: an inline handler, form ownership and the control types above
+    // were already refused before this arm, and a destructive label still decides.
+    //
+    // A BARE <button> is type=submit (this is the HTML default) and stays refused, which is
+    // the contract the landed shadow-root test pins for the other direction
+    // (tests/flow-shadow-browser.mjs, web-uplift-pai, reason "a bare <button> is
+    // type=submit, which the dry-run gate blocks"). Default-denying type=button instead
+    // made a dry run silently skip legitimate journeys - the merger's gate caught exactly
+    // that, so the two landed behaviours are reconciled here rather than by weakening the
+    // shadow test.
+    if (namesDestructive) return DENY(`a button whose label names a write${namedDetail}`);
+    if (type === 'button') return ALLOW('a type=button control: it has no default action');
+    return DENY(`a button that may write${namedDetail}`);
+  }
   if (tag === 'SELECT') return DENY(`a select that may write${namedDetail}`);
   if (tag === 'LABEL') return DENY('a label (it forwards the click to its control)');
   if (CONTROL_ROLES.includes(role)) return DENY(`an element with role=${role} that may write${namedDetail}`);
