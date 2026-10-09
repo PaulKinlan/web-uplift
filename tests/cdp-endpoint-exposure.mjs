@@ -90,8 +90,11 @@ export async function testCdpEndpointExposure() {
   const v6Wild = await listen('::');
   const helper = await childWithWildcardListener().catch(() => null);
   try {
-    const mine = readBoundListeners(process.pid);
-    assert(Array.isArray(mine), 'our own listeners must be readable from /proc');
+    const mineRead = readBoundListeners(process.pid);
+    assert(mineRead && Array.isArray(mineRead.listeners) && Array.isArray(mineRead.unreadable),
+      `our own listeners must be readable from /proc, with the tables that were not readable named: ${JSON.stringify(mineRead)}`);
+    assert(mineRead.unreadable.length === 0, `this host must expose both address-family tables: ${JSON.stringify(mineRead.unreadable)}`);
+    const mine = mineRead.listeners;
     const find = (server) => mine.find((l) => l.port === server.address().port);
 
     assert(find(v4Loop)?.address === '127.0.0.1', `a 127.0.0.1 listener must read back as loopback: ${JSON.stringify(find(v4Loop))}`);
@@ -112,7 +115,7 @@ export async function testCdpEndpointExposure() {
     // 3. ATTRIBUTION: a foreign process holding the same kind of listener must not decide our
     // browser's fate - its pid's read has it, our pid's read does not.
     if (helper) {
-      const theirs = readBoundListeners(helper.child.pid);
+      const theirs = readBoundListeners(helper.child.pid).listeners;
       assert(Array.isArray(theirs) && theirs.some((l) => l.port === helper.port && l.address === '0.0.0.0'),
         `the helper's own wildcard listener must be attributable to the helper: ${JSON.stringify(theirs)}`);
       assert(!mine.some((l) => l.port === helper.port), 'the helper\'s listener must not appear against our pid');
@@ -152,10 +155,32 @@ export async function testCdpEndpointExposure() {
     const nondvt = await cdpEndpointExposure(9222, { ...noPid, connect: respond('other') });
     assert(nondvt.exposed === false && /not with DevTools/.test(nondvt.note), `a non-DevTools listener must NOT refuse a healthy audit: ${JSON.stringify(nondvt)}`);
     const refused = await cdpEndpointExposure(9222, { ...noPid, connect: respond('refused') });
-    assert(refused.exposed === false && !refused.note, `refusals everywhere mean loopback-only: ${JSON.stringify(refused)}`);
+    // Every address was decided and refused, so this IS a verification - by reachability. There is
+    // no pid here, so there was no binding read to be incomplete about, hence no note.
+    assert(refused.exposed === false && refused.verifiedBy === 'reachability' && refused.unknown === undefined && !refused.note,
+      `refusals everywhere mean loopback-only, verified by reachability: ${JSON.stringify(refused)}`);
+    // A pid whose binding cannot be read (no /proc, or no reader) is incomplete: still verified by
+    // reachability when every address is decided, but the note says which check did not run.
+    const noBindingRead = await cdpEndpointExposure(9222, { interfaces, pid: 4242, readListeners: () => null, connect: respond('refused') });
+    assert(noBindingRead.verifiedBy === 'reachability' && /could not be read/.test(noBindingRead.note),
+      `a pid whose binding cannot be read must say so: ${JSON.stringify(noBindingRead)}`);
+    const noReader = await cdpEndpointExposure(9222, { interfaces, pid: 4242, readListeners: null, connect: respond('refused') });
+    assert(noReader.verifiedBy === 'reachability' && /could not be checked/.test(noReader.note),
+      `a pid with no reader must say the binding was not checked: ${JSON.stringify(noReader)}`);
     const undecided = await cdpEndpointExposure(9222, { ...noPid, connect: respond('timeout') });
-    assert(undecided.exposed === false && /unconfirmed/.test(undecided.note) && /could not be decided/.test(undecided.note),
-      `an undecided probe must be reported as unconfirmed, never as verified: ${JSON.stringify(undecided)}`);
+    // The FIELDS, not only the note: a verdict that cannot be decided must not claim a verifier
+    // (web-uplift-sj4c). "verifiedBy: reachability" beside "unconfirmed" reads as a clean result.
+    assert(undecided.exposed === false && undecided.unknown === true && undecided.verifiedBy === undefined,
+      `an undecided probe is UNKNOWN and names no verifier: ${JSON.stringify(undecided)}`);
+    assert(/unconfirmed/.test(undecided.note) && /could not be decided/.test(undecided.note),
+      `an undecided probe must say so: ${JSON.stringify(undecided)}`);
+    // ...and one undecided address among decided ones is enough: the decided ones do not carry it.
+    const oneUndecided = await cdpEndpointExposure(9222, {
+      ...noPid,
+      connect: async (host) => (host.startsWith('2001:') ? 'timeout' : 'refused'),
+    });
+    assert(oneUndecided.unknown === true && oneUndecided.verifiedBy === undefined,
+      `one undecidable address must make the whole verdict unknown: ${JSON.stringify(oneUndecided)}`);
     assert(seen.some((h) => h.startsWith('2001:db8::5:')) && seen.some((h) => h.startsWith('fe80::5%2:')),
       `IPv6 must be probed, including a link-local address with its zone: ${JSON.stringify(seen)}`);
     // The pid is what makes the binding check attributable: assert it is passed through.
@@ -167,6 +192,47 @@ export async function testCdpEndpointExposure() {
     assert(loopbackOnly.exposed === false && /no non-loopback address/.test(loopbackOnly.note), `a loopback-only host must say so: ${JSON.stringify(loopbackOnly)}`);
     assert((await cdpEndpointExposure(0, { interfaces })).exposed === false, 'a launch with no port yet must not be reported as exposed');
     assert(readBoundListeners(99999999) === null, 'an unreadable pid must be null, not an empty list that reads as safe');
+
+    // 5b. web-uplift-03da: an unreadable address-family table is an INCOMPLETE read, never a
+    // verified-safe binding. A v4-only kernel or a sandbox without /proc/net/tcp6 leaves the IPv4
+    // half looking perfect while a browser bound to a non-loopback IPv6 address is invisible.
+    const partial = readBoundListeners(process.pid, { tcpFiles: ['/proc/net/tcp', '/proc/net/tcp6-not-on-this-host'] });
+    assert(partial.unreadable.length === 1 && /tcp6-not-on-this-host/.test(partial.unreadable[0]),
+      `a table that could not be read must be named: ${JSON.stringify(partial.unreadable)}`);
+    assert(partial.listeners.some((l) => l.port === v4Loop.address().port && l.address === '127.0.0.1'),
+      `the readable family must still be answered: ${JSON.stringify(partial.listeners)}`);
+    const incomplete = await cdpEndpointExposure(9222, {
+      interfaces,
+      pid: 4242,
+      readListeners: () => partial,
+      connect: respond('refused'),
+    });
+    assert(incomplete.verifiedBy === 'reachability' && incomplete.unknown === undefined,
+      `an incomplete binding read must fall through to reachability, not claim the kernel: ${JSON.stringify(incomplete)}`);
+    assert(/tcp6-not-on-this-host/.test(incomplete.note) && /unchecked/.test(incomplete.note),
+      `the verdict must name the family it could not read: ${JSON.stringify(incomplete)}`);
+    // The finding's actual scenario: the readable family looks clean, an IPv6 listener is invisible
+    // to us, and it IS reachable. Before this fix the clean IPv4 answer returned
+    // "verifiedBy: the kernel binding" and never probed - a false all-clear.
+    const blindSpot = await cdpEndpointExposure(9222, {
+      interfaces,
+      pid: 4242,
+      readListeners: () => ({ listeners: [{ address: '127.0.0.1', port: 9222, family: 'IPv4' }], unreadable: ['/proc/net/tcp6'] }),
+      connect: async (host) => (host.includes(':') ? 'devtools' : 'refused'),
+    });
+    assert(blindSpot.exposed === true,
+      `an IPv6 listener we could not read must still be found by reachability: ${JSON.stringify(blindSpot)}`);
+    assert(blindSpot.verifiedBy === 'reachability' && /DevTools on [\w:.%]*::[\w:.%]*:9222/.test(blindSpot.reason),
+      `the refusal must name the IPv6 address that answered: ${JSON.stringify(blindSpot)}`);
+    // A complete read is unchanged: loopback-only is still verified by the kernel, with no unknown.
+    const complete = await cdpEndpointExposure(9222, {
+      interfaces,
+      pid: 4242,
+      readListeners: () => ({ listeners: [{ address: '127.0.0.1', port: 9222, family: 'IPv4' }], unreadable: [] }),
+      connect: respond('devtools'),
+    });
+    assert(complete.exposed === false && complete.verifiedBy === 'the kernel binding' && complete.unknown === undefined,
+      `a complete loopback-only binding is verified by the kernel and needs no probe: ${JSON.stringify(complete)}`);
 
     // 6. THE PROBE ITSELF, against real servers: a plain listener is 'connecting but not
     // DevTools', a DevTools-shaped answer is exposure, and a closed port is refused.
@@ -206,7 +272,7 @@ export async function testCdpEndpointExposure() {
     const chrome = await launchChrome({ log: (m) => log.push(m) });
     try {
       const verdict = await cdpEndpointExposure(chrome.port, { pid: chrome.proc.pid });
-      assert(verdict.exposed === false && verdict.verifiedBy === 'the kernel binding',
+      assert(verdict.exposed === false && verdict.verifiedBy === 'the kernel binding' && verdict.unknown === undefined,
         `a real launch must be cleared by its own kernel binding: ${JSON.stringify(verdict)}`);
       assert(!log.some((m) => /unconfirmed|not with DevTools/.test(m)), `a healthy launch must not log an unresolved exposure note: ${JSON.stringify(log)}`);
     } finally {

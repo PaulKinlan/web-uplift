@@ -459,9 +459,15 @@ export function isLoopbackAddress(address) {
   return address.startsWith('127.') || address === '0:0:0:0:0:0:0:1' || LOOPBACK_V6.test(address);
 }
 
-// The addresses our pid listens on, straight from the kernel. Returns null when this cannot be
-// read at all (no /proc, a pid we cannot inspect), which callers must treat as "unknown"
-// rather than as "nothing listening".
+// The addresses our pid listens on, straight from the kernel, plus the address-family tables that
+// could NOT be read. Returns null when this cannot be read at all (no /proc, a pid we cannot
+// inspect), which callers must treat as "unknown" rather than as "nothing listening".
+//
+// The unreadable list is part of the answer, not a detail: a v4-only kernel, a hardened sandbox
+// or a container that does not expose /proc/net/tcp6 leaves the IPv4 half looking perfect while a
+// browser that bound a non-loopback IPv6 address is simply invisible. Reporting such a read as
+// "verified by the kernel binding" would be a false all-clear, so callers must treat a non-empty
+// `unreadable` as INCOMPLETE and fall through to the reachability check (web-uplift-03da).
 export function readBoundListeners(pid, { fdDir = `/proc/${pid}/fd`, tcpFiles = ['/proc/net/tcp', '/proc/net/tcp6'] } = {}) {
   let fds;
   try {
@@ -482,12 +488,14 @@ export function readBoundListeners(pid, { fdDir = `/proc/${pid}/fd`, tcpFiles = 
   }
   if (inodes.size === 0) return null;
   const listeners = [];
+  const unreadable = [];
   for (const file of tcpFiles) {
     let text;
     try {
       text = readFileSync(file, 'utf8');
     } catch {
-      continue; // no IPv6 table on a v4-only kernel, or unreadable in some sandboxes
+      unreadable.push(file); // no IPv6 table on a v4-only kernel, or unreadable in some sandboxes
+      continue;
     }
     for (const line of text.split('\n').slice(1)) {
       const field = line.trim().split(/\s+/);
@@ -500,7 +508,7 @@ export function readBoundListeners(pid, { fdDir = `/proc/${pid}/fd`, tcpFiles = 
       if (address !== null && Number.isInteger(port)) listeners.push({ address, port, family: file.endsWith('6') ? 'IPv6' : 'IPv4' });
     }
   }
-  return listeners;
+  return { listeners, unreadable };
 }
 
 // /proc encodes addresses as hex, IPv4 little-endian as one word and IPv6 as four little-endian
@@ -577,26 +585,50 @@ export async function cdpEndpointExposure(port, {
   if (!Number.isInteger(port) || port <= 0) return { exposed: false, note: 'no CDP port to probe' };
   const notes = [];
 
+  // Does the kernel read cover every address family? Only then is "the kernel binding" a
+  // verification: an unreadable /proc/net/tcp6 hides an IPv6 listener completely, so a clean IPv4
+  // answer must fall through to the reachability check rather than report an all-clear.
+  let bindingIncomplete = false;
   if (Number.isInteger(pid) && typeof readListeners === 'function') {
-    let listeners = null;
+    let read = null;
+    let readFailed = false;
     try {
-      listeners = readListeners(pid);
+      read = readListeners(pid);
     } catch (err) {
-      notes.push(`the socket binding of pid ${pid} could not be read (${err && err.message})`);
+      readFailed = true;
+      bindingIncomplete = true;
+      notes.push(`the socket binding of pid ${pid} could not be read: ${err && err.message}`);
     }
-    if (Array.isArray(listeners)) {
+    // readBoundListeners reports its own blind spots; an injected reader may still return a bare
+    // array, which is treated as complete because that is what a full answer looks like.
+    const listeners = Array.isArray(read) ? read : read && Array.isArray(read.listeners) ? read.listeners : null;
+    const unreadable = Array.isArray(read) ? [] : (read && Array.isArray(read.unreadable) ? read.unreadable : []);
+    if (listeners) {
       const verdict = classifyBoundListeners(port, listeners);
       if (verdict.exposed) return { ...verdict, note: notes.join('; ') || undefined };
-      if (!verdict.unknown) return { exposed: false, verifiedBy: 'the kernel binding', note: notes.join('; ') || undefined };
-      notes.push(verdict.note);
+      if (unreadable.length > 0) {
+        bindingIncomplete = true;
+        notes.push(`the kernel binding could not be read for ${unreadable.join(', ')}, so an address family is unchecked`);
+      }
+      if (!verdict.unknown && !bindingIncomplete) {
+        return { exposed: false, verifiedBy: 'the kernel binding', note: notes.join('; ') || undefined };
+      }
+      if (verdict.unknown) notes.push(verdict.note);
+    } else {
+      // null means /proc could not be read at all, and any other shape is a caller's reader we
+      // cannot interpret: either way the binding check did not run, so it is incomplete.
+      bindingIncomplete = true;
+      if (!readFailed) notes.push(`the socket binding of pid ${pid} could not be read, so an address family is unchecked`);
     }
   } else if (Number.isInteger(pid)) {
+    bindingIncomplete = true;
     notes.push('the kernel binding could not be checked');
   }
 
   const hosts = nonLoopbackHosts(interfaces);
   if (hosts.length === 0) {
     notes.push('this host has no non-loopback address, so the endpoint can only be reached on loopback');
+    if (bindingIncomplete) notes.push('the kernel binding was incomplete, so only reachability was checked');
     return { exposed: false, verifiedBy: 'reachability', note: notes.join('; ') };
   }
   let probed = 0;
@@ -619,10 +651,21 @@ export async function cdpEndpointExposure(port, {
       notes.push(`${host}:${port} could not be probed (${verdict}), so its exposure is unconfirmed`);
     }
   }
+  // Reachability is only a verification when it decided EVERY non-loopback address. If any probe
+  // was undecided (a timeout, an unusual error) then one of them could be serving DevTools, so the
+  // verdict is unknown and names no verifier: "verifiedBy: reachability" beside an "unconfirmed"
+  // note reads as a clean result, which is exactly what it is not (web-uplift-sj4c).
+  if (probed > 0) {
+    return {
+      exposed: false,
+      unknown: true,
+      note: [...notes, `${probed} of ${hosts.length} non-loopback addresses could not be decided`].filter(Boolean).join('; '),
+    };
+  }
   return {
     exposed: false,
     verifiedBy: 'reachability',
-    note: [...notes, probed > 0 ? `${probed} of ${hosts.length} non-loopback addresses could not be decided` : ''].filter(Boolean).join('; ') || undefined,
+    note: [...notes, bindingIncomplete ? 'the kernel binding was incomplete, so only reachability was checked' : ''].filter(Boolean).join('; ') || undefined,
   };
 }
 
