@@ -712,6 +712,68 @@ export async function testFlowReplayMutationGate() {
   assert(!isWriteUrl('https://example.test/deleted-items'), 'a segment that merely starts with delete is not a write');
   assert(!isWriteUrl(''), 'no URL is not a write');
 
+  // 2e. The review's follow-ups (findings 1-4 on this delta).
+  // Finding 1: a click resolved to a LEAF node inside the control that acts. The
+  // Recorder matches whatever it found, so <span>Delete</span> inside an <a> must be
+  // lifted to the anchor - with `a` missing from the closest() selector it fell through
+  // to "not an interactive control" and el.click() bubbled into a real navigation.
+  const deleteAnchor = mk({ tagName: 'A', textContent: 'Delete Account', getAttribute: (k) => (k === 'href' ? '/account/delete' : null) });
+  // Token-accurate: `sel.includes('a')` would be true for 'textarea' and make this test
+  // pass without the fix (it did, until the mutation check caught it).
+  const lifts = (sel, tag) => sel.split(',').map((x) => x.trim()).includes(tag);
+  const spanInDeleteAnchor = mk({ tagName: 'SPAN', textContent: 'Delete Account', closest: (sel) => (lifts(sel, 'a') ? deleteAnchor : null) });
+  assert(classifyClickControl(spanInDeleteAnchor).gated,
+    'click on a span INSIDE <a href=/account/delete> must be lifted to the anchor and gated');
+  assert(/names a write/.test(reasonFor(spanInDeleteAnchor)), `and the refusal names the link: ${reasonFor(spanInDeleteAnchor)}`);
+  const logoutAnchor = mk({ tagName: 'A', textContent: '', getAttribute: (k) => (k === 'href' ? '/logout' : null) });
+  const iconInLogoutAnchor = mk({ tagName: 'IMG', closest: (sel) => (lifts(sel, 'a') ? logoutAnchor : null) });
+  assert(classifyClickControl(iconInLogoutAnchor).gated, 'an icon inside <a href=/logout> is lifted to the anchor and gated');
+  const checkboxLabel = mk({ tagName: 'LABEL', textContent: 'Autosave' });
+  const spanInLabel = mk({ tagName: 'SPAN', textContent: 'Autosave', closest: (sel) => (lifts(sel, 'label') ? checkboxLabel : null) });
+  assert(classifyClickControl(spanInLabel).gated, 'a span inside a <label> forwards the click to its control and is gated');
+  // ...and the container-role trap my first version had: closest('[role]') would lift
+  // <main role="main"> from any span inside it and refuse an ordinary click.
+  const mainRegion = mk({ tagName: 'MAIN', getAttribute: (k) => (k === 'role' ? 'main' : null) });
+  const spanInMain = mk({ tagName: 'SPAN', textContent: 'Read more', closest: (sel) => (sel.includes('role="main"') ? null : mainRegion) });
+  assert(!classifyClickControl(spanInMain).gated, 'a container role (role=main) must not gate a click inside it');
+
+  // Finding 2: substring matching on the label refused ordinary navigation links.
+  for (const [href, text] of [
+    ['/credits', 'Site Credits'], ['/contact', 'Our Address'], ['/careers/ladder', 'Engineering Ladder'],
+    ['/blog/1', 'Read Post'], ['/news', 'Product Updates'], ['/orders', 'Order History'],
+    ['/article', 'Continue Reading'], ['/apply', 'How to Apply'], ['/about', 'About Us'],
+  ]) {
+    const link = mk({ tagName: 'A', textContent: text, getAttribute: (k) => (k === 'href' ? href : null) });
+    assert(!classifyClickControl(link).gated, `a read-only link must not be gated: "${text}" (${href}) -> ${reasonFor(link)}`);
+  }
+  // ...while a destructive verb in the link's own text still refuses it.
+  assert(classifyClickControl(mk({ tagName: 'A', textContent: 'Delete' })).gated, 'a bare <a>Delete</a> is still refused');
+  // Finding 3: the link-URL check missed a query verb, a bare relative target and an extension.
+  for (const href of ['/items?action=delete', 'delete', './delete', '/delete.php', '/account/logout.php', '/x?op=remove']) {
+    const link = mk({ tagName: 'A', textContent: 'go', getAttribute: (k) => (k === 'href' ? href : null) });
+    assert(classifyClickControl(link).gated, `a link to a URL that names a write must be gated: ${href}`);
+  }
+  // A link to /news/archive IS gated: archiving is a mutation and the URL alone cannot
+  // tell a listing from "archive this item", so a CLICK takes the safe direction. The
+  // NAVIGATION to the same URL is allowed (isWriteUrl), because a dry run must be able
+  // to follow the journey - that asymmetry is the point of the two different sets.
+  assert(classifyClickControl(mk({ tagName: 'A', textContent: 'go', getAttribute: (k) => (k === 'href' ? '/news/archive' : null) })).gated,
+    'a click on a link to /news/archive is gated (safe direction) even though navigating there is not');
+  assert(!isWriteUrl('https://example.test/news/archive'), 'navigating to /news/archive is allowed');
+  assert(!classifyClickControl(mk({ tagName: 'A', textContent: 'go', getAttribute: (k) => (k === 'href' ? '/reset-password/abc' : null) })).gated,
+    'a link to /reset-password/<token> is a read');
+  // A role=link that carries its target in data-href is read the same way.
+  assert(classifyClickControl(mk({ tagName: 'DIV', role: 'link', textContent: 'Delete account', getAttribute: (k) => (k === 'data-href' ? '/account/delete' : null) })).gated,
+    'a role=link with data-href that names a write is gated');
+  // Finding 4: SPA hash routes name writes too, and /delete.php is a write while
+  // /news/archive and a payment-return /checkout/cancel are not.
+  assert(isWriteUrl('https://app.test/#/account/delete'), 'a hash route that names a write is a write');
+  assert(isWriteUrl('https://app.test/#/settings/logout'), 'a hash route /logout is a write');
+  assert(isWriteUrl('https://example.test/account/delete.php'), 'a write with a .php extension is a write');
+  assert(!isWriteUrl('https://example.test/news/archive'), '/news/archive is a listing');
+  assert(!isWriteUrl('https://store.example/checkout/cancel'), 'a payment-return landing page named cancel is not a write');
+  assert(!isWriteUrl('https://example.test/#/archive/2024'), 'an archive listing in a hash route is not a write');
+
   // 2b. Selector resolution: text/ and pierce/ (Chrome DevTools Recorder emits
   // them) are restored, aria/ matching is exact-attribute (a double-quote in the
   // name cannot break it), and a stale CSS/xpath candidate falls through.
@@ -889,6 +951,17 @@ export async function testFlowReplayMutationGate() {
     const emailInputEl = stubEl({ tagName: 'INPUT', type: 'email', value: '', id: 'email', dispatchEvent: (e) => { typed.push(`${e.type}:${emailInputEl.value}`); } });
     const pwdInputEl = stubEl({ tagName: 'INPUT', type: 'password', value: '', id: 'pwd', dispatchEvent: (e) => { typed.push(`${e.type}:${pwdInputEl.value}`); } });
     Object.assign(byId, { '#update': updateBtnEl, '#menu': menuItemEl, '#email': emailInputEl, '#pwd': pwdInputEl });
+    // Review findings 1 and 2, in the replay path itself: a click resolved to a span
+    // INSIDE <a href="/account/delete"> (must be gated) and an ordinary link whose text
+    // merely contains "edit" ("Site Credits", must NOT be gated).
+    const deleteAccountAnchor = stubEl({ tagName: 'A', textContent: 'Delete Account', getAttribute: (k) => (k === 'href' ? '/account/delete' : null), click() { clicks.push('deleteAccountAnchor'); } });
+    const spanInDeleteAnchorEl = stubEl({
+      tagName: 'SPAN', textContent: 'Delete Account',
+      closest: (sel) => (sel.split(',').map((x) => x.trim()).includes('a') ? deleteAccountAnchor : null),
+      click() { clicks.push('spanInDeleteAnchor'); },
+    });
+    const creditsLink = stubEl({ tagName: 'A', textContent: 'Site Credits', getAttribute: (k) => (k === 'href' ? '/credits' : null), click() { clicks.push('creditsLink'); } });
+    Object.assign(byId, { '#deleteSpan': spanInDeleteAnchorEl, '#credits': creditsLink });
     const documentStub = {
       activeElement: active,
       querySelector: (sel) => byId[sel] ?? null,
@@ -948,6 +1021,8 @@ export async function testFlowReplayMutationGate() {
       { type: 'navigate', url: 'https://example.test/delete?id=1' },
       { type: 'navigate', url: 'https://example.test/about' },
       { type: 'change', selectors: [['#pwd']], value: 'secret123' },
+      { type: 'click', selectors: [['#deleteSpan']], target: 'main' },
+      { type: 'click', selectors: [['#credits']], target: 'main' },
     ],
   };
 
@@ -967,7 +1042,7 @@ export async function testFlowReplayMutationGate() {
   assert(resDefault.steps[5].ok === true && !resDefault.steps[5].mutationBlocked,
     'stale CSS candidate must fall back to text/ and resolve: ' + resDefault.steps[5].detail);
   assert(resDefault.steps[6].mutationBlocked === true, 'Enter submission blocked in dry-run');
-  assert(dryClient.clicks.length === 2 && dryClient.clicks.every((c) => c === 'aboutLink'),
+  assert(dryClient.clicks.length === 3 && dryClient.clicks.every((c) => c === 'aboutLink' || c === 'creditsLink'),
     `dry-run must click ONLY the innocent links, got: ${JSON.stringify(dryClient.clicks)}`);
   assert(dryClient.submits.length === 0, 'dry-run must never submit a form');
 
@@ -993,6 +1068,16 @@ export async function testFlowReplayMutationGate() {
   // step carries a value and no `redacted` flag (an imported Recorder export).
   assert(resDefault.steps[12].mutationBlocked === true, 'dry-run must not fill a password field from an imported flow');
   assert(/password/.test(resDefault.steps[12].detail), `the refusal names the password field: ${resDefault.steps[12].detail}`);
+  // 13. Iterating the fix: a span inside <a href="/account/delete"> must be lifted to
+  // the anchor. With `a` missing from closest(), el.click() bubbled to a real delete.
+  assert(resDefault.steps[13].mutationBlocked === true, 'click on a span inside <a href=/account/delete> blocked in dry-run');
+  assert(!dryClient.clicks.includes('spanInDeleteAnchor') && !dryClient.clicks.includes('deleteAccountAnchor'),
+    `the delete link must not be clicked, got: ${JSON.stringify(dryClient.clicks)}`);
+  // 14. ...and a link that merely CONTAINS "edit" ("Site Credits") is not a write.
+  assert(resDefault.steps[14].ok === true && !resDefault.steps[14].mutationBlocked,
+    `an ordinary link labelled "Site Credits" must be clickable in dry-run: ${resDefault.steps[14].detail}`);
+  assert(dryClient.clicks.includes('creditsLink'), `it is clicked, got: ${JSON.stringify(dryClient.clicks)}`);
+  assert(dryClient.clicks.length === 3, `dry-run clicks the three innocent links only, got: ${JSON.stringify(dryClient.clicks)}`);
 
   // Enter on a contenteditable element: contenteditable="" makes getAttribute
   // return "" (falsy) while the element IS editable - isContentEditable is the
@@ -1029,6 +1114,8 @@ export async function testFlowReplayMutationGate() {
     'allowed run fills the password field (explicit --allow-mutations)');
   assert(allowClient.typed.includes('change:secret123'),
     `allowed password step types the value, got: ${JSON.stringify(allowClient.typed)}`);
+  assert(resAllow.steps[13].ok === true && !resAllow.steps[13].mutationBlocked && allowClient.clicks.includes('spanInDeleteAnchor'),
+    'allowed run clicks through to the delete link when explicitly authorized');
 }
 
 // Run directly (node tests/flow.mjs), not when imported by the regression

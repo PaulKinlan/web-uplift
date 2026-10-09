@@ -154,7 +154,10 @@ async function screenshot(client, outDir, index, label, log) {
 // navigation (an <a>/[role=link] with no inline handler and no javascript:/data:
 // href) and client-side disclosure (summary, [role=tab]), plus controls that can
 // only take focus (a text field click focuses it and writes nothing). A label that
-// names a write is still REPORTED in the reason, but it is no longer what decides.
+// names a write is still REPORTED in the reason, but it is no longer what decides:
+// substring matching on labels refused ordinary links ("Site Credits" contains
+// "edit", "Our Address" contains "add"), so a label only ever DECIDES for a link
+// whose text contains a destructive verb as a whole word.
 //
 // Exported and self-contained: serialized with .toString() into the click
 // expression, so the suite drives the exact predicate the page runs.
@@ -163,23 +166,35 @@ export function classifyClickControl(node) {
   const ALLOW = (reason) => ({ gated: false, reason });
   if (!node || (node.nodeType && node.nodeType !== 1)) return ALLOW('not an element');
   const at = (el, key) => (el && typeof el.getAttribute === 'function' ? el.getAttribute(key) : null);
-  const interactive = 'button, input, select, textarea, summary, [role], [onclick], [onmousedown], [ontouchstart], [onpointerdown], [contenteditable]';
+  // CONTROL roles only. A bare `[role]` was wrong: closest('[role]') from a span inside
+  // <main role="main"> lifts a CONTAINER, which would refuse ordinary clicks.
+  const CONTROL_ROLES = ['button', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'link', 'checkbox', 'radio',
+    'switch', 'option', 'combobox', 'listbox', 'slider', 'spinbutton', 'textbox', 'searchbox', 'treeitem', 'gridcell'];
+  // `a` and `label` MUST be in this selector, not only in the link arm below: the
+  // Recorder resolves a click to whatever node it matched, and a leaf node is the common
+  // case. A <span>Delete</span> inside <a href="/account/delete"> made closest() return
+  // null, the span fell through to "not an interactive control", and el.click() bubbled
+  // to the link and navigated for real (review finding 1). label is here for the same
+  // reason: a click on it is forwarded to the control it labels.
+  const interactive = 'button, input, select, textarea, summary, a, label, [contenteditable], [onclick], [onmousedown], [ontouchstart], [onpointerdown]'
+    + CONTROL_ROLES.map((r) => ', [role="' + r + '"]').join('');
   const control = (typeof node.closest === 'function' ? node.closest(interactive) : null) || node;
   const tag = String(control.tagName || '').toUpperCase();
   const type = String(control.type || at(control, 'type') || '').toLowerCase();
   const role = String(at(control, 'role') || control.role || '').toLowerCase();
-  const href = String(at(control, 'href') || '');
+  const href = String(at(control, 'href') || at(control, 'data-href') || '');
   const label = String((control.textContent || control.value || '') + ' ' + (at(control, 'aria-label') || '')).trim();
   const name = String(control.name || control.id || '');
   const inline = ['onclick', 'onmousedown', 'ontouchstart', 'onpointerdown'].some((key) => at(control, key) != null);
-  // A label that NAMES a write is not what decides any more, but it is what makes
-  // the refusal readable: "a control that may write (button) labelled Update Profile".
+  // WHOLE WORDS, not substrings (review finding 2), and this list is REPORTING ONLY:
+  // it decorates a refusal another arm already decided. It never decides.
   const WRITE_TERMS = ['submit', 'save', 'delete', 'remove', 'destroy', 'purge', 'trash', 'checkout', 'pay', 'order',
     'confirm', 'send', 'buy', 'purchase', 'register', 'create', 'add', 'update', 'edit', 'modify', 'post', 'apply',
     'publish', 'upload', 'invite', 'move', 'rename', 'merge', 'deploy', 'revoke', 'deactivate', 'disable',
-    'unsubscribe', 'logout', 'signout', 'sign-out', 'cancel', 'reset', 'clear', 'archive', 'unlink', 'disconnect',
-    'suspend', 'block', 'proceed', 'continue', 'finish', 'complete'];
-  const named = WRITE_TERMS.find((term) => label.toLowerCase().includes(term) || name.toLowerCase().includes(term));
+    'unsubscribe', 'logout', 'signout', 'sign out', 'sign-out', 'log out', 'cancel', 'reset', 'clear', 'archive',
+    'unlink', 'disconnect', 'suspend', 'block', 'proceed', 'continue', 'finish', 'complete'];
+  const wordMatch = (text, term) => new RegExp('(^|[^a-z0-9])' + term + '($|[^a-z0-9])', 'i').test(text);
+  const named = WRITE_TERMS.find((term) => wordMatch(label, term) || wordMatch(name, term));
   const namedDetail = named ? ` labelled "${label.slice(0, 40)}"` : '';
 
   if (type === 'submit' || type === 'image' || type === 'reset' || type === 'file') {
@@ -189,12 +204,25 @@ export function classifyClickControl(node) {
   if (inline) return DENY(`an inline event handler${namedDetail}`);
 
   const codeHref = /^\s*(javascript|data|blob|vbscript):/i.test(href);
-  // A link whose URL names a write is a write too: <a href="/account/delete"> is a
-  // GET that deletes. Segment-anchored, so /reset-password/<tok> stays a read.
-  const writeHref = /\/(delete|remove|destroy|purge|trash|logout|signout|sign-out|unsubscribe|revoke|deactivate|disable|cancel|archive|unlink)(\/|$|[?#])/i.test(href);
+  // A link whose URL names a write is a write too: <a href="/account/delete"> is a GET
+  // that deletes. The verb may be a whole segment with an optional extension, a bare
+  // relative target, or a query verb (?action=delete), anchored on both sides so that
+  // /deleted-items and /reset-password/<tok> stay reads (review finding 3).
+  const WRITE_VERBS = ['delete', 'remove', 'destroy', 'purge', 'trash', 'wipe', 'logout', 'signout', 'sign-out',
+    'unsubscribe', 'revoke', 'deactivate', 'disable', 'unlink', 'cancel', 'archive'];
+  const verbs = WRITE_VERBS.join('|');
+  const writeHref = new RegExp(`(^|/)(${verbs})(\\.[a-z0-9]+)?(/|$|[?#])|[?&](action|op|method|_method|do)=(${verbs})(&|$)`, 'i').test(href);
   if (codeHref) return DENY('a javascript:/data: link');
   if (tag === 'A' || role === 'link') {
-    if (named) return DENY(`a link that names a write${namedDetail}`);
+    // The one prose signal kept for links: a DESTRUCTIVE verb as a whole word, from a
+    // short list that is not also ordinary navigation nouns, so that <a>Delete</a> with
+    // no href and no handler is still refused while "Site Credits", "Read Post",
+    // "Product Updates", "Order History" and "How to Apply" are not.
+    const DESTRUCTIVE_WORDS = ['delete', 'remove', 'destroy', 'purge', 'trash', 'wipe', 'revoke', 'deactivate',
+      'unsubscribe', 'unlink', 'logout', 'signout', 'sign out', 'sign-out', 'log out'];
+    if (DESTRUCTIVE_WORDS.some((word) => wordMatch(label, word))) {
+      return DENY(`a link whose label names a write${namedDetail}`);
+    }
     if (writeHref) return DENY(`a link to a URL that names a write (${href.slice(0, 40)})`);
     return ALLOW('read-only navigation link');
   }
@@ -211,7 +239,7 @@ export function classifyClickControl(node) {
   if (tag === 'BUTTON') return DENY(`a button that may write${namedDetail}`);
   if (tag === 'SELECT') return DENY(`a select that may write${namedDetail}`);
   if (tag === 'LABEL') return DENY('a label (it forwards the click to its control)');
-  if (role) return DENY(`an element with role=${role} that may write${namedDetail}`);
+  if (CONTROL_ROLES.includes(role)) return DENY(`an element with role=${role} that may write${namedDetail}`);
   return ALLOW('not an interactive control');
 }
 
@@ -221,21 +249,33 @@ export function classifyClickControl(node) {
 export function findMutatingControl(node) {
   const verdict = classifyClickControl(node);
   if (!verdict.gated) return null;
-  const interactive = 'button, input, select, textarea, summary, [role], [onclick], [onmousedown], [ontouchstart], [onpointerdown], [contenteditable]';
+  const CONTROL_ROLES = ['button', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'link', 'checkbox', 'radio',
+    'switch', 'option', 'combobox', 'listbox', 'slider', 'spinbutton', 'textbox', 'searchbox', 'treeitem', 'gridcell'];
+  const interactive = 'button, input, select, textarea, summary, a, label, [contenteditable], [onclick], [onmousedown], [ontouchstart], [onpointerdown]'
+    + CONTROL_ROLES.map((r) => ', [role="' + r + '"]').join('');
   return (node && typeof node.closest === 'function' ? node.closest(interactive) : null) || node;
 }
 
 // A NAVIGATION whose URL names a write is gated in a dry run: a GET that deletes is
-// still a delete (web-uplift-d31). Matched on whole path segments, so /delete is a
-// write while /reset-password/<token> and /checkout are ordinary reads.
-const WRITE_URL_SEGMENTS = new Set(['delete', 'remove', 'destroy', 'purge', 'trash', 'logout', 'signout', 'sign-out',
-  'unsubscribe', 'revoke', 'deactivate', 'disable', 'cancel', 'archive', 'unlink']);
+// still a delete (web-uplift-d31). Matched on whole path segments (an extension is
+// stripped) in the path AND in an SPA hash route, so /delete, /account/delete,
+// /delete.php and #/account/delete are writes while /reset-password/<token>,
+// /checkout and /deleted-items are ordinary reads. Page names that are as often
+// read-only as they are writes (archive, cancel) are deliberately NOT here:
+// /news/archive is a listing and a payment return /checkout/cancel is a landing,
+// and a dry run must be able to follow the journey. A CLICK on such a link is
+// still gated - that is classifyClickControl's writeHref, the arm that acts.
+const WRITE_URL_SEGMENTS = new Set(['delete', 'remove', 'destroy', 'purge', 'logout', 'signout', 'sign-out',
+  'unsubscribe', 'revoke', 'deactivate', 'disable', 'unlink']);
 export function isWriteUrl(raw) {
   if (!raw || typeof raw !== 'string') return false;
   let u;
   try { u = new URL(raw, 'http://relative.invalid'); } catch { return false; }
-  const segs = u.pathname.toLowerCase().split('/').filter(Boolean);
-  if (segs.some((seg) => WRITE_URL_SEGMENTS.has(seg))) return true;
+  const routes = [u.pathname, u.hash.replace(/^#!?/, '').split('?')[0]];
+  for (const route of routes) {
+    const segs = String(route).toLowerCase().split('/').filter(Boolean).map((seg) => seg.replace(/\.[a-z0-9]+$/, ''));
+    if (segs.some((seg) => WRITE_URL_SEGMENTS.has(seg))) return true;
+  }
   for (const [k, v] of u.searchParams.entries()) {
     if (['action', 'op', 'method', '_method', 'do'].includes(k.toLowerCase()) && WRITE_URL_SEGMENTS.has(String(v).toLowerCase())) return true;
   }
