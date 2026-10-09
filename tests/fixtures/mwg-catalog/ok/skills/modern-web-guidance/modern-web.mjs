@@ -19,4 +19,13 @@ var USE_CASES = [
     "featuresUsed": [],
     "tokenCount": 20,
   },
+  // An entry AFTER the twin: without this, a guide inserted at the end would look identical
+  // to one inserted next to its twin, and no test could tell the two apart.
+  {
+    "id": "omega-guide",
+    "description": "Last table entry.",
+    "category": "misc",
+    "featuresUsed": [],
+    "tokenCount": 30
+  },
 ];

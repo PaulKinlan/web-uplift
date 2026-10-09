@@ -177,16 +177,20 @@ export async function testMwgCatalogExtract() {
   // with no table entry, and the sorted guideIds with their sha.
   const built = buildCatalog({ packageDir: fixture('ok'), version: '9.9.9', now: () => '2000-01-01T00:00:00.000Z' });
   assert(built.version === '9.9.9' && built.source === 'modern-web-guidance', 'the catalog carries source and version');
-  assert(built.guideCount === 4, `four guides expected, got ${built.guideCount}: ${JSON.stringify(built.guideIds)}`);
-  assert(JSON.stringify(built.guides.map((g) => g.id)) === JSON.stringify(['alpha-guide', 'language-model', 'prompt-api', 'stray-guide']),
-    `the twin must be inserted after its twin and the stray guide appended: ${JSON.stringify(built.guides.map((g) => g.id))}`);
+  assert(built.guideCount === 5, `five guides expected, got ${built.guideCount}: ${JSON.stringify(built.guideIds)}`);
+  // prompt-api has no USE_CASES entry and its twin is language-model, so it must land
+  // BETWEEN language-model and the entry that follows it in the table; stray-guide has no
+  // twin and is appended. A mutation run showed the fixture could not tell "inserted next to
+  // the twin" from "appended at the end" until omega-guide existed.
+  assert(JSON.stringify(built.guides.map((g) => g.id)) === JSON.stringify(['alpha-guide', 'language-model', 'prompt-api', 'omega-guide', 'stray-guide']),
+    `the twin must be inserted directly after its twin and the stray guide appended: ${JSON.stringify(built.guides.map((g) => g.id))}`);
   const twin = built.guides.find((g) => g.id === 'prompt-api');
   assert(twin.tokenCount === 20 && twin.description === 'Twin guide.' && twin.category === 'built-in-ai',
     `a twin guide inherits its twin's metadata: ${JSON.stringify(twin)}`);
   const stray = built.guides.find((g) => g.id === 'stray-guide');
   assert(stray.tokenCount === Math.round('# Stray\n'.length / 3.8) && stray.description === '',
     `a guide with no twin gets the character estimate and an empty description: ${JSON.stringify(stray)}`);
-  assert(JSON.stringify(built.guideIds) === JSON.stringify(['alpha-guide', 'language-model', 'prompt-api', 'stray-guide']),
+  assert(JSON.stringify(built.guideIds) === JSON.stringify(['alpha-guide', 'language-model', 'omega-guide', 'prompt-api', 'stray-guide']),
     `guideIds must be sorted: ${JSON.stringify(built.guideIds)}`);
   assert(built.guideIdsSha256 === createHash('sha256').update(built.guideIds.join('\n')).digest('hex'),
     'guideIdsSha256 must be the sha256 of the sorted ids joined by single newlines');
@@ -201,7 +205,7 @@ export async function testMwgCatalogExtract() {
     const first = run(['--package-dir', fixture('ok'), '--version', '9.9.9', '-o', out, '--existing', join(tmp, 'none.json')]);
     assert(first.status === 0, `the generator must succeed on a data table: ${first.status} ${first.stderr}`);
     const firstBytes = readFileSync(out, 'utf8');
-    assert(JSON.parse(firstBytes).guideCount === 4, 'the written catalog must match the built one');
+    assert(JSON.parse(firstBytes).guideCount === 5, 'the written catalog must match the built one');
 
     // Regenerating the same version repeatedly is byte-for-byte reproducible: the timestamp
     // is preserved from the existing catalog rather than refreshed (that is what makes a
