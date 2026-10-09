@@ -38,6 +38,16 @@
 //    with the HAR credential redactor (web-uplift-glar/lw6) - and the page-side copy
 //    the capture script injects is GENERATED from it, so the browser cannot hold a
 //    third, drifted table (web-uplift-so2).
+// 6. The recording binding is AUTHENTICATED and every step is validated before it is
+//    persisted (web-uplift-sg5). `__wuRecordStep` is a CDP binding, which is a function
+//    on the PAGE global: any page script (or a third-party script the page loads) can
+//    call it, and the step it sends used to go straight into flow.json - so a hostile
+//    page could add a navigate step to its own URL, or a change step (password field,
+//    value) the operator never typed, and the operator would replay it. Each recording
+//    now carries a token generated in Node and closed over inside the injected script, so
+//    only our own emitter can produce an accepted payload, and the payload's step is
+//    rebuilt from an allowlist of types and fields with bounds. A refused payload is
+//    counted, reported, and NEVER persisted.
 
 // The credential/PII word list, its tokenisation and its two strengths
 // (strong = any word of a name, weak = only the whole name) live in ONE shared
@@ -53,6 +63,70 @@ import {
   looksLikeToken,
   NAME_WORD_DATA,
 } from '../evidence/credential-terms.mjs';
+import { randomUUID } from 'node:crypto';
+
+// What the recorder may persist, and how large each part may be (web-uplift-sg5). The
+// page-side emitter can only produce clicks and changes; the replayer's other step types
+// (navigate, keyDown, setViewport, ...) are produced by the RECORDER itself, not by the
+// page, so a page-supplied step of one of those types is refused and reported.
+const RECORDED_STEP_FIELDS = {
+  click: ['selectors', 'target'],
+  change: ['selectors', 'value', 'target', 'redacted'],
+};
+const MAX_STEP_SELECTOR_GROUPS = 32;
+const MAX_STEP_SELECTORS_PER_GROUP = 8;
+const MAX_SELECTOR_LENGTH = 500;
+const MAX_STEP_VALUE_LENGTH = 10000;
+const MAX_RECORDED_STEPS = 2000;
+// How many refusals to print before going quiet (a hostile page can spam the binding,
+// and a log flooded with identical warnings is a log the operator stops reading).
+const MAX_REPORTED_REFUSALS = 5;
+
+// Rebuild a page-supplied step from the allowlist rather than passing the object through:
+// a field nobody validated is exactly what a page would use to smuggle something into a
+// flow.json that gets replayed. Returns {ok, step} or {ok:false, reason}.
+export function validateRecordedStep(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'not a step object' };
+  const type = typeof raw.type === 'string' ? raw.type : typeof raw.type;
+  const fields = typeof raw.type === 'string' ? RECORDED_STEP_FIELDS[raw.type] : null;
+  if (!fields) return { ok: false, reason: `type ${JSON.stringify(type)} is not a type the recorder emits` };
+  // `type` selects the allowlist, so it is not an "extra" field: the first version of
+  // this check refused the recorder's OWN click step ("unexpected field(s) type"), which
+  // the browser repro caught by showing a legitimate click missing from the flow.
+  const extra = Object.keys(raw).filter((key) => key !== 'type' && !fields.includes(key));
+  if (extra.length) return { ok: false, reason: `unexpected field(s) ${extra.join(', ')}` };
+  const groups = raw.selectors;
+  if (!Array.isArray(groups) || groups.length === 0 || groups.length > MAX_STEP_SELECTOR_GROUPS) {
+    return { ok: false, reason: `selectors must be 1-${MAX_STEP_SELECTOR_GROUPS} groups` };
+  }
+  const selectors = [];
+  for (const group of groups) {
+    if (!Array.isArray(group) || group.length === 0 || group.length > MAX_STEP_SELECTORS_PER_GROUP) {
+      return { ok: false, reason: `each selector group must hold 1-${MAX_STEP_SELECTORS_PER_GROUP} selectors` };
+    }
+    const clean = [];
+    for (const selector of group) {
+      if (typeof selector !== 'string' || !selector || selector.length > MAX_SELECTOR_LENGTH) {
+        return { ok: false, reason: `a selector must be a non-empty string of at most ${MAX_SELECTOR_LENGTH} characters` };
+      }
+      clean.push(selector);
+    }
+    selectors.push(clean);
+  }
+  const step = { type: raw.type, selectors };
+  if (raw.type === 'change') {
+    if (typeof raw.value !== 'string') return { ok: false, reason: 'a change value must be a string' };
+    if (raw.value.length > MAX_STEP_VALUE_LENGTH) return { ok: false, reason: `a change value must be at most ${MAX_STEP_VALUE_LENGTH} characters` };
+    // The redaction guarantee stays here, not in the page: a step flagged redacted can
+    // never carry a value, whatever the emitter sends.
+    if (raw.redacted) { step.redacted = true; step.value = ''; } else { step.value = raw.value; }
+  }
+  if (raw.target !== undefined) {
+    if (typeof raw.target !== 'string' || raw.target.length > 64) return { ok: false, reason: 'target must be a string of at most 64 characters' };
+    step.target = raw.target;
+  }
+  return { ok: true, step };
+}
 
 export { SENSITIVE_WORDS, isSensitiveWord };
 
@@ -305,14 +379,21 @@ export function sanitizeNavUrl(raw) {
 
 // The page-side capture script. Kept as a string template so it can be injected via
 // Page.addScriptToEvaluateOnNewDocument (runs before page scripts, every load).
-export function makeCaptureJs({ captureHidden = false, captureSensitive = false } = {}) {
+export function makeCaptureJs({ captureHidden = false, captureSensitive = false, token = '' } = {}) {
   return `
 (() => {
   if (window.__wuRec) return;
   window.__wuRec = true;
   const CAPTURE_HIDDEN = ${captureHidden ? 'true' : 'false'};
   const CAPTURE_SENSITIVE = ${captureSensitive ? 'true' : 'false'};
-  const send = (step) => { try { window.__wuRecordStep(JSON.stringify(step)); } catch (e) {} };
+  // The CDP binding is a function on the PAGE global, so a page script can call it too.
+  // A step is therefore authenticated with a token that exists only inside this closure
+  // (web-uplift-sg5): a page can call the binding, but it cannot produce a payload the
+  // recorder accepts - and the binding is captured ONCE, before any page script runs, so
+  // replacing window.__wuRecordStep later can neither intercept nor forge our sends.
+  const TOKEN = ${JSON.stringify(token)};
+  const wuSend = window.__wuRecordStep;
+  const send = (step) => { try { wuSend(JSON.stringify({ __wu: TOKEN, step })); } catch (e) {} };
 
   // The word data is injected from evidence/credential-terms.mjs (the ONE table,
   // shared with the HAR redactor): a third hand-maintained list here is exactly
@@ -471,18 +552,39 @@ export async function recordFlow(client, url, { log = () => {}, captureHidden = 
   let done;
   const finished = new Promise((r) => { done = r; });
 
+  // One token per recording, held only by the injected script's closure (see makeCaptureJs).
+  const token = randomUUID();
+  let refusedSteps = 0;
+  const refuse = (why) => {
+    refusedSteps += 1;
+    if (refusedSteps <= MAX_REPORTED_REFUSALS) {
+      log(`[flow-record] WARNING: refused a step the recorder did not emit (#${refusedSteps}: ${why}) - it was NOT recorded`);
+    } else if (refusedSteps % 100 === 0) {
+      log(`[flow-record] WARNING: ${refusedSteps} steps refused so far (last: ${why}) - none were recorded`);
+    }
+  };
+
   // Receive steps from the page over the CDP binding.
   await client.Runtime.addBinding({ name: '__wuRecordStep' });
   client.Runtime.bindingCalled(({ name, payload }) => {
     if (name !== '__wuRecordStep') return;
-    let step;
-    try { step = JSON.parse(payload); } catch { return; }
-    if (step.type === '__done') { done(); return; }
-    if (step.type === 'change' && step.redacted) {
-      step.value = '';
+    let msg;
+    try { msg = JSON.parse(payload); } catch { return; }
+    // The binding is page-callable, so an unauthenticated payload is a page trying to
+    // write steps the operator never took (web-uplift-sg5). Never persisted.
+    if (!msg || typeof msg !== 'object' || msg.__wu !== token) {
+      refuse('it did not carry this recording\'s token');
+      return;
     }
-    steps.push(step);
-    log(`[flow-record] captured ${step.type}${step.value != null ? ' = ' + JSON.stringify(step.value) : ''}`);
+    if (msg.step && msg.step.type === '__done') { done(); return; }
+    if (steps.length >= MAX_RECORDED_STEPS) {
+      refuse(`the recording already holds the maximum of ${MAX_RECORDED_STEPS} steps`);
+      return;
+    }
+    const verdict = validateRecordedStep(msg.step);
+    if (!verdict.ok) { refuse(verdict.reason); return; }
+    steps.push(verdict.step);
+    log(`[flow-record] captured ${verdict.step.type}${verdict.step.value != null ? ' = ' + JSON.stringify(verdict.step.value) : ''}`);
   });
 
   // Capture main-frame navigations (dedupe consecutive identical urls).
@@ -496,7 +598,7 @@ export async function recordFlow(client, url, { log = () => {}, captureHidden = 
     }
   });
 
-  await client.Page.addScriptToEvaluateOnNewDocument({ source: makeCaptureJs({ captureHidden, captureSensitive }) });
+  await client.Page.addScriptToEvaluateOnNewDocument({ source: makeCaptureJs({ captureHidden, captureSensitive, token }) });
   await client.Page.navigate({ url });
   log('[flow-record] recording... interact with the page, then click Done.');
 

