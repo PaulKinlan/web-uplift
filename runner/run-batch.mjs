@@ -340,7 +340,11 @@ async function worker() {
           console.log(`replaying flow ${flow.title} (${flow.steps.length} steps)`);
           const res = await replayFlowIntoRun(url, siteDir);
           const failed = res.steps.filter((s) => !s.ok).length;
-          console.log(`flow replayed  ${res.steps.length} step(s), ${failed} failed`);
+          const blocked = res.steps.filter((s) => s.mutationBlocked).length;
+          console.log(`flow replayed  ${res.steps.length} step(s), ${failed} failed${blocked > 0 ? ', ' + blocked + ' mutating step(s) blocked (dry-run)' : ''}`);
+          if (blocked > 0) {
+            console.warn(`[run-batch] WARNING: ${blocked} mutating step(s) blocked in dry-run mode for ${url} (pass --allow-mutations to execute)`);
+          }
           extra = flowExtra(siteDir);
         }
         scopedResult = await runAgent(url, siteDir, extra);

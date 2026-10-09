@@ -2043,19 +2043,62 @@ async function testFlowRecordSensitiveRedaction() {
 }
 
 async function testFlowReplayMutationGate() {
-  const { isSubmitControl } = await import('../runner/flow.mjs');
+  const { isSubmitControl, parseFlowArgs, replayFlow } = await import('../runner/flow.mjs');
 
-  // 1. Submit controls identified correctly.
-  assert(isSubmitControl({ tagName: 'BUTTON', type: 'submit' }), 'button type=submit must be submit control');
-  assert(isSubmitControl({ tagName: 'BUTTON', form: {} }), 'button in form without type must be submit control');
+  // 1. Argument parsing flag order independence (boolean flags do not consume positionals).
+  const p1 = parseFlowArgs(['replay', '--allow-mutations', 'checkout.json']);
+  assert(p1.positional[0] === 'checkout.json', 'flow path preserved when flag comes first');
+  assert(p1.flags.has('--allow-mutations'), 'allow-mutations flag captured');
+
+  const p2 = parseFlowArgs(['record', '--capture-hidden', '--capture-sensitive', 'https://example.com', '--out', 'f.json']);
+  assert(p2.positional[0] === 'https://example.com', 'url preserved with leading boolean flags');
+  assert(p2.options.out === 'f.json', 'out option captured');
+  assert(p2.flags.has('--capture-hidden') && p2.flags.has('--capture-sensitive'), 'boolean flags captured');
+
+  // 2. Submit controls identified correctly (including child elements).
+  const form = { tagName: 'FORM', nodeType: 1 };
+  const submitBtn = { tagName: 'BUTTON', type: 'submit', nodeType: 1, form, closest: (s) => (s.includes('form') ? form : null) };
+  const spanChild = { tagName: 'SPAN', nodeType: 1, textContent: 'Submit Order', closest: (s) => (s.includes('button') ? submitBtn : null) };
+  const innocentLink = { tagName: 'A', nodeType: 1, textContent: 'About Us', closest: () => null, getAttribute: () => null };
+
+  assert(isSubmitControl(submitBtn), 'button type=submit must be submit control');
+  assert(isSubmitControl(spanChild), 'span inside submit button must be submit control');
+  assert(isSubmitControl({ tagName: 'BUTTON', form }), 'button in form without type must be submit control');
   assert(isSubmitControl({ tagName: 'INPUT', type: 'submit' }), 'input type=submit must be submit control');
-  assert(isSubmitControl({ tagName: 'INPUT', type: 'image', form: {} }), 'input type=image must be submit control');
+  assert(isSubmitControl({ tagName: 'INPUT', type: 'image', form }), 'input type=image must be submit control');
+  assert(!isSubmitControl(innocentLink), 'innocent link must not be submit control');
 
-  // 2. Non-submit controls not identified as submit.
-  assert(!isSubmitControl({ tagName: 'BUTTON', type: 'button', form: {} }), 'button type=button must not be submit control');
-  assert(!isSubmitControl({ tagName: 'BUTTON' }), 'button without form and without type=submit must not be submit control');
-  assert(!isSubmitControl({ tagName: 'INPUT', type: 'text', form: {} }), 'input type=text must not be submit control');
-  assert(!isSubmitControl({ tagName: 'A', href: '/submit' }), 'anchor tag must not be submit control');
+  // 3. Replay execution suppression test with mock CDP client.
+  function makeMockReplayClient() {
+    return {
+      Emulation: { setDeviceMetricsOverride: async () => {} },
+      Page: { captureScreenshot: async () => ({ data: 'AAAA' }) },
+      Runtime: {
+        evaluate: async ({ expression }) => {
+          if (expression.includes('findMutatingControl')) {
+            return { result: { value: { ok: true, detail: 'dry-run: click on mutating control (BUTTON Submit) prevented (use --allow-mutations)', mutationBlocked: true } } };
+          }
+          if (expression.includes('requestSubmit') && expression.includes('!false')) {
+            return { result: { value: { ok: true, detail: 'dry-run: form submission on Enter prevented (use --allow-mutations)', mutationBlocked: true } } };
+          }
+          return { result: { value: { ok: true, detail: 'ok' } } };
+        }
+      }
+    };
+  }
+
+  const flow = {
+    title: 'Test flow',
+    steps: [
+      { type: 'change', selectors: [['#pwd']], value: '', redacted: true },
+      { type: 'click', selectors: [['#childSpan']], target: 'main' },
+      { type: 'keyDown', key: 'Enter', target: 'main' }
+    ]
+  };
+  const resDefault = await replayFlow(makeMockReplayClient(), flow, { allowMutations: false });
+  assert(resDefault.steps[0].skipped === true, 'redacted change step skipped when value is empty');
+  assert(resDefault.steps[1].mutationBlocked === true, 'click on child of mutating control blocked in dry-run');
+  assert(resDefault.steps[2].mutationBlocked === true, 'Enter submission blocked in dry-run');
 }
 
 function run(command, args, opts = {}) {

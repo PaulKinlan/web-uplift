@@ -10,70 +10,74 @@
 // Chrome DevTools Recorder export, (3) a hand-authored flow.json for CI. Replay
 // drives the steps over raw CDP and captures a screenshot per step; the model
 // (SKILL.md) then judges principles at each stop. No Playwright/Puppeteer.
+//
+// Replay safety gate (web-uplift-bwh):
+// Mutating steps (submitting forms on Enter, clicking submit buttons or mutating
+// controls) are protected by default in dry-run mode (mutationBlocked: true).
+// Passing --allow-mutations is required to execute real form submissions against
+// live targets.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchChrome, newSession, navigate, evaluate, sleep, recordLaunch } from '../evidence/cdp.mjs';
 
-// --- flow loading / normalisation -------------------------------------------
-
-export function normalizeFlow(raw) {
-  const flow = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  if (!flow || !Array.isArray(flow.steps)) {
-    throw new Error('Not a valid flow: expected an object with a `steps` array (Chrome DevTools Recorder JSON or a web-uplift flow.json).');
-  }
-  const steps = flow.steps.filter((s) => s && s.type);
-  return { title: flow.title || 'Untitled flow', steps };
-}
+// --- format validation + normalisation ---------------------------------------
 
 export function loadFlow(path) {
-  return normalizeFlow(readFileSync(path, 'utf8'));
+  const raw = readFileSync(path, 'utf8');
+  return normalizeFlow(JSON.parse(raw));
 }
 
-// Page-side element resolver, shared by replay. Chrome Recorder `selectors` is an
-// array of alternatives (each usually a one-string array). We try each until one
-// resolves, supporting aria/, xpath/, text/, pierce/ and plain CSS - the syntaxes
-// the Recorder emits.
-const RESOLVER_JS = `
-function __wuResolve(alts){
-  const one=(sel)=>{
-    if(!sel) return null;
-    try{
-      if(sel.startsWith('aria/')){
-        const name=sel.slice(5).trim();
-        const els=[...document.querySelectorAll('button,a,[role],input,textarea,select,[aria-label],summary,label')];
-        return els.find(e=>((e.getAttribute('aria-label')||e.textContent||e.value||'').trim())===name)||null;
-      }
-      if(sel.startsWith('xpath/')){
-        const xp=sel.replace(/^xpath\\/+/,'/');
-        const r=document.evaluate(xp,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null);
-        return r.singleNodeValue;
-      }
-      if(sel.startsWith('text/')){
-        const t=sel.slice(5).trim();
-        const els=[...document.querySelectorAll('*')];
-        return els.find(e=>e.childElementCount===0 && (e.textContent||'').trim()===t)||null;
-      }
-      if(sel.startsWith('pierce/')) sel=sel.slice(7);
-      return document.querySelector(sel);
-    }catch(e){ return null; }
-  };
-  for(const group of (alts||[])){
-    const sel=Array.isArray(group)?group[0]:group;
-    const el=one(sel);
-    if(el) return el;
+export function normalizeFlow(flow) {
+  if (!flow || typeof flow !== 'object' || !Array.isArray(flow.steps)) {
+    throw new Error('Invalid flow.json: expected { title: string, steps: array }');
   }
-  return null;
-}`;
+  return {
+    title: String(flow.title || 'User journey'),
+    steps: flow.steps.filter((s) => s && typeof s === 'object' && s.type),
+  };
+}
 
-// Run a resolver-based action in the page. Returns { ok, detail }.
-async function pageAction(client, selectors, body) {
+// Resilient selector resolver: Chrome DevTools Recorder exports a matrix of
+// selector alternatives per step: [ [ "aria/Search" ], [ "#q" ], [ "xpath//..." ] ].
+// We try each in order and run the action against the first one that resolves.
+async function pageAction(client, selectorList, actionJs) {
+  const list = Array.isArray(selectorList) ? selectorList : [selectorList].filter(Boolean);
+  const jsonList = JSON.stringify(list);
   const expr = `(() => {
-    ${RESOLVER_JS}
-    const el = __wuResolve(${JSON.stringify(selectors ?? [])});
-    if(!el) return { ok:false, detail:'no element matched the selectors' };
-    ${body}
+    const list = ${jsonList};
+    const resolve = (cand) => {
+      const s = Array.isArray(cand) ? cand[0] : cand;
+      if (!s || typeof s !== 'string') return null;
+      if (s.startsWith('aria/')) {
+        const name = s.slice(5).trim();
+        const el = document.querySelector('[aria-label="' + CSS.escape(name) + '"]');
+        if (el) return el;
+        for (const cand of document.querySelectorAll('button, a, input, [role=button]')) {
+          if ((cand.textContent || '').trim() === name) return cand;
+        }
+        return null;
+      }
+      if (s.startsWith('xpath/')) {
+        try {
+          const r = document.evaluate(s.slice(6), document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+          return r.singleNodeValue;
+        } catch { return null; }
+      }
+      try { return document.querySelector(s); } catch { return null; }
+    };
+    let el = null;
+    for (const cand of list) {
+      el = resolve(cand);
+      if (el) break;
+    }
+    if (!el) return { ok: false, detail: 'no selector resolved' };
+    try {
+      ${actionJs}
+    } catch (e) {
+      return { ok: false, detail: e.message || String(e) };
+    }
   })()`;
   return evaluate(client, expr);
 }
@@ -92,12 +96,24 @@ async function screenshot(client, outDir, index, label, log) {
 }
 
 export function isSubmitControl(el) {
-  if (!el) return false;
-  const type = (el.type || (typeof el.getAttribute === 'function' ? el.getAttribute('type') : '') || '').toLowerCase();
-  if (type === 'submit') return true;
-  const tag = (el.tagName || '').toUpperCase();
-  if (tag === 'BUTTON' && (!type || type === 'submit') && (el.form || el.hasForm)) return true;
-  if (tag === 'INPUT' && (type === 'image' || type === 'submit')) return true;
+  if (!el || (el.nodeType && el.nodeType !== 1)) return false;
+  const target = (typeof el.closest === 'function' ? el.closest('button, input, [role="button"]') : null) || el;
+  const tag = (target.tagName || '').toUpperCase();
+  const type = (target.type || (typeof target.getAttribute === 'function' ? target.getAttribute('type') : '') || '').toLowerCase();
+
+  if (type === 'submit' || type === 'image') return true;
+  if (target.form || target.hasForm || (typeof target.closest === 'function' && target.closest('form')) || (typeof target.getAttribute === 'function' && target.getAttribute('form'))) {
+    return true;
+  }
+  if (tag === 'BUTTON' || (typeof target.getAttribute === 'function' && target.getAttribute('role') === 'button')) {
+    const text = (target.textContent || '').trim().toLowerCase();
+    const aria = (typeof target.getAttribute === 'function' ? target.getAttribute('aria-label') : '') || '';
+    const name = (target.name || target.id || '').toLowerCase();
+    const MUTATING_TERMS = ['submit', 'save', 'delete', 'checkout', 'pay', 'order', 'confirm', 'send', 'buy', 'purchase', 'register', 'create'];
+    if (MUTATING_TERMS.some((term) => text.includes(term) || aria.toLowerCase().includes(term) || name.includes(term))) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -125,24 +141,46 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
         case 'click':
         case 'doubleClick':
           outcome = await pageAction(client, step.selectors, `
-            const isSubmit = (el) => {
-              if (!el) return false;
-              const type = (el.type || el.getAttribute('type') || '').toLowerCase();
-              if (type === 'submit') return true;
-              if (el.tagName === 'BUTTON' && !type && el.form) return true;
-              if (el.tagName === 'INPUT' && (type === 'image' || type === 'submit')) return true;
-              return false;
+            const findMutatingControl = (node) => {
+              if (!node || node.nodeType !== 1) return null;
+              const target = (typeof node.closest === 'function' ? node.closest('button, input, [role="button"], a[onclick]') : null) || node;
+              const tag = (target.tagName || '').toUpperCase();
+              const type = (target.type || (typeof target.getAttribute === 'function' ? target.getAttribute('type') : '') || '').toLowerCase();
+
+              if (type === 'submit' || type === 'image') return target;
+              if (target.form || (typeof target.closest === 'function' && target.closest('form')) || (typeof target.getAttribute === 'function' && target.getAttribute('form'))) {
+                return target;
+              }
+              if (tag === 'BUTTON' || (typeof target.getAttribute === 'function' && target.getAttribute('role') === 'button')) {
+                const text = (target.textContent || '').trim().toLowerCase();
+                const aria = (typeof target.getAttribute === 'function' ? target.getAttribute('aria-label') : '') || '';
+                const name = (target.name || target.id || '').toLowerCase();
+                const MUTATING_TERMS = ['submit', 'save', 'delete', 'checkout', 'pay', 'order', 'confirm', 'send', 'buy', 'purchase', 'register', 'create'];
+                if (MUTATING_TERMS.some((term) => text.includes(term) || aria.toLowerCase().includes(term) || name.includes(term))) {
+                  return target;
+                }
+              }
+              return null;
             };
-            if (!${allowMutations ? 'true' : 'false'} && isSubmit(el)) {
-              return { ok: true, detail: 'dry-run: submit button click prevented (use --allow-mutations)', mutationBlocked: true };
+
+            const mutating = findMutatingControl(el);
+            if (!${allowMutations ? 'true' : 'false'} && mutating) {
+              const label = (mutating.tagName || '') + ' ' + (mutating.textContent || mutating.value || '').trim().slice(0, 40);
+              return {
+                ok: true,
+                detail: 'dry-run: click on mutating control (' + label + ') prevented (use --allow-mutations)',
+                mutationBlocked: true
+              };
             }
             el.scrollIntoView({block:'center'});
             el.click();
-            return { ok:true, detail: (el.tagName+' '+(el.textContent||'').trim().slice(0,40)) };
+            return { ok: true, detail: (el.tagName + ' ' + (el.textContent || '').trim().slice(0, 40)) };
           `);
           await sleep(settleMs);
           break;
         case 'change':
+          // If the step was redacted (passwords, credentials, PII) and no real replacement
+          // value was supplied in flow.json, SKIP setting an empty string so existing DOM values are never wiped.
           if (step.redacted && (!step.value || step.value === '')) {
             outcome = {
               ok: true,
@@ -163,15 +201,21 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
           if ((step.key || '').toLowerCase() === 'enter') {
             outcome = await evaluate(client, `(() => {
               const el = document.activeElement;
-              const f = el && el.form;
+              const f = el && (el.form || (typeof el.closest === 'function' && el.closest('form')));
               if (f && f.requestSubmit) {
                 if (!${allowMutations ? 'true' : 'false'}) {
-                  return { ok: true, detail: 'dry-run: form submission prevented (use --allow-mutations)', mutationBlocked: true };
+                  return { ok: true, detail: 'dry-run: form submission on Enter prevented (use --allow-mutations)', mutationBlocked: true };
                 }
                 f.requestSubmit();
                 return { ok: true, detail: 'submitted form' };
               }
               if (el) {
+                if (!${allowMutations ? 'true' : 'false'}) {
+                  const tag = (el.tagName || '').toUpperCase();
+                  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || (typeof el.getAttribute === 'function' && el.getAttribute('contenteditable'))) {
+                    return { ok: true, detail: 'dry-run: Enter keydown on ' + tag.toLowerCase() + ' prevented (use --allow-mutations)', mutationBlocked: true };
+                  }
+                }
                 el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
                 return { ok: true, detail: 'Enter' };
               }
@@ -207,6 +251,7 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
       ok: outcome.ok,
       detail: outcome.detail || '',
       mutationBlocked: !!outcome.mutationBlocked,
+      skipped: !!outcome.skipped,
       screenshot: shot,
       url: await currentUrl(client)
     };
@@ -226,6 +271,28 @@ async function currentUrl(client) {
 
 // --- CLI --------------------------------------------------------------------
 
+export function parseFlowArgs(argv) {
+  const sub = argv[0];
+  const rest = argv.slice(1);
+  const VALUE_FLAGS = new Set(['--url', '--out', '--start-url']);
+  const positional = [];
+  const flags = new Set();
+  const options = {};
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (VALUE_FLAGS.has(arg)) {
+      const key = arg.replace(/^--/, '');
+      options[key] = rest[i + 1];
+      i++;
+    } else if (arg.startsWith('--')) {
+      flags.add(arg);
+    } else {
+      positional.push(arg);
+    }
+  }
+  return { sub, positional, flags, options };
+}
+
 const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   main().catch((err) => {
@@ -235,22 +302,15 @@ if (invokedDirectly) {
 }
 
 async function main() {
-  const argv = process.argv.slice(2);
-  const sub = argv[0];
-  const rest = argv.slice(1);
-  const opt = (name) => {
-    const i = rest.indexOf(`--${name}`);
-    return i >= 0 ? rest[i + 1] : undefined;
-  };
-  const positional = rest.filter((a, i) => !a.startsWith('--') && !(i > 0 && rest[i - 1].startsWith('--')));
+  const { sub, positional, flags, options } = parseFlowArgs(process.argv.slice(2));
 
   if (sub === 'replay') {
     const flowPath = positional[0];
     if (!flowPath) throw new Error('Usage: web-uplift flow replay <flow.json> [--url <startUrl>] [--out <dir>] [--allow-mutations]');
     const flow = loadFlow(flowPath);
-    const startUrl = opt('url');
-    const outDir = opt('out') || `reports/flow-${Date.now()}/evidence`;
-    const allowMutations = rest.includes('--allow-mutations');
+    const startUrl = options.url || options['start-url'];
+    const outDir = options.out || `reports/flow-${Date.now()}/evidence`;
+    const allowMutations = flags.has('--allow-mutations');
     const log = (m) => console.error(m);
     const chrome = await launchChrome({ log });
     // Operator-present launch, attributed like every agent-run primitive
@@ -275,9 +335,9 @@ async function main() {
   } else if (sub === 'record') {
     const url = positional[0];
     if (!url) throw new Error('Usage: web-uplift flow record <url> [--out <flow.json>] [--capture-hidden] [--capture-sensitive]');
-    const outPath = opt('out') || `flow-${Date.now()}.json`;
-    const captureHidden = rest.includes('--capture-hidden');
-    const captureSensitive = rest.includes('--capture-sensitive');
+    const outPath = options.out || `flow-${Date.now()}.json`;
+    const captureHidden = flags.has('--capture-hidden');
+    const captureSensitive = flags.has('--capture-sensitive');
     const log = (m) => console.error(m);
     const { recordFlow } = await import('./flow-record.mjs');
     const chrome = await launchChrome({ log, headless: false });
