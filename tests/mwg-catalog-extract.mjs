@@ -53,6 +53,13 @@ export async function testMwgCatalogExtract() {
   assert(interpolated instanceof CatalogRefusal && /interpolation in a template literal/.test(interpolated.message),
     `an interpolation must be refused: ${interpolated && interpolated.message}`);
 
+  // 1c. Numeric literals a real package can legitimately contain are all data: separators,
+  // exponents, signs, hex/octal/binary. A refusal here would stop the lane regenerating.
+  const numbers = parseUseCasesTable('[ { "a": 1_000, "b": 2e3, "c": -5, "d": .5, "e": 0x10, "f": 0o17, "g": 0b101, "h": 3.5e-2 } ]');
+  assert(numbers[0].a === 1000 && numbers[0].b === 2000 && numbers[0].c === -5 && numbers[0].d === 0.5 &&
+    numbers[0].e === 16 && numbers[0].f === 15 && numbers[0].g === 5 && numbers[0].h === 0.035,
+    `numeric literals are data: ${JSON.stringify(numbers[0])}`);
+
   // 2. Anything that is not a literal is REFUSED, and the refusal names the reason.
   for (const [table, why] of [
     ['[ { "id": "a" }, (function () { throw new Error("boom"); })() ]', 'an expression element'],

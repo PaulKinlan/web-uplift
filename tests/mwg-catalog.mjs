@@ -118,10 +118,16 @@ export function parseUseCasesTable(table) {
   };
   const readNumber = () => {
     const rest = table.slice(i);
-    const m = rest.match(/^-?(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/);
+    // Every pure-data numeric literal a package might legitimately contain: sign, decimal
+    // with optional fraction and exponent, hex/octal/binary, and `_` separators. A number
+    // cannot execute, so being liberal here costs nothing and a needless refusal would stop
+    // a lane regenerating the catalog at all.
+    const m = rest.match(/^[+-]?(?:0[xX][0-9a-fA-F][0-9a-fA-F_]*|0[oO][0-7][0-7_]*|0[bB][01][01_]*|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?|\.\d[\d_]*(?:[eE][+-]?\d+)?)/);
     if (!m) fail('a malformed number');
     i += m[0].length;
-    return Number(m[0]);
+    const value = Number(m[0].replace(/_/g, ''));
+    if (!Number.isFinite(value)) fail(`a number that is not finite (${m[0]})`);
+    return value;
   };
   const readValue = () => {
     skipTrivia();
@@ -129,7 +135,10 @@ export function parseUseCasesTable(table) {
     if (c === '"' || c === "'" || c === '`') return readString();
     if (c === '[') return readArray();
     if (c === '{') return readObject();
-    if (c === '-' || (c >= '0' && c <= '9')) return readNumber();
+    const digitNext = /[0-9]/.test(table[i + 1] ?? '');
+    if (c === '-' || (c >= '0' && c <= '9') || (c === '.' && digitNext) || (c === '+' && (digitNext || table[i + 1] === '.'))) {
+      return readNumber();
+    }
     for (const [word, value] of [['true', true], ['false', false], ['null', null]]) {
       if (table.startsWith(word, i) && !/[A-Za-z0-9_$]/.test(table[i + word.length] ?? '')) {
         i += word.length;
