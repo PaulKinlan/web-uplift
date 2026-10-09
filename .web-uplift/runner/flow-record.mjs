@@ -38,16 +38,28 @@
 //    with the HAR credential redactor (web-uplift-glar/lw6) - and the page-side copy
 //    the capture script injects is GENERATED from it, so the browser cannot hold a
 //    third, drifted table (web-uplift-so2).
-// 6. The recording binding is AUTHENTICATED and every step is validated before it is
-//    persisted (web-uplift-sg5). `__wuRecordStep` is a CDP binding, which is a function
-//    on the PAGE global: any page script (or a third-party script the page loads) can
-//    call it, and the step it sends used to go straight into flow.json - so a hostile
-//    page could add a navigate step to its own URL, or a change step (password field,
-//    value) the operator never typed, and the operator would replay it. Each recording
-//    now carries a token generated in Node and closed over inside the injected script, so
-//    only our own emitter can produce an accepted payload, and the payload's step is
-//    rebuilt from an allowlist of types and fields with bounds. A refused payload is
-//    counted, reported, and NEVER persisted.
+// 6. The recording binding is ISOLATED, AUTHENTICATED and every step is validated before
+//    it is persisted (web-uplift-sg5). `__wuRecordStep` is a CDP binding, and a binding
+//    added the plain way is a function on the PAGE global: any page script (or a
+//    third-party script the page loads) can call it, and the step it sends used to go
+//    straight into flow.json - so a hostile page could add a navigate step to its own URL,
+//    or a change step (password field, value) the operator never typed, and the operator
+//    would replay it. Four layers now, because they fail differently:
+//    - ISOLATION: the emitter runs in its own execution world
+//      (Page.addScriptToEvaluateOnNewDocument worldName, and Runtime.addBinding bound to
+//      that world). The page cannot SEE or CALL the binding at all, so the attack is not
+//      "forge a payload", it is unreachable. Note that a review caught the earlier,
+//      page-world version: a token that is merely closed over is still reachable, because
+//      the emitter had to call the page-global JSON.stringify to send it.
+//    - TRUST: a listener only records an event the user agent itself produced (isTrusted).
+//      Without it a page could dispatch a synthetic click or change on any element and the
+//      recorder would sign it with its own token; the Done control is the same, so a page
+//      cannot end a recording either.
+//    - AUTHENTICITY: each recording also carries a token generated in Node and closed over
+//      inside the injected script (and the injection keeps its own reference to the native
+//      JSON.stringify), so a payload is only accepted from our emitter.
+//    - SHAPE: the payload's step is rebuilt from an allowlist of types and fields with
+//      bounds. A refused payload is counted, reported, and NEVER persisted.
 
 // The credential/PII word list, its tokenisation and its two strengths
 // (strong = any word of a name, weak = only the whole name) live in ONE shared
@@ -88,7 +100,10 @@ const MAX_REPORTED_REFUSALS = 5;
 export function validateRecordedStep(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'not a step object' };
   const type = typeof raw.type === 'string' ? raw.type : typeof raw.type;
-  const fields = typeof raw.type === 'string' ? RECORDED_STEP_FIELDS[raw.type] : null;
+  // Object.hasOwn, not a bare lookup: `raw.type` comes from a page, and RECORDED_STEP_FIELDS
+  // inherits from Object.prototype, so type "__proto__" or "constructor" resolved to a
+  // non-array and threw instead of refusing (web-uplift-sg5 review).
+  const fields = typeof raw.type === 'string' && Object.hasOwn(RECORDED_STEP_FIELDS, raw.type) ? RECORDED_STEP_FIELDS[raw.type] : null;
   if (!fields) return { ok: false, reason: `type ${JSON.stringify(type)} is not a type the recorder emits` };
   // `type` selects the allowlist, so it is not an "extra" field: the first version of
   // this check refused the recorder's OWN click step ("unexpected field(s) type"), which
@@ -377,6 +392,11 @@ export function sanitizeNavUrl(raw) {
   }
 }
 
+// The execution world the capture script and its binding live in (web-uplift-sg5). The
+// page's own scripts run in the main world and cannot see into this one, which is what
+// makes the binding unreachable for a hostile page rather than merely guarded.
+export const RECORDER_WORLD = '__wuRecorderWorld';
+
 // The page-side capture script. Kept as a string template so it can be injected via
 // Page.addScriptToEvaluateOnNewDocument (runs before page scripts, every load).
 export function makeCaptureJs({ captureHidden = false, captureSensitive = false, token = '' } = {}) {
@@ -386,14 +406,16 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
   window.__wuRec = true;
   const CAPTURE_HIDDEN = ${captureHidden ? 'true' : 'false'};
   const CAPTURE_SENSITIVE = ${captureSensitive ? 'true' : 'false'};
-  // The CDP binding is a function on the PAGE global, so a page script can call it too.
-  // A step is therefore authenticated with a token that exists only inside this closure
-  // (web-uplift-sg5): a page can call the binding, but it cannot produce a payload the
-  // recorder accepts - and the binding is captured ONCE, before any page script runs, so
-  // replacing window.__wuRecordStep later can neither intercept nor forge our sends.
+  // Layer 2 (the page cannot reach this world at all - see RECORDER_WORLD): a token that
+  // exists only inside this closure, plus our OWN reference to the native JSON.stringify
+  // (web-uplift-sg5). A review showed why the second half matters: a token that is closed
+  // over is not secret if the emitter has to call a PAGE-GLOBAL function to send it - a
+  // page that replaces JSON.stringify reads the token off the next legitimate send and
+  // then forges payloads. Both references are taken here, before any page script runs.
   const TOKEN = ${JSON.stringify(token)};
   const wuSend = window.__wuRecordStep;
-  const send = (step) => { try { wuSend(JSON.stringify({ __wu: TOKEN, step })); } catch (e) {} };
+  const wuStringify = JSON.stringify;
+  const send = (step) => { try { wuSend(wuStringify({ __wu: TOKEN, step })); } catch (e) {} };
 
   // The word data is injected from evidence/credential-terms.mjs (the ONE table,
   // shared with the HAR redactor): a third hand-maintained list here is exactly
@@ -501,13 +523,20 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
     return alts;
   };
 
+  // Layer 3: only an event the user agent produced is recordable. A page can dispatch a
+  // synthetic click or change on any element, and without this check the recorder would
+  // sign it with its own token and the operator would replay a step they never took
+  // (web-uplift-sg5 review). Refused silently, on purpose: a page can dispatch events in a
+  // loop, and a page-triggered log line is a log flood.
   document.addEventListener('click', (e) => {
+    if (!e.isTrusted) return;
     const el = e.target.closest('a,button,[role=button],input[type=submit],input[type=button],summary,[onclick]') || e.target;
     if (el && el.id === '__wu_done') return; // the Done control itself
     send({ type: 'click', selectors: selectorsFor(el), target: 'main' });
   }, true);
 
   document.addEventListener('change', (e) => {
+    if (!e.isTrusted) return;
     const el = e.target;
     if (!el || !('value' in el)) return;
     const type = (el.type || '').toLowerCase();
@@ -535,6 +564,9 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
     document.documentElement.appendChild(bar);
     document.getElementById('__wu_done').addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
+      // The Done control is OUR control, but a page can click it programmatically: a real
+      // user gesture is the only thing that ends a recording.
+      if (!e.isTrusted) return;
       send({ type: '__done' });
     }, true);
   };
@@ -564,8 +596,9 @@ export async function recordFlow(client, url, { log = () => {}, captureHidden = 
     }
   };
 
-  // Receive steps from the page over the CDP binding.
-  await client.Runtime.addBinding({ name: '__wuRecordStep' });
+  // Receive steps from the page over the CDP binding, bound to the ISOLATED world the
+  // emitter runs in: the page's own scripts cannot see or call it (web-uplift-sg5).
+  await client.Runtime.addBinding({ name: '__wuRecordStep', executionContextName: RECORDER_WORLD });
   client.Runtime.bindingCalled(({ name, payload }) => {
     if (name !== '__wuRecordStep') return;
     let msg;
@@ -598,7 +631,10 @@ export async function recordFlow(client, url, { log = () => {}, captureHidden = 
     }
   });
 
-  await client.Page.addScriptToEvaluateOnNewDocument({ source: makeCaptureJs({ captureHidden, captureSensitive, token }) });
+  await client.Page.addScriptToEvaluateOnNewDocument({
+    source: makeCaptureJs({ captureHidden, captureSensitive, token }),
+    worldName: RECORDER_WORLD,
+  });
   await client.Page.navigate({ url });
   log('[flow-record] recording... interact with the page, then click Done.');
 

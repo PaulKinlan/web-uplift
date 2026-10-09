@@ -361,6 +361,10 @@ the audit covers the pages a user actually reaches.
 # ?key=, ?session=), token-shaped path segments and fragments (/reset-password/<tok>),
 # and URL userinfo. Innocent parameters (postalCode, sortKey, a numeric order id)
 # keep their values so the journey still replays.
+# Recording only captures REAL user gestures: an event a page script dispatches itself
+# (element.click(), dispatchEvent(new MouseEvent(...))) is not recorded, so a page cannot
+# script steps into your journey. The recorder also runs in its own browser execution world,
+# which page scripts cannot see into, so the recording channel cannot be reached or forged.
 # Use --capture-hidden to explicitly retain hidden inputs, or --capture-sensitive
 # to record sensitive values for test replay. Flows needing entered sensitive
 # values cannot replay faithfully without the opt-in or hand-authored test data.
