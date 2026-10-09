@@ -1,3 +1,13 @@
+// NEUTRALISED SAMPLE (web-uplift-17q). This file is the provenance record of the
+// probe the model-led run authored to inventory the demo page's forms, semantics
+// and error surfaces (PROVENANCE.md documents that the scratch probes are the
+// agent's own), kept under its original name because write-scope.json:46
+// references this exact path. The live POST to /enquiry is DISABLED - it is
+// commented out below - and the sample payload is a placeholder, so re-running
+// or copying this file cannot file a real submission. The remaining fetches are
+// read-only GETs (the evidence record of the endpoint survey) and stay
+// executable. To probe a target you own and are authorised to test, uncomment
+// the POST line.
 (async () => {
   const snip = (t, n = 240) => (t || '').replace(/\s+/g, ' ').trim().slice(0, n);
   const get = async (u, init) => {
@@ -27,9 +37,12 @@
   const links = [...document.querySelectorAll('a')].map(a => ({ text: a.textContent.trim(), href: a.href, current: a.getAttribute('aria-current'), pointsAtThisPage: a.href === location.href, inNav: a.closest('nav') ? a.closest('nav').getAttribute('aria-label') : null }));
   const mainKids = [...document.querySelector('main').children].map(el => { const r = el.getBoundingClientRect(); return { el: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''), x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; });
   const phone = [...document.querySelectorAll('dd')].map(d => ({ text: d.textContent.trim(), hasTelLink: !!d.querySelector('a[href^="tel:"]') }));
-  const fd = new URLSearchParams({ name: 'Jo Bloggs', email: 'jo@example.com', message: 'Pothole on Mill Lane' });
+  // The recorded payload, with RFC 2606 placeholders in place of the original
+  // sample data (web-uplift-17q).
+  const fd = new URLSearchParams({ name: 'Example User', email: 'user@example.invalid', message: 'Placeholder message from the web-uplift form probe.' });
   const flows = await Promise.all([
-    get('/enquiry', { method: 'POST', body: fd, headers: { 'content-type': 'application/x-www-form-urlencoded' } }),
+    // The live side effect this probe performed, kept as the record of it:
+    //   get('/enquiry', { method: 'POST', body: fd, headers: { 'content-type': 'application/x-www-form-urlencoded' } }),
     get('/enquiry'), get('/'), get('/inbox'), get('/inbox/'),
     get('/robots.txt'), get('/sitemap.xml'), get('/favicon.ico'), get('/no-such-page-xyz'),
   ]);

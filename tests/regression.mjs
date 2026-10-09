@@ -97,6 +97,7 @@ try {
   await testLatestPointerCannotEscapeTheRunRoot();
   await testInstallSurfaceMatchesWhatInstallVendors();
   await testSecretsArtifactDoesNotPersistMatches();
+  testCommittedSiblingProbesAreInert();
   testSecretsScanDoesNotPersistMatchCharacters();
   testSourceTreeRedactsBeforeInlining();
   testSourceTreeSkipsSymlinkFileEscape();
@@ -5627,6 +5628,56 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
     configureFetchDeadline(30000); // restore the production default for the rest of the suite
     await new Promise((resolveClose) => server.close(resolveClose));
   }
+}
+
+// web-uplift-17q: the sibling scratch probes the cpa model-led run committed
+// (submit.js, flow-probe.js) carried the same defect class pv1 fixed in
+// submit-render.js: a live side effect (requestSubmit() / a POST to /enquiry)
+// plus copy-pasteable sample personal data. The committed provenance files keep
+// their names (write-scope.json:46/50 references them) and must stay INERT: the
+// side-effecting line commented out as the record, the payload replaced with
+// RFC 2606 placeholders. flow-probe.js keeps its read-only GET survey
+// executable - GETs are not the defect class; the POST is. The negative
+// control proves the checks FIRE on a live probe shape rather than vacuously
+// passing.
+function assertProbeFileInert(file, { forbid }) {
+  const text = readFileSync(file, 'utf8');
+  // Executable lines only: the record of the original side effect is a comment,
+  // and a comment cannot submit anything.
+  const live = text
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
+  for (const re of forbid) {
+    assert(!re.test(live), `${file} must stay inert (${re}) in executable lines:\n${live}`);
+  }
+  for (const pii of ['Jo Bloggs', 'jo@example.com']) {
+    assert(!text.includes(pii), `${file}: sample personal data must be a placeholder, found ${JSON.stringify(pii)}`);
+  }
+  assert(text.includes('user@example.invalid'), `${file}: the sample email must be an RFC 2606 placeholder`);
+}
+
+function testCommittedSiblingProbesAreInert() {
+  const scratch = join(repoRoot, 'evidence-out', 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch');
+  for (const name of ['submit.js', 'flow-probe.js']) {
+    assert(existsSync(join(scratch, name)), `the neutralised probe must keep the path write-scope.json references: ${name}`);
+  }
+  assertProbeFileInert(join(scratch, 'submit.js'), { forbid: [/\brequestSubmit\s*\(/, /\bfetch\s*\(/] });
+  assertProbeFileInert(join(scratch, 'flow-probe.js'), { forbid: [/method:\s*'POST'/] });
+  // Negative control: a live probe shape (uncommented requestSubmit plus the
+  // original sample data, no placeholder) must trip the checks.
+  const fixture = join(tmp, 'live-probe-shape.js');
+  writeFileSync(
+    fixture,
+    "(() => {\n  document.getElementById('email').value = 'jo@example.com';\n  document.getElementById('enquiry-form').requestSubmit();\n})()\n",
+  );
+  let fired = false;
+  try {
+    assertProbeFileInert(fixture, { forbid: [/\brequestSubmit\s*\(/] });
+  } catch {
+    fired = true;
+  }
+  assert(fired, 'negative control: the inertness checks must fire on a live probe shape');
 }
 
 // The persisted shape itself, without a browser. The fixture value is built at

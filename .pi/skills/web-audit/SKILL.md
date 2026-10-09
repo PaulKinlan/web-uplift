@@ -222,10 +222,14 @@ You may also run **any other tool you judge useful** at inspection time. None of
 these is wired into the runtime; you invoke them yourself when they help:
 
 - **Lighthouse**: `npx -y lighthouse <url> --output=json --quiet
-  --chrome-flags="--headless=new --no-sandbox"` for LCP/CLS/TBT and the a11y /
-  best-practices / SEO audits. Use it to corroborate the Lighthouse-dimension
-  principles, or skip it and gather the same signal first-party with `layout`
-  and `evaluate`.
+  --chrome-flags="--headless=new"` for LCP/CLS/TBT and the a11y /
+  best-practices / SEO audits. Do NOT add `--no-sandbox`: Lighthouse launches
+  its own Chrome against the same untrusted page, and the auditor's posture
+  (web-uplift-d2l) is that the OS sandbox stays ON unless Chrome cannot start
+  it at all - running as root or in a restricted container - in which case add
+  `--no-sandbox` knowingly, for that run only. Use it to corroborate the
+  Lighthouse-dimension principles, or skip it and gather the same signal
+  first-party with `layout` and `evaluate`.
 - **axe-core**: use the `axe` evidence primitive
   (`node evidence/cli.mjs axe <url>`). It injects the VENDORED axe-core, lifting
   the page's Content-Security-Policy for that injection only: the page is
