@@ -32,27 +32,31 @@ export async function testLogUrlRedaction() {
 
   // 1. The redactor, on the shapes a log line actually carries.
   const redacted = (u) => redactUrlCredentialValues(u);
+  // [url, credential parameter, the credential VALUE (asserted absent verbatim), a
+  // non-credential parameter whose value must survive]
   const cases = [
-    ['https://t.example/search?api_key=LIVEKEY1234567890&q=shoes', 'api_key', 'q'],
-    ['https://t.example/a?token=abcdef123456&page=3', 'token', 'page'],
-    ['https://t.example/a?access_token=xyz123&utm_source=news', 'access_token', 'utm_source'],
-    ['https://t.example/a?password=hunter2', 'password', null],
-    ['https://t.example/a?session=SESS123', 'session', null],
-    ['https://t.example/a?apikey=KEY987', 'apikey', null],
+    ['https://t.example/search?api_key=LIVEKEY1234567890&q=shoes', 'api_key', 'LIVEKEY1234567890', 'q'],
+    ['https://t.example/a?token=abcdef123456&page=3', 'token', 'abcdef123456', 'page'],
+    ['https://t.example/a?access_token=xyz123&utm_source=news', 'access_token', 'xyz123', 'utm_source'],
+    ['https://t.example/a?password=hunter2', 'password', 'hunter2', null],
+    ['https://t.example/a?session=SESS123', 'session', 'SESS123', null],
+    ['https://t.example/a?apikey=KEY987', 'apikey', 'KEY987', null],
     // The values a batch/fix log is most likely to carry from a real target, and the
     // ones master's table did not cover before web-uplift-glar landed.
-    ['https://t.example/a?csrf=CSRF123&lang=en', 'csrf', 'lang'],
-    ['https://t.example/a?pin=1234', 'pin', null],
-    ['https://t.example/a?cvv=999', 'cvv', null],
-    ['https://t.example/a?passcode=abcd', 'passcode', null],
+    ['https://t.example/a?csrf=CSRF123&lang=en', 'csrf', 'CSRF123', 'lang'],
+    ['https://t.example/a?pin=1234', 'pin', '1234', null],
+    ['https://t.example/a?cvv=999', 'cvv', '999', null],
+    ['https://t.example/a?passcode=abcd', 'passcode', 'abcd', null],
   ];
-  for (const [url, secretKey, keepKey] of cases) {
+  for (const [url, secretKey, secretValue, keepKey] of cases) {
     const out = redacted(url);
     assert(out !== url, `a credential-bearing URL must change: ${url}`);
-    assert(!/LIVEKEY1234567890|abcdef123456|xyz123|hunter2|SESS123|KEY987/.test(out),
-      `the credential VALUE must not survive: ${out}`);
+    // The VALUE comes from the case itself: a hand-written alternation of the values that
+    // happen to be in the list is how pin/cvv/passcode went unasserted (review finding 3).
+    assert(!out.includes(secretValue),
+      `the credential VALUE "${secretValue}" must not survive: ${out}`);
     assert(out.includes(`${secretKey}=`), `the parameter name stays readable: ${out}`);
-    if (keepKey) assert(new RegExp(`${keepKey}=(shoes|3|news|en)`).test(out), `${keepKey} is not a credential and must keep its value: ${out}`);
+    if (keepKey) assert(out.includes(`${keepKey}=`), `${keepKey} is not a credential and must keep its parameter: ${out}`);
   }
   assert(!/CSRF123/.test(redacted('https://t.example/a?csrf=CSRF123')), 'the csrf VALUE must not survive a log line');
   // The other direction, and the reason the shared table has two strengths: a name that
@@ -70,30 +74,62 @@ export async function testLogUrlRedaction() {
   assert(redacted('<audit-url>') === '<audit-url>' && redacted('') === '' && redacted(undefined) === undefined,
     'a non-URL placeholder passes through unchanged');
 
-  // 2. The census. Every output line interpolating a URL must wrap it.
-  const WRAPPERS = /shownUrl\(|shownAuditUrl\(|shownCommand\(/;
+  // 2. The census. Every output line that can print a target URL must wrap it, either
+  // through the URL interpolations or, when the URL rides inside a message/command, through
+  // shownText/shownCommand.
+  //
+  // ATTACKED BY A REVIEW, and this is the shape it survived in: the first version only saw
+  // a bare `${url}`, so `console.log(`[${slug}] $ ${cliArgs.join(' ')}`)` leaked the URL
+  // inside the agent PROMPT without ever naming `url` - and the exemption's reason claimed
+  // the echo was wrapped, which was false for that line. A console line mentioning a
+  // command/prompt or a message is therefore checked too.
+  //
+  // STILL NOT COVERED, stated instead of implied: an alias (`const u = url`), `'x' + url`
+  // concatenation, a `console.log(url)` with no interpolation, `${` split across lines, and
+  // a URL carried inside an arbitrary object (`console.log(step)`). Those are human review
+  // and the leak's blast radius (a CI log, not an artifact), not this scan's.
+  const WRAPPERS = /shownUrl\(|shownAuditUrl\(|shownCommand\(|shownText\(/;
   // The identifier boundary matters: `${urls.length}` and `${urlsFile}` are not a target
   // URL, and the first version of this rule flagged both (the census caught its own
   // over-reach, which is why the boundary is asserted rather than assumed).
   const INTERPOLATES_URL = /\$\{(?:f\.url|url|auditUrl)(?![a-zA-Z0-9_$])/;
+  const CONSOLE_CALL = /\bconsole\.(?:log|error|warn|info)\(/;
+  const COMMAND_ISH = /(?<![a-zA-Z0-9_$.])(?:cliArgs|agentArgs|command|cmd|prompt)(?![a-zA-Z0-9_$])/;
+  const MESSAGE_ISH = /err\.message|agentError|iterationError|validation\.detail|String\(err\)/;
   // The exemption list is asserted, not implied: each entry names the file, the text,
   // and the reason it is not an output line.
   const EXEMPT = [
     {
       file: 'fixer/fix.mjs',
       match: 'then re-audit ${auditUrl} and write report.json',
-      why: 'prompt TEXT (the model input), not a log line; when the prompt is echoed it is passed through shownCommand()',
+      why: 'prompt STRING CONSTRUCTION (the model input itself), not a print: every site that ECHOES this prompt is wrapped, which the verbose command echo at the bottom of the file did not used to be - exactly what the review caught',
+    },
+    {
+      file: 'runner/run-batch.mjs',
+      match: 'Could not read --urls file',
+      why: 'a filesystem read error for --urls: no target URL is in scope here, so the message cannot carry one (and wrapping it would have nothing to substitute)',
+    },
+    {
+      file: '.web-uplift/runner/run-batch.mjs',
+      match: 'Could not read --urls file',
+      why: 'the vendored copy of the same line: it is byte-identical by cdp-copy-sync, so the same reason applies',
     },
   ];
-  const targets = ['runner/run-batch.mjs', 'fixer/fix.mjs'];
+  const targets = ['runner/run-batch.mjs', '.web-uplift/runner/run-batch.mjs', 'fixer/fix.mjs'];
   const findings = [];
   const used = new Set();
   for (const file of targets) {
     const lines = readFileSync(join(repoRoot, file), 'utf8').split('\n');
     lines.forEach((ln, i) => {
       if (ln.trim().startsWith('//') || ln.trim().startsWith('*')) return;
-      if (!INTERPOLATES_URL.test(ln)) return;
-      if (WRAPPERS.test(ln)) return;
+      const interpolates = INTERPOLATES_URL.test(ln);
+      // `${` (or String()) must be present too: `console.log('Per-iteration command the model is\n  // driven with:')` mentions "command" in a LITERAL string and is not a command echo (the
+  // first version of this rule flagged it).
+  const printsCommandOrMessage = CONSOLE_CALL.test(ln) && /\$\{|String\(/.test(ln) && (COMMAND_ISH.test(ln) || MESSAGE_ISH.test(ln));
+      if (!interpolates && !printsCommandOrMessage) return;
+      // shownText/shownCommand cover a message or a command; shownUrl/shownAuditUrl cover an
+      // interpolation the line names.
+      if (WRAPPERS.test(ln) && (!interpolates || /shown(Text|Command)\(/.test(ln))) return;
       const text = ln.trim();
       const exempt = EXEMPT.find((e) => e.file === file && text.includes(e.match));
       if (exempt) { used.add(file + '|' + exempt.match); return; }

@@ -63,6 +63,10 @@ import { redactUrlCredentialValues } from '../evidence/cli.mjs';
 // and the flow recorder instead of growing a fourth copy of it.
 const shownAuditUrl = () => (typeof auditUrl === 'string' && auditUrl ? redactUrlCredentialValues(auditUrl) : '<audit-url>');
 const shownCommand = (command) => (typeof auditUrl === 'string' && auditUrl ? command.split(auditUrl).join(shownAuditUrl()) : command);
+// A printed MESSAGE can carry the audit URL without interpolating it: an error whose text
+// names the URL it was waiting for, or an agent failure that echoes the prompt
+// (web-uplift-s0x review finding 1).
+const shownText = (text) => (typeof text === 'string' && typeof auditUrl === 'string' && auditUrl ? text.split(auditUrl).join(shownAuditUrl()) : text);
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -212,17 +216,31 @@ if (dryRun) {
   console.log(`agent isolation: ${args.isolation && args.isolation !== true ? `operator-supplied (${args.isolation}), unverified` : 'REQUIRED - refuses before any spawn without --isolation <mechanism>'}`);
   console.log('');
   console.log('Per-iteration command the model is driven with:');
+  // The echoed commands are what the operator copies, so a substitution is announced rather
+  // than silent: a command that quietly differs is a command that fails for no visible
+  // reason (web-uplift-s0x review finding 2).
+  let redactedInEcho = false;
   for (let i = 1; i <= maxIterations; i++) {
     const prompt = iterationPrompt(args.findings, i);
     const cliArgs = agent.args(prompt, { maxTurns: 120 });
-    console.log(`  [iter ${i}] ${agent.bin} ${shownCommand(cliArgs.join(' '))}`);
+    const shownIter = shownCommand(cliArgs.join(' '));
+    if (shownIter !== cliArgs.join(' ')) redactedInEcho = true;
+    console.log(`  [iter ${i}] ${agent.bin} ${shownIter}`);
   }
   console.log('');
   console.log('Equivalent commands for every agent (so adding one stays one entry):');
   for (const name of AGENT_NAMES) {
     const a = AGENTS[name];
     const prompt = a.prompt(auditUrl ?? '<audit-url>', outDir, fixExtra(args.findings ?? '<findings>', 1));
-    console.log(`  ${name.padEnd(12)} ${a.bin} ${shownCommand(a.args(prompt, { maxTurns: 120 }).join(' '))}`);
+    const shownAgent = shownCommand(a.args(prompt, { maxTurns: 120 }).join(' '));
+    if (shownAgent !== a.args(prompt, { maxTurns: 120 }).join(' ')) redactedInEcho = true;
+    console.log(`  ${name.padEnd(12)} ${a.bin} ${shownAgent}`);
+  }
+  // Announced rather than silent: a command that quietly differs is a command that fails
+  // for no visible reason (web-uplift-s0x review finding 2).
+  if (redactedInEcho) {
+    console.log('');
+    console.log('note: credential-bearing query values in the audit URL are redacted in the commands ABOVE; the run uses the URL as given');
   }
   process.exit(0);
 }
@@ -251,7 +269,7 @@ function writeRunSecurity(dir, record) {
     writeFileSync(join(dir, 'run-security.json'), JSON.stringify({ ...record, recordedAt: new Date().toISOString(), tool: 'web-uplift fix' }, null, 2) + '\n');
     return true;
   } catch (err) {
-    console.error(`Could not record the isolation state: ${err.message}`);
+    console.error(`Could not record the isolation state: ${shownText(err.message || String(err))}`);
     return false;
   }
 }
@@ -308,7 +326,7 @@ if (args.findings) {
   try {
     suppliedBaseline = await readReport(args.findings);
   } catch (err) {
-    console.error(`Cannot start the climb: ${err.message || err} (write-scope records: ${scopeRecordPaths()} in ${outDir})`);
+    console.error(`Cannot start the climb: ${shownText(err.message || String(err))} (write-scope records: ${scopeRecordPaths()} in ${outDir})`);
     process.exit(1);
   }
 }
@@ -344,7 +362,7 @@ try {
 } catch (err) {
   // The same named failure the iteration loop reports: a baseline the fixer cannot
   // read is a run it cannot score, not a stack trace.
-  console.error(`Cannot start the climb: ${err.message || err} (write-scope records: ${scopeRecordPaths()} in ${outDir})`);
+  console.error(`Cannot start the climb: ${shownText(err.message || String(err))} (write-scope records: ${scopeRecordPaths()} in ${outDir})`);
   process.exit(1);
 }
 const startIssues = countOutstanding(baseline);
@@ -431,7 +449,7 @@ for (let i = 1; i <= maxIterations && !passed; i++) {
   if (iterationError) {
     agentFailure = iterationError;
     await writeFile(join(outDir, `iter-${i}-error.json`), JSON.stringify(iterationDiff, null, 2) + '\n');
-    console.error(`\nThe fix agent failed in iteration ${i}: ${iterationError.message || iterationError}`);
+    console.error(`\nThe fix agent failed in iteration ${i}: ${shownText(iterationError.message || String(iterationError))}`);
     break;
   }
 
@@ -443,7 +461,7 @@ for (let i = 1; i <= maxIterations && !passed; i++) {
     // the one thing this iteration was asked to produce. Name it and stop.
     agentFailure = err;
     await writeFile(join(outDir, `iter-${i}-error.json`), JSON.stringify({ ...iterationDiff, reportError: String(err.message || err) }, null, 2) + '\n');
-    console.error(`\nIteration ${i} produced no usable report: ${err.message || err}`);
+    console.error(`\nIteration ${i} produced no usable report: ${shownText(err.message || String(err))}`);
     break;
   }
   const r = remaining(report);
@@ -560,10 +578,10 @@ if (escapedOutsideScope || agentFailure) {
       await writeFile(join(beforeRun.hostRoot, 'scorecard.html'), renderScorecard(data));
       console.log(`Scorecard written to ${join(beforeRun.hostRoot, 'scorecard.html')}`);
     } catch (err) {
-      console.error(`Could not emit scorecard: ${err.message}`);
+      console.error(`Could not emit scorecard: ${shownText(err.message || String(err))}`);
     }
   } catch (err) {
-    console.error(`Could not emit before/after comparison: ${err.message}`);
+    console.error(`Could not emit before/after comparison: ${shownText(err.message || String(err))}`);
   }
 }
 
@@ -632,7 +650,7 @@ function runAgent(prompt, iteration) {
   // `root` is passed so the derived absolute-path Bash rules name the SAME
   // directory the child is spawned with as cwd (the write-scope anchor).
   const cliArgs = agent.args(prompt, { maxTurns: 120, root: projectRoot });
-  if (verbose) console.log(`[iter ${iteration}] $ ${agent.bin} ${cliArgs.join(' ')}`);
+  if (verbose) console.log(`[iter ${iteration}] $ ${agent.bin} ${shownCommand(cliArgs.join(' '))}`);
   return new Promise((resolve, reject) => {
     // cwd is the project root, set explicitly rather than inherited: the skill finds
     // the vendored tool at .web-uplift/evidence/cli.mjs relative to this directory.

@@ -65,6 +65,25 @@ function shownUrl(raw) {
   return typeof raw === 'string' && raw ? redactUrlCredentialValues(raw) : raw;
 }
 
+// A printed MESSAGE can carry the target URL without interpolating the variable: a command
+// echo built from the agent prompt (which embeds the URL), or an error whose text names the
+// URL it was waiting for ("the navigation to <url> to be accepted" - web-uplift-b9p review
+// findings 1 and 4). shownText substitutes wherever the URL appears, and is a no-op when it
+// does not appear at all.
+function shownText(text, raw) {
+  if (typeof text !== 'string') return text;
+  const shown = shownUrl(raw);
+  return typeof shown === 'string' && shown !== raw ? text.split(raw).join(shown) : text;
+}
+
+// A candidate the URL parser REJECTS is still printed (it is the operator's own input, and
+// an unparseable URL is what they need to see), but not with something that looks like a
+// credential in it. The parser is unavailable by definition here, so this is a shape-based
+// scrub of the common secret parameters.
+function fallbackScrub(text) {
+  return String(text).replace(/([?&](?:api_?key|access_?token|token|secret|password|passcode|session|code|key|csrf|pin|cvv)=)[^&\s#]*/gi, '$1%5Bredacted%5D');
+}
+
 const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
 
 // The one canonical methodology is .claude/skills/web-audit/SKILL.md. Agents
@@ -317,7 +336,7 @@ async function worker() {
       // Preparing the next URL used to sit outside the per-URL guard, so a failure here
       // aborted the whole batch. Fold it in: one URL cannot take the others down.
       failures.push({ url, reason: `could not prepare a run directory: ${err.message}` });
-      console.error(`failed         ${shownUrl(url)}: ${err.message}`);
+      console.error(`failed         ${shownUrl(url)}: ${shownText(String(err.message), url)}`);
       continue;
     }
 
@@ -400,7 +419,7 @@ async function worker() {
       // security-relevant fact and must not be hidden by a bookkeeping failure.
       recordFailed = true;
       failures.push({ url, reason: `run directory unusable when the scope record was written: ${err.code || err.message}` });
-      console.error(`record failed  ${shownUrl(url)}: ${err.message}`);
+      console.error(`record failed  ${shownUrl(url)}: ${shownText(String(err.message), url)}`);
     }
     console.log(`  changed: ${summariseChanges(scope.changed)}`);
     if (scope.escapedOutsideScope.length) {
@@ -423,7 +442,7 @@ async function worker() {
     }
     if (agentError) {
       failures.push({ url, reason: String(agentError) });
-      console.error(`failed         ${shownUrl(url)}: ${agentError}`);
+      console.error(`failed         ${shownUrl(url)}: ${shownText(String(agentError), url)}`);
       continue;
     }
     if (recordFailed) {
@@ -445,14 +464,14 @@ async function worker() {
             // set before this point meant a DUPLICATE url later in the same resume batch
             // was skipped even though nothing was ever published for it.
             failures.push({ url, reason: `completion could not be published: ${err.message}` });
-            console.error(`failed         ${shownUrl(url)}: could not publish completion: ${err.message}`);
+            console.error(`failed         ${shownUrl(url)}: could not publish completion: ${shownText(String(err.message), url)}`);
             continue;
           }
           completedThisBatch.add(url);
           console.log(`done (coverage complete)     ${shownUrl(url)}`);
         } else {
           failures.push({ url, reason: `atomic coverage validation failed: ${validation.detail}` });
-          console.error(`INVALID REPORT ${shownUrl(url)}: ${validation.detail}`);
+          console.error(`INVALID REPORT ${shownUrl(url)}: ${shownText(String(validation.detail), url)}`);
         }
       } else {
         console.log(`NO REPORT     ${shownUrl(url)}`);
@@ -460,7 +479,7 @@ async function worker() {
       }
     } catch (err) {
       failures.push({ url, reason: String(err) });
-      console.error(`failed         ${shownUrl(url)}: ${err}`);
+      console.error(`failed         ${shownUrl(url)}: ${shownText(String(err), url)}`);
     }
   }
 }
@@ -499,14 +518,14 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
   } catch (err) {
     // ENOENT means there was no report to quarantine, which is a fine outcome.
     if (err?.code !== 'ENOENT') {
-      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${err.code || err.message}). For THIS batch the refusal stands; see the completion check for what a resumed lookup can still do.`);
+      console.error(`NOT QUARANTINED: could not rename the refused report in ${siteDir} (${shownText(String(err.code || err.message), url)}). For THIS batch the refusal stands; see the completion check for what a resumed lookup can still do.`);
       problem = `could not quarantine the refused report (${err.code || err.message}): the report is still on disk`;
     }
   }
   try {
     await writeFile(join(siteDir, 'run-refused.json'), JSON.stringify({ url, reason: 'wrote outside --out', escapedOutsideScope, at: new Date().toISOString() }, null, 2) + '\n');
   } catch (err) {
-    console.error(`Could not write the refusal marker: ${err.message}`);
+    console.error(`Could not write the refusal marker: ${shownText(String(err.message), url)}`);
     if (!problem) problem = `could not write the refusal marker: ${err.message}`;
   }
   return problem;
@@ -616,7 +635,7 @@ async function annotateReport(siteDir, meta) {
 async function replayFlowIntoRun(url, siteDir) {
   const flowDir = join(siteDir, 'evidence', 'flow');
   await mkdir(flowDir, { recursive: true });
-  const log = verbose ? (m) => console.error(m) : () => {};
+  const log = verbose ? (m) => console.error(shownText(m, url)) : () => {};
   const chrome = await launchChrome({ log });
   // The runner's own browser is attributed to the same run-level launches.jsonl
   // the agent's CLI invocations write (web-uplift-4wx).
@@ -650,7 +669,7 @@ function runAgent(url, siteDir, extra = '') {
   // directory the child is spawned with as cwd (the write-scope anchor).
   const cliArgs = agent.args(prompt, { maxTurns, root: projectRoot });
   const slug = slugify(url);
-  if (verbose) console.log(`[${slug}] $ ${agent.bin} ${cliArgs.join(' ')}`);
+  if (verbose) console.log(`[${slug}] $ ${agent.bin} ${shownText(cliArgs.join(' '), url)}`);
   return new Promise((resolve, reject) => {
     // cwd is the project root, set explicitly rather than inherited: the skill
     // finds the vendored tool at .web-uplift/evidence/cli.mjs relative to this
@@ -713,7 +732,7 @@ async function collectUrls() {
   }
   return candidates.filter((candidate) => {
     if (URL.canParse(candidate)) return true;
-    console.warn(`skipping invalid URL: ${candidate}`);
+    console.warn(`skipping invalid URL: ${fallbackScrub(candidate)}`);
     return false;
   });
 }
