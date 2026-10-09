@@ -271,8 +271,8 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // THE COMPLETE AWAIT CENSUS - enforced, not read. A judgement-based version of this list
 // was wrong three times, and a bucket-summed version hid a miscount behind a grand total
 // that agreed, so the authoritative classification is INDIVIDUAL and lives in the test:
-// testAwaitCensus (tests/regression.mjs) matches every non-comment await line in the two
-// evidence files against exactly one disposition rule (exactly one - a line matching zero
+// testAwaitCensus (tests/regression.mjs) matches every non-comment await line across the
+// evidence modules against exactly one disposition rule (exactly one - a line matching zero
 // or two rules fails), and fails - naming the file, line and text - when a site is
 // unclassified or a rule's count drifts. THE CENSUS'S LIMIT, stated plainly: it verifies
 // that every site is CLASSIFIED; it cannot verify that a bound is still PRESENT at a
@@ -308,7 +308,7 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // helper's own Runtime.evaluate, which is the content-probe mechanism itself, is in the
 // primitive-probe bucket.
 //
-// THE WARNING for the next primitive: an await added to either file fails testAwaitCensus
+// THE WARNING for the next primitive: an await added to any evidence module fails testAwaitCensus
 // until it is classified, so an omission is LOUD now rather than silent. A NEW primitive
 // that awaits client.* directly inherits NOTHING from this census: the trace primitive was
 // exactly that hole, found by enumeration, not by the sweeps that preceded it.

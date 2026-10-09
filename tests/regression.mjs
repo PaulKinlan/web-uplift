@@ -7657,7 +7657,7 @@ async function testCdpDeadline() {
 }
 
 // web-uplift-17o, the census ENFORCED. The completeness claim is arithmetic, and this test is
-// what keeps it true rather than read: every non-comment await line in the two evidence files
+// what keeps it true rather than read: every non-comment await line across the evidence modules
 // must match exactly one disposition rule below, and each rule's count must equal its
 // expectation. A NEW await that matches nothing fails HERE, naming the file, the line number
 // and the text, so the next author classifies it (bounds it, or records the exclusion with
@@ -7708,19 +7708,137 @@ function testAwaitCensus() {
       'bounded:own-deadline': 2,
     },
     'evidence/cli.mjs': {
-      'bounded:withDeadline': 13,
-      'bounded:navigate-helper': 20,
-      'bounded:transitive-caller-wraps': 7,
-      'bounded:sleep': 22,
-      'bounded:own-deadline': 8,
       'bounded:gather-spine': 6,
-      'excluded:primitive-probe': 63,
-      // 2, not 3: web-uplift-6fe removed the in-page res.text() fallback for a body with
-      // no readable stream (it is refused before any read now), so the page-side-template
-      // bucket is the navigator.locks probe and the in-page fetch, nothing else.
-      'excluded:page-side-template': 2,
+      'excluded:primitive-probe': 1,
+    },
+    'evidence/common.mjs': {
+      'bounded:transitive-caller-wraps': 6,
+    },
+    'evidence/fetch.mjs': {
+      'excluded:primitive-probe': 3,
+      'bounded:withDeadline': 1,
+      'bounded:own-deadline': 1,
+    },
+    'evidence/primitives/a11ytree.mjs': {
+      'bounded:navigate-helper': 1,
+      'bounded:sleep': 1,
+      'excluded:primitive-probe': 5,
+    },
+    'evidence/primitives/axe.mjs': {
+      'bounded:navigate-helper': 1,
+      'bounded:sleep': 1,
+      'excluded:primitive-probe': 8,
+    },
+    'evidence/primitives/console.mjs': {
+      'bounded:sleep': 2,
+      'bounded:navigate-helper': 1,
+      'excluded:primitive-probe': 1,
+      'bounded:own-deadline': 1,
+    },
+    'evidence/primitives/cookies.mjs': {
+      'bounded:navigate-helper': 1,
+      'excluded:primitive-probe': 1,
+    },
+    'evidence/primitives/discoverability.mjs': {
+      'excluded:primitive-probe': 6,
+      'bounded:own-deadline': 1,
+      'bounded:navigate-helper': 2,
+      'bounded:sleep': 1,
+    },
+    'evidence/primitives/dom.mjs': {
+      'bounded:navigate-helper': 1,
+      'bounded:sleep': 1,
+      'excluded:primitive-probe': 1,
+    },
+    'evidence/primitives/evaluate.mjs': {
+      'bounded:navigate-helper': 1,
+      'bounded:sleep': 1,
+      'excluded:primitive-probe': 2,
+    },
+    'evidence/primitives/features.mjs': {
+      'bounded:navigate-helper': 1,
+      'bounded:sleep': 1,
+      'excluded:primitive-probe': 1,
+    },
+    'evidence/primitives/har.mjs': {
+      'excluded:primitive-probe': 5,
+      'bounded:sleep': 2,
+      'bounded:navigate-helper': 1,
+      'bounded:own-deadline': 1,
+    },
+    'evidence/primitives/headers.mjs': {
+      'bounded:navigate-helper': 1,
+      'bounded:own-deadline': 1,
+    },
+    'evidence/primitives/heap.mjs': {
+      'bounded:navigate-helper': 1,
+      'excluded:primitive-probe': 4,
+      'bounded:sleep': 1,
+    },
+    'evidence/primitives/images.mjs': {
+      'bounded:navigate-helper': 1,
+      'excluded:primitive-probe': 1,
+    },
+    'evidence/primitives/layout.mjs': {
+      'bounded:navigate-helper': 1,
+      'excluded:primitive-probe': 4,
+      'bounded:sleep': 1,
+    },
+    'evidence/primitives/resilience.mjs': {
+      'bounded:transitive-caller-wraps': 1,
+      'bounded:withDeadline': 4,
+      'bounded:navigate-helper': 1,
+      'bounded:sleep': 3,
+      'excluded:primitive-probe': 6,
+      'excluded:page-side-template': 1,
+      'bounded:own-deadline': 3,
+    },
+    'evidence/primitives/screenshot.mjs': {
+      'bounded:navigate-helper': 1,
+      'bounded:sleep': 1,
+      'excluded:primitive-probe': 2,
+    },
+    'evidence/primitives/secrets.mjs': {
+      'bounded:navigate-helper': 1,
+      'excluded:primitive-probe': 7,
+      'excluded:page-side-template': 1,
+    },
+    'evidence/primitives/targets.mjs': {
+      'bounded:navigate-helper': 1,
+      'bounded:sleep': 1,
+      'excluded:primitive-probe': 1,
+    },
+    'evidence/primitives/trace.mjs': {
+      'bounded:withDeadline': 8,
+      'bounded:sleep': 2,
+    },
+    'evidence/primitives/trackers.mjs': {
+      'bounded:navigate-helper': 1,
+      'bounded:sleep': 1,
+    },
+    'evidence/primitives/video.mjs': {
+      'bounded:navigate-helper': 1,
+      'excluded:primitive-probe': 4,
+      'bounded:sleep': 2,
     },
   };
+  function findEvidenceFiles(dir) {
+    const res = [];
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, ent.name);
+      if (ent.isDirectory()) res.push(...findEvidenceFiles(full));
+      else if (ent.isFile() && ent.name.endsWith('.mjs')) res.push(full);
+    }
+    return res;
+  }
+  const allEvidenceFiles = findEvidenceFiles(join(repoRoot, 'evidence')).map((p) => relative(repoRoot, p));
+  for (const f of allEvidenceFiles) {
+    const content = readFileSync(join(repoRoot, f), 'utf8');
+    const hasAwait = content.split('\n').some((ln) => ln.includes('await ') && !ln.trim().startsWith('//'));
+    if (hasAwait) {
+      assert(expected[f], `await census: ${f} contains non-comment await statements but is not covered in expected map!`);
+    }
+  }
   for (const [file, expect] of Object.entries(expected)) {
     const lines = readFileSync(join(repoRoot, file), 'utf8').split('\n');
     const counts = {};

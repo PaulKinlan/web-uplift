@@ -2,9 +2,9 @@
 // sensitive identity data" (web-uplift-glar, web-uplift-lw6, web-uplift-so2).
 //
 // WHY THIS MODULE EXISTS
-// evidence/cli.mjs (the HAR "dsj" redaction) and runner/flow-record.mjs (the flow
+// evidence/redaction.mjs (the HAR "dsj" redaction) and runner/flow-record.mjs (the flow
 // recorder/replayer) each grew their own word list for the same concept. Two
-// tables for one concept drift by construction: by 2026-10-09, cli.mjs persisted
+// tables for one concept drift by construction: by 2026-10-09, redaction.mjs persisted
 // ?csrf=, ?pin=, ?cvv= and ?passcode= unredacted while flow persisted ?code= and
 // ?key= unredacted, each leaking exactly what the other redacted. The words, the
 // tokenisation and the plural rule live here now; both callers use them, so the
