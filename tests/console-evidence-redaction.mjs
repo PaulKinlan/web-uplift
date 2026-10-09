@@ -92,6 +92,21 @@ export async function testConsoleEvidenceRedaction() {
     redactUrlsInText(`https://one.test/?page=1,https://two.test/?token=${SECRET}`) === `https://one.test/?page=1,https://two.test/?token=${REDACTED}`,
     'a credential in a second URL after a comma must be redacted',
   );
+  // The separator that let the NEXT url start must not be swallowed by this URL's redacted value.
+  // With '=' between the two urls the first version fused them and a SECOND pass found a different
+  // shape, so redaction was not idempotent. Found by fuzzing the scanner rather than by a review,
+  // which is why the fuzz is part of how this matcher was checked.
+  const gluedPair = `https://a.test/x?token=${SECRET}=https://b.test/y?token=${SECRET}`;
+  const gluedOnce = redactUrlsInText(gluedPair);
+  assert(
+    gluedOnce === `https://a.test/x?token=${REDACTED}=https://b.test/y?token=${REDACTED}`,
+    `a glued pair must keep its separator and redact both urls: ${gluedOnce}`,
+  );
+  assert(
+    redactUrlsInText(gluedOnce) === gluedOnce,
+    `redacting a glued pair twice must equal redacting it once: ${redactUrlsInText(gluedOnce)}`,
+  );
+
   // Review pass 3: the split was case-sensitive while the outer matcher was not, so an uppercase
   // scheme on the second URL was not a split point at all. The scanner matches case-insensitively,
   // and the assertion is on the credential (URL.toString() lowercases the scheme as part of the

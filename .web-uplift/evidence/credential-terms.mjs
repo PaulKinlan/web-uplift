@@ -254,10 +254,14 @@ export function redactUrlsInText(text) {
     const stop = URL_SPAN_STOP.exec(text.slice(start, limit));
     const end = stop ? start + stop.index : limit;
     const raw = text.slice(start, end);
-    // Prose puts punctuation straight after a URL ("see https://x/a?token=SECRET, then"). That
-    // punctuation is not part of the URL, and letting it into the parse would either mangle the
-    // sentence or be swallowed by the redacted value, so hold it back and put it back untouched.
-    const trailing = /[.,;:!?]+$/.exec(raw);
+    // Prose puts punctuation straight after a URL ("see https://x/a?token=SECRET, then"), and the
+    // separator that let the NEXT url start ("...?token=SECRET=https://b/x?token=..") is not part
+    // of this URL either. Letting either into the parse means the redacted value swallows it and
+    // the two URLs fuse, which also breaks idempotence: redacting the fused string again finds a
+    // different shape. So hold trailing punctuation AND boundary separators back, and put them
+    // back untouched. A URL whose span legitimately ends in '=' (base64 padding, say) is
+    // unaffected in the common case, because the held-back character is re-appended verbatim.
+    const trailing = /[.,;:!?=|"'<([{+]+$/.exec(raw);
     const body = trailing ? raw.slice(0, -trailing[0].length) : raw;
     out += text.slice(cursor, start);
     out += body ? redactUrlCredentialValues(body) : '';
