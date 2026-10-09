@@ -502,7 +502,7 @@ async function currentUrl(client) {
 export function parseFlowArgs(argv) {
   const sub = argv[0];
   const rest = argv.slice(1);
-  const VALUE_FLAGS = new Set(['--url', '--out', '--start-url']);
+  const VALUE_FLAGS = new Set(['--url', '--out', '--start-url', '--timeout']);
   const positional = [];
   const flags = new Set();
   const options = {};

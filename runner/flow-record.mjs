@@ -68,11 +68,17 @@
 // (web-uplift-glar, web-uplift-lw6). `SENSITIVE_WORDS` is re-exported here for
 // callers that only need the flat membership test.
 import {
+  CREDENTIAL_WORDS,
+  SENSITIVE_PII_WORDS,
+  SHORT_PII_WORDS,
   SENSITIVE_WORDS,
   isCredentialName,
+  isCredentialWord,
+  isPiiWord,
   isSensitiveName,
   isSensitiveWord,
   looksLikeToken,
+  member,
   NAME_WORD_DATA,
   splitName,
 } from '../evidence/credential-terms.mjs';
@@ -181,7 +187,9 @@ export function validateRecordedStep(raw) {
       if (typeof raw.descriptor.text !== 'string' || raw.descriptor.text.length > 64) {
         return { ok: false, reason: 'descriptor.text must be a string of at most 64 characters' };
       }
-      cleanDesc.text = raw.descriptor.text;
+      if (!raw.redacted) {
+        cleanDesc.text = raw.descriptor.text;
+      }
     }
     if (Object.keys(cleanDesc).length > 0) {
       step.descriptor = cleanDesc;
@@ -468,30 +476,19 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
 
   // The word data is injected from evidence/credential-terms.mjs (the ONE table,
   // shared with the HAR redactor): a third hand-maintained list here is exactly
-  // how web-uplift-so2 happened. The matching logic below mirrors the module's
-  // isSensitiveName; the flow test suite drives both on the same case list.
+  // how web-uplift-so2 happened. The matching logic and helpers are generated
+  // directly from the module via toString injection (web-uplift-kyez).
   const CREDENTIAL_WORDS = new Set(${JSON.stringify(wordData.credential)});
-  const PII_WORDS = new Set(${JSON.stringify(wordData.pii)});
+  const SENSITIVE_PII_WORDS = new Set(${JSON.stringify(wordData.pii)});
   const SHORT_PII_WORDS = new Set(${JSON.stringify(wordData.shortPii)});
-  const member = (set, w) => set.has(w) || (w.endsWith('s') && set.has(w.slice(0, -1)));
-  const credentialWord = (w) => member(CREDENTIAL_WORDS, w);
-  const piiWord = (w) => member(PII_WORDS, w) || SHORT_PII_WORDS.has(w);
-  const sensitiveWord = (w) => credentialWord(w) || piiWord(w);
-  const isSensitiveWord = sensitiveWord;
+  const member = ${member.toString()};
+  const isCredentialWord = ${isCredentialWord.toString()};
+  const isPiiWord = ${isPiiWord.toString()};
+  const isSensitiveWord = ${isSensitiveWord.toString()};
 
   ${splitName.toString()}
 
-  const isSensitiveName = (str) => {
-    const words = splitName(str);
-    if (!words.length) return false;
-    if (words.some((w) => piiWord(w) || credentialWord(w))) return true;
-    const joined = words.join('');
-    if (sensitiveWord(joined)) return true;
-    for (let i = 0; i < words.length - 1; i++) {
-      if (sensitiveWord(words[i] + words[i + 1])) return true;
-    }
-    return false;
-  };
+  ${isSensitiveName.toString()}
 
   ${isSensitiveAutocomplete.toString()}
 
@@ -555,15 +552,17 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
     return alts;
   };
 
-  const descriptorFor = (el) => {
+  const descriptorFor = (el, { sensitive = false } = {}) => {
     if (!el || el.nodeType !== 1) return undefined;
     const desc = { tag: (el.tagName || '').toLowerCase() };
     const type = (el.getAttribute('type') || '').toLowerCase();
     if (type && type.length <= 32) desc.type = type;
     const role = (el.getAttribute('role') || '').toLowerCase();
     if (role && role.length <= 32) desc.role = role;
-    const txt = (el.textContent || '').trim().slice(0, 40);
-    if (txt) desc.text = txt;
+    if (!sensitive) {
+      const txt = (el.textContent || '').trim().slice(0, 40);
+      if (txt) desc.text = txt;
+    }
     return desc;
   };
 
@@ -597,7 +596,7 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
     if (sensitive) {
       step.redacted = true;
     }
-    const desc = descriptorFor(el);
+    const desc = descriptorFor(el, { sensitive });
     if (desc) step.descriptor = desc;
     send(step);
   }, true);

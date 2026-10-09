@@ -75,13 +75,13 @@ export const SENSITIVE_WORDS = new Set([...CREDENTIAL_WORDS, ...SENSITIVE_PII_WO
 
 // Short PII words that are too ambiguous to live in a word set and are matched
 // exactly instead (a bare `name` field is a person's name; `filename` is not).
-const SHORT_PII_WORDS = new Set(['name', 'email', 'phone', 'tel']);
+export const SHORT_PII_WORDS = new Set(['name', 'email', 'phone', 'tel']);
 
 // Singular-but-a-plural-was-written: a word also matches when stripping ONE
 // trailing 's' lands in the set ('secrets', 'apiKeys' via 'apikeys'). The strip
 // is conditional on the RESULT being in the set, so innocent plurals ('boxes',
 // 'regions', 'fonts') never stem into a match.
-const member = (set, w) => set.has(w) || (w.endsWith('s') && set.has(w.slice(0, -1)));
+export const member = (set, w) => set.has(w) || (w.endsWith('s') && set.has(w.slice(0, -1)));
 
 export const isCredentialWord = (w) => member(CREDENTIAL_WORDS, w);
 export const isWeakCredentialWord = (w) => member(WEAK_CREDENTIAL_WORDS, w);

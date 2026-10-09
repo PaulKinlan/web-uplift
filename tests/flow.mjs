@@ -342,6 +342,60 @@ export async function testFlowRecordSensitiveRedaction() {
   assert(!badDescVerdict.ok && badDescVerdict.reason.includes('descriptor.tag'),
     'an invalid descriptor.tag is refused');
 
+  // web-uplift-vj2q: a redacted step must never persist element text in its descriptor
+  const redactedDescStep = validateRecordedStep({
+    type: 'change',
+    selectors: [['#apiKeyField']],
+    redacted: true,
+    value: '',
+    descriptor: { tag: 'textarea', text: 'sk-live-SUPER-SECRET-TOKEN-123456' },
+  });
+  assert(redactedDescStep.ok, 'redacted step with descriptor validates');
+  assert(redactedDescStep.step.descriptor && redactedDescStep.step.descriptor.tag === 'textarea',
+    'redacted step preserves descriptor.tag for replay matching');
+  assert(redactedDescStep.step.descriptor.text === undefined,
+    'redacted step must strip descriptor.text even if emitter sent it');
+  assert(!JSON.stringify(redactedDescStep.step).includes('SUPER-SECRET'),
+    'validated redacted step must not contain secret in descriptor or anywhere else');
+
+  // Page-side capture session: a sensitive field change must omit descriptor.text
+  const sensitiveDescSession = testCaptureSession({ captureHidden: false, captureSensitive: false });
+  const apiKeySecret = 'sk-live-SUPER-SECRET-TOKEN-123456';
+  sensitiveDescSession.triggerChange({
+    tagName: 'TEXTAREA',
+    name: 'apiKey',
+    id: 'apiKeyField',
+    value: apiKeySecret,
+    textContent: apiKeySecret,
+  });
+  assert(sensitiveDescSession.steps.length === 1, 'apiKey change step recorded');
+  const sensitiveStep = sensitiveDescSession.steps[0];
+  assert(sensitiveStep.redacted === true && sensitiveStep.value === '', 'step is redacted and value is blanked');
+  assert(sensitiveStep.descriptor && sensitiveStep.descriptor.tag === 'textarea', 'tag descriptor is preserved');
+  assert(sensitiveStep.descriptor.text === undefined, 'descriptor.text must be omitted for sensitive change step');
+  assert(!JSON.stringify(sensitiveStep).includes(apiKeySecret),
+    'emitted step must not contain secret in descriptor or anywhere else');
+
+  const validatedSensitive = validateRecordedStep(sensitiveStep);
+  assert(validatedSensitive.ok, 'validated sensitive step ok');
+  assert(validatedSensitive.step.descriptor && validatedSensitive.step.descriptor.tag === 'textarea');
+  assert(validatedSensitive.step.descriptor.text === undefined, 'validated step must omit descriptor.text');
+  assert(!JSON.stringify(validatedSensitive.step).includes(apiKeySecret),
+    'validated step must not contain secret');
+
+  // Innocent non-sensitive input retains its descriptor.text
+  sensitiveDescSession.triggerChange({
+    tagName: 'TEXTAREA',
+    name: 'userFeedback',
+    id: 'feedbackField',
+    value: 'Great service!',
+    textContent: 'Great service!',
+  });
+  const innocentStep = sensitiveDescSession.steps[1];
+  assert(!innocentStep.redacted, 'innocent feedback field is not redacted');
+  assert(innocentStep.descriptor && innocentStep.descriptor.text === 'Great service!',
+    'innocent change step preserves descriptor.text');
+
   // A2. The injected page-side classifier and the Node-side one must agree. The
   // page script's word DATA is generated from evidence/credential-terms.mjs, but
   // its matching logic is a template copy, so this drives BOTH over one case list
@@ -399,6 +453,29 @@ export async function testFlowRecordSensitiveRedaction() {
     assert(pageRedacted === nodeRedacted,
       `module and page isSensitiveAutocomplete must agree on "${ac}": node=${nodeRedacted}, page=${pageRedacted}`);
   }
+
+  // 4. web-uplift-kyez: word sets and classifiers generated directly from evidence/credential-terms.mjs
+  const termsModule = await import('../evidence/credential-terms.mjs');
+  assert(JSON.stringify(NAME_WORD_DATA.credential) === JSON.stringify([...termsModule.CREDENTIAL_WORDS]),
+    'NAME_WORD_DATA.credential must match CREDENTIAL_WORDS exactly');
+  assert(JSON.stringify(NAME_WORD_DATA.pii) === JSON.stringify([...termsModule.SENSITIVE_PII_WORDS]),
+    'NAME_WORD_DATA.pii must match SENSITIVE_PII_WORDS exactly');
+  assert(JSON.stringify(NAME_WORD_DATA.shortPii) === JSON.stringify([...termsModule.SHORT_PII_WORDS]),
+    'NAME_WORD_DATA.shortPii must match SHORT_PII_WORDS exactly');
+
+  const captureSource = makeCaptureJs();
+  assert(captureSource.includes(termsModule.isSensitiveName.toString()),
+    'makeCaptureJs must inject isSensitiveName directly from module');
+  assert(captureSource.includes(termsModule.splitName.toString()),
+    'makeCaptureJs must inject splitName directly from module');
+  assert(captureSource.includes(termsModule.member.toString()),
+    'makeCaptureJs must inject member directly from module');
+  assert(captureSource.includes(termsModule.isCredentialWord.toString()),
+    'makeCaptureJs must inject isCredentialWord directly from module');
+  assert(captureSource.includes(termsModule.isPiiWord.toString()),
+    'makeCaptureJs must inject isPiiWord directly from module');
+  assert(captureSource.includes(termsModule.isSensitiveWord.toString()),
+    'makeCaptureJs must inject isSensitiveWord directly from module');
 
   // B. Opt-in session (captureSensitive:true): values are captured verbatim, on
   // the returned steps AND in their serialisation - the opt-in is only meaningful
@@ -810,6 +887,18 @@ export async function testFlowReplayMutationGate() {
   assert(p2.positional[0] === 'https://example.com', 'url preserved with leading boolean flags');
   assert(p2.options.out === 'f.json', 'out option captured');
   assert(p2.flags.has('--capture-hidden') && p2.flags.has('--capture-sensitive'), 'boolean flags captured');
+
+  // web-uplift-w2s0: --timeout in VALUE_FLAGS parses as options.timeout and preserves positionals
+  const p3 = parseFlowArgs(['record', 'https://example.com', '--timeout', '5000']);
+  assert(p3.options.timeout === '5000', 'timeout option captured when trailing');
+  assert(p3.positional.length === 1 && p3.positional[0] === 'https://example.com',
+    'url preserved and timeout not swallowed into positional');
+
+  const p4 = parseFlowArgs(['record', '--timeout', '5000', 'https://example.com', '--out', 'flow.json']);
+  assert(p4.options.timeout === '5000', 'timeout option captured when leading');
+  assert(p4.options.out === 'flow.json', 'out option captured alongside timeout');
+  assert(p4.positional.length === 1 && p4.positional[0] === 'https://example.com',
+    'url preserved when timeout is leading');
 
   // 2. The real mutating-control predicate against DOM stubs (this is the exact
   // function serialized into the page expression, not a copy).
