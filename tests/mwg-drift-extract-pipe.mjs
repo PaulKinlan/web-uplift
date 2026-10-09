@@ -31,13 +31,30 @@ function makeBigPackage(dir) {
   return dir;
 }
 
+// Byte handling without Node Buffer (AGENTS.md): chunks are Uint8Array views that have to be
+// copied out of the stream's own buffer, then concatenated and compared by hand.
+const concatBytes = (chunks) => {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.length;
+  }
+  return out;
+};
+
+const sameBytes = (a, b) => a.length === b.length && a.every((byte, i) => byte === b[i]);
+
+const decoder = new TextDecoder();
+
 const runCli = (args) => new Promise((resolveRun) => {
   const child = spawn(process.execPath, [CLI, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
   const out = [];
   const err = [];
-  child.stdout.on('data', (c) => out.push(c));
-  child.stderr.on('data', (c) => err.push(c));
-  child.once('close', (code, signal) => resolveRun({ code, signal, out: Buffer.concat(out), err: Buffer.concat(err).toString('utf8') }));
+  child.stdout.on('data', (c) => out.push(new Uint8Array(c)));
+  child.stderr.on('data', (c) => err.push(new Uint8Array(c)));
+  child.once('close', (code, signal) => resolveRun({ code, signal, out: concatBytes(out), err: decoder.decode(concatBytes(err)) }));
 });
 
 // Two corpora whose delta is big enough that the REPORT outgrows the pipe buffer: the
@@ -63,7 +80,7 @@ export async function testMwgDriftExtractPipe() {
     const fileOut = join(tmp, 'corpus.json');
     const toFile = await runCli(['--extract', pkg, '--version', '1.0.0', '-o', fileOut]);
     assert(toFile.code === 0, `the -o run must succeed: ${toFile.code} ${toFile.err}`);
-    const fileBytes = readFileSync(fileOut);
+    const fileBytes = new Uint8Array(readFileSync(fileOut));
     // Wide margin over the pipe buffer on purpose: the closed-consumer case below must not be
     // satisfiable by buffers anywhere in the path.
     assert(fileBytes.length > 256 * 1024, `the fixture must exceed the pipe buffer by a wide margin: ${fileBytes.length} bytes`);
@@ -73,8 +90,8 @@ export async function testMwgDriftExtractPipe() {
     assert(piped.code === 0, `the piped run must succeed: ${piped.code} ${piped.err}`);
     assert(piped.out.length === fileBytes.length,
       `the piped corpus must be the whole corpus: ${piped.out.length} bytes through a pipe vs ${fileBytes.length} with -o`);
-    assert(Buffer.compare(piped.out, fileBytes) === 0, 'the piped corpus must be byte-identical to the -o corpus');
-    const parsed = JSON.parse(piped.out.toString('utf8'));
+    assert(sameBytes(piped.out, fileBytes), 'the piped corpus must be byte-identical to the -o corpus');
+    const parsed = JSON.parse(decoder.decode(piped.out));
     const guideCount = parsed.guides && typeof parsed.guides === 'object' ? Object.keys(parsed.guides).length : -1;
     assert(guideCount === 45, `the piped corpus must parse and hold every guide: ${guideCount}`);
 
@@ -82,16 +99,24 @@ export async function testMwgDriftExtractPipe() {
     // before reading, must not leave this tool claiming success for a corpus nobody received.
     // The reader is a separate process whose stdin IS this run's stdout, because destroying the
     // parent's read stream does not close the pipe fd and the writer then blocks instead.
-    const reader = spawn(process.execPath, ['-e', 'process.stdin.destroy(); setTimeout(() => process.exit(0), 300);'], {
+    // The reader goes away MID-WRITE: it exits on its first read (or after 1.5s if the writer
+    // never starts), which closes the read end of the pipe while the writer still has hundreds
+    // of kilobytes to go. Nothing here depends on scheduling, and the test does not take the
+    // closure on trust: it asserts below that the writer was interrupted part-way, so a run
+    // where the reader never closed fails instead of passing quietly.
+    const reader = spawn(process.execPath, ['-e', "process.stdin.once('data', () => process.exit(0)); setTimeout(() => process.exit(0), 1500);"], {
       stdio: ['pipe', 'ignore', 'inherit'],
     });
     const child = spawn(process.execPath, [CLI, '--extract', pkg, '--version', '1.0.0'], { stdio: ['ignore', reader.stdin, 'pipe'] });
     const err = [];
-    child.stderr.on('data', (c) => err.push(c));
+    child.stderr.on('data', (c) => err.push(new Uint8Array(c)));
     const result = await new Promise((resolveClose) => child.once('close', (code, signal) => resolveClose({ code, signal })));
     assert(result.code !== 0, `a closed consumer must not exit 0 (code=${result.code} signal=${result.signal})`);
-    assert(/could not write the extracted corpus to stdout \(\d+ of \d+ bytes written\)/.test(err.join('')),
-      `the failure must name how much was written: ${err.join('')}`);
+    const refused = /could not write the extracted corpus to stdout \((\d+) of (\d+) bytes written\)/.exec(decoder.decode(concatBytes(err)));
+    assert(refused, `the failure must name how much was written: ${decoder.decode(concatBytes(err))}`);
+    assert(Number(refused[1]) < Number(refused[2]),
+      `the consumer must have gone away mid-write for this case to test anything (${refused[1]} of ${refused[2]} bytes written)`);
+    reader.kill('SIGKILL');
     // 3. THE CLASSIFICATION REPORT IS A PAYLOAD TOO, and it goes out with the same emitter: a
     // 12000-guide delta lost 572803 of its 638339 bytes to the pipe buffer while still exiting 2.
     const { oldCorpus, newCorpus } = makeBigDelta(tmp, 6000);
@@ -104,8 +129,8 @@ export async function testMwgDriftExtractPipe() {
     assert(pipedReport.code === 2, `the piped run must exit 2 as well: ${pipedReport.code}`);
     assert(pipedReport.out.length === toFileReport.out.length,
       `the piped report must be the whole report: ${pipedReport.out.length} bytes through a pipe vs ${toFileReport.out.length} to a file`);
-    assert(Buffer.compare(pipedReport.out, toFileReport.out) === 0, 'the piped report must be byte-identical to the file report');
-    const summary = JSON.parse(pipedReport.out.toString('utf8').trim().split('\n').slice(-1)[0]);
+    assert(sameBytes(pipedReport.out, toFileReport.out), 'the piped report must be byte-identical to the file report');
+    const summary = JSON.parse(decoder.decode(pipedReport.out).trim().split('\n').slice(-1)[0]);
     assert(summary.new.length === 6000, `the JSON summary line must survive the pipe: ${summary.new?.length} new guides`);
   } finally {
     rmSync(tmp, { recursive: true, force: true });

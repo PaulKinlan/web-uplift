@@ -589,21 +589,51 @@ function classifyDelta(oldCorpusPath, newCorpusPath, basisPath, jsonMode) {
 // taken every byte, and a consumer that closes the pipe early (| head) is reported here rather
 // than silently swallowed.
 function writeStdout(text) {
-  const buffer = Buffer.from(text, 'utf8');
+  // TextEncoder/Uint8Array, not Buffer: AGENTS.md is explicit that this repo is ESM-only with no
+  // Node Buffer, and writeSync takes any Uint8Array.
+  const bytes = new TextEncoder().encode(text);
   let written = 0;
+  const deadline = Date.now() + WRITE_STALL_MS;
   try {
-    while (written < buffer.length) {
-      const n = writeSync(1, buffer, written, buffer.length - written);
-      if (n <= 0) throw new Error(`short write: ${written} of ${buffer.length} bytes accepted`);
+    while (written < bytes.length) {
+      let n;
+      try {
+        n = writeSync(1, bytes, written, bytes.length - written);
+      } catch (err) {
+        // A non-blocking descriptor reports backpressure as EAGAIN, which is "write again
+        // shortly" rather than a failure - but only for as long as a stalled consumer deserves.
+        // Anything else (EPIPE because the consumer went away, EBADF) is a real failure.
+        if (err && err.code === 'EAGAIN' && Date.now() < deadline) {
+          sleepSync(WRITE_STALL_RETRY_MS);
+          continue;
+        }
+        if (err && err.code === 'EAGAIN') {
+          throw new Error(`the consumer stopped reading for ${WRITE_STALL_MS}ms`);
+        }
+        throw err;
+      }
+      if (n <= 0) throw new Error(`short write: ${written} of ${bytes.length} bytes accepted`);
       written += n;
     }
   } catch (err) {
     console.error(
-      `FAIL: could not write the extracted corpus to stdout (${written} of ${buffer.length} bytes written): ${err.message}`,
+      `FAIL: could not write the extracted corpus to stdout (${written} of ${bytes.length} bytes written): ${err.message}`,
     );
     process.exit(1);
   }
 }
+
+// Sleeping without async, because the write has to be finished before process.exit() runs.
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+
+// How long stdout may refuse a write (EAGAIN) before that counts as a stalled consumer, and
+// how long to wait between attempts. Generous: this only exists so a non-blocking descriptor is
+// handled correctly rather than mistaken for a broken pipe.
+const WRITE_STALL_MS = 30000;
+const WRITE_STALL_RETRY_MS = 2;
 
 const defaultBasisPath = process.env.MWG_DRIFT_BASIS || join(repoRoot, 'knowledge', 'mwg-rule-basis.json');
 
