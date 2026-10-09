@@ -70,6 +70,8 @@ const ALL_TESTS = [
   testHeadlessAllowlistIsScoped,
   testHeadlessAllowlistMatchesSkillContract,
   testSkillWriteContractGuard,
+  testCdpCopySyncGuard,
+  testCdpCopySyncMutationGuard,
   testMwgDriftCheckGuard,
   testMwgArtefactGuard,
   testMwgDriftClassifierGuard,
@@ -4219,6 +4221,50 @@ function testHeadlessAllowlistIsScoped() {
   assert(
     allowed.includes(`Bash(npx -y --ignore-scripts ${pinned}:*)`),
     `the guidance allowlist entry must name the pinned ${pinned}: ${allowed}`,
+  );
+}
+
+// The in-tree vendored copies under .web-uplift/ must stay 100% byte-identical
+// to their canonical sources (web-uplift-6ha1). Run tests/cdp-copy-sync.mjs as a
+// gate assertion so one-sided edits cannot ship on master.
+function testCdpCopySyncGuard() {
+  const guard = spawnSync(process.execPath, [join(repoRoot, 'tests', 'cdp-copy-sync.mjs')], { encoding: 'utf8' });
+  assert(guard.status === 0, `cdp-copy-sync guard must pass:\n${guard.stderr || guard.stdout}`);
+}
+
+function testCdpCopySyncMutationGuard() {
+  const tmpFixture = mkdtempSync(join(tmp, 'cdp-sync-fixture-'));
+  const srcDir = join(tmpFixture, 'schema');
+  const dstDir = join(tmpFixture, '.web-uplift', 'schema');
+  mkdirSync(srcDir, { recursive: true });
+  mkdirSync(dstDir, { recursive: true });
+  writeFileSync(join(srcDir, 'foo.json'), '{"version": 1}\n');
+  writeFileSync(join(dstDir, 'foo.json'), '{"version": 2}\n');
+  writeFileSync(join(srcDir, 'new-file.json'), '{"new": true}\n');
+
+  // Verify that drift fails the guard (both modified content and missing vendored copy)
+  const failRun = spawnSync(process.execPath, [
+    join(repoRoot, 'tests', 'cdp-copy-sync.mjs'),
+    '--repo', tmpFixture,
+  ], { encoding: 'utf8' });
+  assert(failRun.status !== 0, `cdp-copy-sync must fail on drifted fixture:\n${failRun.stdout}\n${failRun.stderr}`);
+  assert(failRun.stderr.includes('vendored copy has drifted'), `error output must explain drift: ${failRun.stderr}`);
+  assert(failRun.stderr.includes('vendored copy is missing'), `error output must report missing copy: ${failRun.stderr}`);
+
+  // Verify that --sync restores byte identity and creates missing copies
+  const syncRun = spawnSync(process.execPath, [
+    join(repoRoot, 'tests', 'cdp-copy-sync.mjs'),
+    '--repo', tmpFixture,
+    '--sync',
+  ], { encoding: 'utf8' });
+  assert(syncRun.status === 0, `cdp-copy-sync --sync must succeed:\n${syncRun.stdout}\n${syncRun.stderr}`);
+  assert(
+    readFileSync(join(srcDir, 'foo.json'), 'utf8') === readFileSync(join(dstDir, 'foo.json'), 'utf8'),
+    'source and vendored copies must match after --sync'
+  );
+  assert(
+    readFileSync(join(srcDir, 'new-file.json'), 'utf8') === readFileSync(join(dstDir, 'new-file.json'), 'utf8'),
+    'missing vendored copy must be created after --sync'
   );
 }
 

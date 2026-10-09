@@ -17,12 +17,12 @@
 // installed dependencies at install time, so neither is a byte-identical
 // in-tree pair and both are deliberately out of scope here.
 //
-// Usage: node tests/cdp-copy-sync.mjs
+// Usage: node tests/cdp-copy-sync.mjs [options]
 // Exit 0 when every pair is identical, 1 when any differ or one side is missing.
 // Node builtins only: no npm install is needed to run it.
 import { createHash } from 'node:crypto';
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES } from '../install-surface.mjs';
 
@@ -31,6 +31,55 @@ import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES } from '../install-su
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const MAX_DIFF_LINES = 40;
 const DIFF_CONTEXT = 3;
+
+const args = process.argv.slice(2);
+let syncMode = false;
+let fromVendored = false;
+let dryRun = false;
+let targetRepo = repoRoot;
+
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  if (arg === '--sync' || arg === '--write') {
+    syncMode = true;
+  } else if (arg === '--from-vendored' || arg === '--reverse') {
+    fromVendored = true;
+    syncMode = true;
+  } else if (arg === '--dry-run') {
+    dryRun = true;
+    syncMode = true;
+  } else if (arg === '--repo') {
+    if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
+      targetRepo = resolve(args[++i]);
+    } else {
+      console.error('error: missing argument for --repo');
+      process.exit(1);
+    }
+  } else if (arg.startsWith('--repo=')) {
+    const val = arg.slice('--repo='.length);
+    if (!val) {
+      console.error('error: missing value for --repo=');
+      process.exit(1);
+    }
+    targetRepo = resolve(val);
+  } else if (arg === '--help' || arg === '-h') {
+    console.log(`
+Usage: node tests/cdp-copy-sync.mjs [options]
+
+Options:
+  --sync, --write          Sync drifted files from canonical source to vendored copies
+  --from-vendored          Sync drifted files from vendored copies back to canonical source
+  --dry-run                Show what would be synced without writing
+  --repo <dir>             Target repository root (default: current repository)
+  --help, -h               Show this help message
+`);
+    process.exit(0);
+  } else {
+    console.error(`error: unrecognised argument ${arg}`);
+    console.error('Run node tests/cdp-copy-sync.mjs --help for usage.');
+    process.exit(1);
+  }
+}
 
 // copy-dir steps in bin/web-uplift.mjs: the whole source directory is vendored,
 // so the guard compares the full recursive trees (including missing entries).
@@ -49,7 +98,11 @@ const COPY_FILES = [
   ...TRACKED_COPY_FILES.map((file) => [file.source, file.dest]),
 ];
 
-const pairs = buildPairs();
+const pairs = buildPairs(targetRepo);
+if (targetRepo !== repoRoot && pairs.length === 0) {
+  console.error(`error: no comparable vendored files found under ${targetRepo}`);
+  process.exit(1);
+}
 const failures = [];
 
 for (const pair of pairs) {
@@ -98,33 +151,73 @@ if (failures.length === 0) {
   process.exit(0);
 }
 
+if (syncMode) {
+  if (dryRun) {
+    console.log(`dry-run: ${failures.length} drifted copies would be synced`);
+    process.exit(0);
+  }
+  let syncedCount = 0;
+  let errorCount = 0;
+  for (const pair of failures) {
+    const targetRel = fromVendored ? pair.srcRel : pair.dstRel;
+    const targetAbs = join(targetRepo, targetRel);
+    const sourceObj = fromVendored ? readCopy(pair.dstAbs) : readCopy(pair.srcAbs);
+    const sourceRel = fromVendored ? pair.dstRel : pair.srcRel;
+
+    if (sourceObj.state === 'ok') {
+      mkdirSync(dirname(targetAbs), { recursive: true });
+      writeFileSync(targetAbs, sourceObj.bytes);
+      const sourceAbs = fromVendored ? pair.dstAbs : pair.srcAbs;
+      if (sourceAbs && existsSync(sourceAbs)) {
+        try {
+          chmodSync(targetAbs, statSync(sourceAbs).mode);
+        } catch {
+          // Best-effort mode preservation
+        }
+      }
+      syncedCount++;
+      console.log(`synced: ${sourceRel} -> ${targetRel}`);
+    } else {
+      console.error(`cannot sync ${sourceRel} -> ${targetRel}: source is ${sourceObj.state}`);
+      errorCount++;
+    }
+  }
+  if (errorCount > 0) {
+    console.error(`FAILED to sync ${errorCount} file(s) (source was missing or unreadable)`);
+    process.exit(1);
+  }
+  console.log(`successfully synced ${syncedCount} drifted copy/copies`);
+  process.exit(0);
+}
+
 console.error(`FAIL: ${failures.length} of ${pairs.length} vendored copies have drifted`);
-console.error('Resync the vendored tree with: node bin/web-uplift.mjs install --agent all');
+console.error('Resync the vendored tree with: npm run sync:vendored (or node tests/cdp-copy-sync.mjs --sync)');
 process.exit(1);
 
 // Turns the copy-dir / copy-file mappings above into a flat, deterministic list
 // of { srcRel, dstRel, srcAbs, dstAbs }. srcAbs/dstAbs are null when that side
 // is absent (a file the other side has but this one does not).
-function buildPairs() {
+function buildPairs(root = targetRepo) {
   const out = [];
   for (const [src, dst] of COPY_FILES) {
+    const srcAbs = join(root, src);
+    const dstAbs = join(root, dst);
+    if (root !== repoRoot && !existsSync(srcAbs) && !existsSync(dstAbs)) continue;
     out.push({
       srcRel: src,
       dstRel: dst,
-      srcAbs: join(repoRoot, src),
-      dstAbs: join(repoRoot, dst),
+      srcAbs,
+      dstAbs,
     });
   }
   for (const [srcDir, dstDir] of COPY_DIRS) {
-    const srcFiles = walkDir(join(repoRoot, srcDir));
-    const dstFiles = walkDir(join(repoRoot, dstDir));
+    const srcFiles = walkDir(join(root, srcDir));
+    const dstFiles = walkDir(join(root, dstDir));
     const rels = [...new Set([...srcFiles.keys(), ...dstFiles.keys()])].sort();
     if (rels.length === 0) {
-      // A declared copy-dir must contribute at least one compared pair even
-      // when it is empty on both sides, otherwise deleting both directories
-      // would silently shrink coverage instead of failing. Emit one pair that
-      // names the declaration; readCopy reports both sides missing below.
-      out.push({ srcRel: srcDir, dstRel: dstDir, srcAbs: null, dstAbs: null });
+      if (root === repoRoot) {
+        out.push({ srcRel: srcDir, dstRel: dstDir, srcAbs: null, dstAbs: null });
+      }
       continue;
     }
     for (const relPath of rels) {

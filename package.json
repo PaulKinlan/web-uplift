@@ -66,6 +66,7 @@
     "playground": "npx -y serve playground -l 8080",
     "test": "node tests/regression.mjs",
     "test:fast": "node scripts/test-fast.mjs",
+    "sync:vendored": "node tests/cdp-copy-sync.mjs --sync",
     "evidence": "node evidence/cli.mjs",
     "audit": "node runner/run-batch.mjs",
     "batch": "node runner/run-batch.mjs",

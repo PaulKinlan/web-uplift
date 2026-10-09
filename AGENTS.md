@@ -66,6 +66,12 @@ The only host requirements: Node, `google-chrome-stable` (override `CHROME_BIN`)
 - No em dashes in prose.
 - Write `report.json` (valid against the schema) and `report.md`, recording the
   `evidenceUsed`.
+- Canonical and vendored trees must remain 100% byte-identical. Changes to
+  `evidence/`, `aggregate/`, `runner/`, `schema/`, or `knowledge/` must be
+  mirrored to `.web-uplift/` (and `.claude/skills/` to `.pi/skills/`). Run
+  `npm run sync:vendored` (or `node tests/cdp-copy-sync.mjs --sync`) to resync
+  copies. The test gate (`tests/regression.mjs`) enforces byte identity via
+  `testCdpCopySyncGuard`.
 
 ## Codex specifics
 
