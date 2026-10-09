@@ -211,7 +211,10 @@ export function classifyClickControl(node) {
   const WRITE_VERBS = ['delete', 'remove', 'destroy', 'purge', 'trash', 'wipe', 'logout', 'signout', 'sign-out',
     'unsubscribe', 'revoke', 'deactivate', 'disable', 'unlink', 'cancel', 'archive'];
   const verbs = WRITE_VERBS.join('|');
-  const writeHref = new RegExp(`(^|/)(${verbs})(\\.[a-z0-9]+)?(/|$|[?#])|[?&](action|op|method|_method|do)=(${verbs})(&|$)`, 'i').test(href);
+  // ...and a verb may carry a kebab/snake tail: /delete-account, /remove-item and
+  // /delete_account are as much a write as /delete. `deleted` is not `delete`, so
+  // /deleted-items still needs its own segment to be refused.
+  const writeHref = new RegExp(`(^|/)(${verbs})([-_][a-z0-9]+)*(\\.[a-z0-9]+)?(/|$|[?#])|[?&](action|op|method|_method|do)=(${verbs})(&|$)`, 'i').test(href);
   if (codeHref) return DENY('a javascript:/data: link');
   if (tag === 'A' || role === 'link') {
     // The one prose signal kept for links: a DESTRUCTIVE verb as a whole word, from a
@@ -271,13 +274,20 @@ export function isWriteUrl(raw) {
   if (!raw || typeof raw !== 'string') return false;
   let u;
   try { u = new URL(raw, 'http://relative.invalid'); } catch { return false; }
-  const routes = [u.pathname, u.hash.replace(/^#!?/, '').split('?')[0]];
+  // An SPA hash may itself be a route with a query (?action=delete), which
+  // new URL().searchParams does not see because the query is after the '#'.
+  const hash = u.hash.replace(/^#!?/, '');
+  const [hashRoute, hashQuery] = hash.split('?');
+  const routes = [u.pathname, hashRoute];
   for (const route of routes) {
     const segs = String(route).toLowerCase().split('/').filter(Boolean).map((seg) => seg.replace(/\.[a-z0-9]+$/, ''));
-    if (segs.some((seg) => WRITE_URL_SEGMENTS.has(seg))) return true;
+    if (segs.some((seg) => WRITE_URL_SEGMENTS.has(seg) || seg.split(/[-_]/).some((part) => WRITE_URL_SEGMENTS.has(part)))) return true;
   }
-  for (const [k, v] of u.searchParams.entries()) {
-    if (['action', 'op', 'method', '_method', 'do'].includes(k.toLowerCase()) && WRITE_URL_SEGMENTS.has(String(v).toLowerCase())) return true;
+  for (const qs of [u.search, hashQuery ? '?' + hashQuery : '']) {
+    if (!qs) continue;
+    for (const [k, v] of new URLSearchParams(qs).entries()) {
+      if (['action', 'op', 'method', '_method', 'do'].includes(k.toLowerCase()) && WRITE_URL_SEGMENTS.has(String(v).toLowerCase())) return true;
+    }
   }
   return false;
 }

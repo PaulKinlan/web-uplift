@@ -774,6 +774,23 @@ export async function testFlowReplayMutationGate() {
   assert(!isWriteUrl('https://store.example/checkout/cancel'), 'a payment-return landing page named cancel is not a write');
   assert(!isWriteUrl('https://example.test/#/archive/2024'), 'an archive listing in a hash route is not a write');
 
+  // 2f. The review's non-blocking P3 notes on this delta: a kebab/snake action slug
+  // (/delete-account, /remove-item, /delete_account) and a query verb INSIDE a hash
+  // route (#/items?action=delete) were not matched.
+  for (const href of ['/delete-account', '/remove-item', '/delete_account', '/cancel-subscription', '/account/destroy_account']) {
+    const link = mk({ tagName: 'A', textContent: 'go', getAttribute: (k) => (k === 'href' ? href : null) });
+    assert(classifyClickControl(link).gated, `a compound action slug must be gated: ${href}`);
+  }
+  assert(!classifyClickControl(mk({ tagName: 'A', textContent: 'go', getAttribute: (k) => (k === 'href' ? '/deleted-items' : null) })).gated,
+    '/deleted-items is still not a write (deleted != delete)');
+  for (const url of ['https://example.test/delete-account', 'https://example.test/remove_item', 'https://example.test/account/destroy-account']) {
+    assert(isWriteUrl(url), `a compound action slug in a navigation is a write: ${url}`);
+  }
+  assert(isWriteUrl('https://app.test/#/items?action=delete'), 'a query verb inside a hash route is a write');
+  assert(isWriteUrl('https://app.test/#/items?op=remove'), 'op=remove inside a hash route is a write');
+  assert(!isWriteUrl('https://example.test/deleted-items'), '/deleted-items in a navigation is still not a write');
+  assert(!isWriteUrl('https://app.test/#/items?filter=deleted'), 'an unrelated hash query is not a write');
+
   // 2b. Selector resolution: text/ and pierce/ (Chrome DevTools Recorder emits
   // them) are restored, aria/ matching is exact-attribute (a double-quote in the
   // name cannot break it), and a stale CSS/xpath candidate falls through.
