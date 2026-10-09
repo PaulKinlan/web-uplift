@@ -1,0 +1,169 @@
+// ONE vocabulary for "a NAME that carries a credential, a payment identifier, or
+// sensitive identity data" (web-uplift-glar, web-uplift-lw6, web-uplift-so2).
+//
+// WHY THIS MODULE EXISTS
+// evidence/cli.mjs (the HAR "dsj" redaction) and runner/flow-record.mjs (the flow
+// recorder/replayer) each grew their own word list for the same concept. Two
+// tables for one concept drift by construction: by 2026-10-09, cli.mjs persisted
+// ?csrf=, ?pin=, ?cvv= and ?passcode= unredacted while flow persisted ?code= and
+// ?key= unredacted, each leaking exactly what the other redacted. The words, the
+// tokenisation and the plural rule live here now; both callers use them, so the
+// two redactors cannot disagree again.
+//
+// WHY TWO STRENGTHS INSTEAD OF ONE FLAT LIST
+// `code` and `key` are credential-shaped as the WHOLE name (?code=AUTH_CODE_123,
+// ?key=AIza...), but ordinary words inside a longer name: postalCode,
+// countryCode and sortKey must keep their values or replay breaks. They are
+// therefore WEAK words, matched ONLY when the entire name is that word (or its
+// joined form, e.g. authcode/api_key through the compound rules below).
+// Everything else is STRONG and matches as ANY word of a camelCase, snake_case,
+// kebab-case or spaced name (apiKey, auth_token, userSession, accessKey).
+//
+// WHY PII IS A SEPARATE SET
+// The HAR path is a credential redactor: it rewrites the VALUES of
+// credential-named fields and deliberately leaves everything else intact so the
+// artifact stays diagnostic. The flow recorder has a wider job - a recorded
+// journey must not carry personal data either - so its field and navigation
+// classifier also refuses emails, phone numbers, names, addresses and identity
+// numbers. Both use the ONE credential vocabulary here; the flow side adds the
+// PII set on top. That is a documented difference in strictness, not a second
+// table for the same concept.
+//
+// Both halves are data, so the page-side copy the flow recorder injects into the
+// browser is generated from these sets (makeCaptureJs) instead of being a third
+// hand-maintained list.
+
+// Credential-shaped words. Matched as any word of a name, joined with a
+// neighbour, or joined whole; plural-tolerant in all three positions.
+export const CREDENTIAL_WORDS = new Set([
+  'passwd', 'password', 'pwd', 'secret', 'token', 'apikey', 'auth', 'authorization',
+  'session', 'sessionid', 'sig', 'signature', 'credential', 'credentials', 'bearer',
+  'jwt', 'otp', 'otc', 'mfa', 'onetimecode', 'onetimenumber', 'accesstoken', 'refreshtoken',
+  'clientsecret', 'privatekey', 'accesskey', 'secretkey', 'idtoken', 'passcode', 'pin',
+  'csrf', 'xsrf', 'security', 'securitycode', 'verificationcode',
+  // payment & financial identifiers
+  'cvv', 'cvc', 'csc', 'cardnumber', 'creditcard', 'cardholder', 'routing', 'iban', 'swift',
+]);
+
+// Credential-shaped only when the ENTIRE name is the word. See the header: a
+// substring match here would take postalCode, countryCode and sortKey with it.
+export const WEAK_CREDENTIAL_WORDS = new Set(['code', 'key']);
+
+// Qualifiers that turn a weak word into a credential compound: auth+code,
+// verify+code, api+key, otp+code are credentials, while sort+key, postal+code,
+// country+code and redirect+uri+code are ordinary names that must keep their
+// values. A qualifier on its own is not a credential (the strong set carries the
+// spellings that are, e.g. 'otp', 'auth', 'token').
+export const WEAK_QUALIFIER_WORDS = new Set([
+  'auth', 'api', 'otp', 'mfa', 'totp', 'verify', 'verification', 'confirm', 'confirmation',
+  'activate', 'activation', 'reset', 'recover', 'recovery', 'invite', 'unlock',
+  'sms', 'email', 'device', 'backup', 'security', 'secret', 'private', 'access',
+]);
+
+// Sensitive PII / identity numbers. Used by the flow recorder's field and
+// navigation classifier (never by the HAR credential redactor).
+export const SENSITIVE_PII_WORDS = new Set([
+  'ssn', 'socialsecurity', 'taxid', 'dob', 'birthdate',
+  'email', 'phone', 'telephone', 'mobile', 'cellphone',
+  'fullname', 'firstname', 'lastname', 'surname', 'username',
+  'address', 'street',
+]);
+
+// The union, for callers that want one flat "is this word sensitive at all"
+// membership test (the flow recorder's autocomplete token test does).
+export const SENSITIVE_WORDS = new Set([...CREDENTIAL_WORDS, ...SENSITIVE_PII_WORDS]);
+
+// Short PII words that are too ambiguous to live in a word set and are matched
+// exactly instead (a bare `name` field is a person's name; `filename` is not).
+const SHORT_PII_WORDS = new Set(['name', 'email', 'phone', 'tel']);
+
+// Singular-but-a-plural-was-written: a word also matches when stripping ONE
+// trailing 's' lands in the set ('secrets', 'apiKeys' via 'apikeys'). The strip
+// is conditional on the RESULT being in the set, so innocent plurals ('boxes',
+// 'regions', 'fonts') never stem into a match.
+const member = (set, w) => set.has(w) || (w.endsWith('s') && set.has(w.slice(0, -1)));
+
+export const isCredentialWord = (w) => member(CREDENTIAL_WORDS, w);
+export const isWeakCredentialWord = (w) => member(WEAK_CREDENTIAL_WORDS, w);
+export const isPiiWord = (w) => member(SENSITIVE_PII_WORDS, w) || SHORT_PII_WORDS.has(w);
+export const isSensitiveWord = (w) => isCredentialWord(w) || isPiiWord(w);
+
+// Split a name on separators AND camelCase/PascalCase boundaries, the way a
+// credential actually gets spelled: accessToken, access_token, access-token.
+export function splitName(str) {
+  if (!str || typeof str !== 'string') return [];
+  return str
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+// Credential-shaped NAME (no PII): the whole name, any one word of it, or two
+// adjacent words joined (apiKey -> 'apikey', authToken -> 'auth'+'token'). Weak
+// words match only as the whole name (or its joined compound, e.g. auth_code).
+export function isCredentialName(name) {
+  const words = splitName(name);
+  if (!words.length) return false;
+  const joined = words.join('');
+  if (isCredentialWord(joined) || isWeakCredentialWord(joined)) return true;
+  if (words.some(isCredentialWord)) return true;
+  // A weak word qualified by a credential context: verifyCode, auth_code, api_key.
+  if (words.some(isWeakCredentialWord) && words.some((w) => WEAK_QUALIFIER_WORDS.has(w))) return true;
+  for (let i = 0; i < words.length - 1; i++) {
+    if (isCredentialWord(words[i] + words[i + 1])) return true;
+  }
+  return false;
+}
+
+// WHY WEAK WORDS ARE NOT PART OF THE FIELD TEST
+// isCredentialName (URL parameters, HAR fields, redirect Locations) treats a bare
+// `code`/`key` as a credential, because ?code=AUTH_CODE_123 (an OAuth callback)
+// and ?key=AIza... (an API call) are credentials. A FORM field named `code` is
+// just as often a promo or product code, and redacting its value breaks replay of
+// the journey the recorder exists to capture, so the field test here (and the
+// page-side classifier generated from it) deliberately stays on STRONG words plus
+// PII. Compound spellings (oneTimeCode, otpCode, verificationCode, passcode) are
+// in the strong set and cover the OTP fields.
+
+// Credential OR PII shaped name, the flow recorder's FIELD test.
+export function isSensitiveName(name) {
+  const words = splitName(name);
+  if (!words.length) return false;
+  if (words.some((w) => isPiiWord(w) || isCredentialWord(w))) return true;
+  const joined = words.join('');
+  if (isSensitiveWord(joined)) return true;
+  for (let i = 0; i < words.length - 1; i++) {
+    if (isSensitiveWord(words[i] + words[i + 1])) return true;
+  }
+  return false;
+}
+
+// A PATH segment or FRAGMENT that is itself the credential, with no name to
+// classify: /reset-password/a8f9c0e2d4b6, ?returnTo=..., #ya29.a0AfH6SMB...
+// Deliberately conservative, because redacting an innocent route segment breaks
+// replay: a word-shaped segment (about-us, my-first-post) never matches, and the
+// alphanumeric rule refuses separators so v2-Release-Notes-2024 stays intact.
+// Shapes covered: a hex id with at least one letter (a8f9c0e2d4b6), a
+// three-part JWT, a short digits-dot-opaque token (Google's ya29.* access
+// tokens), and a long, separator-free, mixed-case-plus-digit opaque string.
+export function looksLikeToken(value) {
+  if (!value || typeof value !== 'string') return false;
+  if (value.length < 10) return false;
+  if (/^[0-9a-f]{10,}$/i.test(value) && /\d/.test(value) && /[a-f]/i.test(value)) return true;
+  if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)) return true;
+  if (/^[0-9]{2,}\.[A-Za-z0-9_-]{12,}$/.test(value)) return true;
+  if (/^[A-Za-z]{2}[0-9]{2,}\.[A-Za-z0-9_-]{12,}$/.test(value)) return true;
+  if (value.length >= 16 && /^[A-Za-z0-9]+$/.test(value) && /\d/.test(value) && /[A-Z]/.test(value) && /[a-z]/.test(value)) return true;
+  return false;
+}
+
+// The literal JSON the page-side capture script is built from, so the injected
+// classifier and the Node-side classifier can never hold different words.
+export const NAME_WORD_DATA = {
+  credential: [...CREDENTIAL_WORDS],
+  weak: [...WEAK_CREDENTIAL_WORDS],
+  pii: [...SENSITIVE_PII_WORDS],
+  shortPii: [...SHORT_PII_WORDS],
+  weakQualifier: [...WEAK_QUALIFIER_WORDS],
+};

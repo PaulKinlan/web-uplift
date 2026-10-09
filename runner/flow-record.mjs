@@ -28,53 +28,35 @@
 //    URL like /user/alice@example.com must not persist the email) and to the
 //    FRAGMENT (which may be query-like: #email=...&tab=2, or an SPA route that
 //    hides the value in a parameter KEY: #/user/alice@example.com?tab=2). Path
-//    segments right after a sensitive marker (/token/abc123) are values too.
-//    Long digit sequences are
-//    only treated as payment cards with real payment context (a payment-named
-//    parameter or a Luhn-valid value), so innocent numeric ids survive replay.
+//    segments right after a sensitive marker (/token/abc123, /reset-password/<tok>,
+//    /verify/<code>) are values too, as is a segment or bare fragment that is
+//    itself token-shaped (an opaque id, a JWT, a ya29.* token), and URL userinfo
+//    is scrubbed. Long digit sequences are only treated as payment cards with real
+//    payment context (a payment-named parameter or a Luhn-valid value), so innocent
+//    numeric ids survive replay.
+// 5. The word list itself lives in ONE place - evidence/credential-terms.mjs, shared
+//    with the HAR credential redactor (web-uplift-glar/lw6) - and the page-side copy
+//    the capture script injects is GENERATED from it, so the browser cannot hold a
+//    third, drifted table (web-uplift-so2).
 
-// Words that mark a field as credential-shaped, payment-bearing, or sensitive PII.
-// Note: Bare "code" and "key" are intentionally omitted to avoid over-broad matching
-// on innocent form fields like postalCode, countryCode, sortKey. Explicit compound
-// terms (passcode, one-time-code, securitycode, apiKey, etc.) are matched instead.
-export const SENSITIVE_WORDS = new Set([
-  // credentials (the dsj pipeline: evidence/cli.mjs CREDENTIAL_WORDS refined)
-  'passwd', 'password', 'pwd', 'secret', 'token', 'apikey', 'auth', 'authorization',
-  'session', 'sessionid', 'sig', 'signature', 'credential', 'credentials', 'bearer',
-  'jwt', 'otp', 'mfa', 'onetimecode', 'accesstoken', 'refreshtoken', 'clientsecret', 'privatekey',
-  'accesskey', 'secretkey', 'idtoken', 'passcode', 'pin', 'csrf', 'xsrf',
-  'security', 'securitycode',
-  // payment & financial
-  'cvv', 'cvc', 'csc', 'cardnumber', 'creditcard', 'cardholder', 'routing', 'iban', 'swift',
-  // sensitive PII & identity numbers
-  'ssn', 'socialsecurity', 'taxid', 'dob', 'birthdate',
-  // PII - email & phone
-  'email', 'phone', 'telephone', 'mobile', 'cellphone',
-  // PII - name
-  'fullname', 'firstname', 'lastname', 'surname', 'username',
-  // PII - address
-  'address', 'street'
-]);
+// The credential/PII word list, its tokenisation and its two strengths
+// (strong = any word of a name, weak = only the whole name) live in ONE shared
+// module used by this recorder AND by the HAR credential redactor, because two
+// tables for one concept drifted and each leaked what the other redacted
+// (web-uplift-glar, web-uplift-lw6). `SENSITIVE_WORDS` is re-exported here for
+// callers that only need the flat membership test.
+import {
+  SENSITIVE_WORDS,
+  isCredentialName,
+  isSensitiveName,
+  isSensitiveWord,
+  looksLikeToken,
+  NAME_WORD_DATA,
+} from '../evidence/credential-terms.mjs';
 
-export const isSensitiveWord = (w) =>
-  SENSITIVE_WORDS.has(w) || (w.endsWith('s') && SENSITIVE_WORDS.has(w.slice(0, -1)));
+export { SENSITIVE_WORDS, isSensitiveWord };
 
-export function hasSensitiveWord(str) {
-  if (!str || typeof str !== 'string') return false;
-  const words = str
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // camelCase / PascalCase boundary
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-  if (!words.length) return false;
-  if (words.some((w) => w === 'name' || w === 'email' || w === 'phone' || w === 'tel' || isSensitiveWord(w))) return true;
-  if (isSensitiveWord(words.join(''))) return true;
-  for (let i = 0; i < words.length - 1; i++) {
-    if (isSensitiveWord(words[i] + words[i + 1])) return true;
-  }
-  return false;
-}
-
+export const hasSensitiveWord = (str) => isSensitiveName(str);
 export function isSensitiveAutocomplete(ac) {
   if (!ac || typeof ac !== 'string') return false;
   const tokens = ac.toLowerCase().split(/\s+/).filter(Boolean);
@@ -133,6 +115,20 @@ const PAYMENT_KEY_WORDS = new Set(['cc', 'pan', 'cvv', 'cvc', 'csc']);
 // name, is never sortKey/postalCode.
 const PATH_VALUE_MARKERS = new Set(['token', 'secret', 'key', 'session']);
 
+// Markers that are ALSO ordinary route words (web-uplift-hi3): /auth/callback and
+// /settings/password/change are routes, /verify/abc123 and /reset-password/<tok>
+// are credentials. These only redact the next segment when that segment itself
+// carries a value shape, so a real route word is never thrown away.
+const ROUTE_VALUE_MARKERS = new Set([
+  'auth', 'authorize', 'authorization', 'verify', 'verification', 'validate',
+  'confirm', 'confirmation', 'activate', 'activation', 'reset', 'password',
+  'code', 'otp', 'totp', 'invite', 'unlock', 'recover', 'recovery',
+]);
+
+// The words of one path segment, so a hyphenated marker (/reset-password) is
+// recognised by its parts.
+const segmentWords = (seg) => seg.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
 export function hasPaymentWord(str) {
   if (!str || typeof str !== 'string') return false;
   const words = str
@@ -180,9 +176,19 @@ export function sanitizeNavUrl(raw) {
   try {
     const u = new URL(raw);
     let modified = false;
+    // Userinfo is a credential when a password is present, and an opaque
+    // userinfo is a token (https://<token>@host/): scrub it. A plain username
+    // with no password is left alone, so a user page keeps its evidence.
+    if (u.password || looksLikeToken(u.username) || isSensitiveNavValue(u.username)) {
+      u.username = '[redacted]';
+      if (u.password) u.password = '[redacted]';
+      modified = true;
+    }
     for (const [k, v] of [...u.searchParams.entries()]) {
       if (!v) continue;
-      if (hasSensitiveWord(k) || isSensitiveNavValue(v, k)) {
+      // The weak words (bare code/key) ARE credentials in a URL: ?code= is an
+      // OAuth callback code and ?key= an API key (web-uplift-lw6).
+      if (isCredentialName(k) || isSensitiveName(k) || isSensitiveNavValue(v, k)) {
         u.searchParams.set(k, '[redacted]');
         modified = true;
       }
@@ -196,10 +202,21 @@ export function sanitizeNavUrl(raw) {
         let decoded = seg;
         try { decoded = decodeURIComponent(seg); } catch { /* keep raw */ }
         if (isSensitiveNavValue(decoded)) { pathModified = true; return '[redacted]'; }
+        // A segment that IS the credential, with no name to classify:
+        // /reset-password/a8f9c0e2d4b6, /files/AbCdEf1234567890, a bare fragment
+        // that is a ya29.* token. Word-shaped segments never match (see
+        // looksLikeToken), so /about-us and /my-first-post survive.
+        if (looksLikeToken(decoded)) { pathModified = true; return '[redacted]'; }
         if (i > 0) {
           let prev = rawSegs[i - 1];
           try { prev = decodeURIComponent(prev); } catch { /* keep raw */ }
-          if (PATH_VALUE_MARKERS.has(prev.toLowerCase())) { pathModified = true; return '[redacted]'; }
+          const prevWords = segmentWords(prev);
+          if (prevWords.some((w) => PATH_VALUE_MARKERS.has(w))) { pathModified = true; return '[redacted]'; }
+          if (prevWords.some((w) => ROUTE_VALUE_MARKERS.has(w)) &&
+              (looksLikeToken(decoded) || isSensitiveNavValue(decoded) || /\d/.test(decoded))) {
+            pathModified = true;
+            return '[redacted]';
+          }
         }
         return seg;
       });
@@ -247,7 +264,7 @@ export function sanitizeNavUrl(raw) {
             continue;
           }
           if (!v) continue;
-          if (hasSensitiveWord(k) || isSensitiveNavValue(v, k)) {
+          if (isCredentialName(k) || isSensitiveName(k) || isSensitiveNavValue(v, k)) {
             params.set(k, '[redacted]');
             searchModified = true;
           }
@@ -287,32 +304,35 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false 
   const CAPTURE_SENSITIVE = ${captureSensitive ? 'true' : 'false'};
   const send = (step) => { try { window.__wuRecordStep(JSON.stringify(step)); } catch (e) {} };
 
-  const SENSITIVE_WORDS = new Set([
-    'passwd', 'password', 'pwd', 'secret', 'token', 'apikey', 'auth', 'authorization',
-    'session', 'sessionid', 'sig', 'signature', 'credential', 'credentials', 'bearer',
-    'jwt', 'otp', 'mfa', 'onetimecode', 'accesstoken', 'refreshtoken', 'clientsecret', 'privatekey',
-    'accesskey', 'secretkey', 'idtoken', 'passcode', 'pin', 'csrf', 'xsrf',
-    'security', 'securitycode',
-    'cvv', 'cvc', 'csc', 'cardnumber', 'creditcard', 'cardholder', 'routing', 'iban', 'swift',
-    'ssn', 'socialsecurity', 'taxid', 'dob', 'birthdate',
-    'email', 'phone', 'telephone', 'mobile', 'cellphone',
-    'fullname', 'firstname', 'lastname', 'surname', 'username',
-    'address', 'street'
-  ]);
+  // The word data is injected from evidence/credential-terms.mjs (the ONE table,
+  // shared with the HAR redactor): a third hand-maintained list here is exactly
+  // how web-uplift-so2 happened. The matching logic below mirrors the module's
+  // isSensitiveName; the flow test suite drives both on the same case list.
+  const CREDENTIAL_WORDS = new Set(${JSON.stringify(NAME_WORD_DATA.credential)});
+  const PII_WORDS = new Set(${JSON.stringify(NAME_WORD_DATA.pii)});
+  const SHORT_PII_WORDS = new Set(${JSON.stringify(NAME_WORD_DATA.shortPii)});
+  const member = (set, w) => set.has(w) || (w.endsWith('s') && set.has(w.slice(0, -1)));
+  const credentialWord = (w) => member(CREDENTIAL_WORDS, w);
+  const piiWord = (w) => member(PII_WORDS, w) || SHORT_PII_WORDS.has(w);
+  const sensitiveWord = (w) => credentialWord(w) || piiWord(w);
 
-  const isSensitiveWord = (w) => SENSITIVE_WORDS.has(w) || (w.endsWith('s') && SENSITIVE_WORDS.has(w.slice(0, -1)));
-  const hasSensitiveWord = (str) => {
-    if (!str || typeof str !== 'string') return false;
-    const words = str
+  const splitName = (str) => {
+    if (!str || typeof str !== 'string') return [];
+    return str
       .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
       .toLowerCase()
       .split(/[^a-z0-9]+/)
       .filter(Boolean);
+  };
+
+  const isSensitiveName = (str) => {
+    const words = splitName(str);
     if (!words.length) return false;
-    if (words.some((w) => w === 'name' || w === 'email' || w === 'phone' || w === 'tel' || isSensitiveWord(w))) return true;
-    if (isSensitiveWord(words.join(''))) return true;
+    if (words.some((w) => piiWord(w) || credentialWord(w))) return true;
+    const joined = words.join('');
+    if (sensitiveWord(joined)) return true;
     for (let i = 0; i < words.length - 1; i++) {
-      if (isSensitiveWord(words[i] + words[i + 1])) return true;
+      if (sensitiveWord(words[i] + words[i + 1])) return true;
     }
     return false;
   };
@@ -330,7 +350,7 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false 
       if (s.startsWith('address-') || s === 'street-address' || s === 'country' || s === 'country-name') return true;
       if (s.startsWith('bday') || s === 'sex') return true;
       if (s.startsWith('transaction-')) return true;
-      return isSensitiveWord(s.replace(/[^a-z0-9]+/g, ''));
+      return sensitiveWord(s.replace(/[^a-z0-9]+/g, ''));
     });
   };
 
@@ -348,11 +368,11 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false 
     const labelText = el.labels && el.labels.length ? Array.from(el.labels).map((l) => l.textContent || '').join(' ') : '';
     const aria = el.getAttribute('aria-label') || '';
     const placeholder = el.placeholder || '';
-    if (hasSensitiveWord(el.name) ||
-        hasSensitiveWord(el.id) ||
-        hasSensitiveWord(aria) ||
-        hasSensitiveWord(placeholder) ||
-        hasSensitiveWord(labelText)) {
+    if (isSensitiveName(el.name) ||
+        isSensitiveName(el.id) ||
+        isSensitiveName(aria) ||
+        isSensitiveName(placeholder) ||
+        isSensitiveName(labelText)) {
       return true;
     }
     return false;

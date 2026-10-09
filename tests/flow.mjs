@@ -103,6 +103,12 @@ export async function testFlowRecordSensitiveRedaction() {
   assert(isSensitiveField({ type: 'text', name: 'one-time-code' }), 'hyphenated one-time-code name must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'mfaCode' }), 'mfaCode must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'otpCode' }), 'otpCode must be sensitive');
+  // so2: 'otc' is the abbreviation that was missing while 'otp' matched, and
+  // 'otcCode' reaches it through the camelCase join. The page-side classifier is
+  // generated from the SAME table, so both stay in step (asserted in section A2).
+  assert(isSensitiveField({ type: 'text', name: 'otc' }), 'otc must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'otcCode' }), 'camelCase otcCode must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'oneTimeNumber' }), 'oneTimeNumber must be sensitive');
 
   // 6. Payment, sensitive PII, contact, and delimited names (billingName, contactEmail, etc.).
   assert(isSensitiveField({ type: 'text', name: 'cardCvc' }), 'cvc must be sensitive');
@@ -198,6 +204,31 @@ export async function testFlowRecordSensitiveRedaction() {
     `default session serialisation must not contain any sensitive value: ${defSerialized}`);
   assert(defSerialized.includes('blue sneakers') && defSerialized.includes('90210'),
     'default session serialisation must keep innocent values');
+  def.triggerChange({ type: 'text', name: 'otcCode', value: '483921', id: 'otc1' });
+  assert(def.steps.length === 7 && def.steps[6].value === '' && def.steps[6].redacted === true,
+    'the injected handler must redact an otcCode field (web-uplift-so2)');
+  assert(!JSON.stringify(def.steps).includes('483921'),
+    'so2: the serialised capture must not carry the one-time-code value');
+
+  // A2. The injected page-side classifier and the Node-side one must agree. The
+  // page script's word DATA is generated from evidence/credential-terms.mjs, but
+  // its matching logic is a template copy, so this drives BOTH over one case list
+  // (the page script in a vm context, the module in Node): a divergence in either
+  // direction fails here. Bare code/key are deliberately NOT field-sensitive - a
+  // promo/product code is not a credential - while being credential-shaped as URL
+  // parameters (asserted in 10f).
+  const { isSensitiveName, isCredentialName } = await import('../evidence/credential-terms.mjs');
+  const agree = testCaptureSession({ captureHidden: false, captureSensitive: false });
+  const fieldCases = ['otc', 'otcCode', 'oneTimeNumber', 'otpCode', 'authCode', 'apiKey', 'csrfToken',
+    'code', 'key', 'postalCode', 'countryCode', 'sortKey', 'businessKey', 'search', 'quantity', 'email'];
+  let agreeIndex = 0;
+  for (const name of fieldCases) {
+    agree.triggerChange({ type: 'text', name, value: 'v1', id: 'agree-' + agreeIndex });
+    const step = agree.steps[agreeIndex];
+    agreeIndex++;
+    assert((step.redacted === true) === isSensitiveName(name),
+      `page-side and Node-side classifiers must agree on field "${name}": page=${step.redacted === true} node=${isSensitiveName(name)}`);
+  }
 
   // B. Opt-in session (captureSensitive:true): values are captured verbatim, on
   // the returned steps AND in their serialisation - the opt-in is only meaningful
@@ -278,6 +309,48 @@ export async function testFlowRecordSensitiveRedaction() {
     'a payment-named key must redact a card-length digit value');
   assert(sanitizeNavUrl('https://example.com/o?n=%2B1-555-019-0199').includes('n=%5Bredacted%5D'),
     'a formatted phone number value must be redacted');
+
+  // 10f. web-uplift-lw6: a query parameter named code/key IS a credential (an
+  // OAuth callback code, an API key), while postalCode/countryCode/sortKey are
+  // ordinary parameters that must keep their values for replay. Weak words match
+  // the WHOLE parameter name only, which is how both stay true at once.
+  assert(sanitizeNavUrl('https://example.com/oauth/callback?code=AUTH_SECRET_CODE_12345').includes('code=%5Bredacted%5D'),
+    'lw6: an OAuth ?code= parameter must be redacted');
+  const apiKeyNav = sanitizeNavUrl('https://api.example.com/x?key=AIzaSySECRET123&q=1');
+  assert(apiKeyNav.includes('key=%5Bredacted%5D') && apiKeyNav.includes('q=1'),
+    `lw6: ?key= must be redacted and its sibling preserved: ${apiKeyNav}`);
+  assert(sanitizeNavUrl('https://example.com/x?postalCode=90210').includes('postalCode=90210'), 'lw6: postalCode must be preserved');
+  assert(sanitizeNavUrl('https://example.com/x?countryCode=GB').includes('countryCode=GB'), 'lw6: countryCode must be preserved');
+  assert(sanitizeNavUrl('https://example.com/x?sortKey=name').includes('sortKey=name'), 'lw6: sortKey must be preserved');
+  assert(sanitizeNavUrl('https://example.com/x?businessKey=1').includes('businessKey=1'), 'lw6: businessKey must be preserved');
+  assert(isCredentialName('code') && isCredentialName('key'), 'lw6: the shared credential test must cover code/key');
+  assert(!isCredentialName('postalCode') && !isCredentialName('sortKey'), 'lw6: weak words must not match a longer name');
+
+  // 10g. web-uplift-hi3: values with no name to classify. A token-shaped segment,
+  // a bare opaque fragment and URL userinfo are the credential itself, while a
+  // route word after a markered ROUTE (/auth/callback, /settings/password/change)
+  // and a word-shaped slug stay intact so replay still works.
+  assert(sanitizeNavUrl('https://example.com/reset-password/a8f9c0e2d4b6') === 'https://example.com/reset-password/[redacted]',
+    'hi3: a token after the reset-password marker must be redacted');
+  assert(sanitizeNavUrl('https://example.com/verify/483920') === 'https://example.com/verify/[redacted]',
+    'hi3: a code after the verify marker must be redacted');
+  assert(sanitizeNavUrl('https://example.com/auth/callback') === 'https://example.com/auth/callback',
+    'hi3: /auth/callback is a route, not a secret, and must survive');
+  assert(sanitizeNavUrl('https://example.com/settings/password/change') === 'https://example.com/settings/password/change',
+    'hi3: /settings/password/change must survive');
+  assert(sanitizeNavUrl('https://example.com/#ya29.a0AfH6SMBxxxxxxxx') === 'https://example.com/#[redacted]',
+    'hi3: a bare opaque fragment token must be redacted');
+  assert(sanitizeNavUrl('https://example.com/app#tab2') === 'https://example.com/app#tab2',
+    'hi3: an innocent anchor fragment must survive');
+  assert(sanitizeNavUrl('https://example.com/files/AbCdEf1234567890') === 'https://example.com/files/[redacted]',
+    'hi3: a token-shaped path segment must be redacted');
+  assert(sanitizeNavUrl('https://example.com/v2-Release-Notes-2024') === 'https://example.com/v2-Release-Notes-2024',
+    'hi3: a word-shaped path segment must survive');
+  assert(sanitizeNavUrl('https://example.com/my-first-post-2024') === 'https://example.com/my-first-post-2024',
+    'hi3: a slug path segment must survive');
+  assert(sanitizeNavUrl('https://user:pass@example.com/x') === 'https://%5Bredacted%5D:%5Bredacted%5D@example.com/x',
+    'hi3: URL userinfo carrying a password must be scrubbed');
+  assert(sanitizeNavUrl('https://example.com/x') === 'https://example.com/x', 'hi3: an innocent URL must pass through unchanged');
 
   // 11. End-to-end recordFlow execution and serialized output assertion.
   const { recordFlow } = await import('../runner/flow-record.mjs');

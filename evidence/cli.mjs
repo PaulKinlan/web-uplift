@@ -86,6 +86,7 @@ import https from 'node:https';
 import { Readable } from 'node:stream';
 import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
 import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs, getCdpCallDeadlineMs, recordLaunch } from './cdp.mjs';
+import { isCredentialName } from './credential-terms.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
 
@@ -1767,35 +1768,23 @@ const REDACTED_HEADER_VALUE = '[redacted]';
 // missed the common spellings `accessToken`, `refreshToken`, `apiKey` and `clientSecret`
 // entirely - a hole the review found by asking what a plausible credential parameter
 // actually looks like, rather than by testing the spellings we happened to think of.
-const CREDENTIAL_WORDS = new Set([
-  'passwd', 'password', 'pwd', 'secret', 'token', 'apikey', 'auth', 'authorization',
-  'session', 'sessionid', 'sig', 'signature', 'credential', 'credentials', 'bearer',
-  'jwt', 'otp', 'key', 'accesstoken', 'refreshtoken', 'clientsecret', 'privatekey',
-  'accesskey', 'secretkey', 'idtoken', 'code',
-]);
-
+//
+// web-uplift-glar/lw6: the words, the tokenisation and the plural rule now live in ONE
+// shared module, evidence/credential-terms.mjs, used by this HAR redactor AND by the
+// flow recorder. Two lists for one concept drifted: this file persisted ?csrf=, ?pin=,
+// ?cvv= and ?passcode= that the flow recorder redacted, while the flow recorder
+// persisted ?code= and ?key= that this file redacted. One module, one answer.
+//
 // Deliberately fail-closed on ambiguity: `code` and `key` can be innocent (`countryCode`,
 // `sortKey`), and redacting an innocent value costs evidence, but leaving a credential
-// costs a disclosure. The artifact note says the test is names-based and can over-redact.
+// costs a disclosure. They are therefore matched as the WHOLE name only, which is what
+// keeps postalCode/countryCode/sortKey inside the artifact with their values intact.
+// The artifact note says the test is names-based and can over-redact.
 //
-// web-uplift-xwr: CREDENTIAL_WORDS carries singulars, and a pluralized name is exactly
-// as credential-shaped ('secrets', 'tokens', 'apiKeys' — the last via the joined
-// spelling 'apikeys'). A word therefore also matches when stripping ONE trailing 's'
-// lands in the set; the strip is conditional on the RESULT being a credential word, so
-// innocent plurals ('boxes', 'regions', 'fonts') never stem into a match.
-const credentialWord = (w) => CREDENTIAL_WORDS.has(w) || (w.endsWith('s') && CREDENTIAL_WORDS.has(w.slice(0, -1)));
-
-export function isCredentialName(name) {
-  if (typeof name !== 'string' || !name) return false;
-  const words = name
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // camelCase / PascalCase boundary
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-  if (!words.length) return false;
-  if (credentialWord(words.join(''))) return true;
-  return words.some(credentialWord);
-}
+// The module also keeps the flow recorder's PII words (email, phone, names, address)
+// SEPARATE from this credential vocabulary: this artifact is a credential redactor, so
+// it does not start rewriting fields the review never asked it to touch.
+export { isCredentialName };
 
 // Redact the VALUES of credential-named query parameters in a URL; keep the names and
 // every other parameter exactly as they were.
@@ -2731,7 +2720,11 @@ async function secrets(client, url, opts, log) {
   // deadline, enforced in-page via a streamed read and an AbortController.
   const scripts = await evaluate(client, "(() => { const all = [...document.querySelectorAll('script[src]')].map(s => s.src); return { urls: all.slice(0, 20), total: all.length }; })()");
   const scriptUrls = scripts?.urls || [];
+  const scriptFailures = [];
+  let scriptsScanned = 0;
+  let scriptsCapped = 0;
   for (const su of scriptUrls) {
+    const scriptLabel = su.split('/').pop();
     try {
       const got = await evaluate(client, `(async () => {
         try {
@@ -2740,9 +2733,22 @@ async function secrets(client, url, opts, log) {
           const timer = setTimeout(() => controller.abort(), ${fetchDeadlineMsDefault});
           try {
             const res = await fetch(${JSON.stringify(su)}, { signal: controller.signal });
+            // A 404/500 body is not the script: reporting it as scanned would claim
+            // coverage that does not exist (web-uplift-6fe).
+            if (!res.ok) return { text: '', truncated: false, ok: false, error: 'HTTP ' + res.status };
             if (!res.body || !res.body.getReader) {
+              // No stream means no way to stop an oversized body mid-read, so the
+              // cap can only be enforced against the DECLARED length. Fail closed
+              // when it is absent or over the cap rather than reading unbounded.
+              const declared = Number(res.headers.get('content-length'));
+              if (!Number.isFinite(declared)) {
+                return { text: '', truncated: false, ok: false, error: 'no readable stream and no content-length: the body size cannot be bounded' };
+              }
+              if (declared > MAX) {
+                return { text: '', truncated: true, ok: false, error: 'no readable stream and content-length ' + declared + ' exceeds the ' + MAX + ' byte cap' };
+              }
               const t = await res.text();
-              return { text: t.slice(0, MAX), truncated: t.length > MAX };
+              return { text: t.slice(0, MAX), truncated: t.length > MAX, ok: true };
             }
             const reader = res.body.getReader();
             const chunks = [];
@@ -2763,20 +2769,48 @@ async function secrets(client, url, opts, log) {
               buf.set(c.subarray(0, n), off);
               off += n;
             }
-            return { text: new TextDecoder().decode(buf), truncated: hitCap };
+            return { text: new TextDecoder().decode(buf), truncated: hitCap, ok: true };
           } finally { clearTimeout(timer); }
-        } catch { return { text: '', truncated: false }; }
+        } catch (e) {
+          // A rejection or an aborted (deadline) fetch is a script that was NOT
+          // read. It must say so instead of coming back as an empty success.
+          const reason = e && e.name === 'AbortError' ? 'fetch deadline exceeded' : ((e && e.message) || String(e));
+          return { text: '', truncated: false, ok: false, error: reason };
+        }
       })()`, { awaitPromise: true });
-      const js = got && typeof got.text === 'string' ? got.text : '';
-      if (got && got.truncated) log(`[secrets] external JS body capped at ${FETCH_MAX_BYTES} bytes: ${su.split('/').pop()}`);
-      if (js) findings.push(...scanTextForSecrets(js, 'external JS: ' + su.split('/').pop(), seen));
-    } catch {}
+      if (!got || got.ok !== true) {
+        const reason = (got && got.error) || 'the in-page fetch returned no result';
+        scriptFailures.push({ url: su, reason });
+        log(`[secrets] external JS NOT scanned (${reason}): ${scriptLabel}`);
+        continue;
+      }
+      const js = typeof got.text === 'string' ? got.text : '';
+      scriptsScanned++;
+      if (got.truncated) {
+        scriptsCapped++;
+        log(`[secrets] external JS body capped at ${FETCH_MAX_BYTES} bytes: ${scriptLabel}`);
+      }
+      if (js) findings.push(...scanTextForSecrets(js, 'external JS: ' + scriptLabel, seen));
+    } catch (e) {
+      // The evaluate itself failing (a page that navigated away, a CDP error) is
+      // also an unread script, not a silent skip.
+      const reason = 'in-page fetch could not be evaluated: ' + ((e && e.message) || String(e));
+      scriptFailures.push({ url: su, reason });
+      log(`[secrets] external JS NOT scanned (${reason}): ${scriptLabel}`);
+    }
   }
   // 4. Meta tags
   const meta = await evaluate(client, "[...document.querySelectorAll('meta')].map(m=>m.content||'').join(' ')");
   findings.push(...scanTextForSecrets(meta || '', 'meta tags', seen));
   announceCap('secrets.findings', 30, findings.length, log);
-  announceCap('secrets.externalScriptsScanned', scriptUrls.length, scripts?.total ?? scriptUrls.length, log);
+  announceCap('secrets.externalScriptsSampled', scriptUrls.length, scripts?.total ?? scriptUrls.length, log);
+  if (scriptFailures.length) {
+    log(
+      `[evidence] WARNING: ${scriptFailures.length} of ${scriptUrls.length} external script URL(s) could NOT be read and were NOT scanned: ` +
+        scriptFailures.map((f) => `${f.url.split('/').pop()} (${f.reason})`).join(', ') +
+        '. A miss in this sample is not evidence of absence.',
+    );
+  }
   const summary = {
     primitive: 'secrets',
     url,
@@ -2784,10 +2818,14 @@ async function secrets(client, url, opts, log) {
     totalFindings: findings.length,
     findings: findings.slice(0, 30),
     findingsTruncated: findings.length > 30,
-    externalScriptsScanned: scriptUrls.length,
+    externalScriptsAttempted: scriptUrls.length,
+    externalScriptsScanned: scriptsScanned,
+    externalScriptsCapped: scriptsCapped,
+    externalScriptsFailed: scriptFailures.length,
+    externalScriptFailures: scriptFailures,
     externalScriptsTotal: scripts?.total ?? scriptUrls.length,
     externalScriptsTruncated: (scripts?.total ?? scriptUrls.length) > scriptUrls.length,
-    note: 'Descriptive signal, not a verdict. The MODEL must REASON about each finding: legitimate public API keys (e.g. Google Maps keys, Stripe publishable keys) are EXPECTED to be client-side and are NOT security issues. Actual sensitive secrets (AWS keys, Stripe SECRET keys, JWTs, private keys, DB connection strings, GitHub/Slack tokens) exposed client-side ARE critical be-private-and-secure failures. Judge each finding accordingly.',
+    note: 'Descriptive signal, not a verdict. externalScriptsScanned counts only the scripts that were actually READ: an entry in externalScriptFailures (HTTP error, fetch deadline, bounded-read refusal) was NOT scanned, so a miss there is not evidence of absence. The MODEL must REASON about each finding: legitimate public API keys (e.g. Google Maps keys, Stripe publishable keys) are EXPECTED to be client-side and are NOT security issues. Actual sensitive secrets (AWS keys, Stripe SECRET keys, JWTs, private keys, DB connection strings, GitHub/Slack tokens) exposed client-side ARE critical be-private-and-secure failures. Judge each finding accordingly.',
   };
   return emit(opts, summary, client);
 }

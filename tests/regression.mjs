@@ -33,6 +33,7 @@ import {
 } from './snapshot-run.mjs';
 import { testFlowNormalize, testFlowRecordSensitiveRedaction, testFlowReplayMutationGate } from './flow.mjs';
 import { testFlowPierceShadowRootBrowser } from './flow-shadow-browser.mjs';
+import { testCredentialRedactorsAgree } from './credential-redaction.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -150,6 +151,9 @@ try {
   // pai: the pierce/ shadow walk against REAL open shadow roots in headless
   // Chrome, because the stub above can only agree with itself.
   await testFlowPierceShadowRootBrowser();
+  // glar/lw6: the HAR credential redactor and the flow recorder read ONE word
+  // table, so both are driven over the same credential/innocent case list.
+  await testCredentialRedactorsAgree();
   await testLaunchSessionLoop();
   await testNoOrphanBrowser();
   console.log('tests OK');
@@ -5574,6 +5578,13 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
       res.end('/*' + 'a'.repeat(2 * 1024 * 1024 + 4096) + '*/' + `const api_key="${lateKey}";`);
       return;
     }
+    if (path === '/missing.js') {
+      // A script URL the page references but the server cannot serve. A 404 body is
+      // not the script, so counting it as scanned over-claims coverage (6fe).
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not Found');
+      return;
+    }
     if (path === '/slow.js') {
       slowRequests++;
       // Never answer: the socket stays open. The in-page deadline must cut it.
@@ -5583,7 +5594,7 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(
       '<!doctype html><title>capped</title><link rel="icon" href="data:,">' +
-        '<script src="/early.js"></script><script src="/big.js"></script><script>window.addEventListener("load",()=>{const s=document.createElement("script");s.src="/slow.js";document.body.appendChild(s);})</script><body>page</body>',
+        '<script src="/early.js"></script><script src="/big.js"></script><script src="/missing.js"></script><script>window.addEventListener("load",()=>{const s=document.createElement("script");s.src="/slow.js";document.body.appendChild(s);})</script><body>page</body>',
     );
   });
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
@@ -5606,6 +5617,36 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
     assert(
       elapsedMs < 20000,
       `a never-answering script URL must not hang the audit (took ${elapsedMs}ms with an 800ms deadline)`
+    );
+
+    // web-uplift-6fe: a script that could not be READ must say so and must not be
+    // counted as covered. Of the four sampled URLs, early.js alone is a clean read
+    // (big.js is capped, missing.js is a 404, slow.js hits the deadline).
+    assert(
+      result.externalScriptsAttempted === 4,
+      `all four script URLs must be accounted for: ${JSON.stringify({ attempted: result.externalScriptsAttempted })}`
+    );
+    assert(
+      result.externalScriptsScanned === 2,
+      `only the two readable scripts may be counted as scanned (early.js, big.js): ${JSON.stringify({ scanned: result.externalScriptsScanned, failed: result.externalScriptFailures })}`
+    );
+    assert(result.externalScriptsCapped === 1, `the capped body must be reported as capped: ${result.externalScriptsCapped}`);
+    assert(
+      result.externalScriptsFailed === 2,
+      `the 404 and the deadline must both be reported as failed: ${JSON.stringify(result.externalScriptFailures)}`
+    );
+    const reasons = (result.externalScriptFailures || []).map((f) => f.reason).sort();
+    assert(
+      reasons.some((r) => r === 'HTTP 404') && reasons.some((r) => /deadline/.test(r)),
+      `each failure must name its cause: ${JSON.stringify(reasons)}`
+    );
+    assert(
+      (result.externalScriptFailures || []).every((f) => typeof f.url === 'string' && f.url.includes('.js')),
+      `each failure must name the URL it could not read: ${JSON.stringify(result.externalScriptFailures)}`
+    );
+    assert(
+      result.note.includes('NOT scanned'),
+      'the artifact note must warn that an unread script is not coverage'
     );
   } finally {
     configureFetchDeadline(30000); // restore the production default for the rest of the suite
@@ -6773,14 +6814,20 @@ async function testCredentialRedactionHelpers() {
   for (const name of ['country', 'page', 'monkey']) {
     assert(!isCredentialName(name), `redaction: '${name}' must NOT be treated as a credential (over-redaction costs evidence)`);
   }
-  // ACCEPTED OVER-REDACTION, asserted so the direction is deliberate rather than accidental:
-  // 'sortKeyName' splits into words that include 'key', so it is redacted. The names-based
-  // test errs towards redacting an innocent value rather than leaving a credential, and the
-  // artifact note says exactly that.
-  for (const ambiguous of ['sortKeyName', 'code', 'key', 'redirectUriCode']) {
+  // WEAK WORDS (web-uplift-glar/lw6): a bare code/key IS a credential, while a name
+  // that merely CONTAINS the word is not. An earlier revision over-redacted every
+  // name with 'key' in it, which is exactly what breaks postalCode/sortKey in a
+  // recorded journey, so the narrow rule is asserted in BOTH directions: a
+  // qualifier compound (auth_code, api_key, verifyCode, otpCode) stays a
+  // credential, and sortKeyName/redirectUriCode/primaryKey keep their values.
+  // tests/credential-redaction.mjs pins the same boundary for the flow redactor.
+  for (const credential of ['code', 'key', 'auth_code', 'api_key', 'verifyCode', 'otpCode']) {
+    assert(isCredentialName(credential), `redaction: '${credential}' must be credential-shaped`);
+  }
+  for (const innocent of ['sortKeyName', 'redirectUriCode', 'primaryKey', 'postalCode', 'countryCode', 'sortKey']) {
     assert(
-      isCredentialName(ambiguous),
-      `redaction: the names test errs towards over-redaction on ambiguous names, asserted for '${ambiguous}' (documented)`,
+      !isCredentialName(innocent),
+      `redaction: '${innocent}' must NOT be redacted (a weak word matches the whole name or a qualifier compound only)`,
     );
   }
 

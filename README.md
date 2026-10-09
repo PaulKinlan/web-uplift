@@ -356,7 +356,11 @@ the audit covers the pages a user actually reaches.
 # Record a journey. Opens a headed browser with a small "Recording... Done"
 # overlay - just click through your journey and press Done. No DevTools needed.
 # By default, passwords, hidden inputs, payment details, and credential/PII-shaped
-# fields (email, phone, name, address, tokens) are sanitized/redacted from flow.json.
+# fields (email, phone, name, address, tokens) are sanitized/redacted from flow.json,
+# and so are sensitive navigation URLs: credential-named query parameters (?code=,
+# ?key=, ?session=), token-shaped path segments and fragments (/reset-password/<tok>),
+# and URL userinfo. Innocent parameters (postalCode, sortKey, a numeric order id)
+# keep their values so the journey still replays.
 # Use --capture-hidden to explicitly retain hidden inputs, or --capture-sensitive
 # to record sensitive values for test replay. Flows needing entered sensitive
 # values cannot replay faithfully without the opt-in or hand-authored test data.
@@ -467,7 +471,7 @@ node evidence/cli.mjs <primitive> <url> [options]
 | `har` | HAR 1.2 plus compact network summary | `Network` domain |
 | `discoverability` | raw server HTML (no JS) vs the rendered DOM: how much content a non-JS crawler sees (`coveragePct`, `isJsShell`, empty SPA mounts), plus a browser-view/crawler-view screenshot pair | `fetch` + `DOM` |
 | `console` | what the page logged while it was being measured: console errors and warnings, uncaught exceptions, and browser log errors/warnings (failed subresource requests, CSP violations), deduplicated with repeat counts and split by source | `Runtime` + `Log` domains |
-| `secrets` | exposed API keys, tokens and credentials in page HTML, inline scripts, external JS and meta tags (redacted matches, descriptive signal) | `Runtime.evaluate` + `fetch` |
+| `secrets` | exposed API keys, tokens and credentials in page HTML, inline scripts, external JS and meta tags (redacted matches, descriptive signal). External scripts it could NOT read (HTTP error, fetch deadline) are reported in `externalScriptFailures` and are NOT counted in `externalScriptsScanned`, so a miss there is not evidence of absence | `Runtime.evaluate` + `fetch` |
 | `headers` | the main document's security response headers: CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy | `Network` domain |
 | `cookies` | every cookie the page sets, with Secure / SameSite / HttpOnly / expiry / third-party flags and per-cookie issues | `Network` domain |
 | `trackers` | third-party request origins matched against a built-in list of known tracker and analytics domains | `Network` domain |
