@@ -81,6 +81,7 @@ try {
   await testBatchIsolationGate();
   await testMcpSkillsServerStdio();
   await testSecretsScanHandlesQuotedScriptUrl();
+  await testSecretsExternalScriptFetchIsCappedAndDeadlined();
   await testTrackersThirdPartySuffix();
   await testHarWaitsForPendingResponses();
   await testHarRedactsCredentialHeaders();
@@ -5421,6 +5422,68 @@ async function testSecretsScanHandlesQuotedScriptUrl() {
   }
 }
 
+
+// web-uplift-61i: the secrets primitive's in-page fetch of page-selected script
+// URLs must carry the same containment as the Node-side path (FETCH_MAX_BYTES
+// cap + the configured fetch deadline), or a hostile page can return an
+// unbounded body or hang the audit. Proven with three fixtures: a key BEFORE
+// the 2 MiB boundary is found, a key AFTER it is not (the body was capped),
+// and a never-answering script cannot hang the run past the deadline.
+async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
+  const { configureFetchDeadline } = await import('../evidence/cli.mjs');
+  const earlyKey = 'NOTAREALKEY_FIXTURE_EARLY1234567890ABCDEFGH';
+  const lateKey = 'NOTAREALKEY_FIXTURE_LATE1234567890ABCDEFGHIJ';
+  let slowRequests = 0;
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/early.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      res.end(`const api_key="${earlyKey}";`);
+      return;
+    }
+    if (path === '/big.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      res.end('/*' + 'a'.repeat(2 * 1024 * 1024 + 4096) + '*/' + `const api_key="${lateKey}";`);
+      return;
+    }
+    if (path === '/slow.js') {
+      slowRequests++;
+      // Never answer: the socket stays open. The in-page deadline must cut it.
+      req.on('close', () => res.destroy());
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(
+      '<!doctype html><title>capped</title><link rel="icon" href="data:,">' +
+        '<script src="/early.js"></script><script src="/big.js"></script><script>window.addEventListener("load",()=>{const s=document.createElement("script");s.src="/slow.js";document.body.appendChild(s);})</script><body>page</body>',
+    );
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  const started = Date.now();
+  try {
+    const { port } = server.address();
+    configureFetchDeadline(800);
+    const result = await gather('secrets', `http://127.0.0.1:${port}/`, { quiet: true, wait: 300 });
+    const elapsedMs = Date.now() - started;
+    const sources = result.findings.map((f) => `${f.pattern}@${f.source}`);
+    assert(
+      result.findings.some((f) => f.source === 'external JS: early.js'),
+      `the key before the cap boundary must be found: ${JSON.stringify(sources)}`
+    );
+    assert(
+      !result.findings.some((f) => f.source === 'external JS: big.js'),
+      `the key AFTER the 2 MiB boundary must NOT be found (body must be capped): ${JSON.stringify(sources)}`
+    );
+    assert(slowRequests >= 1, 'the fixture must actually have been asked for the hanging script');
+    assert(
+      elapsedMs < 20000,
+      `a never-answering script URL must not hang the audit (took ${elapsedMs}ms with an 800ms deadline)`
+    );
+  } finally {
+    configureFetchDeadline(30000); // restore the production default for the rest of the suite
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
 
 // The persisted shape itself, without a browser. The fixture value is built at
 // runtime so this file contains no provider-shaped key literal, and the scan is

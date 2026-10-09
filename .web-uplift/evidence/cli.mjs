@@ -2724,12 +2724,51 @@ async function secrets(client, url, opts, log) {
   // 2. Inline scripts
   const inline = await evaluate(client, "[...document.querySelectorAll('script:not([src])')].map(s=>s.textContent).join('\\n')");
   findings.push(...scanTextForSecrets(inline || '', 'inline scripts', seen));
-  // 3. External JS (sample first 20)
+  // 3. External JS (sample first 20). The in-page fetch reads page-selected URLs
+  // from the page's own context (same-origin/CORS reach), so it cannot go
+  // through the Node-side safeFetch - but it gets the SAME containment values
+  // (web-uplift-61i): the FETCH_MAX_BYTES body cap and the configured fetch
+  // deadline, enforced in-page via a streamed read and an AbortController.
   const scripts = await evaluate(client, "(() => { const all = [...document.querySelectorAll('script[src]')].map(s => s.src); return { urls: all.slice(0, 20), total: all.length }; })()");
   const scriptUrls = scripts?.urls || [];
   for (const su of scriptUrls) {
     try {
-      const js = await evaluate(client, `fetch(${JSON.stringify(su)}).then(r=>r.text()).catch(()=>'')`, { awaitPromise: true });
+      const got = await evaluate(client, `(async () => {
+        try {
+          const MAX = ${FETCH_MAX_BYTES};
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), ${fetchDeadlineMsDefault});
+          try {
+            const res = await fetch(${JSON.stringify(su)}, { signal: controller.signal });
+            if (!res.body || !res.body.getReader) {
+              const t = await res.text();
+              return { text: t.slice(0, MAX), truncated: t.length > MAX };
+            }
+            const reader = res.body.getReader();
+            const chunks = [];
+            let total = 0;
+            let hitCap = false;
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+              total += value.byteLength;
+              if (total >= MAX) { hitCap = true; try { await reader.cancel(); } catch {} break; }
+            }
+            const buf = new Uint8Array(Math.min(total, MAX));
+            let off = 0;
+            for (const c of chunks) {
+              const n = Math.min(c.byteLength, buf.byteLength - off);
+              if (n <= 0) break;
+              buf.set(c.subarray(0, n), off);
+              off += n;
+            }
+            return { text: new TextDecoder().decode(buf), truncated: hitCap };
+          } finally { clearTimeout(timer); }
+        } catch { return { text: '', truncated: false }; }
+      })()`, { awaitPromise: true });
+      const js = got && typeof got.text === 'string' ? got.text : '';
+      if (got && got.truncated) log(`[secrets] external JS body capped at ${FETCH_MAX_BYTES} bytes: ${su.split('/').pop()}`);
       if (js) findings.push(...scanTextForSecrets(js, 'external JS: ' + su.split('/').pop(), seen));
     } catch {}
   }
