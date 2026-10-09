@@ -24,7 +24,11 @@
 // 4. Navigation URLs: Query parameter keys matching sensitive field tokens and query
 //    values matching PII formats (emails, phone numbers, auth tokens) are redacted in
 //    captured navigation steps, while innocent search queries and postal codes
-//    remain preserved.
+//    remain preserved. The same rules are applied to PATH segments (a user profile
+//    URL like /user/alice@example.com must not persist the email) and to the
+//    FRAGMENT (which may be query-like: #email=...&tab=2). Long digit sequences are
+//    only treated as payment cards with real payment context (a payment-named
+//    parameter or a Luhn-valid value), so innocent numeric ids survive replay.
 
 // Words that mark a field as credential-shaped, payment-bearing, or sensitive PII.
 // Note: Bare "code" and "key" are intentionally omitted to avoid over-broad matching
@@ -34,7 +38,7 @@ export const SENSITIVE_WORDS = new Set([
   // credentials (the dsj pipeline: evidence/cli.mjs CREDENTIAL_WORDS refined)
   'passwd', 'password', 'pwd', 'secret', 'token', 'apikey', 'auth', 'authorization',
   'session', 'sessionid', 'sig', 'signature', 'credential', 'credentials', 'bearer',
-  'jwt', 'otp', 'accesstoken', 'refreshtoken', 'clientsecret', 'privatekey',
+  'jwt', 'otp', 'mfa', 'onetimecode', 'accesstoken', 'refreshtoken', 'clientsecret', 'privatekey',
   'accesskey', 'secretkey', 'idtoken', 'passcode', 'pin', 'csrf', 'xsrf',
   'security', 'securitycode',
   // payment & financial
@@ -113,12 +117,51 @@ export function isSensitiveField(desc, { captureHidden = false, captureSensitive
   return false;
 }
 
-export function isSensitiveNavValue(v) {
+// Payment-context tokens: a long digit sequence is only treated as a card number
+// when the surrounding parameter/field name points at payment (or the value itself
+// is Luhn-valid). Without this, /(?:\d[ -]*?){13,19}\b/ redacts ANY 13-19 digit
+// value - an innocent ?orderId=1234567890123 is corrupted, breaking replay.
+const PAYMENT_KEY_WORDS = new Set(['cc', 'pan', 'cvv', 'cvc', 'csc']);
+
+export function hasPaymentWord(str) {
+  if (!str || typeof str !== 'string') return false;
+  const words = str
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (!words.length) return false;
+  if (words.some((w) => PAYMENT_KEY_WORDS.has(w))) return true;
+  const joined = words.join('');
+  return joined.includes('card') || joined.includes('credit') || joined.includes('payment');
+}
+
+// Luhn checksum: a 13-19 digit value that passes is almost certainly a real card
+// number regardless of the parameter name it arrived under.
+export function luhnValid(digits) {
+  if (!/^\d{13,19}$/.test(digits)) return false;
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = digits.charCodeAt(digits.length - 1 - i) - 48;
+    if (i % 2 === 1) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+export function isSensitiveNavValue(v, key = '') {
   if (!v || typeof v !== 'string') return false;
   if (/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(v)) return true;
   if (/\b\d{3}-\d{2}-\d{4}\b/.test(v)) return true;
-  if (/\b(?:\d[ -]*?){13,19}\b/.test(v)) return true;
-  if (/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/.test(v)) return true;
+  // Payment cards: only with real payment context (payment-named key or a
+  // Luhn-valid value) - never a bare numeric identifier like an order id.
+  if (/^[\d -]+$/.test(v)) {
+    const digits = v.replace(/[^\d]/g, '');
+    if (digits.length >= 13 && digits.length <= 19 && (luhnValid(digits) || hasPaymentWord(key))) return true;
+  }
+  // Phone numbers require phone formatting (separators, parentheses, or a +) so a
+  // bare 10-13 digit id is not mistaken for a phone number.
+  if (/[-.\s()+]/.test(v) && /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/.test(v)) return true;
   return false;
 }
 
@@ -129,8 +172,49 @@ export function sanitizeNavUrl(raw) {
     let modified = false;
     for (const [k, v] of [...u.searchParams.entries()]) {
       if (!v) continue;
-      if (hasSensitiveWord(k) || isSensitiveNavValue(v)) {
+      if (hasSensitiveWord(k) || isSensitiveNavValue(v, k)) {
         u.searchParams.set(k, '[redacted]');
+        modified = true;
+      }
+    }
+    // Path segments carry values too: /user/alice@example.com/orders persists the
+    // email unless the segment is redacted. Value-shape only (no key heuristics) so
+    // routes like /settings/security are left alone.
+    if (u.pathname && u.pathname !== '/') {
+      let pathModified = false;
+      const segs = u.pathname.split('/').map((seg) => {
+        if (!seg) return seg;
+        let decoded = seg;
+        try { decoded = decodeURIComponent(seg); } catch { /* keep raw */ }
+        if (isSensitiveNavValue(decoded)) { pathModified = true; return '[redacted]'; }
+        return seg;
+      });
+      if (pathModified) {
+        u.pathname = segs.join('/');
+        modified = true;
+      }
+    }
+    // Fragments can be query-like (#email=...&tab=2) or a bare PII value.
+    if (u.hash && u.hash.length > 1) {
+      const frag = u.hash.slice(1);
+      let decoded = frag;
+      try { decoded = decodeURIComponent(frag); } catch { /* keep raw */ }
+      if (decoded.includes('=')) {
+        const params = new URLSearchParams(decoded);
+        let fragModified = false;
+        for (const [k, v] of [...params.entries()]) {
+          if (!v) continue;
+          if (hasSensitiveWord(k) || isSensitiveNavValue(v, k)) {
+            params.set(k, '[redacted]');
+            fragModified = true;
+          }
+        }
+        if (fragModified) {
+          u.hash = params.toString();
+          modified = true;
+        }
+      } else if (isSensitiveNavValue(decoded)) {
+        u.hash = '[redacted]';
         modified = true;
       }
     }
@@ -154,7 +238,7 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false 
   const SENSITIVE_WORDS = new Set([
     'passwd', 'password', 'pwd', 'secret', 'token', 'apikey', 'auth', 'authorization',
     'session', 'sessionid', 'sig', 'signature', 'credential', 'credentials', 'bearer',
-    'jwt', 'otp', 'accesstoken', 'refreshtoken', 'clientsecret', 'privatekey',
+    'jwt', 'otp', 'mfa', 'onetimecode', 'accesstoken', 'refreshtoken', 'clientsecret', 'privatekey',
     'accesskey', 'secretkey', 'idtoken', 'passcode', 'pin', 'csrf', 'xsrf',
     'security', 'securitycode',
     'cvv', 'cvc', 'csc', 'cardnumber', 'creditcard', 'cardholder', 'routing', 'iban', 'swift',
@@ -298,6 +382,9 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false 
 
 export async function recordFlow(client, url, { log = () => {}, captureHidden = false, captureSensitive = false } = {}) {
   const steps = [{ type: 'setViewport', width: 1280, height: 800, deviceScaleFactor: 1, isMobile: false }];
+  if (captureSensitive) {
+    log('[flow-record] WARNING: --capture-sensitive persists form values AND navigation URLs verbatim (needed for replay fidelity); treat the resulting flow.json as a secret and never commit or share it.');
+  }
   let lastNav = null;
   let done;
   const finished = new Promise((r) => { done = r; });

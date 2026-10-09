@@ -26,10 +26,19 @@ import { launchChrome, newSession, navigate, evaluate, sleep, recordLaunch } fro
 
 export function loadFlow(path) {
   const raw = readFileSync(path, 'utf8');
-  return normalizeFlow(JSON.parse(raw));
+  return normalizeFlow(raw);
 }
 
 export function normalizeFlow(flow) {
+  // A JSON string is accepted (the original contract: loadFlow handed the raw file
+  // contents straight here), so hand-authored callers can pass either shape.
+  if (typeof flow === 'string') {
+    try {
+      flow = JSON.parse(flow);
+    } catch {
+      throw new Error('Invalid flow.json: expected { title: string, steps: array }');
+    }
+  }
   if (!flow || typeof flow !== 'object' || !Array.isArray(flow.steps)) {
     throw new Error('Invalid flow.json: expected { title: string, steps: array }');
   }
@@ -41,32 +50,56 @@ export function normalizeFlow(flow) {
 
 // Resilient selector resolver: Chrome DevTools Recorder exports a matrix of
 // selector alternatives per step: [ [ "aria/Search" ], [ "#q" ], [ "xpath//..." ] ].
-// We try each in order and run the action against the first one that resolves.
+// We try each in order and run the action against the first one that resolves, so
+// a stale CSS or xpath alternative falls back to text//pierce/.
+//
+// resolveSelectorCandidate is exported AND self-contained (no closure references)
+// because it is serialized with .toString() into the page expression: the
+// regression suite drives the exact function the page runs, against a DOM stub.
+export function resolveSelectorCandidate(s, doc) {
+  if (!s || typeof s !== 'string') return null;
+  if (s.startsWith('aria/')) {
+    const name = s.slice(5).trim();
+    // Exact attribute equality: no selector-string escaping, so a name containing
+    // a double-quote cannot break the match (CSS.escape is identifier-context and
+    // is the wrong tool inside a quoted attribute selector).
+    for (const cand of doc.querySelectorAll('[aria-label]')) {
+      if (cand.getAttribute('aria-label') === name) return cand;
+    }
+    for (const cand of doc.querySelectorAll('button, a, input, [role=button]')) {
+      if ((cand.textContent || '').trim() === name) return cand;
+    }
+    return null;
+  }
+  if (s.startsWith('xpath/')) {
+    try {
+      const FIRST = typeof XPathResult !== 'undefined' ? XPathResult.FIRST_ORDERED_NODE_TYPE : 9;
+      const r = doc.evaluate(s.slice(6), doc, null, FIRST, null);
+      return r.singleNodeValue;
+    } catch { return null; }
+  }
+  if (s.startsWith('text/')) {
+    const t = s.slice(5).trim();
+    for (const cand of doc.querySelectorAll('*')) {
+      if (cand.childElementCount === 0 && (cand.textContent || '').trim() === t) return cand;
+    }
+    return null;
+  }
+  if (s.startsWith('pierce/')) {
+    // Recorder's pierce/ crosses shadow roots; querySelector is the no-shadow-DOM
+    // approximation we can offer page-side.
+    try { return doc.querySelector(s.slice(7)); } catch { return null; }
+  }
+  try { return doc.querySelector(s); } catch { return null; }
+}
+
 async function pageAction(client, selectorList, actionJs) {
   const list = Array.isArray(selectorList) ? selectorList : [selectorList].filter(Boolean);
   const jsonList = JSON.stringify(list);
   const expr = `(() => {
     const list = ${jsonList};
-    const resolve = (cand) => {
-      const s = Array.isArray(cand) ? cand[0] : cand;
-      if (!s || typeof s !== 'string') return null;
-      if (s.startsWith('aria/')) {
-        const name = s.slice(5).trim();
-        const el = document.querySelector('[aria-label="' + CSS.escape(name) + '"]');
-        if (el) return el;
-        for (const cand of document.querySelectorAll('button, a, input, [role=button]')) {
-          if ((cand.textContent || '').trim() === name) return cand;
-        }
-        return null;
-      }
-      if (s.startsWith('xpath/')) {
-        try {
-          const r = document.evaluate(s.slice(6), document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-          return r.singleNodeValue;
-        } catch { return null; }
-      }
-      try { return document.querySelector(s); } catch { return null; }
-    };
+    const __wuResolveOne = ${resolveSelectorCandidate.toString()};
+    const resolve = (cand) => __wuResolveOne(Array.isArray(cand) ? cand[0] : cand, document);
     let el = null;
     for (const cand of list) {
       el = resolve(cand);
@@ -95,26 +128,38 @@ async function screenshot(client, outDir, index, label, log) {
   }
 }
 
-export function isSubmitControl(el) {
-  if (!el || (el.nodeType && el.nodeType !== 1)) return false;
-  const target = (typeof el.closest === 'function' ? el.closest('button, input, [role="button"]') : null) || el;
+// Mutating-control predicate: which element would a click on `node` actually
+// trigger, and is it the kind of control that MUTATES a live target (submits a
+// form, or carries a mutating term like delete/pay/confirm)? Exported and
+// self-contained because it is serialized with .toString() into the click
+// expression - the regression suite drives the exact predicate the page runs
+// against a DOM stub, so a passing test cannot be a mock agreeing with itself.
+export function findMutatingControl(node) {
+  if (!node || (node.nodeType && node.nodeType !== 1)) return null;
+  const target = (typeof node.closest === 'function' ? node.closest('button, input, [role="button"], a[onclick]') : null) || node;
   const tag = (target.tagName || '').toUpperCase();
   const type = (target.type || (typeof target.getAttribute === 'function' ? target.getAttribute('type') : '') || '').toLowerCase();
 
-  if (type === 'submit' || type === 'image') return true;
+  if (type === 'submit' || type === 'image') return target;
   if (target.form || target.hasForm || (typeof target.closest === 'function' && target.closest('form')) || (typeof target.getAttribute === 'function' && target.getAttribute('form'))) {
-    return true;
+    return target;
   }
-  if (tag === 'BUTTON' || (typeof target.getAttribute === 'function' && target.getAttribute('role') === 'button')) {
+  // Anchors count too: <a onclick="...">Delete</a> fails a BUTTON-only check and
+  // would otherwise run its handler against the live target in dry-run.
+  if (tag === 'BUTTON' || tag === 'A' || (typeof target.getAttribute === 'function' && target.getAttribute('role') === 'button')) {
     const text = (target.textContent || '').trim().toLowerCase();
     const aria = (typeof target.getAttribute === 'function' ? target.getAttribute('aria-label') : '') || '';
     const name = (target.name || target.id || '').toLowerCase();
     const MUTATING_TERMS = ['submit', 'save', 'delete', 'checkout', 'pay', 'order', 'confirm', 'send', 'buy', 'purchase', 'register', 'create'];
     if (MUTATING_TERMS.some((term) => text.includes(term) || aria.toLowerCase().includes(term) || name.includes(term))) {
-      return true;
+      return target;
     }
   }
-  return false;
+  return null;
+}
+
+export function isSubmitControl(el) {
+  return !!findMutatingControl(el);
 }
 
 // --- replay -----------------------------------------------------------------
@@ -141,27 +186,7 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
         case 'click':
         case 'doubleClick':
           outcome = await pageAction(client, step.selectors, `
-            const findMutatingControl = (node) => {
-              if (!node || node.nodeType !== 1) return null;
-              const target = (typeof node.closest === 'function' ? node.closest('button, input, [role="button"], a[onclick]') : null) || node;
-              const tag = (target.tagName || '').toUpperCase();
-              const type = (target.type || (typeof target.getAttribute === 'function' ? target.getAttribute('type') : '') || '').toLowerCase();
-
-              if (type === 'submit' || type === 'image') return target;
-              if (target.form || (typeof target.closest === 'function' && target.closest('form')) || (typeof target.getAttribute === 'function' && target.getAttribute('form'))) {
-                return target;
-              }
-              if (tag === 'BUTTON' || (typeof target.getAttribute === 'function' && target.getAttribute('role') === 'button')) {
-                const text = (target.textContent || '').trim().toLowerCase();
-                const aria = (typeof target.getAttribute === 'function' ? target.getAttribute('aria-label') : '') || '';
-                const name = (target.name || target.id || '').toLowerCase();
-                const MUTATING_TERMS = ['submit', 'save', 'delete', 'checkout', 'pay', 'order', 'confirm', 'send', 'buy', 'purchase', 'register', 'create'];
-                if (MUTATING_TERMS.some((term) => text.includes(term) || aria.toLowerCase().includes(term) || name.includes(term))) {
-                  return target;
-                }
-              }
-              return null;
-            };
+            const findMutatingControl = ${findMutatingControl.toString()};
 
             const mutating = findMutatingControl(el);
             if (!${allowMutations ? 'true' : 'false'} && mutating) {
@@ -212,7 +237,10 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
               if (el) {
                 if (!${allowMutations ? 'true' : 'false'}) {
                   const tag = (el.tagName || '').toUpperCase();
-                  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || (typeof el.getAttribute === 'function' && el.getAttribute('contenteditable'))) {
+                  // isContentEditable, not getAttribute('contenteditable'): the
+                  // attribute is "" (falsy) for contenteditable="" and the element
+                  // is still editable.
+                  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || el.isContentEditable) {
                     return { ok: true, detail: 'dry-run: Enter keydown on ' + tag.toLowerCase() + ' prevented (use --allow-mutations)', mutationBlocked: true };
                   }
                 }
