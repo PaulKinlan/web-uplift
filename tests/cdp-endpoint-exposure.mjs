@@ -6,7 +6,9 @@
 // Two kinds of case: real sockets (bind a server the two ways and probe it), and injected
 // verdicts (so the decision table is pinned on a machine with no non-loopback interface).
 import { createServer } from 'node:net';
-import { dirname, resolve } from 'node:path';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cdpEndpointExposure, probeTcp } from '../evidence/cdp.mjs';
 
@@ -82,8 +84,42 @@ export async function testCdpEndpointExposure() {
       'a closed loopback port must probe as refused');
     assert((await probeTcp('127.0.0.1', loopback.address().port, 500)) === 'connected',
       'an open loopback port must probe as connected');
-    // The launch path actually passes the pin: asserted on the source, because the alternative
-    // is spawning a browser to read its command line.
+    // 3. THE FAIL-CLOSED PATH, end to end with a real browser (a stub verdict injected, since
+    // this Chrome correctly refuses non-loopback and the alternative is a fabricated exposure):
+    // launchChrome must REJECT with the exposure reason, attribute the refused launch to the run
+    // log, and leave no browser tree and no profile dir behind - a refused audit must not leak
+    // the very browser it refused to expose.
+    const launchesFile = join(tmpdir(), `web-uplift-4rv-launches-${process.pid}.jsonl`);
+    rmSync(launchesFile, { force: true });
+    // recordLaunchFailure only writes when the sink is configured, and the sink is how a
+    // refused launch is attributed to the run.
+    const previousSink = process.env.WEB_UPLIFT_LAUNCH_LOG;
+    process.env.WEB_UPLIFT_LAUNCH_LOG = launchesFile;
+    const { launchChrome } = await import('../evidence/cdp.mjs');
+    let refused = null;
+    try {
+      await launchChrome({
+        log: () => {},
+        exposureProbe: async (port) => ({ exposed: true, reason: `test-injected exposure on port ${port}` }),
+      });
+    } catch (err) {
+      refused = err;
+    }
+    assert(refused instanceof Error && /test-injected exposure on port \d+/.test(refused.message),
+      `an exposed endpoint must fail the launch with the reason: ${refused && refused.message}`);
+    const records = readFileSync(launchesFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const refusal = records.find((r) => /test-injected exposure/.test(r.reason ?? ''));
+    assert(refusal, `the refused launch must be attributed to the run log: ${JSON.stringify(records)}`);
+    assert(!existsSync(refusal.profileDir), `a refused launch must not leave its profile dir behind (${refusal.profileDir})`);
+    const alive = refusal.pid ? existsSync(`/proc/${refusal.pid}`) : false;
+    assert(!alive, `a refused launch must not leave the browser running (pid ${refusal.pid})`);
+    if (previousSink === undefined) delete process.env.WEB_UPLIFT_LAUNCH_LOG;
+    else process.env.WEB_UPLIFT_LAUNCH_LOG = previousSink;
+    rmSync(launchesFile, { force: true });
+
+    // The launch path also passes the pin itself: asserted on the source, because the
+    // alternative is spawning a browser and reading its command line (which I did by hand, and
+    // which a live-launch check in this suite's browser tests cannot do portably).
     const source = (await import('node:fs')).readFileSync(resolve(repoRoot, 'evidence', 'cdp.mjs'), 'utf8');
     assert(source.includes("'--remote-debugging-address=127.0.0.1'"),
       'the launch must pin the debugging address to loopback, not rely on Chrome defaulting to it');

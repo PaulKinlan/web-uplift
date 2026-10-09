@@ -494,7 +494,7 @@ export function probeTcp(host, port, timeoutMs) {
 // (remote-debugging-port=0 picks a free port). Returns { ok: true, handle } or
 // { ok: false, detail } and never throws, so launchChrome() can retry the whole
 // attempt and report every reason it failed.
-async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs }) {
+async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, exposureProbe = (port) => cdpEndpointExposure(port) }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'web-uplift-cdp-'));
   const sandboxReason = sandboxDisableReason();
   log(
@@ -648,7 +648,7 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs }
   // operator, read the pages it has open and run script in them. So the claim is measured
   // rather than trusted, and a non-loopback bind fails the launch instead of exposing an
   // audit (web-uplift-4rv).
-  const exposure = await cdpEndpointExposure(port);
+  const exposure = await exposureProbe(port);
   if (exposure.exposed) {
     recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: exposure.reason });
     await close();
@@ -672,12 +672,17 @@ export async function launchChrome({
   // Overridable so tests can exercise the timeout/wedge path without a 20 s
   // wait; production callers keep the measured constant.
   devtoolsTimeoutMs = DEVTOOLS_ENDPOINT_TIMEOUT_MS,
+  // Overridable for the same reason (web-uplift-4rv): the exposure verdict is the one thing
+  // a test cannot provoke from a real browser here, because this Chrome correctly refuses
+  // non-loopback, and "the launch fails closed when the endpoint IS exposed" is exactly the
+  // behaviour worth telling from a source grep. Production always uses the real probe.
+  exposureProbe = (port) => cdpEndpointExposure(port),
 } = {}) {
   const chromePath = resolveChromePath();
   const reasons = [];
   let lastDetail = null;
   for (let attempt = 1; attempt <= LAUNCH_ATTEMPTS; attempt++) {
-    const result = await launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs });
+    const result = await launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, exposureProbe });
     if (result.ok) {
       if (attempt > 1) log(`[browser] launch recovered on attempt ${attempt}/${LAUNCH_ATTEMPTS}`);
       return result.handle;
