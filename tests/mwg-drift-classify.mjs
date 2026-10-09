@@ -33,7 +33,7 @@
 // Environment variable overrides:
 //   MWG_DRIFT_BASIS: Path to rule basis JSON (default: knowledge/mwg-rule-basis.json).
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, writeSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -573,6 +573,32 @@ function classifyDelta(oldCorpusPath, newCorpusPath, basisPath, jsonMode) {
 }
 
 // Main CLI parsing
+// Emitting the corpus on stdout (web-uplift-as3).
+//
+// process.stdout.write() is ASYNCHRONOUS, and process.exit() does not wait for it. Piping an
+// extracted corpus larger than the pipe buffer therefore handed the consumer whatever had been
+// flushed and dropped the rest: the same package produced 232941 bytes with -o and exactly
+// 131072 through a pipe, and the run still exited 0, so the only sign of loss was a downstream
+// JSON parse failure much later. Writing straight to the descriptor blocks until the kernel has
+// taken every byte, and a consumer that closes the pipe early (| head) is reported here rather
+// than silently swallowed.
+function writeStdout(text) {
+  const buffer = Buffer.from(text, 'utf8');
+  let written = 0;
+  try {
+    while (written < buffer.length) {
+      const n = writeSync(1, buffer, written, buffer.length - written);
+      if (n <= 0) throw new Error(`short write: ${written} of ${buffer.length} bytes accepted`);
+      written += n;
+    }
+  } catch (err) {
+    console.error(
+      `FAIL: could not write the extracted corpus to stdout (${written} of ${buffer.length} bytes written): ${err.message}`,
+    );
+    process.exit(1);
+  }
+}
+
 const defaultBasisPath = process.env.MWG_DRIFT_BASIS || join(repoRoot, 'knowledge', 'mwg-rule-basis.json');
 
 const rawArgs = process.argv.slice(2);
@@ -705,7 +731,7 @@ if (mode === 'extract') {
       process.exit(1);
     }
   } else {
-    process.stdout.write(formatted);
+    writeStdout(formatted);
   }
   process.exit(0);
 } else if (mode === 'verify_basis') {
