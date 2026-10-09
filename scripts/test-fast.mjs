@@ -416,16 +416,23 @@ export function runTarget(target, repo = repoRoot) {
   console.log(`\n▶ [test:fast] RUNNING: ${target.label}`);
   console.log(`  $ ${cmd} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`);
 
+  const envTimeout = process.env.TEST_FAST_TARGET_TIMEOUT_MS ? Number(process.env.TEST_FAST_TARGET_TIMEOUT_MS) : null;
+  const targetTimeoutMs = envTimeout || target.timeoutMs || 120000;
   const startTime = Date.now();
-  const res = spawnSync(cmd, args, { cwd: repo, stdio: 'inherit' });
+  const res = spawnSync(cmd, args, { cwd: repo, stdio: 'inherit', timeout: targetTimeoutMs });
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+  if (res.error?.code === 'ETIMEDOUT') {
+    console.error(`✖ [test:fast] TIMED OUT (exceeded ${targetTimeoutMs}ms): ${target.label} (${duration}s)`);
+    return { ok: false, status: 124, duration };
+  }
 
   if (res.status === 0) {
     console.log(`✔ [test:fast] PASSED: ${target.label} (${duration}s)`);
     return { ok: true, duration };
   } else {
     console.error(`✖ [test:fast] FAILED (exit ${res.status}): ${target.label} (${duration}s)`);
-    return { ok: false, status: res.status, duration };
+    return { ok: false, status: res.status ?? 1, duration };
   }
 }
 

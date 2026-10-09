@@ -13,6 +13,7 @@
  * 8. The fast gate exits non-zero when an affected test fails.
  * 9. CLI flags (--dry-run, --list, --all, --diff) operate as specified.
  * 10. tests/regression.mjs supports --only, --filter, --list, and fails when --only is missing an argument (P2-8).
+ * 11. Slow/hanging targets are bounded and exit 124 on timeout rather than hanging.
  */
 
 import { strict as assert } from 'node:assert';
@@ -316,6 +317,44 @@ function testFailingTargetExitsNonZero() {
   console.log('✔ Failing target exits non-zero test passed');
 }
 
+function testSlowTargetTimesOutWithExit124() {
+  console.log('Testing that slow targets time out with exit 124 rather than hanging...');
+
+  const tmp = mkdtempSync(join(tmpdir(), 'test-fast-timeout-'));
+  const hangingTestPath = join(tmp, 'hanging-test.mjs');
+
+  try {
+    writeFileSync(
+      hangingTestPath,
+      `#!/usr/bin/env node\nawait new Promise(r => setTimeout(r, 5000));\n`,
+      { mode: 0o755 }
+    );
+
+    const hangingTarget = {
+      type: 'node',
+      path: hangingTestPath,
+      label: 'Hanging test suite',
+      timeoutMs: 200,
+    };
+
+    const res = runTarget(hangingTarget);
+    assert.equal(res.ok, false, 'runTarget on timed out process must return ok: false');
+    assert.equal(res.status, 124, 'runTarget on timed out process must return status: 124');
+
+    // Also assert CLI end-to-end exit code propagation
+    const fastScript = join(repoRoot, 'scripts/test-fast.mjs');
+    const cliRes = spawnSync(process.execPath, [fastScript, hangingTestPath], {
+      encoding: 'utf8',
+      env: { ...process.env, TEST_FAST_TARGET_TIMEOUT_MS: '200' },
+    });
+    assert.equal(cliRes.status, 124, `CLI invocation must exit 124 on timeout, got ${cliRes.status}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+
+  console.log('✔ Slow target timeout test passed');
+}
+
 function runAll() {
   testSubsystemMappings();
   testNonTestExclusion();
@@ -325,6 +364,7 @@ function runAll() {
   testRegressionFilterCli();
   testMissingTargetSkippedCleanly();
   testFailingTargetExitsNonZero();
+  testSlowTargetTimesOutWithExit124();
   console.log('\nAll fast gate unit and integration tests passed successfully.');
 }
 
