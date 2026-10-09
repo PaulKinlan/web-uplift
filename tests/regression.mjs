@@ -36,6 +36,7 @@ import { testFlowPierceShadowRootBrowser } from './flow-shadow-browser.mjs';
 import { testCredentialRedactorsAgree } from './credential-redaction.mjs';
 import { testSecretsCoverageClassification } from './secrets-coverage.mjs';
 import { testLogUrlRedaction } from './log-redaction.mjs';
+import { testMwgCatalogExtract } from './mwg-catalog-extract.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -58,7 +59,7 @@ try {
   testAtomicCoverageValidator();
   testGuidanceUsage();
   testGuidanceVersionPinnedInDocs();
-  testMwgCatalogRegenerateAgreement();
+  await testMwgCatalogRegenerateAgreement();
   testPrinciplesMwgCatalogSyncAndChangedGuidance();
   testHeadlessAllowlistIsScoped();
   testHeadlessAllowlistMatchesSkillContract();
@@ -159,6 +160,8 @@ try {
   // glar/lw6: the HAR credential redactor and the flow recorder read ONE word
   // table, so both are driven over the same credential/innocent case list.
   await testCredentialRedactorsAgree();
+  // The catalog generator parses the downloaded USE_CASES table as data (web-uplift-w0y).
+  await testMwgCatalogExtract();
   // 6fe: what "read" means for the secrets primitive's external scripts, driven
   // against the exact function the page expression is built from.
   await testSecretsCoverageClassification();
@@ -3952,24 +3955,27 @@ function testGuidanceVersionPinnedInDocs() {
 // Asserts that the extraction script inside knowledge/mwg-catalog.md and the
 // 'regenerate' property in knowledge/mwg-catalog.json agree, preventing
 // reintroduction of incorrect CLI flags (web-uplift-bxl).
-function testMwgCatalogRegenerateAgreement() {
+//
+// It used to compare the catalog against an extraction script embedded in
+// knowledge/mwg-catalog.md, eval-ing the string out of the markdown to read it. That script
+// is gone: it evaluated the USE_CASES table of a downloaded npm package (web-uplift-w0y),
+// and the generator (tests/mwg-catalog.mjs) is now the single source of truth for both the
+// extraction and this text.
+async function testMwgCatalogRegenerateAgreement() {
   const catalog = readJson('knowledge/mwg-catalog.json');
-  const md = readFileSync(join(repoRoot, 'knowledge/mwg-catalog.md'), 'utf8');
   assert(
     typeof catalog.regenerate === 'string' && catalog.regenerate.length > 0,
     'knowledge/mwg-catalog.json must declare a regenerate field',
   );
-  const match = md.match(/regenerate:\s*(['"`][\s\S]*?['"`]),/);
-  assert(match, 'knowledge/mwg-catalog.md must define a regenerate assignment in its script');
-  let scriptRegenerate;
-  try {
-    scriptRegenerate = eval(match[1]);
-  } catch (e) {
-    assert.fail(`knowledge/mwg-catalog.md script regenerate expression failed to parse: ${e.message}`);
-  }
+  const md = readFileSync(join(repoRoot, 'knowledge', 'mwg-catalog.md'), 'utf8');
   assert(
-    scriptRegenerate === catalog.regenerate,
-    `knowledge/mwg-catalog.md script generates '${scriptRegenerate}', but knowledge/mwg-catalog.json has '${catalog.regenerate}'`,
+    !/regenerate:\s*['"`]/.test(md),
+    'knowledge/mwg-catalog.md must not carry its own catalog extraction script: the generator is the single source of truth (web-uplift-w0y)',
+  );
+  const { REGENERATE } = await import('./mwg-catalog.mjs');
+  assert(
+    REGENERATE === catalog.regenerate,
+    `tests/mwg-catalog.mjs writes '${REGENERATE}', but knowledge/mwg-catalog.json has '${catalog.regenerate}'`,
   );
 }
 

@@ -37,128 +37,29 @@ To ensure complete coverage without dropping unlisted guides, the extraction scr
 To regenerate `knowledge/mwg-catalog.json` from the latest published package:
 
 ```sh
-node -e '
-const cp = require("node:child_process");
-const crypto = require("node:crypto");
-const fs = require("node:fs");
-const path = require("node:path");
-const os = require("node:os");
+# 1. Unpack the package (this reads a tarball; it runs no package code).
+ver=$(npm view modern-web-guidance version)
+tmp=$(mktemp -d)
+npm pack modern-web-guidance@"$ver" --pack-destination "$tmp" >/dev/null
+tar -xzf "$tmp"/modern-web-guidance-*.tgz -C "$tmp" package/skills/modern-web-guidance
 
-const rawVer = process.argv[1] || cp.execSync("npm view modern-web-guidance version", { encoding: "utf8" }).trim();
-const ver = rawVer.replace(/^modern-web-guidance@/, "");
-const outPath = process.argv[2] || "knowledge/mwg-catalog.json";
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mwg-"));
-try {
-  cp.execSync("npm pack modern-web-guidance@" + ver, { cwd: tmp, stdio: "ignore" });
-  const tgz = fs.readdirSync(tmp).find(f => f.endsWith(".tgz"));
-  cp.execSync("tar -xzf " + tgz + " package/skills/modern-web-guidance/modern-web.mjs package/skills/modern-web-guidance/guides", { cwd: tmp });
-  const src = fs.readFileSync(path.join(tmp, "package/skills/modern-web-guidance/modern-web.mjs"), "utf8");
-  const match = src.match(/var USE_CASES = (\[[\s\S]*?\n\];)/);
-  const ucList = eval(match[1]);
-  const ucMap = new Map(ucList.map(g => [g.id, g]));
+# 2. Build the catalog with the committed generator.
+#    It parses the package's USE_CASES table as DATA, never by evaluating it: the table is
+#    a literal array (single-quoted strings, comments and a trailing comma are fine), and
+#    anything that is not a literal - a call, an operator, an identifier - makes the run
+#    fail instead of running. That matters because this package is DOWNLOADED: the recipe
+#    this replaces called `eval` on it, so anything shipped inside that array ran with the
+#    operator's privileges (web-uplift-w0y).
+node tests/mwg-catalog.mjs --package-dir "$tmp/package" --version "$ver" --out knowledge/mwg-catalog.json
+rm -rf "$tmp"
 
-  const guidesDir = path.join(tmp, "package/skills/modern-web-guidance/guides");
-  const categories = fs.readdirSync(guidesDir).filter(c => fs.statSync(path.join(guidesDir, c)).isDirectory()).sort();
-
-  const fileOnly = [];
-  for (const cat of categories) {
-    const catDir = path.join(guidesDir, cat);
-    const files = fs.readdirSync(catDir).filter(f => f.endsWith(".md")).sort();
-    for (const f of files) {
-      const id = f.replace(/\.md$/, "");
-      if (!ucMap.has(id)) {
-        const content = fs.readFileSync(path.join(catDir, f), "utf8");
-        let twin = null;
-        for (const [otherId, otherG] of ucMap.entries()) {
-          if (otherG.category === cat) {
-            const otherPath = path.join(guidesDir, cat, otherId + ".md");
-            if (fs.existsSync(otherPath) && fs.readFileSync(otherPath, "utf8") === content) {
-              twin = otherG;
-              break;
-            }
-          }
-        }
-        fileOnly.push({
-          id,
-          category: cat,
-          twinId: twin ? twin.id : null,
-          description: twin ? twin.description : "",
-          featuresUsed: twin ? twin.featuresUsed : [],
-          tokenCount: twin ? twin.tokenCount : Math.round(content.length / 3.8)
-        });
-      }
-    }
-  }
-
-  const guides = [];
-  for (const uc of ucList) {
-    guides.push({
-      id: uc.id,
-      category: uc.category,
-      description: uc.description,
-      featuresUsed: uc.featuresUsed,
-      tokenCount: uc.tokenCount
-    });
-    for (const fo of fileOnly) {
-      if (fo.twinId === uc.id) {
-        guides.push({
-          id: fo.id,
-          category: fo.category,
-          description: fo.description,
-          featuresUsed: fo.featuresUsed,
-          tokenCount: fo.tokenCount
-        });
-      }
-    }
-  }
-
-  for (const fo of fileOnly) {
-    if (!guides.some(g => g.id === fo.id)) {
-      guides.push({
-        id: fo.id,
-        category: fo.category,
-        description: fo.description,
-        featuresUsed: fo.featuresUsed,
-        tokenCount: fo.tokenCount
-      });
-    }
-  }
-
-  const guideIds = guides.map(g => g.id).sort();
-  const guideIdsSha256 = crypto.createHash("sha256").update(guideIds.join("\n")).digest("hex");
-
-  const existingPath = "knowledge/mwg-catalog.json";
-  let existing = null;
-  try {
-    if (fs.existsSync(existingPath)) {
-      existing = JSON.parse(fs.readFileSync(existingPath, "utf8"));
-    }
-  } catch {}
-  const retrievedAt = (existing && existing.version === ver && existing.retrievedAt)
-    ? existing.retrievedAt
-    : new Date().toISOString();
-
-  const catalog = {
-    source: "modern-web-guidance",
-    version: ver,
-    retrievedAt,
-    regenerate: "See the \"How to Regenerate\" node extraction script in knowledge/mwg-catalog.md (unions the USE_CASES table from the package\x27s skills/modern-web-guidance/modern-web.mjs with the package guides/*/*.md file enumeration to ensure guides omitted from USE_CASES like prompt-api are included; the CLI `list` command does not emit featuresUsed/tokenCount)",
-    guideCount: guides.length,
-    guideIds,
-    guideIdsSha256,
-    comment: "Catalog extracted from modern-web-guidance@" + ver + ". The package CLI list command outputs id, category, and description; the package USE_CASES table and guides file enumeration additionally provide featuresUsed, tokenCount, and unlisted guides (such as prompt-api).",
-    guides: guides.map(g => ({
-      id: g.id,
-      category: g.category,
-      description: g.description,
-      featuresUsed: g.featuresUsed,
-      tokenCount: g.tokenCount
-    }))
-  };
-  fs.writeFileSync(outPath, JSON.stringify(catalog, null, 2) + "\n");
-  console.log(`Wrote ${guides.length} guides for modern-web-guidance@${ver} to ${outPath}`);
-} finally {
-  fs.rmSync(tmp, { recursive: true, force: true });
-}
-' "$@"
+# 3. Refresh the artefact hashes the catalog changed, then verify.
+node tests/mwg-artefact.mjs update
+node tests/mwg-artefact.mjs verify
 ```
+
+The generator (`tests/mwg-catalog.mjs`) is the single source of truth for the extraction: it
+unions the `USE_CASES` table with the guide file enumeration, and `tests/mwg-catalog-extract.mjs`
+tests it, including that a table containing an expression is refused without being executed.
+The upstream package's own `list` command is not used for the catalog because it omits
+`featuresUsed` and `tokenCount`.

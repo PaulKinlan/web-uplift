@@ -66,7 +66,7 @@ A recurring monitor must never fail silently. The total-absence guard uses a two
 
 When exit code 2 fires (or an issue titled "MWG upstream moved: reanalysis needed" is created), the assigned lane performs the following procedure:
 
-1. Regenerate catalog: Follow the extraction script in `knowledge/mwg-catalog.md` ("How to Regenerate") to extract the new guidance taxonomy and update `knowledge/mwg-catalog.json`.
+1. Regenerate catalog: Run the committed generator (`node tests/mwg-catalog.mjs --package-dir <unpacked package> --version <x.y.z> --out knowledge/mwg-catalog.json`) to extract the new guidance taxonomy and update `knowledge/mwg-catalog.json`. The recipe it replaces (`eval` of the package's `USE_CASES` table) is gone: the generator parses that table as data and refuses anything that is not a literal, because the package is downloaded code (web-uplift-w0y). See "How to Regenerate" in `knowledge/mwg-catalog.md`.
 2. Re-verify principles coverage: Check `docs/principles-analysis.md` and `knowledge/principles.json` against the updated catalog (ensure all new or changed guides are mapped to principles and retired guides are reconciled).
 3. Update state file: Bump `analysedVersion` and `analysedAt` in `knowledge/mwg-state.json` to match the newly regenerated `knowledge/mwg-catalog.json`, then run `node tests/mwg-artefact.mjs update` to refresh `catalogSha256`, `guideIdsSha256` and `guideCount`.
 4. Run regression suite: Verify all guards pass and commit the reanalysed baseline.

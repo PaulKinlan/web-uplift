@@ -2,7 +2,7 @@
   "source": "modern-web-guidance",
   "version": "0.0.193",
   "retrievedAt": "2026-10-08T14:19:37.712Z",
-  "regenerate": "See the \"How to Regenerate\" node extraction script in knowledge/mwg-catalog.md (unions the USE_CASES table from the package's skills/modern-web-guidance/modern-web.mjs with the package guides/*/*.md file enumeration to ensure guides omitted from USE_CASES like prompt-api are included; the CLI `list` command does not emit featuresUsed/tokenCount)",
+  "regenerate": "Regenerate with the committed generator: `node tests/mwg-catalog.mjs --package-dir <unpacked modern-web-guidance package> --version <x.y.z> --out knowledge/mwg-catalog.json` (see \"How to Regenerate\" in knowledge/mwg-catalog.md). It unions the USE_CASES table from the package's skills/modern-web-guidance/modern-web.mjs with the package guides/*/*.md file enumeration to ensure guides omitted from USE_CASES like prompt-api are included; the CLI `list` command does not emit featuresUsed/tokenCount.",
   "guideCount": 178,
   "guideIds": [
     "accessibility",
