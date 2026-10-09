@@ -1,7 +1,7 @@
 // User-flow record + replay: audit a real JOURNEY (checkout, signup, search),
 // not just a landing page, for MPA and SPA sites.
 //
-//   web-uplift flow record <url> [--out flow.json] [--capture-hidden]   capture a journey (we drive)
+//   web-uplift flow record <url> [--out flow.json] [--capture-hidden] [--capture-sensitive]   capture a journey (we drive)
 //   web-uplift flow replay <flow.json> [--url <start>] [--out <dir>] [--allow-mutations]   replay + shots
 //
 // The flow format IS Chrome DevTools' Recorder JSON ({ title, steps: [...] }), so
@@ -143,6 +143,14 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
           await sleep(settleMs);
           break;
         case 'change':
+          if (step.redacted && !allowMutations) {
+            outcome = {
+              ok: true,
+              detail: 'skipped redacted sensitive field (pass --allow-mutations to replay)',
+              skipped: true
+            };
+            break;
+          }
           outcome = await pageAction(client, step.selectors, `
             const v=${JSON.stringify(step.value ?? '')};
             el.focus();
@@ -266,9 +274,10 @@ async function main() {
     }
   } else if (sub === 'record') {
     const url = positional[0];
-    if (!url) throw new Error('Usage: web-uplift flow record <url> [--out <flow.json>] [--capture-hidden]');
+    if (!url) throw new Error('Usage: web-uplift flow record <url> [--out <flow.json>] [--capture-hidden] [--capture-sensitive]');
     const outPath = opt('out') || `flow-${Date.now()}.json`;
     const captureHidden = rest.includes('--capture-hidden');
+    const captureSensitive = rest.includes('--capture-sensitive');
     const log = (m) => console.error(m);
     const { recordFlow } = await import('./flow-record.mjs');
     const chrome = await launchChrome({ log, headless: false });
@@ -277,7 +286,7 @@ async function main() {
     try {
       const session = await newSession(chrome.port, { log });
       try {
-        const flow = await recordFlow(session.client, url, { log, captureHidden });
+        const flow = await recordFlow(session.client, url, { log, captureHidden, captureSensitive });
         writeFileSync(outPath, JSON.stringify(flow, null, 2) + '\n');
         console.error(`[flow] recorded ${flow.steps.length} step(s) -> ${outPath}`);
       } finally {

@@ -324,7 +324,11 @@ additional paths and record the flow in `paths`.
 **Replay safety invariant:** Audits must not mutate target state without operator
 consent. Flow replay defaults to dry-run mode for mutating steps (form submission
 on Enter, clicks on submit controls); passing `--allow-mutations` is required to
-execute real submissions against target sites.
+execute real submissions against target sites. Flows needing entered sensitive
+values cannot replay faithfully without either passing `--capture-sensitive`
+during recording, hand-authoring test values in `flow.json`, or passing
+`--allow-mutations` during replay (redacted fields are skipped during replay by
+default to prevent clearing DOM values).
 
 ### 2. Build the check manifest and plan evidence, per check
 

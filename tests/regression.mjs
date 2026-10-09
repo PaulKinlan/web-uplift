@@ -1871,7 +1871,8 @@ async function testFlowNormalize() {
 }
 
 async function testFlowRecordSensitiveRedaction() {
-  const { isSensitiveField, makeCaptureJs } = await import('../runner/flow-record.mjs');
+  const { runInNewContext } = await import('node:vm');
+  const { isSensitiveField, makeCaptureJs, sanitizeNavUrl } = await import('../runner/flow-record.mjs');
 
   // 1. Password inputs are always sensitive.
   assert(isSensitiveField({ type: 'password', name: 'pwd' }), 'password field must be sensitive');
@@ -1881,12 +1882,20 @@ async function testFlowRecordSensitiveRedaction() {
   assert(isSensitiveField({ type: 'hidden', name: 'csrf_token' }, { captureHidden: false }), 'hidden input must be sensitive by default');
   assert(!isSensitiveField({ type: 'hidden', name: 'returnUrl' }, { captureHidden: true }), 'innocent hidden input must be allowed when captureHidden=true');
 
-  // 3. Autocomplete sensitive tokens.
+  // 3. PII by type: email and tel are sensitive.
+  assert(isSensitiveField({ type: 'email', name: 'email' }), 'email type must be sensitive');
+  assert(isSensitiveField({ type: 'tel', name: 'phone' }), 'tel type must be sensitive');
+
+  // 4. Autocomplete sensitive tokens (payment, auth, PII, address).
   assert(isSensitiveField({ type: 'text', name: 'card', autocomplete: 'cc-number' }), 'cc-number autocomplete must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'code', autocomplete: 'one-time-code' }), 'one-time-code autocomplete must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'pw', autocomplete: 'current-password' }), 'current-password autocomplete must be sensitive');
+  assert(isSensitiveField({ type: 'text', autocomplete: 'email' }), 'email autocomplete must be sensitive');
+  assert(isSensitiveField({ type: 'text', autocomplete: 'tel' }), 'tel autocomplete must be sensitive');
+  assert(isSensitiveField({ type: 'text', autocomplete: 'street-address' }), 'street-address autocomplete must be sensitive');
+  assert(isSensitiveField({ type: 'text', autocomplete: 'name' }), 'name autocomplete must be sensitive');
 
-  // 4. Credential-shaped names, IDs, labels, placeholders.
+  // 5. Credential-shaped names, IDs, labels, placeholders.
   assert(isSensitiveField({ type: 'text', name: 'apiKey' }), 'apiKey name must be sensitive');
   assert(isSensitiveField({ type: 'text', id: 'user_session' }), 'user_session ID must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'authToken' }), 'authToken name must be sensitive');
@@ -1894,24 +1903,97 @@ async function testFlowRecordSensitiveRedaction() {
   assert(isSensitiveField({ type: 'text', placeholder: 'Enter JWT bearer token' }), 'jwt placeholder must be sensitive');
   assert(isSensitiveField({ type: 'text', label: 'Client Secret Key' }), 'secret label must be sensitive');
 
-  // 5. Payment and sensitive PII names.
+  // 6. Payment, sensitive PII, and contact names.
   assert(isSensitiveField({ type: 'text', name: 'cardCvc' }), 'cvc must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'creditCard' }), 'creditCard must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'ssn' }), 'ssn must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'socialSecurityNumber' }), 'socialSecurityNumber must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'taxId' }), 'taxId must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'emailAddress' }), 'emailAddress must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'phoneNumber' }), 'phoneNumber must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'fullName' }), 'fullName must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'streetAddress' }), 'streetAddress must be sensitive');
 
-  // 6. Innocent fields must not be sensitive.
+  // 7. Innocent fields must not be sensitive (bare code/key omitted to protect postalCode/sortKey).
   assert(!isSensitiveField({ type: 'text', name: 'search' }), 'search must not be sensitive');
   assert(!isSensitiveField({ type: 'text', name: 'city' }), 'city must not be sensitive');
   assert(!isSensitiveField({ type: 'number', name: 'quantity' }), 'quantity must not be sensitive');
   assert(!isSensitiveField({ type: 'text', name: 'comment' }), 'comment must not be sensitive');
+  assert(!isSensitiveField({ type: 'text', name: 'postalCode' }), 'postalCode must not match bare code keyword');
+  assert(!isSensitiveField({ type: 'text', name: 'countryCode' }), 'countryCode must not match bare code keyword');
+  assert(!isSensitiveField({ type: 'text', name: 'sortKey' }), 'sortKey must not match bare key keyword');
 
-  // 7. makeCaptureJs source embeds the captureHidden flag.
-  const srcDefault = makeCaptureJs();
-  assert(srcDefault.includes('CAPTURE_HIDDEN = false;'), 'default capture script must disable hidden capture');
-  const srcOptIn = makeCaptureJs({ captureHidden: true });
-  assert(srcOptIn.includes('CAPTURE_HIDDEN = true;'), 'opt-in capture script must enable hidden capture');
+  // 8. Opt-in captureSensitive overrides redaction.
+  assert(!isSensitiveField({ type: 'email', name: 'email' }, { captureSensitive: true }), 'captureSensitive must allow email');
+  assert(!isSensitiveField({ type: 'password', name: 'pwd' }, { captureSensitive: true }), 'captureSensitive must allow password');
+
+  // 9. Injected capture handler persistence test in VM sandbox.
+  function mockEl(props) {
+    return {
+      getAttribute: (k) => props[k] ?? null,
+      tagName: 'INPUT',
+      nodeType: 1,
+      ...props
+    };
+  }
+  function testCaptureSession({ captureHidden = false, captureSensitive = false } = {}) {
+    const steps = [];
+    const listeners = {};
+    const mockElem = { setAttribute: () => {}, addEventListener: () => {} };
+    const mockDoc = {
+      addEventListener: (evt, fn) => { listeners[evt] = fn; },
+      createElement: () => mockElem,
+      body: {},
+      documentElement: { appendChild: () => {} },
+      getElementById: (id) => (id === '__wu_bar' ? null : mockElem),
+    };
+    const mockWin = {
+      __wuRecordStep: (str) => { steps.push(JSON.parse(str)); },
+    };
+    runInNewContext(makeCaptureJs({ captureHidden, captureSensitive }), {
+      window: mockWin,
+      document: mockDoc,
+      CSS: { escape: (s) => s },
+    });
+    return {
+      triggerChange: (props) => listeners['change']({ target: mockEl(props) }),
+      steps
+    };
+  }
+
+  // A. Default session: verify sensitive and hidden fields are redacted/omitted
+  const def = testCaptureSession({ captureHidden: false, captureSensitive: false });
+  def.triggerChange({ type: 'password', name: 'pwd', value: 'secret123', id: 'p1' });
+  assert(def.steps.length === 1 && def.steps[0].value === '', 'password value must be blanked');
+
+  def.triggerChange({ type: 'hidden', name: 'csrf_token', value: 'tok456', id: 'h1' });
+  assert(def.steps.length === 1, 'hidden input must be omitted by default');
+
+  def.triggerChange({ type: 'email', name: 'user_email', value: 'alice@example.com', id: 'e1' });
+  assert(def.steps.length === 2 && def.steps[1].value === '' && def.steps[1].redacted === true, 'email must be redacted');
+
+  def.triggerChange({ type: 'tel', name: 'phone_num', value: '+1-555-0199', id: 't1' });
+  assert(def.steps.length === 3 && def.steps[2].value === '' && def.steps[2].redacted === true, 'phone must be redacted');
+
+  def.triggerChange({ type: 'text', name: 'search', value: 'blue sneakers', id: 's1' });
+  assert(def.steps.length === 4 && def.steps[3].value === 'blue sneakers' && !def.steps[3].redacted, 'search query must be persisted verbatim');
+
+  def.triggerChange({ type: 'text', name: 'postalCode', value: '90210', id: 'pc1' });
+  assert(def.steps.length === 5 && def.steps[4].value === '90210' && !def.steps[4].redacted, 'postalCode must be persisted verbatim');
+
+  // B. Opt-in session: verify captureHidden and captureSensitive capture values verbatim
+  const opt = testCaptureSession({ captureHidden: true, captureSensitive: true });
+  opt.triggerChange({ type: 'hidden', name: 'csrf_token', value: 'tok456', id: 'h2' });
+  assert(opt.steps.length === 1 && opt.steps[0].value === 'tok456', 'hidden token preserved when captureHidden=true');
+
+  opt.triggerChange({ type: 'email', name: 'user_email', value: 'alice@example.com', id: 'e2' });
+  assert(opt.steps.length === 2 && opt.steps[1].value === 'alice@example.com', 'email preserved when captureSensitive=true');
+
+  // 10. Navigation URL query sanitization
+  const safeNav = sanitizeNavUrl('https://example.com/checkout?step=2&session_token=xyz&email=alice%40test.com&search=boots');
+  assert(safeNav.includes('session_token=%5Bredacted%5D'), 'nav URL session_token must be redacted');
+  assert(safeNav.includes('email=%5Bredacted%5D'), 'nav URL email must be redacted');
+  assert(safeNav.includes('search=boots'), 'nav URL innocent search param must be preserved');
 }
 
 async function testFlowReplayMutationGate() {
