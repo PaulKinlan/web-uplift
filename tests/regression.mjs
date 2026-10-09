@@ -1886,7 +1886,7 @@ async function testFlowRecordSensitiveRedaction() {
   assert(isSensitiveField({ type: 'email', name: 'email' }), 'email type must be sensitive');
   assert(isSensitiveField({ type: 'tel', name: 'phone' }), 'tel type must be sensitive');
 
-  // 4. Autocomplete sensitive tokens (payment, auth, PII, address).
+  // 4. Autocomplete sensitive tokens (payment, auth, PII, address, including multi-token strings).
   assert(isSensitiveField({ type: 'text', name: 'card', autocomplete: 'cc-number' }), 'cc-number autocomplete must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'code', autocomplete: 'one-time-code' }), 'one-time-code autocomplete must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'pw', autocomplete: 'current-password' }), 'current-password autocomplete must be sensitive');
@@ -1894,6 +1894,9 @@ async function testFlowRecordSensitiveRedaction() {
   assert(isSensitiveField({ type: 'text', autocomplete: 'tel' }), 'tel autocomplete must be sensitive');
   assert(isSensitiveField({ type: 'text', autocomplete: 'street-address' }), 'street-address autocomplete must be sensitive');
   assert(isSensitiveField({ type: 'text', autocomplete: 'name' }), 'name autocomplete must be sensitive');
+  assert(isSensitiveField({ type: 'text', autocomplete: 'shipping street-address' }), 'multi-token shipping street-address must be sensitive');
+  assert(isSensitiveField({ type: 'text', autocomplete: 'section-user email' }), 'multi-token section-user email must be sensitive');
+  assert(isSensitiveField({ type: 'text', autocomplete: 'billing name' }), 'multi-token billing name must be sensitive');
 
   // 5. Credential-shaped names, IDs, labels, placeholders.
   assert(isSensitiveField({ type: 'text', name: 'apiKey' }), 'apiKey name must be sensitive');
@@ -1903,7 +1906,7 @@ async function testFlowRecordSensitiveRedaction() {
   assert(isSensitiveField({ type: 'text', placeholder: 'Enter JWT bearer token' }), 'jwt placeholder must be sensitive');
   assert(isSensitiveField({ type: 'text', label: 'Client Secret Key' }), 'secret label must be sensitive');
 
-  // 6. Payment, sensitive PII, and contact names.
+  // 6. Payment, sensitive PII, contact, and delimited names (billingName, contactEmail, etc.).
   assert(isSensitiveField({ type: 'text', name: 'cardCvc' }), 'cvc must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'creditCard' }), 'creditCard must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'ssn' }), 'ssn must be sensitive');
@@ -1912,7 +1915,10 @@ async function testFlowRecordSensitiveRedaction() {
   assert(isSensitiveField({ type: 'text', name: 'emailAddress' }), 'emailAddress must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'phoneNumber' }), 'phoneNumber must be sensitive');
   assert(isSensitiveField({ type: 'text', name: 'fullName' }), 'fullName must be sensitive');
-  assert(isSensitiveField({ type: 'text', name: 'streetAddress' }), 'streetAddress must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'billingName' }), 'billingName must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'shippingAddress' }), 'shippingAddress must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'contactEmail' }), 'contactEmail must be sensitive');
+  assert(isSensitiveField({ type: 'text', name: 'userPhone' }), 'userPhone must be sensitive');
 
   // 7. Innocent fields must not be sensitive (bare code/key omitted to protect postalCode/sortKey).
   assert(!isSensitiveField({ type: 'text', name: 'search' }), 'search must not be sensitive');
@@ -1989,11 +1995,51 @@ async function testFlowRecordSensitiveRedaction() {
   opt.triggerChange({ type: 'email', name: 'user_email', value: 'alice@example.com', id: 'e2' });
   assert(opt.steps.length === 2 && opt.steps[1].value === 'alice@example.com', 'email preserved when captureSensitive=true');
 
-  // 10. Navigation URL query sanitization
-  const safeNav = sanitizeNavUrl('https://example.com/checkout?step=2&session_token=xyz&email=alice%40test.com&search=boots');
+  // 10. Navigation URL query sanitization (keys and values, preserving innocent params).
+  const safeNav = sanitizeNavUrl('https://example.com/checkout?step=2&session_token=xyz&email=alice%40test.com&q=alice@example.com&postalCode=90210&search=boots');
   assert(safeNav.includes('session_token=%5Bredacted%5D'), 'nav URL session_token must be redacted');
-  assert(safeNav.includes('email=%5Bredacted%5D'), 'nav URL email must be redacted');
+  assert(safeNav.includes('email=%5Bredacted%5D'), 'nav URL email key must be redacted');
+  assert(safeNav.includes('q=%5Bredacted%5D'), 'nav URL q with email value must be redacted');
+  assert(safeNav.includes('postalCode=90210'), 'nav URL postalCode must be preserved (not matching bare code)');
   assert(safeNav.includes('search=boots'), 'nav URL innocent search param must be preserved');
+
+  // 11. End-to-end recordFlow execution and serialized output assertion.
+  const { recordFlow } = await import('../runner/flow-record.mjs');
+  const bindingListeners = [];
+  const frameNavListeners = [];
+  const mockCdp = {
+    Runtime: {
+      addBinding: async () => {},
+      bindingCalled: (fn) => bindingListeners.push(fn),
+    },
+    Page: {
+      frameNavigated: (fn) => frameNavListeners.push(fn),
+      addScriptToEvaluateOnNewDocument: async () => {},
+      navigate: async () => {},
+    },
+  };
+  const flowPromise = recordFlow(mockCdp, 'https://example.com/checkout', { captureHidden: false });
+  await new Promise((r) => setTimeout(r, 10));
+
+  for (const fn of frameNavListeners) {
+    fn({ frame: { parentId: null, url: 'https://example.com/checkout?step=2&token=sec123&postalCode=90210&user_email=alice@test.com' } });
+  }
+  for (const fn of bindingListeners) {
+    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#email']], value: '', redacted: true }) });
+    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#search']], value: 'winter boots' }) });
+    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: '__done' }) });
+  }
+  const flow = await flowPromise;
+  assert(flow.title === 'Recorded flow (example.com)', 'flow title matches host');
+  assert(flow.steps.length === 4, 'flow contains 4 steps (viewport, nav, 2 changes)');
+  assert(flow.steps[1].type === 'navigate' && flow.steps[1].url.includes('token=%5Bredacted%5D'), 'flow nav step redacts token');
+  assert(flow.steps[1].url.includes('postalCode=90210'), 'flow nav step preserves postalCode');
+  assert(flow.steps[2].redacted === true && flow.steps[2].value === '', 'flow email step is redacted');
+  assert(flow.steps[3].value === 'winter boots', 'flow search step preserves value');
+
+  const serialized = JSON.stringify(flow);
+  assert(!serialized.includes('sec123'), 'serialized flow must not leak token');
+  assert(!serialized.includes('alice@test.com'), 'serialized flow must not leak email');
 }
 
 async function testFlowReplayMutationGate() {

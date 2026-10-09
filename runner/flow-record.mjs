@@ -12,16 +12,19 @@
 //
 // Security & Privacy (web-uplift-r5t):
 // Form values are sanitized by default before being written to flow.json:
-// 1. Password fields (type="password") are never recorded by default (empty string).
+// 1. Password fields (type="password") are never recorded by default (empty string, redacted: true).
 // 2. Hidden inputs (type="hidden") are omitted by default to prevent leaking CSRF
 //    tokens, session identifiers, or internal state into durable flow files.
 //    Capturing hidden input values requires explicit opt-in (--capture-hidden).
 // 3. Credential-shaped and PII-bearing fields (email, phone, name, address, payment,
-//    tokens, and sensitive identity numbers, by type, autocomplete, or name heuristic)
-//    have their values redacted (value: "", redacted: true). Capturing unredacted
-//    sensitive values for local test replay requires explicit opt-in (--capture-sensitive).
-// 4. Navigation URLs: Query parameters containing sensitive credentials, tokens, or
-//    PII are redacted in captured navigation steps.
+//    tokens, and sensitive identity numbers, by type, autocomplete tokens, or name
+//    heuristics) have their values redacted (value: "", redacted: true). Capturing
+//    unredacted sensitive values for local test replay requires explicit opt-in
+//    (--capture-sensitive).
+// 4. Navigation URLs: Query parameter keys and values containing sensitive credentials,
+//    tokens, or PII (e.g. emails, phone numbers, auth tokens) are redacted in
+//    captured navigation steps, while innocent search queries and postal codes
+//    remain preserved.
 
 // Words that mark a field as credential-shaped, payment-bearing, or sensitive PII.
 // Note: Bare "code" and "key" are intentionally omitted to avoid over-broad matching
@@ -57,9 +60,8 @@ export function hasSensitiveWord(str) {
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
   if (!words.length) return false;
-  if (words.length === 1 && words[0] === 'name') return true;
+  if (words.some((w) => w === 'name' || w === 'email' || w === 'phone' || w === 'tel' || isSensitiveWord(w))) return true;
   if (isSensitiveWord(words.join(''))) return true;
-  if (words.some(isSensitiveWord)) return true;
   for (let i = 0; i < words.length - 1; i++) {
     if (isSensitiveWord(words[i] + words[i + 1])) return true;
   }
@@ -68,16 +70,19 @@ export function hasSensitiveWord(str) {
 
 export function isSensitiveAutocomplete(ac) {
   if (!ac || typeof ac !== 'string') return false;
-  const s = ac.toLowerCase().trim();
-  if (s.startsWith('cc-')) return true;
-  if (s.startsWith('tel')) return true; // tel, tel-country-code, tel-national, etc.
-  if (s === 'email') return true;
-  if (s === 'one-time-code' || s === 'current-password' || s === 'new-password' || s.includes('password')) return true;
-  if (s === 'name' || s === 'given-name' || s === 'family-name' || s === 'additional-name' || s === 'nickname' || s === 'username') return true;
-  if (s.startsWith('address-') || s === 'street-address' || s === 'country' || s === 'country-name') return true;
-  if (s.startsWith('bday') || s === 'sex') return true;
-  if (s.startsWith('transaction-')) return true;
-  return false;
+  const tokens = ac.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  return tokens.some((s) => {
+    if (s.startsWith('cc-')) return true;
+    if (s.startsWith('tel')) return true;
+    if (s === 'email') return true;
+    if (s === 'one-time-code' || s === 'current-password' || s === 'new-password' || s.includes('password')) return true;
+    if (s === 'name' || s === 'given-name' || s === 'family-name' || s === 'additional-name' || s === 'nickname' || s === 'username') return true;
+    if (s.startsWith('address-') || s === 'street-address' || s === 'country' || s === 'country-name') return true;
+    if (s.startsWith('bday') || s === 'sex') return true;
+    if (s.startsWith('transaction-')) return true;
+    return isSensitiveWord(s.replace(/[^a-z0-9]+/g, ''));
+  });
 }
 
 export function isSensitiveField(desc, { captureHidden = false, captureSensitive = false } = {}) {
@@ -114,12 +119,21 @@ export function isSensitiveNavParam(k) {
   if (lower === 'email' || lower.includes('email')) return true;
   if (lower === 'phone' || lower.includes('phone') || lower === 'tel') return true;
   if (lower === 'token' || lower.includes('token')) return true;
-  if (lower === 'code' || lower.includes('code')) return true;
-  if (lower === 'password' || lower.includes('pass')) return true;
-  if (lower === 'session' || lower.includes('session')) return true;
+  if (lower === 'code' || lower === 'auth_code' || lower === 'authcode' || lower === 'one_time_code' || lower === 'passcode' || lower === 'pin' || lower === 'otp') return true;
+  if (lower === 'password' || lower.includes('pass') || lower === 'pwd' || lower === 'passwd') return true;
+  if (lower === 'session' || lower.includes('session') || lower === 'sessionid') return true;
   if (lower === 'secret' || lower.includes('secret')) return true;
-  if (lower === 'key' || lower.includes('key')) return true;
+  if (lower === 'key' || lower.startsWith('api_key') || lower.startsWith('apikey') || lower.endsWith('_key') || lower === 'secret_key' || lower === 'private_key') return true;
   return hasSensitiveWord(k);
+}
+
+export function isSensitiveNavValue(v) {
+  if (!v || typeof v !== 'string') return false;
+  if (/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(v)) return true;
+  if (/\b\d{3}-\d{2}-\d{4}\b/.test(v)) return true;
+  if (/\b(?:\d[ -]*?){13,19}\b/.test(v)) return true;
+  if (/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/.test(v)) return true;
+  return false;
 }
 
 export function sanitizeNavUrl(raw) {
@@ -129,7 +143,7 @@ export function sanitizeNavUrl(raw) {
     let modified = false;
     for (const [k, v] of [...u.searchParams.entries()]) {
       if (!v) continue;
-      if (isSensitiveNavParam(k)) {
+      if (isSensitiveNavParam(k) || isSensitiveNavValue(v)) {
         u.searchParams.set(k, '[redacted]');
         modified = true;
       }
@@ -173,9 +187,8 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false 
       .split(/[^a-z0-9]+/)
       .filter(Boolean);
     if (!words.length) return false;
-    if (words.length === 1 && words[0] === 'name') return true;
+    if (words.some((w) => w === 'name' || w === 'email' || w === 'phone' || w === 'tel' || isSensitiveWord(w))) return true;
     if (isSensitiveWord(words.join(''))) return true;
-    if (words.some(isSensitiveWord)) return true;
     for (let i = 0; i < words.length - 1; i++) {
       if (isSensitiveWord(words[i] + words[i + 1])) return true;
     }
@@ -184,16 +197,19 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false 
 
   const isSensitiveAutocomplete = (ac) => {
     if (!ac || typeof ac !== 'string') return false;
-    const s = ac.toLowerCase().trim();
-    if (s.startsWith('cc-')) return true;
-    if (s.startsWith('tel')) return true;
-    if (s === 'email') return true;
-    if (s === 'one-time-code' || s === 'current-password' || s === 'new-password' || s.includes('password')) return true;
-    if (s === 'name' || s === 'given-name' || s === 'family-name' || s === 'additional-name' || s === 'nickname' || s === 'username') return true;
-    if (s.startsWith('address-') || s === 'street-address' || s === 'country' || s === 'country-name') return true;
-    if (s.startsWith('bday') || s === 'sex') return true;
-    if (s.startsWith('transaction-')) return true;
-    return false;
+    const tokens = ac.toLowerCase().split(/\\s+/).filter(Boolean);
+    if (!tokens.length) return false;
+    return tokens.some((s) => {
+      if (s.startsWith('cc-')) return true;
+      if (s.startsWith('tel')) return true;
+      if (s === 'email') return true;
+      if (s === 'one-time-code' || s === 'current-password' || s === 'new-password' || s.includes('password')) return true;
+      if (s === 'name' || s === 'given-name' || s === 'family-name' || s === 'additional-name' || s === 'nickname' || s === 'username') return true;
+      if (s.startsWith('address-') || s === 'street-address' || s === 'country' || s === 'country-name') return true;
+      if (s.startsWith('bday') || s === 'sex') return true;
+      if (s.startsWith('transaction-')) return true;
+      return isSensitiveWord(s.replace(/[^a-z0-9]+/g, ''));
+    });
   };
 
   const isSensitiveField = (el) => {
@@ -269,7 +285,7 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false 
     const sensitive = isSensitiveField(el);
     const val = sensitive ? '' : el.value;
     const step = { type: 'change', selectors: selectorsFor(el), value: val, target: 'main' };
-    if (sensitive && type !== 'password') {
+    if (sensitive) {
       step.redacted = true;
     }
     send(step);

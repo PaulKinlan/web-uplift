@@ -143,10 +143,10 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
           await sleep(settleMs);
           break;
         case 'change':
-          if (step.redacted && !allowMutations) {
+          if (step.redacted && (!step.value || step.value === '')) {
             outcome = {
               ok: true,
-              detail: 'skipped redacted sensitive field (pass --allow-mutations to replay)',
+              detail: 'skipped redacted sensitive field (no replacement value supplied in flow.json)',
               skipped: true
             };
             break;
