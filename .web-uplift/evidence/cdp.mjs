@@ -14,7 +14,8 @@
 
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, networkInterfaces, tmpdir } from 'node:os';
+import { connect as netConnect } from 'node:net';
 import { join } from 'node:path';
 import CDP from 'chrome-remote-interface';
 
@@ -422,6 +423,73 @@ export function sandboxDisableReason({ env = process.env, uid = process.getuid?.
 }
 
 // One launch attempt: a fresh profile dir, a spawn, and a bounded wait for the
+// Is the CDP endpoint reachable from anywhere but this machine (web-uplift-4rv)?
+//
+// Chrome's DevTools endpoint has no authentication, and this tool keeps it open for the life
+// of the audit, so the only thing standing between the browser and any other host that can
+// reach the port is the ADDRESS it bound to. This asks the question with a real connection to
+// the endpoint over every non-loopback address this host has: a connection that SUCCEEDS is
+// proof the endpoint is exposed, because the same connection from another host would succeed
+// too. `interfaces` and `connect` are injectable so the decision is testable without a
+// browser and without depending on this machine's network.
+export async function cdpEndpointExposure(port, { interfaces = networkInterfaces(), connect = probeTcp, timeoutMs = 300 } = {}) {
+  if (!Number.isInteger(port) || port <= 0) return { exposed: false, note: 'no CDP port to probe' };
+  const hosts = [];
+  for (const addrs of Object.values(interfaces ?? {})) {
+    for (const addr of addrs ?? []) {
+      if (addr && addr.family === 'IPv4' && !addr.internal) hosts.push(addr.address);
+    }
+  }
+  if (hosts.length === 0) {
+    // Nothing but loopback on this host: there is no other address to reach it on, which is
+    // the property we want, and it is worth saying so rather than staying silent.
+    return { exposed: false, note: 'CDP endpoint: no non-loopback interface exists on this host, so it is loopback-only' };
+  }
+  let indeterminate = null;
+  for (const host of hosts) {
+    const verdict = await connect(host, port, timeoutMs);
+    if (verdict === 'connected') {
+      return {
+        exposed: true,
+        reason:
+          `the CDP endpoint answered on ${host}:${port}, which is not a loopback address: the audit's ` +
+          'authenticated-free DevTools port is reachable from other hosts, so this launch is refused',
+      };
+    }
+    if (verdict !== 'refused') indeterminate = host;
+  }
+  return indeterminate
+    ? {
+        exposed: false,
+        note: `CDP endpoint: could not probe ${indeterminate}:${port} (${indeterminate} did not refuse the connection), so loopback-only is unconfirmed`,
+      }
+    : { exposed: false };
+}
+
+// One real TCP probe of the endpoint. 'connected' means something is listening on that
+// address, which is the only outcome that proves exposure; 'refused' is the loopback-only
+// answer; anything else is indeterminate and must not be reported as either.
+export function probeTcp(host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (verdict) => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.destroy();
+      } catch {
+        // teardown is best effort: the verdict is already decided
+      }
+      resolve(verdict);
+    };
+    const socket = netConnect({ host, port });
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => settle('connected'));
+    socket.once('timeout', () => settle('timeout'));
+    socket.once('error', (err) => settle(err && err.code === 'ECONNREFUSED' ? 'refused' : 'error'));
+  });
+}
+
 // "DevTools listening on ws://..." line Chrome prints to stderr
 // (remote-debugging-port=0 picks a free port). Returns { ok: true, handle } or
 // { ok: false, detail } and never throws, so launchChrome() can retry the whole
@@ -442,6 +510,10 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs }
         // Headed for `flow record` (the user interacts); headless everywhere else.
         ...(headless ? ['--headless=new'] : []),
         '--remote-debugging-port=0',
+        // web-uplift-4rv: the CDP endpoint is unauthenticated and lives for the whole audit,
+        // so WHO can reach it is a security property, not a detail. Chrome defaults to
+        // loopback, but the default is not a contract: pin it, and verify it below.
+        '--remote-debugging-address=127.0.0.1',
         // Absent unless the operator opted out or Chrome cannot sandbox here.
         ...(sandboxReason ? ['--no-sandbox'] : []),
         `--user-data-dir=${userDataDir}`,
@@ -570,6 +642,22 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs }
     await close();
     return { ok: false, detail };
   }
+
+  // The address is pinned above, but a pin is a claim about what Chrome did, and the endpoint
+  // it protects has no authentication: anything that can reach it can drive the browser as the
+  // operator, read the pages it has open and run script in them. So the claim is measured
+  // rather than trusted, and a non-loopback bind fails the launch instead of exposing an
+  // audit (web-uplift-4rv).
+  const exposure = await cdpEndpointExposure(port);
+  if (exposure.exposed) {
+    recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: exposure.reason });
+    await close();
+    return {
+      ok: false,
+      detail: { reason: exposure.reason, spawned: true, alive: false, exitCode: null, signal: null, stderrText },
+    };
+  }
+  if (exposure.note) log(`[browser] ${exposure.note}`);
 
   log(`[browser] DevTools port ${port}`);
   return { ok: true, handle: { proc, port, userDataDir, close } };

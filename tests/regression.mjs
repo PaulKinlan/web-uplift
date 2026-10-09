@@ -22,6 +22,7 @@ import { testSourceTreeSkipsSymlinkFileEscape, testSourceTreeSkipsSymlinkDirEsca
 import { testInstallSkipsSymlinksInVendoredSource, testInstallCopyDepthGuard, testInstallVendorsCompleteClosure } from './install-copy-symlink.mjs';
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath, sandboxDisableReason } from '../evidence/cdp.mjs';
+import { testCdpEndpointExposure } from './cdp-endpoint-exposure.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
 import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
@@ -42,6 +43,7 @@ const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'reports', 'scratch']);
 
 const ALL_TESTS = [
+  testCdpEndpointExposure,
   testSyntaxChecks,
   testPackageRootImportIsSideEffectFree,
   testChromeCandidateDiscovery,
