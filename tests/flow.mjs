@@ -151,13 +151,27 @@ export async function testFlowRecordSensitiveRedaction() {
     const tokens = [];
     const rawPayloads = [];
     const listeners = {};
-    const mockElem = { setAttribute: () => {}, addEventListener: () => {} };
+    const mockElem = { setAttribute: () => {}, addEventListener: () => {}, isConnected: true };
+    let barEl = null;
+    let observerCb = null;
+    let observerDisconnected = false;
+    class MockMutationObserver {
+      constructor(cb) { observerCb = cb; }
+      observe() {}
+      disconnect() { observerDisconnected = true; }
+    }
     const mockDoc = {
       addEventListener: (evt, fn) => { listeners[evt] = fn; },
-      createElement: () => mockElem,
+      createElement: () => {
+        const el = { setAttribute: () => {}, addEventListener: () => {}, isConnected: true };
+        return el;
+      },
       body: {},
-      documentElement: { appendChild: () => {} },
-      getElementById: (id) => (id === '__wu_bar' ? null : mockElem),
+      documentElement: { appendChild: (c) => { barEl = c; if (barEl) barEl.isConnected = true; } },
+      getElementById: (id) => {
+        if (id === '__wu_bar') return barEl;
+        return mockElem;
+      },
     };
     const mockWin = {
       // The emitted payload is an envelope: { __wu: token, step } (web-uplift-sg5). The
@@ -169,16 +183,22 @@ export async function testFlowRecordSensitiveRedaction() {
       window: mockWin,
       document: mockDoc,
       CSS: { escape: (s) => s },
+      MutationObserver: MockMutationObserver,
     });
     return {
       // isTrusted: an event the user agent produced. Without it the listener refuses to
       // record at all (web-uplift-sg5 review), which is asserted below.
       triggerChange: (props, trusted = true) => listeners['change']({ isTrusted: trusted, target: mockEl(props) }),
       triggerClick: (props, trusted = true) => listeners['click']({ isTrusted: trusted, target: { closest: () => mockEl(props) } }),
+      removeOverlay: () => {
+        if (barEl) barEl.isConnected = false;
+        if (observerCb) observerCb();
+      },
       steps,
       tokens,
       rawPayloads,
       token,
+      get observerDisconnected() { return observerDisconnected; },
     };
   }
 
@@ -249,6 +269,16 @@ export async function testFlowRecordSensitiveRedaction() {
   assert(clickSession.steps.length === 1 && clickSession.steps[0].type === 'click' && clickSession.steps[0].selectors.length >= 1,
     `a legitimate click must still be recorded: ${JSON.stringify(clickSession.steps)}`);
   assert(clickSession.tokens[0] === clickSession.token, 'the click payload must be authenticated too');
+
+  // web-uplift-q7s6: overlay removal detection notifies Node so recording does not hang
+  const overlaySession = testCaptureSession({ captureHidden: false, captureSensitive: false });
+  overlaySession.removeOverlay();
+  assert(overlaySession.steps.length === 1 && overlaySession.steps[0].type === '__overlay_removed',
+    `overlay removal must emit __overlay_removed: ${JSON.stringify(overlaySession.steps)}`);
+  assert(overlaySession.tokens[0] === overlaySession.token,
+    'overlay removal must carry the recording token');
+  assert(overlaySession.observerDisconnected === true,
+    'observer must disconnect after emitting overlay removal');
 
   // A3. validateRecordedStep driven directly: the e2e above proves the live path, this
   // pins the shapes and the BOUNDS - including the shapes that must still be accepted, so
@@ -611,6 +641,59 @@ export async function testFlowRecordSensitiveRedaction() {
   assert(serializedOpt.includes('alice@test.com'), 'serialized opt-in flow retains email');
   assert(optLogs.some((m) => /WARNING.*--capture-sensitive/.test(m) && /replay fidelity/.test(m)),
     `opt-in recording must warn that values are persisted verbatim: ${JSON.stringify(optLogs)}`);
+
+  // 13. Overlay removal termination and timeout termination (web-uplift-q7s6).
+  const overlayLogs = [];
+  let overlayToken = null;
+  let overlayBindingFn = null;
+  const mockCdpOverlay = {
+    Runtime: {
+      addBinding: async () => {},
+      bindingCalled: (fn) => { overlayBindingFn = fn; },
+    },
+    Page: {
+      frameNavigated: () => {},
+      addScriptToEvaluateOnNewDocument: async ({ source }) => {
+        overlayToken = /const TOKEN = "([^"]+)"/.exec(source)?.[1];
+      },
+      navigate: async () => {},
+    },
+  };
+  const overlayFlowPromise = recordFlow(mockCdpOverlay, 'https://example.com/start', {
+    log: (m) => overlayLogs.push(m),
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  assert(overlayBindingFn && overlayToken, 'overlay mock setup must capture token and binding');
+  overlayBindingFn({
+    name: '__wuRecordStep',
+    payload: JSON.stringify({ __wu: overlayToken, step: { type: '__overlay_removed' } }),
+  });
+  const overlayFlow = await overlayFlowPromise;
+  assert(overlayFlow.steps.length === 1 && overlayFlow.steps[0].type === 'setViewport',
+    'overlay removal terminates recording cleanly');
+  assert(overlayLogs.some((m) => m.includes('recorder overlay was removed')),
+    'overlay removal must log a warning');
+
+  const timeoutLogs = [];
+  const mockCdpTimeout = {
+    Runtime: {
+      addBinding: async () => {},
+      bindingCalled: () => {},
+    },
+    Page: {
+      frameNavigated: () => {},
+      addScriptToEvaluateOnNewDocument: async () => {},
+      navigate: async () => {},
+    },
+  };
+  const timeoutFlow = await recordFlow(mockCdpTimeout, 'https://example.com/start', {
+    log: (m) => timeoutLogs.push(m),
+    timeoutMs: 20,
+  });
+  assert(timeoutFlow.steps.length === 1 && timeoutFlow.steps[0].type === 'setViewport',
+    'timeout terminates recording cleanly');
+  assert(timeoutLogs.some((m) => m.includes('recording timed out after 20ms')),
+    'timeout must log a warning');
 }
 
 export async function testFlowReplayMutationGate() {

@@ -544,10 +544,11 @@ async function main() {
     }
   } else if (sub === 'record') {
     const url = positional[0];
-    if (!url) throw new Error('Usage: web-uplift flow record <url> [--out <flow.json>] [--capture-hidden] [--capture-sensitive]');
+    if (!url) throw new Error('Usage: web-uplift flow record <url> [--out <flow.json>] [--capture-hidden] [--capture-sensitive] [--timeout <ms>]');
     const outPath = options.out || `flow-${Date.now()}.json`;
     const captureHidden = flags.has('--capture-hidden');
     const captureSensitive = flags.has('--capture-sensitive');
+    const timeoutMs = options.timeout ? parseInt(options.timeout, 10) : 0;
     const log = (m) => console.error(m);
     const { recordFlow } = await import('./flow-record.mjs');
     const chrome = await launchChrome({ log, headless: false });
@@ -556,7 +557,7 @@ async function main() {
     try {
       const session = await newSession(chrome.port, { log });
       try {
-        const flow = await recordFlow(session.client, url, { log, captureHidden, captureSensitive });
+        const flow = await recordFlow(session.client, url, { log, captureHidden, captureSensitive, timeoutMs });
         writeFileSync(outPath, JSON.stringify(flow, null, 2) + '\n');
         console.error(`[flow] recorded ${flow.steps.length} step(s) -> ${outPath}`);
       } finally {

@@ -569,13 +569,26 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
       if (!e.isTrusted) return;
       send({ type: '__done' });
     }, true);
+
+    // Overlay-removal detection (web-uplift-q7s6): if page scripts remove the overlay
+    // or its Done control, the operator can never click Done. Notify Node so the
+    // recording terminates instead of hanging indefinitely.
+    if (typeof MutationObserver !== 'undefined') {
+      const observer = new MutationObserver(() => {
+        if (!bar.isConnected || !document.getElementById('__wu_done')) {
+          observer.disconnect();
+          send({ type: '__overlay_removed' });
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
   };
   if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount);
 })();
 `;
 }
 
-export async function recordFlow(client, url, { log = () => {}, captureHidden = false, captureSensitive = false } = {}) {
+export async function recordFlow(client, url, { log = () => {}, captureHidden = false, captureSensitive = false, timeoutMs = 0 } = {}) {
   const steps = [{ type: 'setViewport', width: 1280, height: 800, deviceScaleFactor: 1, isMobile: false }];
   if (captureSensitive) {
     log('[flow-record] WARNING: --capture-sensitive persists form values AND navigation URLs verbatim (needed for replay fidelity); treat the resulting flow.json as a secret and never commit or share it.');
@@ -583,6 +596,23 @@ export async function recordFlow(client, url, { log = () => {}, captureHidden = 
   let lastNav = null;
   let done;
   const finished = new Promise((r) => { done = r; });
+
+  let timer = null;
+  const finish = (reason) => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (reason === 'overlay_removed') {
+      log('[flow-record] WARNING: recorder overlay was removed from the page; terminating recording');
+    } else if (reason === 'timeout') {
+      log(`[flow-record] WARNING: recording timed out after ${timeoutMs}ms; terminating recording`);
+    }
+    done();
+  };
+
+  if (timeoutMs > 0) {
+    timer = setTimeout(() => {
+      finish('timeout');
+    }, timeoutMs);
+  }
 
   // One token per recording, held only by the injected script's closure (see makeCaptureJs).
   const token = randomUUID();
@@ -609,7 +639,8 @@ export async function recordFlow(client, url, { log = () => {}, captureHidden = 
       refuse('it did not carry this recording\'s token');
       return;
     }
-    if (msg.step && msg.step.type === '__done') { done(); return; }
+    if (msg.step && msg.step.type === '__done') { finish('done'); return; }
+    if (msg.step && msg.step.type === '__overlay_removed') { finish('overlay_removed'); return; }
     if (steps.length >= MAX_RECORDED_STEPS) {
       refuse(`the recording already holds the maximum of ${MAX_RECORDED_STEPS} steps`);
       return;
