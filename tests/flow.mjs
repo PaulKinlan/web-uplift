@@ -694,6 +694,49 @@ export async function testFlowRecordSensitiveRedaction() {
     'timeout terminates recording cleanly');
   assert(timeoutLogs.some((m) => m.includes('recording timed out after 20ms')),
     'timeout must log a warning');
+
+  // 14. Navigation steps count toward MAX_RECORDED_STEPS cap (web-uplift-qgz3).
+  const capLogs = [];
+  let capBindingFn = null;
+  let capNavFn = null;
+  let capToken = null;
+  const mockCdpCap = {
+    Runtime: {
+      addBinding: async () => {},
+      bindingCalled: (fn) => { capBindingFn = fn; },
+    },
+    Page: {
+      frameNavigated: (fn) => { capNavFn = fn; },
+      addScriptToEvaluateOnNewDocument: async ({ source }) => {
+        capToken = /const TOKEN = "([^"]+)"/.exec(source)?.[1];
+      },
+      navigate: async () => {},
+    },
+  };
+  const capFlowPromise = recordFlow(mockCdpCap, 'https://example.com/start', {
+    log: (m) => capLogs.push(m),
+  });
+  await new Promise((r) => setTimeout(r, 10));
+
+  // Drive 2005 navigation steps through frameNavigated
+  for (let i = 0; i < 2005; i++) {
+    capNavFn({ frame: { parentId: null, url: `https://example.com/page/${i}` } });
+  }
+  // Try sending a click step after cap is reached
+  capBindingFn({
+    name: '__wuRecordStep',
+    payload: JSON.stringify({ __wu: capToken, step: { type: 'click', selectors: [['#btn']], target: 'main' } }),
+  });
+  // Finish recording
+  capBindingFn({
+    name: '__wuRecordStep',
+    payload: JSON.stringify({ __wu: capToken, step: { type: '__done' } }),
+  });
+  const capFlow = await capFlowPromise;
+  assert(capFlow.steps.length === 2000,
+    `steps count must be capped at 2000, got ${capFlow.steps.length}`);
+  assert(capLogs.some((m) => m.includes('the recording already holds the maximum of 2000 steps')),
+    'excess navigation steps must be refused with a logged warning');
 }
 
 export async function testFlowReplayMutationGate() {

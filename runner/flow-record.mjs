@@ -143,7 +143,7 @@ export function validateRecordedStep(raw) {
   return { ok: true, step };
 }
 
-export { SENSITIVE_WORDS, isSensitiveWord };
+export { SENSITIVE_WORDS, isSensitiveWord, MAX_RECORDED_STEPS };
 
 export const hasSensitiveWord = (str) => isSensitiveName(str);
 export function isSensitiveAutocomplete(ac) {
@@ -652,9 +652,14 @@ export async function recordFlow(client, url, { log = () => {}, captureHidden = 
   });
 
   // Capture main-frame navigations (dedupe consecutive identical urls).
+  // Navigation steps count toward MAX_RECORDED_STEPS to prevent unbounded nav steps (web-uplift-qgz3).
   client.Page.frameNavigated(({ frame }) => {
     if (frame.parentId) return; // main frame only
     if (frame.url && frame.url !== lastNav && !frame.url.startsWith('about:')) {
+      if (steps.length >= MAX_RECORDED_STEPS) {
+        refuse(`the recording already holds the maximum of ${MAX_RECORDED_STEPS} steps`);
+        return;
+      }
       const sanitizedUrl = captureSensitive ? frame.url : sanitizeNavUrl(frame.url);
       lastNav = frame.url;
       steps.push({ type: 'navigate', url: sanitizedUrl });
