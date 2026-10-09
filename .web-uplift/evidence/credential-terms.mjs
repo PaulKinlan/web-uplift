@@ -212,23 +212,47 @@ export function redactUrlCredentialValues(raw) {
   }
 }
 
-// A URL that appears INSIDE a string of prose: absolute, or protocol-relative. A page can log
-// `location.href`, so a console entry's text is a leak path that no URL-shaped field redactor
-// reaches. Conservative by design - it only rewrites what is plainly a URL, and
-// redactUrlCredentialValues is a no-op for a URL with no credential parameter.
-const URL_IN_TEXT = /(?:https?:)?\/\/[^\s"'`<>()\[\]{}|]+/gi;
+// A URL that appears INSIDE a string of prose. Three shapes, because the artifact redacts what a
+// page wrote, not what a well-formed API returned: absolute ('https://x/a?token=..'),
+// protocol-relative ('//x/a?token=..'), and a rooted relative path ('/api/send?access_token=..'),
+// which is an ordinary console message. A path with no query is left alone; redaction is a no-op
+// for any URL whose query has no credential-named parameter, so widening the match costs nothing
+// but a parse.
+const URL_IN_TEXT = /(?:https?:)?\/\/[^\s"'`<>()\[\]{}|]+|\/[^\s"'`<>()\[\]{}|]*\?[^\s"'`<>()\[\]{}|]*/gi;
+
+// A credential in a SECOND URL that sits right after the first one, separated by a comma or a
+// semicolon, is invisible to a whole-match parse: everything after the comma becomes part of the
+// first URL's last parameter value, so the first URL has no credential parameter and the string
+// comes back untouched (web-uplift-lsn3 review). Splitting there and redacting each piece is the
+// fix; the separator stays with the piece before it, which is harmless because a trailing comma is
+// preserved either way.
+function splitAdjacentUrls(body) {
+  const starts = [0];
+  const separator = /[,;]\s*(?=(?:https?:)?\/\/)/g;
+  let match;
+  while ((match = separator.exec(body)) !== null) starts.push(match.index + match[0].length);
+  if (starts.length === 1) return [body];
+  const pieces = [];
+  for (let i = 0; i < starts.length; i++) {
+    const piece = body.slice(starts[i], i + 1 < starts.length ? starts[i + 1] : undefined);
+    if (piece) pieces.push(piece);
+  }
+  return pieces;
+}
 
 export function redactUrlsInText(text) {
   if (typeof text !== 'string' || !text) return text;
   return text.replace(URL_IN_TEXT, (match) => {
-    // Prose puts punctuation straight after a URL ("see https://x/a?token=SECRET, then").
-    // That punctuation is not part of the URL, and letting it into the parse would either
-    // mangle the sentence or be swallowed by the redacted value, so hold it back and put it
-    // back untouched.
+    // Prose puts punctuation straight after a URL ("see https://x/a?token=SECRET, then"). That
+    // punctuation is not part of the URL, and letting it into the parse would either mangle the
+    // sentence or be swallowed by the redacted value, so hold it back and put it back untouched.
     const trailing = /[.,;:!?]+$/.exec(match);
+    const tail = trailing ? trailing[0] : '';
     const body = trailing ? match.slice(0, -trailing[0].length) : match;
     if (!body) return match;
-    return redactUrlCredentialValues(body) + (trailing ? trailing[0] : '');
+    return splitAdjacentUrls(body)
+      .map((piece) => redactUrlCredentialValues(piece))
+      .join('') + tail;
   });
 }
 

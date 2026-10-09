@@ -1209,7 +1209,11 @@ export async function attachConsoleCollector(client, { log = () => {}, cdpDeadli
       .slice(0, 3)
       .map((f) => {
         const url = f.url ? redactUrlCredentialValues(f.url) : '?';
-        return `${f.functionName || '<anonymous>'} (${url}:${f.lineNumber + 1}:${f.columnNumber + 1})`;
+        // The function name is page-derived too: a computed method name can BE a URL, and it
+        // reaches this artifact inside stack[]. Redacting only the url field left that open
+        // (web-uplift-lsn3 review).
+        const name = f.functionName ? redactUrlsInText(f.functionName) : '<anonymous>';
+        return `${name} (${url}:${f.lineNumber + 1}:${f.columnNumber + 1})`;
       });
 
   client.Runtime.consoleAPICalled(({ type, args, stackTrace }) => {

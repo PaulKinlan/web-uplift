@@ -13,10 +13,11 @@
 // (gather('secrets') against a page whose script 404s with a credential in its query) is measured
 // on the bead, because it needs Chrome.
 //
-// Boundary stated rather than implied: the URL-in-text matcher rewrites ABSOLUTE and
-// protocol-relative URLs. A bare relative path with a credential query sitting inside prose
-// ('/api/send?access_token=...') is not rewritten by it, and neither is a credential that appears
-// with no URL around it at all (that is the secrets scanner's job, not this redactor's).
+// Boundary stated rather than implied: the URL-in-text matcher rewrites absolute URLs,
+// protocol-relative URLs, and ROOTED relative paths ('/api/send?access_token=...', an ordinary
+// console message and a real leak until the review found it). What it still does not rewrite: a
+// relative path with no leading slash ('api/send?access_token=...'), and a credential that appears
+// with no URL around it at all (that is the secrets scanner's job, not this one's).
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { attachConsoleCollector, attachConsoleEvidence } from '../evidence/cdp.mjs';
@@ -74,6 +75,28 @@ export async function testConsoleEvidenceRedaction() {
   assert(!protocolRelative.includes(SECRET) && protocolRelative.includes(REDACTED),
     `a protocol-relative URL must have its credential removed: ${protocolRelative}`);
 
+  // Adjacent URLs: the review's P1. Everything after the comma used to be swallowed into the first
+  // URL's last parameter value, so the first URL had no credential parameter and the SECOND URL's
+  // credential came back untouched.
+  assert(
+    redactUrlsInText(`https://one.test/?page=1,https://two.test/?token=${SECRET}`) === `https://one.test/?page=1,https://two.test/?token=${REDACTED}`,
+    'a credential in a second URL after a comma must be redacted',
+  );
+  const semicolonSeparated = redactUrlsInText(`see https://one.test/?page=1; //two.test/?token=${SECRET} now`);
+  assert(semicolonSeparated.includes(REDACTED) && !semicolonSeparated.includes(SECRET),
+    `a semicolon-separated second URL must be redacted too: ${semicolonSeparated}`);
+
+  // A ROOTED relative path with a credential query is a realistic console message, not a
+  // theoretical boundary; the matcher covers it now.
+  assert(
+    redactUrlsInText(`failed to send to /api/send?access_token=${SECRET}`) === `failed to send to /api/send?access_token=${REDACTED}`,
+    'a rooted relative path with a credential query must be redacted',
+  );
+  assert(
+    redactUrlsInText('see /docs?page=2 first') === 'see /docs?page=2 first',
+    'a rooted relative path with no credential parameter must be untouched',
+  );
+
   // 2. Through the collector: every entry path, and the innocents that must survive.
   const client = stubClient();
   await attachConsoleCollector(client, { log: () => {} });
@@ -102,10 +125,22 @@ export async function testConsoleEvidenceRedaction() {
       },
     },
   });
+  // A computed method name can BE a URL, and it reaches the artifact inside stack[]: redacting
+  // only the frame's url field left that open (review P1).
+  client.handlers.exception({
+    exceptionDetails: {
+      text: 'Uncaught',
+      url: 'http://127.0.0.1:9/plain.js',
+      lineNumber: 1,
+      stackTrace: {
+        callFrames: [{ functionName: `https://evil.test/?token=${SECRET}`, url: 'http://127.0.0.1:9/plain.js', lineNumber: 1, columnNumber: 1 }],
+      },
+    },
+  });
   // A page logging its own location: the credential is inside the TEXT, not in any field.
   client.handlers.console({
     type: 'error',
-    args: [{ value: `failed to send to http://127.0.0.1:9/api/send?access_token=${SECRET}` }],
+    args: [{ value: `failed to send to http://127.0.0.1:9/api/send?access_token=${SECRET} and /api/other?session_key=${SECRET}` }],
     stackTrace: { callFrames: [] },
   });
   // Innocents: a non-credential query parameter, and a URL with no query at all.
@@ -127,7 +162,15 @@ export async function testConsoleEvidenceRedaction() {
     json.includes('Failed to load resource') && json.includes('boom') && json.includes('failed to send to'),
     `the diagnostic text must survive redaction: ${json}`,
   );
-  assert(block.entries.length === 4, `an unchanged entry must not be split by redaction: ${JSON.stringify(block.entries)}`);
+  assert(
+    block.entries.filter((e) => e.kind === 'exception').length === 2,
+    `both exceptions must be recorded: ${JSON.stringify(block.entries)}`,
+  );
+  assert(
+    block.entries.some((e) => e.kind === 'exception' && e.stack.some((f) => f.includes('evil.test') && f.includes(REDACTED) && !f.includes(SECRET))),
+    `a stack frame whose FUNCTION NAME is a URL must be redacted: ${JSON.stringify(block.entries)}`,
+  );
+  assert(block.entries.length === 5, `an unchanged entry must not be split by redaction: ${JSON.stringify(block.entries)}`);
   assert(block.entries[0].repeat === 2, `a retried entry must still collapse into one with a repeat count: ${JSON.stringify(block.entries[0])}`);
   assert(result.console === block && block.hasErrors === true, 'the block is attached to the result');
   assert(
@@ -142,8 +185,13 @@ export async function testConsoleEvidenceRedaction() {
     JSON.stringify(JSON.parse(json)) === JSON.stringify({ ...result, console: JSON.parse(JSON.stringify(block)) }),
     'the serialised result round-trips',
   );
-  assert(redactUrlsInText(JSON.parse(json).console.entries[1].text) === JSON.parse(json).console.entries[1].text,
-    'redacting already-redacted text is a no-op');
+  const roundTripped = JSON.parse(json).console;
+  const urlBearing = roundTripped.entries.find((e) => typeof e.text === 'string' && e.text.includes(REDACTED));
+  assert(urlBearing, `an entry whose text carried a URL must exist: ${JSON.stringify(roundTripped.entries)}`);
+  assert(redactUrlsInText(urlBearing.text) === urlBearing.text,
+    'redacting already-redacted text is a no-op, on an entry that actually carried a URL');
+  assert(roundTripped.entries.every((e) => !JSON.stringify(e).includes(SECRET)),
+    're-reading the serialised artifact finds no credential in any entry');
 
   // 4. A collector never sees another session's entries: the block is per client, not global.
   const other = stubClient();
