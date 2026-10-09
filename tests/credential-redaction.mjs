@@ -115,6 +115,26 @@ export async function testCredentialRedactorsAgree() {
   ]) {
     assert(terms.looksLikeToken(token), `"${token}" must be recognised as a token shape`);
   }
+  // 9. Protocol-relative URLs keep their host (web-uplift-53o1). new URL() cannot parse a
+  // protocol-relative string without a base, so this path was reached through the relative-path
+  // fallback, which re-emitted only pathname+search+hash: the host silently vanished from the
+  // artifact or HAR entry, inventing a URL that was never requested. The credential was redacted
+  // either way, which is why it hid for so long - the output looked plausible.
+  const SECRET_53O1 = 'NOTAREALKEY_FIXTURE_53O1';
+  for (const redactor of [terms.redactUrlCredentialValues, cli.redactUrlCredentialValues]) {
+    assert(
+      redactor(`//x.test/a?token=${SECRET_53O1}`) === `//x.test/a?token=${'%5Bredacted%5D'}`,
+      'a protocol-relative URL must keep its host AND redact its credential parameter',
+    );
+    assert(
+      redactor(`//x.test:8443/a?token=${SECRET_53O1}`) === `//x.test:8443/a?token=${'%5Bredacted%5D'}`,
+      'a protocol-relative URL with a port must keep host:port',
+    );
+    assert(redactor('//x.test/a?page=2') === '//x.test/a?page=2', 'a protocol-relative URL with no credential parameter is untouched');
+    assert(redactor(`/a?token=${SECRET_53O1}`) === `/a?token=${'%5Bredacted%5D'}`, 'a rooted relative path is unchanged by this fix');
+    assert(redactor('not a url at all ?') === 'not a url at all ?', 'an unparseable string is left alone');
+  }
+
   for (const word of [
     'about-us', 'my-first-post', 'settings', 'v2-Release-Notes-2024', 'dashboard', 'abc123', 'tab2', '4f3a9b2c.js',
     // The review's false positives: multi-dot filenames, version strings and long

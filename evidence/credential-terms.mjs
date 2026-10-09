@@ -206,7 +206,13 @@ export function redactUrlCredentialValues(raw) {
     // leading '/'), which is the only shape change and is noted rather than silent.
     const u = new URL(raw, 'http://relative.invalid');
     if (!apply(u)) return raw;
-    return `${u.pathname}${u.search}${u.hash}`;
+    // A PROTOCOL-RELATIVE input ('//host/path?token=..') is not a relative path: new URL() resolves
+    // it against the base, so it HAS a host, and re-emitting only the path invented a URL that was
+    // never requested - the host silently vanished from the artifact or HAR entry (web-uplift-53o1).
+    // Note the host is re-emitted as host:port and any userinfo is not, which is unchanged
+    // behaviour for the absolute branch above too.
+    const authority = /^\/\//.test(raw) ? `//${u.host}` : '';
+    return `${authority}${u.pathname}${u.search}${u.hash}`;
   } catch {
     return raw; // genuinely unparseable: leave it alone rather than guess
   }
