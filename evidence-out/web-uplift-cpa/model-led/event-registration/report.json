@@ -1,0 +1,1972 @@
+{
+  "url": "http://127.0.0.1:8765/event-registration/",
+  "auditedAt": "2026-10-09T00:51:22.040Z",
+  "mode": "report",
+  "status": "completed",
+  "statusDetail": "All 58 catalog checks judged (30 pass, 20 issues, 8 not-applicable; 0 blocked, 0 not-run). Single-page surface: the only linked sibling routes (/attendees, the /register form action) do not resolve, which is itself a finding.",
+  "page": {
+    "appType": "mpa",
+    "framework": "none (static HTML + one shared stylesheet, zero scripts)",
+    "notes": "Community fun run registration page: h1, event-details <dl>, a native POST form (name, email, ticket select), an aside and a footer. Served by what responds like a Python static file server (directory listing at /, 404 for unknown paths, 501 for POST). 44 DOM elements, 3 requests, 5.4 KB transferred."
+  },
+  "config": {
+    "loaded": false
+  },
+  "evidenceUsed": [
+    "dom",
+    "screenshot (desktop 780 default, 1280 full page, 360x800, prefers-color-scheme: dark, forced-colors: active)",
+    "axe-core 4.13.0 (vendored, axe primitive)",
+    "a11ytree (computed AX tree + real tab order)",
+    "targets (1280x720 + 360x800)",
+    "features (live CSSOM census, censusComplete: true)",
+    "layout-metrics (360x800, CLS + long-task observers)",
+    "trace (360x800, mobile-lighthouse network + 4x CPU)",
+    "har + har-summary",
+    "headers",
+    "cookies",
+    "trackers",
+    "secrets",
+    "images (via dom/evaluate: page has 0 <img>)",
+    "discoverability (raw vs rendered + crawler screenshot)",
+    "resilience (SW/manifest + real offline reload)",
+    "console",
+    "heap (baseline + after 10x form fill/validate/reset)",
+    "evaluate-probe: sibling routes, robots.txt, sitemap.xml",
+    "evaluate-probe: form POST to action, constraint validation, autocomplete, metadata",
+    "evaluate-probe: ar-EG locale + Asia/Tokyo time zone render",
+    "evaluate-probe: prefers-reduced-motion/prefers-contrast + getAnimations + layout boxes",
+    "evaluate-probe: text and non-text contrast ratios",
+    "modern-web-guidance@0.0.193 list/search/retrieve",
+    "baseline oracle (knowledge/baseline.mjs)"
+  ],
+  "guidanceConsulted": [
+    "required-field-feedback",
+    "respect-os-text-scale",
+    "dark-mode",
+    "contrast-color",
+    "cross-document-transitions",
+    "persistent-toast-notifications",
+    "autofill-sign-up-form",
+    "forms",
+    "security",
+    "html",
+    "optimize-preload-priority",
+    "accessibility",
+    "agentic-forms",
+    "coordinate-global-events",
+    "capture-location-agnostic-data"
+  ],
+  "coverage": {
+    "catalogVersion": "modern-web-guidance@0.0.193",
+    "catalogChecksum": "sha256:5cb6b09a94a3c27fc78161504f385a086f7a437d1a9f6c321bbac2bdc0fb82b7",
+    "baselineCatalogVersion": "web-features@3.40.0",
+    "expected": 58,
+    "recorded": 58,
+    "judged": 58,
+    "blocked": 0,
+    "notRun": 0,
+    "missing": 0,
+    "unknown": 0,
+    "duplicates": 0,
+    "complete": true
+  },
+  "paths": [
+    {
+      "id": "P1-entry",
+      "description": "Entry/registration page at default and 1280px desktop widths. The site is a single page: this is the only archetype (event details + form).",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "conditions": [
+        "viewport: 780x437 default",
+        "viewport: 1280x720"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "P2-mobile",
+      "description": "Same page at a narrow mobile layout, plus a throttled mobile load trace.",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "conditions": [
+        "viewport: 360x800",
+        "network: mobile-lighthouse + 4x CPU"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "P3-register-flow",
+      "description": "Primary journey: fill name/email/ticket and submit; also empty submit (constraint validation) and invalid email.",
+      "url": "http://127.0.0.1:8765/register",
+      "conditions": [
+        "POST form action",
+        "empty required fields",
+        "invalid email"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "P4-nav-and-routes",
+      "description": "Primary-nav links (Register -> /, Attendees -> /attendees) and indexing files (/robots.txt, /sitemap.xml). '/' is a directory listing of other fixtures (account-recovery/, booking/, ...) which are separate sites and NOT covered here.",
+      "url": "http://127.0.0.1:8765/",
+      "conditions": [
+        "fetch probe"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "P5-preferences",
+      "description": "User-preference conditions on the entry page.",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "conditions": [
+        "prefers-color-scheme: dark",
+        "forced-colors: active",
+        "prefers-reduced-motion: reduce",
+        "prefers-contrast: more"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "P6-locale",
+      "description": "Rendered under a second locale and time zone.",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "conditions": [
+        "locale: ar-EG",
+        "timezone: Asia/Tokyo"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "P7-offline",
+      "description": "Real offline reload after an online load.",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "conditions": [
+        "Network.emulateNetworkConditions offline"
+      ],
+      "result": "pass"
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "dom",
+      "path": "evidence/dom.json",
+      "caption": "Rendered HTML + full CSS (not truncated)"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/desktop.png",
+      "caption": "Default viewport, light"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/desktop-1280-full.png",
+      "caption": "1280x720 layout",
+      "condition": "viewport: 1280x720"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/dark.png",
+      "caption": "Byte-identical to the light screenshot (40584 B): no dark theme",
+      "condition": "prefers-color-scheme: dark",
+      "findingIds": [
+        "F05"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/narrow-360.png",
+      "caption": "Narrow layout, single column, no overflow",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/forced-colors.png",
+      "caption": "Forced colors: control borders and text survive",
+      "condition": "forced-colors: active"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/after-valid-submit.png",
+      "caption": "Screenshot primitive after scripted submit; navigation not captured (identical to baseline) - the POST outcome is in form-probe.json",
+      "condition": "interact: submit"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/after-empty-submit.png",
+      "caption": "Empty submit; native validation bubble is not captured in headless screenshots",
+      "condition": "interact: empty submit"
+    },
+    {
+      "type": "other",
+      "path": "evidence/axe.json",
+      "caption": "axe-core 4.13.0: 0 violations, 0 incomplete, 36 passes"
+    },
+    {
+      "type": "other",
+      "path": "evidence/a11ytree.json",
+      "caption": "Computed AX tree + 7-stop tab order"
+    },
+    {
+      "type": "other",
+      "path": "evidence/targets.json",
+      "caption": "6 targets, 0 under 24px at 1280 and 360"
+    },
+    {
+      "type": "other",
+      "path": "evidence/features.json",
+      "caption": "Live CSSOM census: no color-scheme, @container, view-transition, :user-invalid; 1 @media"
+    },
+    {
+      "type": "layout",
+      "path": "evidence/layout-360.json",
+      "caption": "CLS 0, no long tasks, 0px horizontal overflow",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "trace",
+      "path": "evidence/trace-mobile.json",
+      "caption": "DevTools trace, throttled mobile",
+      "condition": "360x800, mobile-lighthouse, 4x CPU"
+    },
+    {
+      "type": "trace-summary",
+      "path": "evidence/trace-mobile-summary.json",
+      "caption": "FCP=LCP 611ms, TBT 256ms (0 page scripts)",
+      "condition": "360x800, mobile-lighthouse, 4x CPU"
+    },
+    {
+      "type": "har",
+      "path": "evidence/page.har",
+      "caption": "HAR of load (3 requests)"
+    },
+    {
+      "type": "har-summary",
+      "path": "evidence/page-summary.json",
+      "caption": "5.4KB, 0 third parties; base.css uncompressed and without cache headers",
+      "findingIds": [
+        "F16"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/headers.json",
+      "caption": "No CSP, HSTS, nosniff, XFO, Referrer-Policy, Permissions-Policy; http",
+      "findingIds": [
+        "F14",
+        "F15"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/cookies.json",
+      "caption": "0 cookies"
+    },
+    {
+      "type": "other",
+      "path": "evidence/trackers.json",
+      "caption": "1 origin, 0 third parties, 0 trackers"
+    },
+    {
+      "type": "other",
+      "path": "evidence/secrets.json",
+      "caption": "0 secrets, 0 external scripts"
+    },
+    {
+      "type": "discoverability",
+      "path": "evidence/discoverability.json",
+      "caption": "coveragePct 100, not a JS shell, no meta description",
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-rendered.png",
+      "caption": "Browser view (JS on)"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-crawler.png",
+      "caption": "Crawler view (JS off) - identical content"
+    },
+    {
+      "type": "other",
+      "path": "evidence/resilience.json",
+      "caption": "No manifest, no page SW; offline reload rendered 383 chars from HTTP cache"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/resilience-offline.png",
+      "caption": "Offline reload",
+      "condition": "offline"
+    },
+    {
+      "type": "other",
+      "path": "evidence/routes-probe.json",
+      "caption": "/ = directory listing, /attendees 404, /register 404 (GET), robots.txt 404, sitemap.xml 404",
+      "findingIds": [
+        "F02",
+        "F04",
+        "F12"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/form-probe.json",
+      "caption": "POST /register -> 501 Unsupported method; validation messages; autocomplete; nav aria-current; metadata",
+      "findingIds": [
+        "F01",
+        "F02",
+        "F03",
+        "F04",
+        "F11",
+        "F13",
+        "F17",
+        "F18",
+        "F19",
+        "F20"
+      ]
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-baseline.json",
+      "caption": "Baseline: 30049 nodes, 1.02MB self size"
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-after-10x.json",
+      "caption": "After 10x fill/validate/reset: 32063 nodes, 1.12MB; no Detached* constructors",
+      "condition": "interact: 10x form cycle"
+    },
+    {
+      "type": "other",
+      "path": "evidence/i18n-ar-EG-tokyo.json",
+      "caption": "Identical rendered text under ar-EG/Asia/Tokyo; 0 <time> elements",
+      "condition": "locale ar-EG, timezone Asia/Tokyo",
+      "findingIds": [
+        "F20"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/motion-contrast-probe.json",
+      "caption": "0 animations/transitions; body font 16px fixed; borders unchanged under prefers-contrast: more; no skip link",
+      "condition": "prefers-reduced-motion: reduce, prefers-contrast: more",
+      "findingIds": [
+        "F06",
+        "F08",
+        "F09"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/contrast-probe.json",
+      "caption": "Text >= 6.24:1; input/select border 1.46:1 against the white form card",
+      "findingIds": [
+        "F07"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/console.json",
+      "caption": "0 console errors/exceptions; only Chrome's automatic /favicon.ico 404"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F01",
+      "pathId": "P3-register-flow",
+      "url": "http://127.0.0.1:8765/register",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "primary-flow-completion",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "critical",
+      "confidence": "high",
+      "summary": "Registering cannot be completed: the form's action (POST /register) is not handled by the server, so every valid submission ends in a server error.",
+      "evidence": "evaluate probe POSTed the page's own FormData (name, email, ticket=standard) to form.action http://127.0.0.1:8765/register: HTTP 501 \"Unsupported method ('POST')\" with a bare server error document. A GET to /register is 404. The server behaves like a static file server (directory listing at /), so this may be an environment limitation of where the page is hosted, but as served the core task dead-ends.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/routes-probe.json"
+      ],
+      "suggestedFix": "Wire /register to a handler that accepts POST, stores the registration and responds with a 303 redirect to a confirmation page (Post/Redirect/Get), or point the form's action at the endpoint that actually handles registrations. Keep the native form POST so it continues to work without JavaScript.",
+      "effort": "medium"
+    },
+    {
+      "id": "F02",
+      "pathId": "P3-register-flow",
+      "url": "http://127.0.0.1:8765/register",
+      "principleId": "be-resilient",
+      "principleCheckId": "network-and-http-failure-states",
+      "guidanceId": "persistent-toast-notifications",
+      "guidanceCategory": "ui-behaviors",
+      "severity": "high",
+      "confidence": "high",
+      "summary": "HTTP failures land users on raw server error pages with no site chrome, explanation, or way back, and the entered registration data is lost.",
+      "evidence": "The 501 response to the form POST and the 404 for /attendees are the server's default 'Error response' documents (title 'Error response', 'Error code: 501/404', no nav, no link back, no retry). There is no script or custom error page to catch the failure, so the user's name/email/ticket entry is discarded.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/routes-probe.json"
+      ],
+      "suggestedFix": "Serve branded 404/5xx error pages that keep the site header and nav and offer a clear next step (back to registration, contact the organiser). On a failed registration, re-render the form with the user's values preserved and a visible, announced error summary so they can retry without retyping.",
+      "effort": "small"
+    },
+    {
+      "id": "F03",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "clear-system-state-and-recovery",
+      "guidanceId": "persistent-toast-notifications",
+      "guidanceCategory": "ui-behaviors",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "Capacity state is not communicated: places are 'Limited, with a waitlist' but the page never says whether places remain, so a user cannot tell whether 'Register' books a place or joins the waitlist.",
+      "evidence": "DOM: <dd>Limited, with a waitlist</dd> is the only capacity statement; the single submit button reads 'Register' with no remaining-places count, sold-out state, or waitlist wording. No confirmation/success state exists to fall back on (F01).",
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/desktop-1280-full.png"
+      ],
+      "suggestedFix": "Render the live state server-side: 'N places left' or 'Event full - join the waitlist', and change the button label and the confirmation copy to match ('Join waitlist'). Show a confirmation page that states which outcome the user got.",
+      "effort": "small"
+    },
+    {
+      "id": "F04",
+      "pathId": "P4-nav-and-routes",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "provide-guided-navigation",
+      "principleCheckId": "directs-attention",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "high",
+      "confidence": "high",
+      "summary": "The primary nav mis-states where the user is and leads to dead ends: 'Register' carries aria-current=\"page\" but links to '/', and 'Attendees' 404s.",
+      "evidence": "form-probe: nav a[0] text 'Register' href http://127.0.0.1:8765/ aria-current='page' while location is /event-registration/; '/' returns a server directory listing (routes-probe). nav a[1] 'Attendees' -> /attendees returns 404 (also /event-registration/attendees 404). The a11ytree exposes 'Register' as the current page to screen-reader users.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/routes-probe.json",
+        "evidence/a11ytree.json"
+      ],
+      "suggestedFix": "Point 'Register' at /event-registration/ (or make that the site root) so aria-current matches the real location; either publish the Attendees page or remove the link until it exists.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F05",
+      "pathId": "P5-preferences",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-color-scheme",
+      "guidanceId": "dark-mode",
+      "guidanceCategory": "visual-design",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "No dark mode: the page ignores prefers-color-scheme and stays light.",
+      "evidence": "Screenshot under prefers-color-scheme: dark is byte-identical (40584 B) to the light screenshot; features census (censusComplete: true) reports color-scheme 0, light-dark() 0 and no prefers-color-scheme condition; no <meta name=color-scheme>.",
+      "artifacts": [
+        "evidence/dark.png",
+        "evidence/desktop.png",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Declare `color-scheme: light dark` on :root (and <meta name=\"color-scheme\" content=\"light dark\">), then give the existing custom properties (--ink, --paper, --wash, --line, --muted, --accent) dark values via light-dark() with an @supports fallback, or a @media (prefers-color-scheme: dark) override of the same tokens.",
+      "baseline": {
+        "featureId": "light-dark",
+        "featureName": "light-dark()",
+        "status": "newly",
+        "lowDate": "2024-05-13",
+        "highDate": null,
+        "fallbackMandatory": true
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F06",
+      "pathId": "P5-preferences",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-contrast",
+      "guidanceId": "contrast-color",
+      "guidanceCategory": "visual-design",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "prefers-contrast: more is not honoured: the faint control borders stay at 1.46:1 when the user asks for more contrast (forced-colors mode is fine).",
+      "evidence": "Probe under prefers-contrast: more: matchMedia matched, #name border-color still rgb(213,213,221); features census shows no prefers-contrast condition. The forced-colors: active screenshot shows borders and text rendered in system colours, so forced colors survives.",
+      "artifacts": [
+        "evidence/motion-contrast-probe.json",
+        "evidence/forced-colors.png",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Add `@media (prefers-contrast: more) { :root { --line: #6b6b78; --muted: #3d3d47; } }` (or darker) so field and card boundaries and secondary text strengthen when requested.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F07",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "sufficient-contrast",
+      "guidanceId": "contrast-color",
+      "guidanceCategory": "visual-design",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "Form field boundaries fail WCAG 1.4.11 non-text contrast: input and select borders are 1.46:1 against the white card (3:1 required), so the fields are hard to locate for low-vision users.",
+      "evidence": "contrast-probe: #name and #ticket border rgb(213,213,221) vs form background rgb(255,255,255) = 1.46:1; the border is the only visual indicator of the empty text fields. Text contrast passes (muted text 6.24:1, button 6.63:1). axe reported 0 violations because axe does not test non-text contrast. The MWG forms guide likewise asks for input borders of #ccc or darker on white; #d5d5dd is lighter.",
+      "artifacts": [
+        "evidence/contrast-probe.json",
+        "evidence/desktop-1280-full.png",
+        "evidence/axe.json"
+      ],
+      "suggestedFix": "Use a separate, darker token for control borders (e.g. --control-line: #767680 gives roughly 4.5:1 on white) on input/select/textarea and keep --line for decorative card borders.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F08",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "structure-and-focus",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "No skip link to the main content or the form; landmarks and focus order are otherwise sound.",
+      "evidence": "Probe: no a[href^='#'] in the document; a11ytree tab order starts Register -> Attendees -> name. Landmarks (banner, navigation 'Main', main, region 'Event details', complementary, contentinfo), single h1 + h2, and visible 3px focus outlines on every stop are all present. The nav has only two links, so impact is small.",
+      "artifacts": [
+        "evidence/motion-contrast-probe.json",
+        "evidence/a11ytree.json"
+      ],
+      "suggestedFix": "Add a visually-hidden-until-focused 'Skip to registration form' link as the first focusable element targeting #registration-form (or main).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F09",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "legible-text",
+      "guidanceId": "respect-os-text-scale",
+      "guidanceCategory": "accessibility",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "Body text is pinned to 16px, overriding the user's browser default font size, and the page does not opt into OS text scaling.",
+      "evidence": "dom.json CSS: `body { font: 16px / 1.5 system-ui, ... }`; probe: body font-size 16px. Headings use rem, but all body copy, labels and inputs (font: inherit) inherit the fixed px value, so a user who raised the default font size gets 16px anyway. No <meta name=\"text-scale\">.",
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/motion-contrast-probe.json"
+      ],
+      "suggestedFix": "Change to `body { font: 1rem/1.5 system-ui, ... }` (or omit the size so it inherits); optionally add `<meta name=\"text-scale\" content=\"scale\">`, which is a harmless no-op where unsupported (Limited availability per the respect-os-text-scale guide).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F10",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "implement-natural-interactions",
+      "principleCheckId": "view-transitions",
+      "guidanceId": "cross-document-transitions",
+      "guidanceCategory": "ui-behaviors",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "Navigation between pages (nav links, form submit to confirmation) is an instant swap; no cross-document view transition is opted in.",
+      "evidence": "features census: @view-transition 0, view-transition-name 0. This is an MPA whose state changes are all full navigations (nav links, form POST).",
+      "artifacts": [
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Add `@media (prefers-reduced-motion: no-preference) { @view-transition { navigation: auto; } }` to base.css. Unsupported browsers ignore the rule and navigate normally.",
+      "baseline": {
+        "featureId": "cross-document-view-transitions",
+        "featureName": "Cross-document view transitions",
+        "status": "limited",
+        "lowDate": null,
+        "highDate": null,
+        "fallbackMandatory": true
+      },
+      "effort": "trivial"
+    },
+    {
+      "id": "F11",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "title-and-description",
+      "guidanceId": "html",
+      "guidanceCategory": "html",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "No meta description, so search results and link previews fall back to scraped text. The title is descriptive.",
+      "evidence": "form-probe: meta[name=description] null; discoverability metaDescriptionPresentInRaw: null. <title> is 'Community fun run registration' (present in the raw HTML).",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "suggestedFix": "Add `<meta name=\"description\" content=\"Register for the community 5km fun run in the park on Sunday 6 June 2027, 10am from the north gate. Limited places with a waitlist.\">` (with the correct date).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F12",
+      "pathId": "P4-nav-and-routes",
+      "url": "http://127.0.0.1:8765/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "canonical-and-indexing-signals",
+      "guidanceId": "html",
+      "guidanceCategory": "html",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "No canonical URL, robots.txt or sitemap, and the site root serves a raw directory listing instead of the event page.",
+      "evidence": "form-probe: link[rel=canonical] null. routes-probe: /robots.txt 404, /sitemap.xml 404, / = 'Directory listing for /' (exposes sibling folders such as account-recovery/ and booking/). The page itself returns 200 with no noindex.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/routes-probe.json"
+      ],
+      "suggestedFix": "Add <link rel=\"canonical\" href=\"https://<host>/event-registration/\">, publish a minimal robots.txt and sitemap.xml listing the event page, and disable directory listing at / (redirect it to the event page).",
+      "effort": "small"
+    },
+    {
+      "id": "F13",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "structured-and-shareable-metadata",
+      "guidanceId": "html",
+      "guidanceCategory": "html",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The page describes an Event but has no schema.org Event structured data and no Open Graph tags, so it is not eligible for event rich results and shares without a preview.",
+      "evidence": "form-probe: script[type=application/ld+json] count 0, meta[property^=og:] count 0. The visible content has every Event field: name, date/time, location (north gate of the park) and availability (limited/waitlist).",
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "suggestedFix": "Add JSON-LD `{\"@type\":\"Event\",\"name\":\"Community fun run\",\"startDate\":\"<ISO date with offset>\",\"location\":{...},\"eventAttendanceMode\":\"OfflineEventAttendanceMode\",\"offers\":{...}}` matching the visible text, plus og:title/og:description/og:type.",
+      "effort": "small"
+    },
+    {
+      "id": "F14",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "secure-transport-and-headers",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "Served over plain HTTP with no Content-Security-Policy or X-Content-Type-Options, while the form collects personal data (name, email).",
+      "evidence": "headers primitive: https false; content-security-policy, x-content-type-options missing. Loopback counts as a secure context in the browser (isSecureContext true), which is why confidence is medium: the gap matters for the deployed origin. The page has no scripts, so a strict policy costs nothing.",
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "suggestedFix": "Serve over HTTPS and send `Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'; require-trusted-types-for 'script'` plus `X-Content-Type-Options: nosniff`.",
+      "effort": "small"
+    },
+    {
+      "id": "F15",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "defensive-browser-policies",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "No HSTS, no clickjacking protection (no frame-ancestors, no X-Frame-Options), and no Referrer-Policy or Permissions-Policy. The page can be framed to overlay its personal-data form.",
+      "evidence": "headers primitive: strict-transport-security, x-frame-options, referrer-policy, permissions-policy all missing; no CSP, so no frame-ancestors.",
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "suggestedFix": "Once on HTTPS send `Strict-Transport-Security: max-age=31536000; includeSubDomains`, CSP `frame-ancestors 'self'`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`.",
+      "effort": "small"
+    },
+    {
+      "id": "F16",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/base.css",
+      "principleId": "be-fast-and-stable",
+      "principleCheckId": "efficient-resource-delivery",
+      "guidanceId": "optimize-preload-priority",
+      "guidanceCategory": "performance",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "The one render-blocking stylesheet is served uncompressed and without cache headers, so every visit re-validates or refetches it.",
+      "evidence": "har-summary hygiene: base.css in missingCacheHeaders and uncompressedTextOver2KB (3179 B transferred, content-encoding none); it is the only renderBlockingCandidate (parser-inserted <link rel=stylesheet>, VeryHigh). Absolute impact is small (LCP 611ms on throttled mobile).",
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/page.har",
+        "evidence/trace-mobile-summary.json"
+      ],
+      "suggestedFix": "Serve CSS with gzip/brotli and `Cache-Control: public, max-age=31536000, immutable` on a fingerprinted filename (base.<hash>.css), or inline this small sheet in <head>.",
+      "effort": "small"
+    },
+    {
+      "id": "F17",
+      "pathId": "P3-register-flow",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "humane-error-handling",
+      "guidanceId": "required-field-feedback",
+      "guidanceCategory": "forms",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "Required fields are not marked, and errors rely only on the browser's transient validation bubble: there is no :user-invalid styling, persistent inline message, or aria-invalid.",
+      "evidence": "form-probe: labels read 'Attendee name', 'Email', 'Ticket' (no required indicator) although name and email are required; on submit, validationMessage is 'Please fill out this field.' (native bubble only); aria-invalid null on both; features census :user-invalid 0 and :user-valid 0; setting email to 'not-an-email' yields only the native message.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Per required-field-feedback: mark required fields in the label ('Attendee name (required)'), add an inline error element per field linked with aria-errormessage, show it with `input:user-invalid + .error-msg { display:block }` and a non-colour cue, and sync aria-invalid on blur/submit with a few lines of JS (progressive enhancement).",
+      "baseline": {
+        "featureId": "user-pseudos",
+        "featureName": ":user-valid and :user-invalid",
+        "status": "widely",
+        "lowDate": "2023-11-02",
+        "highDate": "2026-05-02",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F18",
+      "pathId": "P3-register-flow",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "trustworthy-input-assistance",
+      "guidanceId": "autofill-sign-up-form",
+      "guidanceCategory": "forms",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "The attendee-name field has no autocomplete token, so autofill cannot offer the user's name. The email field is correct.",
+      "evidence": "form-probe: #name autocomplete null; #email autocomplete 'email' (type=email).",
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "suggestedFix": "Add autocomplete=\"name\" to #name (or autocomplete=\"off\" with a hint if registrants usually enter someone else's name), and spellcheck=\"false\" on the email field.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F19",
+      "pathId": "P1-entry",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "safe-commercial-and-account-flows",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "Ticket tiers (standard / accessible / student) are offered with no price, eligibility, or explanation, and there is no information on what registering commits the user to or how to cancel.",
+      "evidence": "form-probe: ticket options standard/accessible/student with value = label; no currency, 'price', 'free' or 'cost' text anywhere on the page; no cancellation or refund wording; no confirmation step exists (F01).",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/desktop-1280-full.png"
+      ],
+      "suggestedFix": "State each tier's price (or 'Free') and who qualifies in the option text or an adjacent description (aria-describedby), say what 'accessible' provides, and add how to cancel or transfer a place. Show the chosen tier and total on the confirmation page. With only three tiers, the forms guide recommends visible radio buttons over a <select> so all options and their prices are scannable at once.",
+      "effort": "small"
+    },
+    {
+      "id": "F20",
+      "pathId": "P6-locale",
+      "url": "http://127.0.0.1:8765/event-registration/",
+      "principleId": "be-internationalised",
+      "principleCheckId": "locale-aware-data",
+      "guidanceId": "capture-location-agnostic-data",
+      "guidanceCategory": "js",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The event date is ambiguous free text with no year and no machine-readable <time>. As of this audit (2026-10-09), 'Sunday 7 June' matches 2026, a date that has already passed.",
+      "evidence": "dom/form-probe: <dd>Sunday 7 June, 10am</dd>, 0 <time> elements; ar-EG/Asia/Tokyo render is text-identical (no locale-aware formatting). 7 June is a Sunday in 2026 (past at audit time); the next 'first Sunday in June' is 6 June 2027.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/i18n-ar-EG-tokyo.json",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Mark up `<time datetime=\"2027-06-06T10:00\">Sunday 6 June 2027, 10am</time>` (or the intended year), with the year always included. For an event venue, store the date with its IANA zone (per coordinate-global-events) and render the visible text in the venue's local time.",
+      "effort": "trivial"
+    }
+  ],
+  "checkOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-color-scheme",
+      "status": "issues",
+      "confidence": "high",
+      "method": "screenshot under prefers-color-scheme: dark vs light + features census",
+      "evidence": "Dark screenshot byte-identical to light; no color-scheme / light-dark / prefers-color-scheme in the live CSSOM.",
+      "pathIds": [
+        "P5-preferences"
+      ],
+      "artifacts": [
+        "evidence/dark.png",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F05"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-reduced-motion",
+      "status": "pass",
+      "confidence": "high",
+      "method": "evaluate probe under prefers-reduced-motion: reduce (getAnimations + computed transition/animation on every element) + features census",
+      "evidence": "document.getAnimations() 0 and 0 elements with a non-zero transition-duration or animation-name; the page has no motion and no auto-advance, so there is nothing that could ignore the preference.",
+      "pathIds": [
+        "P5-preferences"
+      ],
+      "artifacts": [
+        "evidence/motion-contrast-probe.json",
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-contrast",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "screenshot under forced-colors: active + computed-style probe under prefers-contrast: more",
+      "evidence": "Forced colors OK (borders/text in system colours); under prefers-contrast: more the control borders stay rgb(213,213,221) (1.46:1).",
+      "pathIds": [
+        "P5-preferences"
+      ],
+      "artifacts": [
+        "evidence/forced-colors.png",
+        "evidence/motion-contrast-probe.json"
+      ],
+      "findingIds": [
+        "F06"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "view-transitions",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "features census for @view-transition / view-transition-name on an MPA whose state changes are navigations",
+      "evidence": "@view-transition 0, view-transition-name 0; nav links and the form submit are hard navigations.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F10"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "scroll-driven-animations",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features census (animation-timeline/scroll-timeline/view-timeline) + script count",
+      "evidence": "No scroll-linked motion of any kind: 0 scroll/view timelines, 0 animations, 0 scripts (so no scroll listeners).",
+      "reason": "The page has no parallax, reveal or scrollytelling effect, declarative or scripted, so there is nothing for this check to judge. Adding scroll motion would not serve a short registration form.",
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "physical-gestures",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "DOM/features inspection for gesture surfaces (carousels, swipe lists, drawers, scroll-snap)",
+      "evidence": "No gesture-driven components: a static form plus text; 0 scripts, 0 scroll-snap, 0 overlays.",
+      "reason": "No swipe, drag, pull or entry/exit interaction exists on this page; native form controls handle all input.",
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "scroll-state-aware-chrome",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "DOM/CSS inspection for sticky/fixed chrome + page height at 1280 and 360",
+      "evidence": "Header is static (no position: sticky/fixed in base.css); the page is ~720px tall at 1280 and 1037px at 360x800.",
+      "reason": "There is no sticky or affixed chrome to react to scroll state, and the page is about one screen tall, so scroll-position-aware UI has no role here.",
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "anchored-positioning",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features overlay census + DOM inspection for tooltips/popovers/menus",
+      "evidence": "0 dialogs, 0 popovers, 0 role=dialog, 0 high-z-index elements, no tooltips or menus.",
+      "reason": "The page has no tooltip, popover or menu that would need anchoring; the ticket picker is a native <select>.",
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "directs-attention",
+      "status": "issues",
+      "confidence": "high",
+      "method": "evaluate probe of nav aria-current vs location + fetch of each nav target + a11ytree",
+      "evidence": "'Register' is aria-current=page but links to '/' (a directory listing); 'Attendees' 404s.",
+      "pathIds": [
+        "P4-nav-and-routes"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/routes-probe.json"
+      ],
+      "findingIds": [
+        "F04"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "no-intrusive-interruptions",
+      "status": "pass",
+      "confidence": "high",
+      "method": "screenshots on load (desktop, 1280, 360) + features overlay census",
+      "evidence": "No banners, interstitials or overlays on load: 0 dialogs/popovers/role=dialog/aria-modal, highZIndexCount 0; first viewport shows heading, details and form.",
+      "pathIds": [
+        "P1-entry",
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/desktop-1280-full.png",
+        "evidence/narrow-360.png",
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "semantic-dismissible-primitives",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "features overlay census + a11ytree roles",
+      "evidence": "No ad-hoc div controls or overlays; the only rich control is a native <select> exposed as combobox 'Ticket'; the form uses fieldset/legend, so every control is the right primitive.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "reduced-chrome",
+      "status": "pass",
+      "confidence": "high",
+      "method": "screenshot + layout inspection of chrome vs content share",
+      "evidence": "Chrome is a 48px header with two links and a one-line footer; content (h1, details, form) fills the viewport at 1280 and 360 with no decorative clutter.",
+      "pathIds": [
+        "P1-entry",
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/desktop-1280-full.png",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "responsive-no-horizontal-scroll",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive at 360x800 + screenshot",
+      "evidence": "scrollWidth 360 = innerWidth 360, horizontalOverflowPx 0, viewport meta present; grid collapses to one column under 44rem; no overflow:hidden masking.",
+      "pathIds": [
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "component-level-responsiveness",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "features census (@container 0) + measuring the form card in its two real containers (1280 sidebar vs 360 single column)",
+      "evidence": "No container queries, but the components are intrinsically fluid: the form card renders correctly at 241-278px (desktop 1fr column) and 294px (mobile) with width:100% controls, and the dl reflows. No component is reused at sizes its intrinsic sizing cannot handle.",
+      "pathIds": [
+        "P1-entry",
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/targets.json",
+        "evidence/motion-contrast-probe.json",
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "input-modality-aware",
+      "status": "pass",
+      "confidence": "high",
+      "method": "targets at 1280x720 and 360x800 + a11ytree focus walk + CSS inspection for hover-only affordances",
+      "evidence": "0 of 6 targets under 24px at both sizes (smallest 76x24 nav links); all 6 tab stops show a 3px solid #1f4fd8 :focus-visible outline; there are no :hover rules, so no hover-only affordances.",
+      "pathIds": [
+        "P1-entry",
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/targets.json",
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-purpose-and-primary-action",
+      "status": "pass",
+      "confidence": "high",
+      "method": "first-viewport screenshots + heading/label inspection",
+      "evidence": "h1 'Community fun run', a one-line lede and the date/start/places list make the purpose clear; the 'Register a runner' form with one primary 'Register' button is above the fold at 1280 and within the first scroll at 360.",
+      "pathIds": [
+        "P1-entry",
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/desktop-1280-full.png",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "primary-flow-completion",
+      "status": "issues",
+      "confidence": "high",
+      "method": "submitted the form's own FormData to form.action via fetch POST; GET probe of /register",
+      "evidence": "POST /register returned 501 Unsupported method; the journey dead-ends.",
+      "pathIds": [
+        "P3-register-flow"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/routes-probe.json"
+      ],
+      "findingIds": [
+        "F01"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-system-state-and-recovery",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "DOM/content inspection of capacity, success and waitlist states + submit outcome",
+      "evidence": "Capacity is 'Limited, with a waitlist' with no remaining-places, full, or waitlist state on the page or the button; no success/confirmation state exists.",
+      "pathIds": [
+        "P1-entry",
+        "P3-register-flow"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F03"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "good-core-web-vitals",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "trace under 360x800 + mobile-lighthouse network + 4x CPU; layout CLS observer",
+      "evidence": "FCP = LCP 611ms (good < 2500), CLS 0. TBT 256ms comes from 4 long tasks on a page with 0 scripts (HTML parse/style/layout under 4x CPU and trace start-up), so INP risk from page code is nil. Throttled mid-tier mobile profile.",
+      "pathIds": [
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/trace-mobile-summary.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "visual-stability",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive CLS / layout-shift observer",
+      "evidence": "cls 0, 0 shifts; no images, web fonts (system-ui stack) or late-injected content.",
+      "pathIds": [
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-main-thread",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "trace long tasks + layout long-task observer + script inventory",
+      "evidence": "0 page scripts (document.scripts.length 0); layout observer saw 0 long tasks unthrottled; the throttled trace's long tasks are browser parse/style work, not page code.",
+      "pathIds": [
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/trace-mobile-summary.json",
+        "evidence/layout-360.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-resource-delivery",
+      "status": "issues",
+      "confidence": "high",
+      "method": "HAR summary hygiene + render-blocking candidates confirmed against DOM <head>",
+      "evidence": "base.css (sole render-blocking resource) has no cache headers and no compression.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/page.har"
+      ],
+      "findingIds": [
+        "F16"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "trim-unused-and-duplicate-code",
+      "status": "pass",
+      "confidence": "high",
+      "method": "HAR totals + CSS read from dom primitive",
+      "evidence": "0 JS, 0 third parties; one 3.1KB stylesheet. It carries some rules unused here (.grid, article, .pagination - it is shared base CSS), but the absolute cost is a few hundred bytes.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "names-roles-labels",
+      "status": "pass",
+      "confidence": "high",
+      "method": "a11ytree computed names/roles + axe-core",
+      "evidence": "textbox 'Attendee name', textbox 'Email', combobox 'Ticket', button 'Register', group 'Register a runner', navigation 'Main', region 'Event details'; axe 0 violations / 0 incomplete; no images or canvas.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/a11ytree.json",
+        "evidence/axe.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "sufficient-contrast",
+      "status": "issues",
+      "confidence": "high",
+      "method": "computed-colour contrast probe (text + non-text) + axe",
+      "evidence": "Text passes (>= 6.24:1) but input/select borders are 1.46:1 on white (WCAG 1.4.11 needs 3:1).",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/contrast-probe.json",
+        "evidence/axe.json"
+      ],
+      "findingIds": [
+        "F07"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "structure-and-focus",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "a11ytree landmarks/headings + real Tab walk + skip-link probe",
+      "evidence": "Landmarks, headings and focus order are good and focus is always visible, but there is no skip link.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/a11ytree.json",
+        "evidence/motion-contrast-probe.json"
+      ],
+      "findingIds": [
+        "F08"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "legible-text",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "CSS inspection + computed font-size probe + screenshots at 1280/360",
+      "evidence": "Line length and wrapping are comfortable, but body text is fixed at 16px, overriding the user's default font size.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/motion-contrast-probe.json"
+      ],
+      "findingIds": [
+        "F09"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "zoom-reflow-targets-and-media",
+      "status": "pass",
+      "confidence": "high",
+      "method": "viewport meta inspection + 360px reflow layout + targets",
+      "evidence": "viewport 'width=device-width, initial-scale=1' (no user-scalable=no / maximum-scale); reflows to one column with 0 overflow at 360px; 0 targets under 24px; no audio/video needing captions.",
+      "pathIds": [
+        "P2-mobile"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json",
+        "evidence/targets.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "no-console-errors",
+      "status": "pass",
+      "confidence": "high",
+      "method": "console primitive across load",
+      "evidence": "0 console errors, 0 warnings, 0 uncaught exceptions; the only entry is Chrome's automatic /favicon.ico 404 (not page-authored). The 501 seen during the submit probe is covered by F01.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/console.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "sound-document-and-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "DOM probe (doctype, charset) + CSS review",
+      "evidence": "<!DOCTYPE html>, charset UTF-8 declared first in head, lang=en, 0 images; CSS is a compact token-based sheet without meaningful repetition.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "browser-platform-hygiene",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "script inventory + console + DOM probe",
+      "evidence": "0 scripts, so no deprecated APIs, unload handlers (BFCache blockers), paste prevention or permission prompts on load; no console deprecation/inspector warnings; no third-party libraries.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/console.json"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "title-and-description",
+      "status": "issues",
+      "confidence": "high",
+      "method": "DOM probe + discoverability raw-HTML comparison",
+      "evidence": "Descriptive title present; meta description missing.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "crawlable-and-mobile-friendly",
+      "status": "pass",
+      "confidence": "high",
+      "method": "discoverability raw vs rendered + DOM probe of anchors/viewport/robots",
+      "evidence": "coveragePct 100, not a JS shell (crawler screenshot identical); anchors have real hrefs and descriptive text; viewport meta present; no robots meta, and robots.txt is absent (404 = crawl allowed). Broken nav targets are covered under directs-attention (F04).",
+      "pathIds": [
+        "P1-entry",
+        "P4-nav-and-routes"
+      ],
+      "artifacts": [
+        "evidence/discoverability.json",
+        "evidence/discoverability-crawler.png",
+        "evidence/routes-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "canonical-and-indexing-signals",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "DOM probe for canonical/hreflang + fetch of robots.txt, sitemap.xml and /",
+      "evidence": "200 status, no noindex; but no canonical, no robots.txt/sitemap, and the root is a directory listing.",
+      "pathIds": [
+        "P4-nav-and-routes"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/routes-probe.json"
+      ],
+      "findingIds": [
+        "F12"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "structured-and-shareable-metadata",
+      "status": "issues",
+      "confidence": "high",
+      "method": "DOM probe for JSON-LD and og: tags against visible content",
+      "evidence": "0 JSON-LD blocks and 0 og: tags on a page that describes an Event.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F13"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "secure-transport-and-headers",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "headers primitive + cookies primitive",
+      "evidence": "http, no CSP, no nosniff; 0 cookies (nothing insecure there).",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/headers.json",
+        "evidence/cookies.json"
+      ],
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "data-minimisation-and-third-parties",
+      "status": "pass",
+      "confidence": "high",
+      "method": "trackers + HAR third-party breakdown + secrets + form field inventory",
+      "evidence": "1 origin, 0 third parties, 0 known trackers, 0 beacons, 0 cookies, 0 exposed secrets; the form asks only for name, email and ticket type, all needed to register.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/trackers.json",
+        "evidence/page-summary.json",
+        "evidence/secrets.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "in-context-permissions-and-modern-auth",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "script inventory + console for permission prompts; DOM inspection for auth surfaces",
+      "evidence": "0 scripts, so no permission prompt can fire on load; there is no sign-in, account or password surface, so passkeys/WebAuthn are not called for. Email ownership verification happens after submission, which could not be observed (F01).",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/console.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "defensive-browser-policies",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "headers primitive",
+      "evidence": "No HSTS, X-Frame-Options/frame-ancestors, Referrer-Policy or Permissions-Policy.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "findingIds": [
+        "F15"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "progressive-enhancement",
+      "status": "pass",
+      "confidence": "high",
+      "method": "discoverability no-JS crawler view vs rendered + script inventory",
+      "evidence": "0 scripts; raw HTML carries 100% of the content and a native <form method=post>, so content and the flow need no JS and degrade cleanly in any browser. The only modern CSS (:focus-visible) is Baseline.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/discoverability.json",
+        "evidence/discoverability-crawler.png",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "resilient-runtime-behaviour",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "script inventory + features overlay census",
+      "evidence": "0 scripts, 0 overlays/menus, no custom elements or async dependencies.",
+      "reason": "The page has no runtime behaviour to make robust: no menus or overlays that could be cut off, no DOM moves, no background or async work, no visibility-dependent logic.",
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "offline-and-installable",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "resilience primitive (manifest, SW registrations, real offline reload)",
+      "evidence": "No manifest, no page-origin SW observed in the 2s window; offline reload still rendered the page from HTTP cache.",
+      "reason": "A one-off community event registration page is not an app that users install or return to offline, and submission is intrinsically online. The contextual offline/installable bar does not apply (online failure handling is judged under network-and-http-failure-states).",
+      "artifacts": [
+        "evidence/resilience.json",
+        "evidence/resilience-offline.png"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "network-and-http-failure-states",
+      "status": "issues",
+      "confidence": "high",
+      "method": "form POST failure injection via real endpoint + 404 route fetch + offline reload",
+      "evidence": "The 501 and 404 responses are raw server error documents with no recovery path; form data is lost.",
+      "pathIds": [
+        "P3-register-flow",
+        "P4-nav-and-routes",
+        "P7-offline"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/routes-probe.json",
+        "evidence/resilience.json"
+      ],
+      "findingIds": [
+        "F02"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "lang-dir-and-logical-properties",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "DOM probe of lang/dir + CSS review for physical left/right properties",
+      "evidence": "<html lang=\"en\">, LTR default (computed direction ltr); CSS uses no left/right-specific properties (margins/paddings are symmetric shorthands, layout is grid/flex with gap), so it mirrors correctly under dir=rtl.",
+      "pathIds": [
+        "P6-locale"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "locale-aware-data",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "render diff under ar-EG + Asia/Tokyo vs default; DOM inspection of date markup",
+      "evidence": "Date is the free-text 'Sunday 7 June, 10am' with no year and no <time datetime>; identical under ar-EG.",
+      "pathIds": [
+        "P6-locale"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json",
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F20"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "time-zone-correctness",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "render under Asia/Tokyo vs default + script inventory",
+      "evidence": "The start time is venue-local wall-clock text for an in-person event and renders as '10am' under Asia/Tokyo too. That is the correct model for a physical-venue time, and with 0 scripts there is no naive Date arithmetic to break across zones or DST. (The missing year is judged under locale-aware-data.)",
+      "pathIds": [
+        "P6-locale"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "no-dark-patterns",
+      "status": "pass",
+      "confidence": "high",
+      "method": "screenshot + DOM review of defaults, consent, upsell and button wiring",
+      "evidence": "No pre-ticked consent, no marketing opt-ins, no confirmshaming, no countdowns or scarcity pressure beyond a plain 'Limited' statement; neutral default ticket 'standard'; the submit button is a native form button; no hidden text.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/desktop-1280-full.png",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "humane-error-handling",
+      "status": "issues",
+      "confidence": "high",
+      "method": "empty submit + invalid email via constraint-validation probe; features census for :user-invalid",
+      "evidence": "Required fields unmarked; errors only as the native bubble; no :user-invalid styling or aria-invalid.",
+      "pathIds": [
+        "P3-register-flow"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F17"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "trustworthy-input-assistance",
+      "status": "issues",
+      "confidence": "high",
+      "method": "DOM probe of autocomplete tokens on each field",
+      "evidence": "#name has no autocomplete; #email has autocomplete=email.",
+      "pathIds": [
+        "P3-register-flow"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F18"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "safe-commercial-and-account-flows",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "walkthrough of ticket selection + page text search for price/cancellation",
+      "evidence": "Ticket tiers carry no price or eligibility; no commitment or cancellation information.",
+      "pathIds": [
+        "P1-entry",
+        "P3-register-flow"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/desktop-1280-full.png"
+      ],
+      "findingIds": [
+        "F19"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "optimised-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "HAR by-type totals + DOM image inventory",
+      "evidence": "0 images, 0 decorative backgrounds, no web fonts; total transfer 5.4KB (document 1.7KB, CSS 3.2KB).",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "no-wasteful-work",
+      "status": "pass",
+      "confidence": "high",
+      "method": "HAR request list + script inventory + trace",
+      "evidence": "3 requests total, 0 scripts, no background fetches, timers or polling; nothing runs after load.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/trace-mobile-summary.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "third-party-and-media-budget",
+      "status": "pass",
+      "confidence": "high",
+      "method": "trackers + HAR third-party summary + DOM media inventory",
+      "evidence": "0 third-party requests/bytes, no video/audio/autoplay, no animation, system font stack.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/trackers.json",
+        "evidence/page-summary.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "structured-agent-capabilities",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "source/DOM inspection for WebMCP / agentic form attributes + discoverability",
+      "evidence": "No WebMCP tool registration or agentic form attributes; the form is a plain, well-labelled native POST form, fully present in raw HTML.",
+      "reason": "Emerging, contextual principle with no declared agent intent for a small community event page. The labelled native form is already machine-operable, so absence is not penalised. Opportunity: annotate the form per agentic-forms once registration works.",
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/discoverability.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "on-device-inference",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "script inventory",
+      "evidence": "0 scripts; no built-in AI usage.",
+      "reason": "Nothing on a three-field registration page would benefit from on-device summarisation or language-model inference.",
+      "artifacts": [
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-leak-under-repeated-interaction",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "heap baseline vs heap after 10x (fill name/email, change ticket, checkValidity, reset)",
+      "evidence": "Heap 30049 -> 32063 nodes, 1.02MB -> 1.12MB self size. The growth is V8 code/closures/shapes from compiling the injected probe script, since the page itself has 0 scripts and no listeners to retain anything; no Detached* constructors in the post snapshot.",
+      "pathIds": [
+        "P3-register-flow"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "bounded-footprint",
+      "status": "pass",
+      "confidence": "high",
+      "method": "heap baseline totals + DOM element count",
+      "evidence": "~1.0MB JS heap self size (engine baseline only) and 44 DOM elements, proportionate to a static form page.",
+      "pathIds": [
+        "P1-entry"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-detached-dom-or-unbounded-listeners",
+      "status": "pass",
+      "confidence": "high",
+      "method": "heap constructor comparison for Detached* + script/listener inventory",
+      "evidence": "No Detached* constructors in baseline or post-interaction summaries; 0 scripts means no page event listeners, intervals or observers can accumulate.",
+      "pathIds": [
+        "P1-entry",
+        "P3-register-flow"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json"
+      ]
+    }
+  ],
+  "principleOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F05",
+        "F06"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F10"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F04"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "support-core-task-success",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F01",
+        "F03"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F16"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F07",
+        "F08",
+        "F09"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-discoverable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F11",
+        "F12",
+        "F13"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F14",
+        "F15"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "expectation": "contextual",
+      "status": "issues",
+      "findingIds": [
+        "F02"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "expectation": "contextual",
+      "status": "issues",
+      "findingIds": [
+        "F20"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F17",
+        "F18",
+        "F19"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "expectation": "contextual",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-agent-ready",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "No agent-facing surface or declared agent intent on a small community event page; both checks judged not-applicable with rationale (opportunity noted: agentic-forms)."
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "expectation": "default",
+      "status": "pass"
+    }
+  ],
+  "taskList": [
+    {
+      "id": "T1",
+      "title": "Make POST /register work and return a confirmation (PRG), stating place vs waitlist",
+      "priority": 1,
+      "findingIds": [
+        "F01",
+        "F03"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T2",
+      "title": "Branded 404/5xx pages; on failure re-render the form with values kept and an error summary",
+      "priority": 2,
+      "findingIds": [
+        "F02"
+      ],
+      "guidanceId": "persistent-toast-notifications",
+      "status": "open"
+    },
+    {
+      "id": "T3",
+      "title": "Fix nav: Register -> /event-registration/ (aria-current), publish or remove Attendees",
+      "priority": 3,
+      "findingIds": [
+        "F04"
+      ],
+      "guidanceId": "accessibility",
+      "status": "open"
+    },
+    {
+      "id": "T4",
+      "title": "Humane form: required markers, :user-invalid inline errors + aria-invalid sync, autocomplete=name",
+      "priority": 4,
+      "findingIds": [
+        "F17",
+        "F18"
+      ],
+      "guidanceId": "required-field-feedback",
+      "status": "open"
+    },
+    {
+      "id": "T5",
+      "title": "Darker control-border token (>=3:1) + prefers-contrast: more overrides",
+      "priority": 5,
+      "findingIds": [
+        "F07",
+        "F06"
+      ],
+      "guidanceId": "contrast-color",
+      "status": "open"
+    },
+    {
+      "id": "T6",
+      "title": "Show ticket prices/eligibility and cancellation terms",
+      "priority": 6,
+      "findingIds": [
+        "F19"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T7",
+      "title": "HTTPS + security headers (CSP incl. frame-ancestors, nosniff, HSTS, Referrer-/Permissions-Policy)",
+      "priority": 7,
+      "findingIds": [
+        "F14",
+        "F15"
+      ],
+      "guidanceId": "security",
+      "status": "open"
+    },
+    {
+      "id": "T8",
+      "title": "Event metadata: meta description, JSON-LD Event, OG tags, canonical, robots/sitemap, <time datetime> with year",
+      "priority": 8,
+      "findingIds": [
+        "F11",
+        "F13",
+        "F12",
+        "F20"
+      ],
+      "guidanceId": "html",
+      "status": "open"
+    },
+    {
+      "id": "T9",
+      "title": "Dark mode via color-scheme + token overrides",
+      "priority": 9,
+      "findingIds": [
+        "F05"
+      ],
+      "guidanceId": "dark-mode",
+      "status": "open"
+    },
+    {
+      "id": "T10",
+      "title": "body font-size in rem; skip link",
+      "priority": 10,
+      "findingIds": [
+        "F09",
+        "F08"
+      ],
+      "guidanceId": "respect-os-text-scale",
+      "status": "open"
+    },
+    {
+      "id": "T11",
+      "title": "Cache-Control + compression for base.css",
+      "priority": 11,
+      "findingIds": [
+        "F16"
+      ],
+      "guidanceId": "optimize-preload-priority",
+      "status": "open"
+    },
+    {
+      "id": "T12",
+      "title": "Opt into cross-document view transitions (reduced-motion gated)",
+      "priority": 12,
+      "findingIds": [
+        "F10"
+      ],
+      "guidanceId": "cross-document-transitions",
+      "status": "open"
+    }
+  ],
+  "budget": {
+    "pathCount": 7,
+    "auditPasses": 1
+  },
+  "agent": "claude",
+  "runId": "2026-10-09T00-51-22-040Z"
+}

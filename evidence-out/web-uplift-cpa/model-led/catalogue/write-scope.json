@@ -1,0 +1,56 @@
+{
+  "url": "http://127.0.0.1:8765/catalogue/",
+  "allowedRoots": [
+    "/home/exedev/worktrees/web-uplift-mwg-drift/reports-cpa"
+  ],
+  "changed": {
+    "added": [
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/a11ytree.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/after-add-to-cart.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/after-search.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/axe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/catalogue-nav-target.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/cookies.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/dark.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/desktop-1280-full.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/desktop-full.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/desktop.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/discoverability-crawler.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/discoverability-rendered.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/discoverability.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/dom.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/features.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/flow-probe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/forced-colors.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/headers.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/heap-after-10x.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/heap-baseline.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/i18n-ar-EG-tokyo.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/layout-360.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/narrow-360.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/page-summary.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/page.har",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/resilience-offline.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/resilience.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/secrets.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/targets.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/trace-mobile-summary.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/trace-mobile.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/trackers.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/launches.jsonl",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/report.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/report.md",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/scratch/flow-probe.js",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/scratch/manifest.mjs"
+    ],
+    "modified": [
+      "reports-cpa/127_0_0_1_8765/latest.txt",
+      "reports-cpa/127_0_0_1_8765/scorecard.html",
+      "reports-cpa/127_0_0_1_8765/scorecard.json"
+    ],
+    "deleted": []
+  },
+  "escapedOutsideScope": [],
+  "agentError": null,
+  "recordWrittenTo": "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z"
+}

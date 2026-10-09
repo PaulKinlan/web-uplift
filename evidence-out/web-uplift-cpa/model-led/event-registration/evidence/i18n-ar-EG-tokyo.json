@@ -1,0 +1,17 @@
+{
+  "lang": "en",
+  "dir": "ltr",
+  "navLang": "en-US",
+  "tz": "Asia/Tokyo",
+  "dateText": [
+    "Sunday 7 June, 10am",
+    "The north gate",
+    "Limited, with a waitlist"
+  ],
+  "lede": "A 5km run through the park on the first Sunday in June.",
+  "timeEls": 0,
+  "conditions": {
+    "locale": "ar-EG",
+    "timezone": "Asia/Tokyo"
+  }
+}

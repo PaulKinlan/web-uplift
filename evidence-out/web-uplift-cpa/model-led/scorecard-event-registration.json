@@ -1,0 +1,22 @@
+{
+  "host": "127_0_0_1_8765",
+  "generatedAt": "2026-10-09 01:07",
+  "runId": "2026-10-09T00-51-22-040Z",
+  "url": "http://127.0.0.1:8765/event-registration/",
+  "overall": 79,
+  "outcomes": {
+    "speed": 93,
+    "memory": 100,
+    "usability": 68,
+    "inclusive": 77,
+    "discoverable": 65,
+    "trust": 71
+  },
+  "findingsBySeverity": {
+    "critical": 1,
+    "high": 2,
+    "medium": 9,
+    "low": 8
+  },
+  "findingsTotal": 20
+}

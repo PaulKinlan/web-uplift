@@ -1,0 +1,2081 @@
+{
+  "url": "http://127.0.0.1:8765/catalogue/",
+  "auditedAt": "2026-10-09T00:27:28.894Z",
+  "mode": "report",
+  "status": "completed",
+  "statusDetail": "All 58 catalog checks judged on the parts-catalogue page, its search, pagination and add-to-cart flows, and the targets of its header navigation. The page is served by a static Python http.server fixture (HTTP/1.0, directory listing at /), so server-side behaviour (GET /search, GET/POST /cart, response headers) reflects this host, not necessarily a production deployment.",
+  "page": {
+    "appType": "mpa",
+    "framework": "none (static HTML + one shared stylesheet, zero scripts)",
+    "notes": "Product listing page titled 'Parts catalogue'. It has 51 DOM elements, 0 scripts, 0 inline handlers, 0 images and one stylesheet (../base.css, 3 KB) shared with sibling fixture designs. Contents: a header nav (Catalogue -> '/', marked aria-current=page; Cart -> /cart), h1, a GET search form (#search-form -> /search), a 'Results' section with three product cards (h3 name, description, availability; no price, no part number, no link, no button), a pagination nav (1/2/3 -> /search?page=N), and an aside 'Your cart' holding a POST form (#cart-form -> /cart) that asks for a free-text 'Part number' and a quantity. The footer says 'Catalogue prices include VAT.' Every onward route fails on this host: /search and /search?page=N -> 404, /cart -> 404 (GET) and 501 (POST), and '/' is a raw directory listing. Sibling directories (account-recovery/, booking/, contact-lead/, event-registration/) are separate designs, are not linked from this page, and are out of scope; booking/ and account-recovery/ were audited in earlier runs."
+  },
+  "config": {
+    "loaded": false
+  },
+  "evidenceUsed": [
+    "dom",
+    "screenshot (default 780px, full page, 1280x900 full page, 360x800, prefers-color-scheme: dark, forced-colors: active + prefers-contrast: more; destination pages /search?q=bearing and /)",
+    "evaluate-probe (form fields + constraint validation, heading outline, links + aria-current, product-card contents, grid placement of main's children, GET/POST of /, /cart, /search, /search?q=, /search?page=2, /robots.txt, /sitemap.xml, a guessed product URL and a 404 URL; document metadata, protocol, memory)",
+    "evaluate-probe under locale ar-EG + timezone Asia/Tokyo",
+    "axe-core 4.13.0 (vendored, axe primitive)",
+    "a11ytree (computed AX tree + real Tab order)",
+    "targets (WCAG 2.5.8 at 1280x720 and 360x800)",
+    "features (live CSSOM census + overlay census)",
+    "layout-metrics (360x800)",
+    "trace (360x800, mobile-lighthouse network + 4x CPU)",
+    "har + har-summary",
+    "headers",
+    "cookies",
+    "trackers",
+    "secrets",
+    "discoverability (raw vs rendered, crawler screenshot pair)",
+    "resilience (service worker, manifest, offline reload)",
+    "heap summaries (baseline and after 10x fill/validate/clear of both forms)",
+    "console collector (on every primitive)",
+    "modern-web-guidance@0.0.193 search/retrieve",
+    "baseline oracle (knowledge/baseline.mjs)"
+  ],
+  "guidanceConsulted": [
+    "forms",
+    "required-field-feedback",
+    "validate-input-after-interaction",
+    "agentic-forms",
+    "color",
+    "dark-mode",
+    "cross-document-transitions",
+    "security",
+    "respect-os-text-scale",
+    "accessibility"
+  ],
+  "coverage": {
+    "catalogVersion": "modern-web-guidance@0.0.193",
+    "catalogChecksum": "sha256:5cb6b09a94a3c27fc78161504f385a086f7a437d1a9f6c321bbac2bdc0fb82b7",
+    "baselineCatalogVersion": "web-features@3.40.0",
+    "expected": 58,
+    "recorded": 58,
+    "judged": 58,
+    "blocked": 0,
+    "notRun": 0,
+    "missing": 0,
+    "unknown": 0,
+    "duplicates": 0,
+    "complete": true
+  },
+  "paths": [
+    {
+      "id": "catalogue-load",
+      "description": "Catalogue page at load, at the default 780px capture and at 1280x900 (full page). This is the only page the target exposes and the primary archetype (a product listing with search and add-to-cart).",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "conditions": [
+        "default viewport (780px capture)",
+        "1280x900 full page",
+        "1280x720 (targets)"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "catalogue-narrow",
+      "description": "Same page at a 360x800 mobile layout, including a throttled performance trace (mobile-lighthouse: 150ms RTT, ~1.6 Mbps, 4x CPU).",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "conditions": [
+        "viewport: 360x800",
+        "network: mobile-lighthouse",
+        "cpu: 4x"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "catalogue-preferences",
+      "description": "User-preference conditions: dark colour scheme, forced colours with more contrast.",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "conditions": [
+        "prefers-color-scheme: dark",
+        "forced-colors: active",
+        "prefers-contrast: more"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "search-flow",
+      "description": "Primary journey 1: search for a part. Submitting #search-form issues GET /search?q=<term>.",
+      "url": "http://127.0.0.1:8765/search?q=bearing",
+      "conditions": [
+        "GET form submission"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "pagination",
+      "description": "Primary journey 2: browse further results via the pagination nav (/search?page=1..3).",
+      "url": "http://127.0.0.1:8765/search?page=2",
+      "conditions": [
+        "link follow"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "add-to-cart",
+      "description": "Primary journey 3: add a listed part to the cart via #cart-form (POST /cart with item + quantity), plus empty-submit constraint validation and 10x fill/validate cycles for the memory check.",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "conditions": [
+        "POST /cart",
+        "keyboard/form interaction"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "header-nav",
+      "description": "Header navigation targets reached from this page: '/' (the 'Catalogue' link, marked aria-current=page) and '/cart' (the 'Cart' link).",
+      "url": "http://127.0.0.1:8765/",
+      "conditions": [
+        "link follow",
+        "fetch of nav targets"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "catalogue-i18n",
+      "description": "Catalogue page rendered under a second locale and time zone to diff text, numbers and direction.",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "conditions": [
+        "locale: ar-EG",
+        "timezone: Asia/Tokyo"
+      ],
+      "result": "pass"
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "dom",
+      "path": "evidence/dom.json",
+      "caption": "Rendered HTML and full stylesheet of the catalogue page (not truncated: 1552 html chars, 3143 css chars).",
+      "findingIds": [
+        "F2",
+        "F4",
+        "F12",
+        "F13"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/desktop.png",
+      "caption": "Catalogue at load (780px capture): the search card takes the wide column while the product cards sit in a narrow right-hand column.",
+      "condition": "default",
+      "findingIds": [
+        "F4"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/desktop-1280-full.png",
+      "caption": "Full page at 1280x900: results squeezed into the right 1fr column, a large empty area under the search card, pagination (1 2 3) stranded in the left column below search, 'Your cart' nests a bordered form inside a bordered card, and no card shows a price or part number.",
+      "condition": "viewport: 1280x900, full page",
+      "findingIds": [
+        "F2",
+        "F3",
+        "F4",
+        "F6"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/desktop-full.png",
+      "caption": "Full page at the default 780px capture.",
+      "condition": "default, full page",
+      "findingIds": [
+        "F4"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/dark.png",
+      "caption": "Same page under prefers-color-scheme: dark. It is byte-identical in size (37,464 B) and visually identical to the default capture; surfaces stay light.",
+      "condition": "prefers-color-scheme: dark",
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/narrow-360.png",
+      "caption": "Catalogue at 360x800: single column, no overflow; the card grid reflows to one column.",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/forced-colors.png",
+      "caption": "Forced colours + more contrast: inputs and cards keep system-colour borders, but the 'Search' button (border: 0) loses its boundary and reads as bare bold text.",
+      "condition": "forced-colors: active, prefers-contrast: more",
+      "findingIds": [
+        "F12"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/after-search.png",
+      "caption": "What a search for 'bearing' lands on (GET /search?q=bearing): the host's raw 'Error response 404' page with no site chrome, navigation or way back.",
+      "condition": "GET /search?q=bearing",
+      "findingIds": [
+        "F1",
+        "F5"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/catalogue-nav-target.png",
+      "caption": "Target of the 'Catalogue' nav link (marked aria-current=page): a raw 'Directory listing for /'.",
+      "condition": "GET /",
+      "findingIds": [
+        "F1",
+        "F7"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/axe.json",
+      "caption": "axe-core 4.13.0: 1 moderate violation (heading-order on the first product h3), 0 incomplete, 34 passes including color-contrast.",
+      "findingIds": [
+        "F8"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/a11ytree.json",
+      "caption": "Computed accessibility tree and real Tab order: 10 page stops (Catalogue, Cart, search box, Search, pages 1-3, Part number, Quantity, Add to cart), all with a 3px accent outline, then the body wrap.",
+      "findingIds": [
+        "F7"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/targets.json",
+      "caption": "Target sizes: 0 of 10 targets under 24x24 at both 1280x720 and 360x800."
+    },
+    {
+      "type": "other",
+      "path": "evidence/features.json",
+      "caption": "Live CSSOM census (complete, 1 sheet): no color-scheme, no prefers-color-scheme, no light-dark(), no @container, no :user-invalid, no @view-transition, no animation; one @media (max-width: 44rem); 0 overlays.",
+      "findingIds": [
+        "F9",
+        "F11",
+        "F14"
+      ]
+    },
+    {
+      "type": "layout",
+      "path": "evidence/layout-360.json",
+      "caption": "Layout at 360x800: scrollWidth 360, horizontal overflow 0px, CLS 0, 0 long tasks.",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "trace",
+      "path": "evidence/trace-mobile.json",
+      "caption": "DevTools performance trace of the throttled mobile load.",
+      "condition": "360x800, mobile-lighthouse, 4x CPU"
+    },
+    {
+      "type": "trace-summary",
+      "path": "evidence/trace-mobile-summary.json",
+      "caption": "FCP = LCP 529ms; 2 long tasks (longest 83ms), TBT 42ms on a page with zero scripts (renderer parse/style work under 4x throttle).",
+      "condition": "360x800, mobile-lighthouse, 4x CPU"
+    },
+    {
+      "type": "har",
+      "path": "evidence/page.har",
+      "caption": "HAR 1.2 of the page load (3 requests)."
+    },
+    {
+      "type": "har-summary",
+      "path": "evidence/page-summary.json",
+      "caption": "3 requests, 5.4 KB transferred, 0 third-party; base.css (the one render-blocking resource) uncompressed with no cache headers; only the browser's automatic favicon 404.",
+      "findingIds": [
+        "F17"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/headers.json",
+      "caption": "Security headers: plain HTTP; CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy and Permissions-Policy all missing.",
+      "findingIds": [
+        "F15",
+        "F16"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/cookies.json",
+      "caption": "0 cookies set at load."
+    },
+    {
+      "type": "other",
+      "path": "evidence/trackers.json",
+      "caption": "1 origin (first party), 0 third-party origins, 0 known trackers."
+    },
+    {
+      "type": "other",
+      "path": "evidence/secrets.json",
+      "caption": "Secrets scan: 0 findings, 0 scripts."
+    },
+    {
+      "type": "discoverability",
+      "path": "evidence/discoverability.json",
+      "caption": "Raw HTML covers 100% of rendered content; not a JS shell; title and h1 in raw HTML; no meta description.",
+      "findingIds": [
+        "F18"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-rendered.png",
+      "caption": "Browser view (JS on).",
+      "condition": "JS enabled"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-crawler.png",
+      "caption": "Crawler view (JS off), identical to the browser view.",
+      "condition": "JS disabled"
+    },
+    {
+      "type": "other",
+      "path": "evidence/resilience.json",
+      "caption": "No manifest, no page-origin service worker observed in a 2s window; the offline reload rendered the page from HTTP cache (317 chars).",
+      "condition": "offline"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/resilience-offline.png",
+      "caption": "Offline reload of the catalogue page (served from HTTP cache).",
+      "condition": "offline"
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-baseline.json",
+      "caption": "Heap summary at load: 28,497 nodes, 0.96 MB self size; no Detached* constructors."
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-after-10x.json",
+      "caption": "Heap summary after 10x fill/reportValidity/clear cycles on both forms: 30,364 nodes, 1.05 MB; no Detached* constructors.",
+      "condition": "after 10x form interaction"
+    },
+    {
+      "type": "other",
+      "path": "evidence/flow-probe.json",
+      "caption": "Flow/form/document probe: field attributes (no required anywhere; quantity min=1, no default), forms valid when empty, heading outline h1 > h3 x3 > h2, aria-current on '/' and on /search?page=1, product cards with no link/button/price/part number, grid placement of main's children, and route results: / directory listing; /cart 404; /search, /search?q=bearing, /search?page=2 404; POST /cart 501; robots.txt, sitemap.xml 404; doctype/charset/http/1.0/0 scripts.",
+      "findingIds": [
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6",
+        "F7",
+        "F8",
+        "F9",
+        "F10",
+        "F15",
+        "F18",
+        "F19",
+        "F20"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/i18n-ar-EG-tokyo.json",
+      "caption": "Render under ar-EG / Asia/Tokyo: text identical to default, lang=en, ltr, 0 time elements; the only digits are product sizes (12mm, 15mm) and page numbers.",
+      "condition": "locale: ar-EG, timezone: Asia/Tokyo"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "pathId": "search-flow",
+      "url": "http://127.0.0.1:8765/search?q=bearing",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "primary-flow-completion",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "critical",
+      "confidence": "high",
+      "summary": "Every onward journey from the catalogue dead-ends. Searching lands on a 404, all three pagination links 404, the 'Cart' link 404s, 'Add to cart' returns 501 'Unsupported method', and 'Catalogue' opens a raw server directory listing. A shopper can view three cards and nothing else.",
+      "evidence": "flow-probe: GET /search?q=bearing -> 404, GET /search -> 404, GET /search?page=2 -> 404, GET /cart -> 404, POST /cart (item=Bearing 12mm, quantity=1) -> 501 'Unsupported method (POST)', GET / -> 200 'Directory listing for /'. after-search.png shows the raw 'Error response 404' page a search produces; catalogue-nav-target.png shows the directory listing. Product cards contain no links, so there is no detail page either (a guessed /catalogue/bearing-12mm -> 404). The host is a static fixture, but this is what a user of this deployment gets.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/after-search.png",
+        "evidence/catalogue-nav-target.png"
+      ],
+      "suggestedFix": "Back every action the page advertises: a GET /search handler that renders results (and the same template for ?page=N), a GET /cart page, and a POST /cart handler using POST-redirect-GET back to the catalogue (or to the cart) with a confirmation. Point 'Catalogue' at /catalogue/ rather than '/'. If search is not ready, remove the form instead of shipping a dead control.",
+      "effort": "medium"
+    },
+    {
+      "id": "F2",
+      "pathId": "add-to-cart",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "primary-flow-completion",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "high",
+      "confidence": "high",
+      "summary": "To add a part, the user must type a 'Part number' that the page never shows. The product cards have no part number, no 'Add' button and no link, so the only cart path asks for hidden required information and invites guesses such as the product name.",
+      "evidence": "flow-probe articles: all 3 cards have hasPartNumber=false, hasButton=false and hasLink=false (text is name, description and availability only). The only add path is #cart-form, with a free-text #item labelled 'Part number' (type=text, no pattern, no hint, no datalist) and #quantity. The 1280 full-page screenshot shows the cart form in a separate card, away from the products.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/desktop-1280-full.png",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Put the action on the product: give each <article> its own <form method=\"post\" action=\"/cart\"> with <input type=\"hidden\" name=\"item\" value=\"BRG-12\">, a labelled quantity (value=\"1\" min=\"1\") and a 'Add Bearing 12mm to cart' button (visible text 'Add to cart' plus a visually hidden product name). Show the part number on the card. If quick-entry by part number stays, add a hint with the format and a <datalist> of valid numbers.",
+      "effort": "small"
+    },
+    {
+      "id": "F3",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "safe-commercial-and-account-flows",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "No prices appear anywhere, yet the footer says 'Catalogue prices include VAT.' Shoppers are asked to add items to a cart without knowing what they cost.",
+      "evidence": "flow-probe: hasPrice=false on all 3 product cards; the rendered text contains no currency symbol or amount. The footer copy reads 'Catalogue prices include VAT.' (dom.json, desktop-1280-full.png). The Add to cart form shows no unit price or line total either.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/desktop-1280-full.png"
+      ],
+      "suggestedFix": "Show the VAT-inclusive unit price on every card, e.g. <p class=\"price\"><data value=\"4.50\">£4.50</data> <span class=\"hint\">inc. VAT, pack of two</span></p>, formatted with Intl.NumberFormat or server-side locale formatting. For 'Ordered on request' items, say so explicitly ('Price on request') rather than leaving the price blank.",
+      "effort": "small"
+    },
+    {
+      "id": "F4",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "clear-purpose-and-primary-action",
+      "guidanceId": "css-layout",
+      "guidanceCategory": "css",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The layout demotes the products. The 2fr main column holds only the search card while the results are squeezed into the 1fr sidebar column. The pagination lands in the left column below search, detached from the results it pages, leaving a large empty area beside the cards.",
+      "evidence": "flow-probe mainKids at the 780px capture: form#search-form x=16 w=483 h=150, section[Results] x=523 w=241 h=475, nav[Pagination] x=16 y=641 w=483, aside x=523 y=641 w=241. main uses grid-template-columns: 2fr 1fr, and its five children auto-place into alternating columns. desktop-1280-full.png shows the cards in a single narrow column on the right, an empty block under the search card, and '1 2 3' stranded on the left. The auto-fill card grid (minmax(14rem,1fr)) can only fit one card per row in that column.",
+      "artifacts": [
+        "evidence/desktop-1280-full.png",
+        "evidence/desktop.png",
+        "evidence/flow-probe.json",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Place the regions explicitly: e.g. main { grid-template-columns: 2fr 1fr; grid-template-areas: 'h1 h1' 'search cart' 'results cart' 'pages cart'; }, with #search-form { grid-area: search } and so on, or put the search form, results and pagination in one wrapper in the main column and the aside in the sidebar. The results grid then gets the wide column (2-3 cards per row) and the pagination sits directly under the results.",
+      "effort": "small"
+    },
+    {
+      "id": "F5",
+      "pathId": "search-flow",
+      "url": "http://127.0.0.1:8765/search?q=bearing",
+      "principleId": "be-resilient",
+      "principleCheckId": "network-and-http-failure-states",
+      "guidanceId": "persistent-toast-notifications",
+      "guidanceCategory": "ui-components",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "When a route fails, the user gets the bare server error page ('Error response / Error code: 404' or '501 Unsupported method') with no site header, no navigation, no explanation and no way back other than the browser Back button. The search term and cart entry are lost.",
+      "evidence": "after-search.png: an unstyled 'Error response' page with error code, message and explanation only. flow-probe bodySample is identical for /cart, /search, /search?page=2, /robots.txt and /no-such-page-xyz (404), and POST /cart returns the same template with 501. None carry links back into the catalogue.",
+      "artifacts": [
+        "evidence/after-search.png",
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "Serve branded error documents that keep the site header and nav. A 404 should say what was not found, link to the catalogue and offer the search box pre-filled with the query. A failed POST /cart should re-render the catalogue with the entered part number and quantity preserved and a role=alert message ('We couldn't add that to your cart. Try again.').",
+      "effort": "small"
+    },
+    {
+      "id": "F6",
+      "pathId": "add-to-cart",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "clear-system-state-and-recovery",
+      "guidanceId": "persistent-toast-notifications",
+      "guidanceCategory": "ui-components",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The 'Your cart' panel shows no cart state: no items, no count and no 'Your cart is empty' message, only an entry form. The page has no success or confirmation pattern for an add, so a user cannot tell what is already in the cart.",
+      "evidence": "dom.json/flow-probe: the aside contains only h2 'Your cart' and #cart-form; liveRegions=0 and there are no role=status/alert elements. desktop-1280-full.png shows the panel with two empty inputs and a button.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/desktop-1280-full.png",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Render the cart summary server-side in the aside (line items, count and subtotal, or 'Your cart is empty'), and after a successful POST-redirect-GET show a role=status confirmation ('Added 2 x Bearing 12mm. View cart').",
+      "effort": "small"
+    },
+    {
+      "id": "F7",
+      "pathId": "header-nav",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "names-roles-labels",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "aria-current=\"page\" is attached to links that are not this page. 'Catalogue' (current) points to '/', a directory listing, and pagination '1' (current) points to /search?page=1. Assistive tech and sighted users are told the current location lives at URLs that are not the one they are on.",
+      "evidence": "flow-probe links: {text:'Catalogue', href:'http://127.0.0.1:8765/', current:'page'} and {text:'1', href:'http://127.0.0.1:8765/search?page=1', current:'page'} while location is /catalogue/. The a11ytree exposes both links with the current-page state; base.css renders the nav one at font-weight 600. GET / -> 'Directory listing for /'.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/a11ytree.json",
+        "evidence/catalogue-nav-target.png"
+      ],
+      "suggestedFix": "Point 'Catalogue' at /catalogue/ (the page that actually carries aria-current). Render the current pagination item as the current URL (/catalogue/ or /catalogue/?page=1) and make page links share this page's path rather than /search.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F8",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "structure-and-focus",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "The heading outline skips a level: the product names are h3 directly under the h1, and the 'Results' region has no heading of its own, so heading navigation jumps from 'Parts catalogue' to the first product.",
+      "evidence": "axe heading-order (moderate) on 'article:nth-child(1) > h3'. flow-probe headings: H1 Parts catalogue, H3 Bearing 12mm, H3 Bearing 15mm, H3 Bushing 12mm, H2 Your cart. The section is labelled only by aria-label=\"Results\".",
+      "artifacts": [
+        "evidence/axe.json",
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "Give the results section a visible h2 ('Results' or '3 parts') referenced by aria-labelledby, so the product h3s nest correctly. Alternatively make the product names h2.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F9",
+      "pathId": "add-to-cart",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "humane-error-handling",
+      "guidanceId": "required-field-feedback",
+      "guidanceCategory": "forms",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The add-to-cart form does not prevent obvious mistakes. Neither field is required, so an empty submit goes straight to the server. Quantity has no default. There is no visible invalid state, inline message or hint, so the only feedback is the browser's transient bubble for a quantity below 1.",
+      "evidence": "flow-probe: #item and #quantity both required=false; #cart-form checkValidity() on an empty form -> true (submittable empty); #quantity min=1 with no value. The features census shows no :user-invalid or :user-valid rule; liveRegions=0; no field has aria-describedby. Per MWG required-field-feedback and forms, required fields should be marked and invalid fields signalled with :user-invalid plus text.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Add required to both fields (and mark them in the label), give quantity value=\"1\", add a part-number pattern plus a hint linked by aria-describedby, and style input:user-invalid with a border change plus an adjacent message (input:user-invalid + .error-msg { display: block }). On server rejection, re-render with input kept and a role=alert summary.",
+      "baseline": {
+        "featureId": "user-pseudos",
+        "featureName": ":user-valid and :user-invalid",
+        "status": "widely",
+        "lowDate": "2023-11-02",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F10",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "trustworthy-input-assistance",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "The identifier inputs leave text correction on. 'Part number' and the search box lack autocorrect=\"off\", autocapitalize=\"off\" and spellcheck=\"false\", so mobile keyboards may 'correct' or capitalise codes. Neither field sets an enterkeyhint.",
+      "evidence": "flow-probe fields: #item (type=text, label 'Part number') and #q (type=search) both have autocorrect=null, autocapitalize=null, spellcheck=null and no enterkeyhint. MWG forms section 3: 'DO turn off text correction on fields that hold identifiers ... codes, and search inputs.' #quantity correctly uses type=number with min=1.",
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "<input id=\"item\" name=\"item\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"characters\" spellcheck=\"false\" enterkeyhint=\"next\"> (use autocapitalize=\"characters\" if part numbers are upper-case codes), and add autocorrect=\"off\" spellcheck=\"false\" enterkeyhint=\"search\" to #q.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F11",
+      "pathId": "catalogue-preferences",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-color-scheme",
+      "guidanceId": "dark-mode",
+      "guidanceCategory": "visual-design",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "There is no dark mode. The page ignores prefers-color-scheme and does not declare color-scheme, so the light #f4f5f8/#fff surfaces and light form controls stay the same for users who ask for dark.",
+      "evidence": "dark.png under prefers-color-scheme: dark is byte-identical in size (37,464 B) and visually identical to desktop.png. The features census (complete, 1 sheet) shows color-scheme 0, light-dark() 0 and no prefers-color-scheme condition; the only @media is (max-width: 44rem). flow-probe: no <meta name=color-scheme>.",
+      "artifacts": [
+        "evidence/dark.png",
+        "evidence/desktop.png",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "In base.css add :root { color-scheme: light dark; } and a @media (prefers-color-scheme: dark) override of the tokens (--ink, --muted, --line, --paper, --wash, --accent), optionally expressed with light-dark(). Add <meta name=\"color-scheme\" content=\"light dark\">, then re-check contrast in both schemes (MWG dark-mode).",
+      "baseline": {
+        "featureId": "color-scheme",
+        "featureName": "color-scheme",
+        "status": "widely",
+        "lowDate": "2022-02-03",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F12",
+      "pathId": "catalogue-preferences",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-contrast",
+      "guidanceId": "color",
+      "guidanceCategory": "visual-design",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "In forced-colours mode the buttons lose their boundary. They are styled with a background colour and border: 0, so once the system palette replaces the background, 'Search' and 'Add to cart' render as bare bold text with no visible control edge.",
+      "evidence": "forced-colors.png (forced-colors: active + prefers-contrast: more): the search input and cards keep system-colour borders, but the 'Search' button shows no outline or fill. base.css: 'button { background: var(--accent); ... border: 0px; }'.",
+      "artifacts": [
+        "evidence/forced-colors.png",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Use a transparent border instead of none: button { border: 2px solid transparent; }. Forced colours then paints it as ButtonText. Alternatively add @media (forced-colors: active) { button { border: 1px solid ButtonText; } } (MWG color: Forced Colors Mode).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F13",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "legible-text",
+      "guidanceId": "respect-os-text-scale",
+      "guidanceCategory": "typography",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "body sets font: 16px/1.5, a fixed pixel size that overrides the user's browser or OS default text size. People who raise their default size get no larger body text, card copy or form fields (page zoom still works).",
+      "evidence": "dom css: 'body { font: 16px / 1.5 system-ui, ... }'. Headings use rem, but card text, labels and the inputs/buttons (font: inherit) stay pinned at 16px; flow-probe bodyFont 16px.",
+      "artifacts": [
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Use a relative size: body { font: 100%/1.5 system-ui, ... } (or 1rem), so text and inherited controls scale with the user's text-size preference (MWG respect-os-text-scale).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F14",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "implement-natural-interactions",
+      "principleCheckId": "view-transitions",
+      "guidanceId": "cross-document-transitions",
+      "guidanceCategory": "ui-behaviors",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "Browsing the catalogue (search, page 1 -> 2 -> 3, add to cart -> cart) is a sequence of full-page navigations that swap instantly, with no cross-document view-transition opt-in to keep orientation between result pages.",
+      "evidence": "features census (complete): @view-transition 0 and view-transition-name 0. There are 0 scripts, so there is no same-document transition either.",
+      "artifacts": [
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Add @media (prefers-reduced-motion: no-preference) { @view-transition { navigation: auto; } } to base.css, optionally naming the results grid (view-transition-name: results) so paging cross-fades in place. This is pure progressive enhancement; unsupported browsers navigate normally (MWG cross-document-transitions).",
+      "baseline": {
+        "featureId": "cross-document-view-transitions",
+        "featureName": "Cross-document view transitions",
+        "status": "limited",
+        "fallbackMandatory": true
+      },
+      "effort": "trivial"
+    },
+    {
+      "id": "F15",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "secure-transport-and-headers",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "The page and its state-changing cart form are served and posted over plain HTTP with no Content-Security-Policy and no X-Content-Type-Options. The POST /cart form carries no anti-CSRF token.",
+      "evidence": "headers primitive: https=false; content-security-policy and x-content-type-options missing. flow-probe: nextHopProtocol http/1.0; #cart-form method=post action=http://127.0.0.1:8765/cart with only item and quantity fields (no hidden token). 0 cookies at load. Confidence is medium: loopback counts as a secure context (isSecureContext=true), and the fixture host may not reflect production.",
+      "artifacts": [
+        "evidence/headers.json",
+        "evidence/flow-probe.json",
+        "evidence/cookies.json"
+      ],
+      "suggestedFix": "Serve only over HTTPS. Send an enforced Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'; require-trusted-types-for 'script', plus X-Content-Type-Options: nosniff. The page has no scripts, so a strict policy costs nothing. Add a per-session anti-CSRF token to the cart form, and when a cart session cookie is introduced use __Host- with Secure; HttpOnly; SameSite=Lax (MWG security, forms section 8).",
+      "effort": "small"
+    },
+    {
+      "id": "F16",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "defensive-browser-policies",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "No browser-enforced defences are configured: no HSTS, no clickjacking protection (neither frame-ancestors nor X-Frame-Options), no Referrer-Policy and no Permissions-Policy.",
+      "evidence": "headers primitive: strict-transport-security, x-frame-options, referrer-policy and permissions-policy all missing, and there is no CSP to carry frame-ancestors. Lower stakes than a credential page, but the cart form is a state-changing control that could be framed.",
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "suggestedFix": "Once on HTTPS, send Strict-Transport-Security: max-age=31536000; includeSubDomains, CSP frame-ancestors 'self', Referrer-Policy: strict-origin-when-cross-origin, and Permissions-Policy: camera=(), microphone=(), geolocation=() (MWG security, privacy).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F17",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/base.css",
+      "principleId": "be-fast-and-stable",
+      "principleCheckId": "efficient-resource-delivery",
+      "guidanceId": "performance",
+      "guidanceCategory": "performance",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The only render-blocking resource, base.css, is served uncompressed with no Cache-Control or validators over HTTP/1.0, so every catalogue page view re-downloads it.",
+      "evidence": "har-summary hygiene: base.css is listed in missingCacheHeaders and uncompressedTextOver2KB (3179 B, content-encoding none). renderBlockingCandidates: base.css (parser-inserted, VeryHigh), confirmed in the DOM as a <link rel=stylesheet> in <head>. flow-probe: nextHopProtocol http/1.0. The absolute cost is small (5.4 KB total) and the throttled LCP is still 529ms.",
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/page.har"
+      ],
+      "suggestedFix": "Serve static assets with br/gzip, a versioned filename and Cache-Control: public, max-age=31536000, immutable, over HTTP/2 or HTTP/3. Optionally inline the 3 KB of critical CSS.",
+      "effort": "small"
+    },
+    {
+      "id": "F18",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "title-and-description",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "The <title> 'Parts catalogue' carries no site or brand name, and there is no meta description, so search results and tabs cannot tell this catalogue apart from any other.",
+      "evidence": "flow-probe: title 'Parts catalogue', metaDescription=null. discoverability: metaDescriptionPresentInRaw=null (absent).",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "suggestedFix": "<title>Parts catalogue: bearings and bushings - <Site name></title> and <meta name=\"description\" content=\"Browse sealed bearings and bronze bushings, check stock and order online. Prices include VAT.\">. Modern Web Guidance has no SEO guide; this is the Lighthouse SEO bar.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F19",
+      "pathId": "pagination",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "canonical-and-indexing-signals",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The listing's indexing signals are inconsistent. Page 1 of the pagination is a different URL (/search?page=1) from the page being viewed, there is no rel=canonical to reconcile them, and the catalogue publishes no robots.txt or sitemap to expose its product pages.",
+      "evidence": "flow-probe: pagination '1' href /search?page=1 with aria-current=page while location is /catalogue/; canonical=null; robots.txt and sitemap.xml -> 404; the paginated URLs themselves -> 404.",
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "Use one URL scheme for the listing (/catalogue/?page=N, with page 1 = /catalogue/), add <link rel=\"canonical\"> pointing at each page's own clean URL, and publish a sitemap.xml listing the catalogue and product pages, referenced from robots.txt.",
+      "effort": "small"
+    },
+    {
+      "id": "F20",
+      "pathId": "catalogue-load",
+      "url": "http://127.0.0.1:8765/catalogue/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "structured-and-shareable-metadata",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The page lists products (name, description, availability) but exposes no structured data and no share-preview metadata, so search and AI agents cannot read the items or their stock state as products.",
+      "evidence": "flow-probe: jsonLd=0, ogTags=0. Visible content: 3 product articles with names, descriptions and 'In stock' / 'Ordered on request' states.",
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "Add a JSON-LD ItemList of Product entries (name, description, sku, offers.availability = InStock / PreOrder, and offers.price + priceCurrency once prices are shown, see F3), plus og:title, og:description and og:type for share previews.",
+      "effort": "small"
+    }
+  ],
+  "checkOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-color-scheme",
+      "status": "issues",
+      "confidence": "high",
+      "method": "screenshot under emulated prefers-color-scheme: dark vs default + features CSSOM census",
+      "evidence": "The dark capture is byte-identical in size and visually identical to the default. color-scheme, light-dark() and prefers-color-scheme are all 0 in a complete census.",
+      "pathIds": [
+        "catalogue-preferences"
+      ],
+      "artifacts": [
+        "evidence/dark.png",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-reduced-motion",
+      "status": "pass",
+      "confidence": "high",
+      "method": "features CSSOM census for animation/transition properties, @keyframes, animation-timeline, view transitions; script count",
+      "evidence": "The complete census lists no animation-*, transition-*, @keyframes, scroll timeline or view-transition declarations, and the page has 0 scripts, so nothing moves that would need reducing.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-contrast",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "screenshot under forced-colors: active + prefers-contrast: more; axe contrast rules",
+      "evidence": "Text, links (LinkText), inputs and card borders stay visible, and axe reports 0 contrast violations. However, the border:0 buttons lose their control boundary under forced colours.",
+      "pathIds": [
+        "catalogue-preferences"
+      ],
+      "artifacts": [
+        "evidence/forced-colors.png",
+        "evidence/axe.json"
+      ],
+      "findingIds": [
+        "F12"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "view-transitions",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "features census for @view-transition / view-transition-name; script inventory",
+      "evidence": "No cross-document @view-transition and no JS. The paging, search and cart navigations of this MPA listing swap instantly.",
+      "pathIds": [
+        "catalogue-load",
+        "pagination"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "scroll-driven-animations",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features census for animation-timeline/scroll-timeline/view-timeline; script inventory",
+      "evidence": "No scroll-linked motion exists (0 scripts, 0 timelines, 0 animations).",
+      "reason": "A three-card parts listing has no scroll-linked effects (parallax, reveals, scrollytelling), and a utilitarian catalogue does not call for any.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "physical-gestures",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "DOM/overlay census for carousels, drawers, swipe lists, drag targets",
+      "evidence": "The page contains 3 inputs, 2 buttons and 5 links in static grids. It has no gesture-driven components and 0 overlays.",
+      "reason": "There are no gesture-driven or entry/exit-animated components (no carousel, drawer, swipe-to-remove, drag or top-layer UI) on this page.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "scroll-state-aware-chrome",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "CSS inspection for position: sticky/fixed and scroll-state queries; 360x800 layout",
+      "evidence": "The header is static (no sticky/fixed in the stylesheet). The page is 1210px tall at 360px wide.",
+      "reason": "No sticky or affixed chrome exists, and with three results the page is short enough that scroll-state-aware UI would add nothing.",
+      "pathIds": [
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "anchored-positioning",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features overlay census + anchor-* properties",
+      "evidence": "0 dialogs, 0 popovers, 0 role=dialog, 0 high-z-index elements; anchor-name/position-anchor 0.",
+      "reason": "The page has no tooltips, popovers or menus to anchor.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "directs-attention",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Fetch of the nav and pagination targets + aria-current probe + full-page screenshots",
+      "evidence": "The 'you are here' cues point elsewhere (the Catalogue link resolves to a directory listing; current page '1' resolves to /search?page=1). The pagination is rendered away from the results it controls, so attention is not guided from results to the next page.",
+      "pathIds": [
+        "header-nav",
+        "pagination",
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/a11ytree.json",
+        "evidence/desktop-1280-full.png"
+      ],
+      "findingIds": [
+        "F7",
+        "F4"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "no-intrusive-interruptions",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Screenshot at load + overlay census",
+      "evidence": "No banner, interstitial or overlay at load (0 dialogs/popovers/high-z elements). Content is visible immediately at both viewports.",
+      "pathIds": [
+        "catalogue-load",
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/desktop.png",
+        "evidence/narrow-360.png",
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "semantic-dismissible-primitives",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "features overlay census + a11ytree roles",
+      "evidence": "All controls are native (input type=search/text/number, button, a) inside form/nav/section/aside landmarks, exposed with correct roles in the AX tree. There are no ad-hoc div overlays or custom widgets.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "reduced-chrome",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Screenshots at 780px, 1280px and 360px",
+      "evidence": "The header is a single 48px bar with two links and the footer is one line, with no decorative imagery. The nested card-in-card on the cart form is a minor double border. The wasted space beside the results is a placement problem, judged under clear-purpose-and-primary-action (F4).",
+      "pathIds": [
+        "catalogue-load",
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/desktop-1280-full.png",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "responsive-no-horizontal-scroll",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive at 360x800 + screenshot",
+      "evidence": "scrollWidth 360 = innerWidth 360, horizontalOverflowPx 0, and a viewport meta is present. main collapses to one column under 44rem, the card grid uses auto-fill minmax(14rem, 1fr), and fields are width:100%.",
+      "pathIds": [
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "component-level-responsiveness",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "features census for @container/container-type; screenshots of the card grid and forms in two container widths",
+      "evidence": "No @container is used, but the reused card grid is intrinsically responsive (repeat(auto-fill, minmax(14rem, 1fr))). It renders one column in the ~240-310px sidebar slot and one column at 360px without breaking. The forms (block labels, width:100% fields) adapt in both the 483px and 260px containers. The grid's unfortunate placement is a page-layout issue (F4), not a component failing to adapt.",
+      "pathIds": [
+        "catalogue-load",
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/desktop-1280-full.png",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "input-modality-aware",
+      "status": "pass",
+      "confidence": "high",
+      "method": "targets primitive at 1280x720 and 360x800 + a11ytree real Tab walk",
+      "evidence": "0 of 10 targets are under 24x24 at either form factor (smallest: nav links at 24px high, page links 35x37). All 10 page Tab stops show a 3px solid accent outline (:focus-visible); the 11th stop is the body wrap. Quantity uses type=number for a numeric keypad, and there are no hover-only affordances.",
+      "pathIds": [
+        "catalogue-load",
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/targets.json",
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-purpose-and-primary-action",
+      "status": "issues",
+      "confidence": "high",
+      "method": "First-viewport and full-page screenshots at 780px and 1280px + grid-placement probe + card inspection",
+      "evidence": "The h1 'Parts catalogue' states the purpose, but the products are pushed into the narrow sidebar column while the search card takes the wide one. The cards carry no action, and the add-to-cart action sits detached in a sidebar form.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/desktop-1280-full.png",
+        "evidence/desktop.png",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F4",
+        "F2"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "primary-flow-completion",
+      "status": "issues",
+      "confidence": "high",
+      "method": "Walkthrough of search, pagination, cart link and add-to-cart (GET/POST via the flow probe + destination screenshots)",
+      "evidence": "Search, every page link and the Cart link return 404, Add to cart returns 501, and Catalogue goes to a directory listing. Adding requires a part number the page never displays.",
+      "pathIds": [
+        "search-flow",
+        "pagination",
+        "add-to-cart",
+        "header-nav"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/after-search.png",
+        "evidence/catalogue-nav-target.png"
+      ],
+      "findingIds": [
+        "F1",
+        "F2"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-system-state-and-recovery",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Inspection of cart panel state, live regions, and the failure pages reached from each flow",
+      "evidence": "'Your cart' shows no contents or empty state, and nothing confirms an add. Every failure lands on a raw server error page with no retry or way back.",
+      "pathIds": [
+        "add-to-cart",
+        "search-flow"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/after-search.png",
+        "evidence/desktop-1280-full.png"
+      ],
+      "findingIds": [
+        "F6",
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "good-core-web-vitals",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "trace under 360x800 + mobile-lighthouse + 4x CPU; layout CLS observer; script inventory for INP",
+      "evidence": "LCP = FCP 529ms on throttled mobile (good < 2500ms), and CLS is 0. There are 0 scripts and 0 handlers, so no page code can add interaction latency. The 2 long tasks (TBT 42ms) are renderer parse/style work under a 4x CPU slowdown.",
+      "pathIds": [
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/trace-mobile-summary.json",
+        "evidence/trace-mobile.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "visual-stability",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive layout-shift observer at 360x800",
+      "evidence": "CLS 0 with 0 shifts. There are no images, web fonts or injected content (system font stack).",
+      "pathIds": [
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-main-thread",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Script inventory + trace summary + layout long-task observer",
+      "evidence": "The page ships 0 scripts and 0 inline handlers. The unthrottled layout run records 0 long tasks. The longest task in the 4x-throttled trace is 83ms (TBT 42ms) during parse/style, which is browser work, not page-authored.",
+      "pathIds": [
+        "catalogue-narrow",
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/trace-mobile-summary.json",
+        "evidence/layout-360.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-resource-delivery",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "HAR summary hygiene + render-blocking candidates confirmed against the DOM <head>",
+      "evidence": "base.css (the sole render-blocking resource) is uncompressed with no cache headers, over HTTP/1.0.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/page.har"
+      ],
+      "findingIds": [
+        "F17"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "trim-unused-and-duplicate-code",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "HAR by-resource-type + stylesheet inspection",
+      "evidence": "0 JS and 0 third-party bytes. The single 3 KB shared stylesheet carries a few unused rules for sibling templates (fieldset, dl/dt/dd, .lede, select/textarea). That is a negligible, cacheable cost, and nothing is duplicated.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "names-roles-labels",
+      "status": "issues",
+      "confidence": "high",
+      "method": "a11ytree computed names/roles + axe + aria-current probe",
+      "evidence": "Every field has a computed name from its <label> (Search parts, Part number, Quantity), the buttons are named Search / Add to cart, and the navs are named Main / Pagination. axe finds no name or label violations. However, aria-current=page is exposed on two links whose URLs are not this page.",
+      "pathIds": [
+        "catalogue-load",
+        "header-nav"
+      ],
+      "artifacts": [
+        "evidence/a11ytree.json",
+        "evidence/axe.json",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F7"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "sufficient-contrast",
+      "status": "pass",
+      "confidence": "high",
+      "method": "axe color-contrast rule + token inspection",
+      "evidence": "axe: color-contrast is among the 34 passes. Tokens: ink #1b1b1f on #fff/#f4f5f8, muted #5a5a66 on #fff (>6:1, including the 0.9rem .hint availability text), and white on the #1f4fd8 button (~6.2:1).",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/axe.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "structure-and-focus",
+      "status": "issues",
+      "confidence": "high",
+      "method": "axe structural rules + a11ytree landmarks/headings + real Tab walk",
+      "evidence": "Landmarks are sound (banner > navigation 'Main', main with region 'Results', navigation 'Pagination', complementary, contentinfo), and the Tab order follows the DOM with every stop visibly outlined and none inside aria-hidden. With two nav links before main, the absent skip link costs little. However, the heading outline skips from h1 to h3 (axe heading-order).",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/axe.json",
+        "evidence/a11ytree.json",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F8"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "legible-text",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Stylesheet inspection + screenshots at three widths",
+      "evidence": "The measure (62rem max), line-height 1.5 and wrapping are comfortable at every width, but the body font is pinned at 16px, overriding the user's default text size.",
+      "pathIds": [
+        "catalogue-load",
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/narrow-360.png"
+      ],
+      "findingIds": [
+        "F13"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "zoom-reflow-targets-and-media",
+      "status": "pass",
+      "confidence": "high",
+      "method": "targets at 360x800, viewport meta inspection, 360px reflow layout",
+      "evidence": "The viewport meta is width=device-width, initial-scale=1 (no user-scalable=no or maximum-scale). The page reflows to one column at 360px with 0 overflow, there are 0 undersized targets, and there is no media needing captions.",
+      "pathIds": [
+        "catalogue-narrow"
+      ],
+      "artifacts": [
+        "evidence/targets.json",
+        "evidence/layout-360.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "no-console-errors",
+      "status": "pass",
+      "confidence": "high",
+      "method": "console collector on every primitive's load (Runtime.consoleAPICalled + exceptionThrown + Log.entryAdded)",
+      "evidence": "0 console errors, 0 exceptions and 0 warnings on load across all primitives. The only entry is Chrome's automatic /favicon.ico 404, which the page did not request. The 404/501s in the flow probe come from the probe's own navigation fetches and are judged under primary-flow-completion.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/axe.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "sound-document-and-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "DOM probe (doctype, compatMode, charset) + stylesheet inspection",
+      "evidence": "doctype html in standards mode (CSS1Compat), <meta charset=utf-8> first in <head>, lang=en, valid nesting, and form controls all carry name attributes. There are no images to size. The CSS is token-driven custom properties with no repetition.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "browser-platform-hygiene",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Script/handler inventory, console deprecation scan",
+      "evidence": "0 scripts and 0 inline handlers, so there are no deprecated APIs, unload handlers (no BFCache blocker), paste blockers or permission prompts. The console shows no deprecation warnings, and no source maps or libraries are shipped.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "title-and-description",
+      "status": "issues",
+      "confidence": "high",
+      "method": "DOM probe + discoverability raw-HTML check",
+      "evidence": "The title 'Parts catalogue' has no site name, and there is no meta description.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "findingIds": [
+        "F18"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "crawlable-and-mobile-friendly",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Anchor href probe + fetch of every link target, viewport meta, robots meta, discoverability raw vs rendered",
+      "evidence": "All anchors have real hrefs, the page numbers sit inside a nav labelled 'Pagination', a viewport meta is present, there is no robots meta, and raw HTML covers 100% of content. But every internal link a crawler can follow ends in a 404 (Cart, pages 1-3) or a directory listing (Catalogue), and the products have no crawlable detail links.",
+      "pathIds": [
+        "catalogue-load",
+        "pagination",
+        "header-nav"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/discoverability.json",
+        "evidence/discoverability-crawler.png"
+      ],
+      "findingIds": [
+        "F1"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "canonical-and-indexing-signals",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Response status, robots meta, robots.txt/sitemap fetch, canonical/hreflang probe, pagination URL comparison",
+      "evidence": "The document returns 200 with no noindex, and single-language (no hreflang needed). However, page 1 is published under a second URL with no canonical, and there is no sitemap or robots.txt for a catalogue that should expose its products.",
+      "pathIds": [
+        "catalogue-load",
+        "pagination"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F19"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "structured-and-shareable-metadata",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Probe for JSON-LD, microdata and og:* tags against the visible content",
+      "evidence": "The page shows product entities (name, description, availability) but has 0 JSON-LD blocks, no microdata and 0 og: tags.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F20"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "secure-transport-and-headers",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "headers primitive + navigation protocol + cookies primitive + form inspection",
+      "evidence": "Plain HTTP, no CSP and no nosniff on a page whose POST form changes cart state, with no anti-CSRF token. 0 cookies at load, so cookie flags are not yet at issue.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/headers.json",
+        "evidence/cookies.json",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F15"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "data-minimisation-and-third-parties",
+      "status": "pass",
+      "confidence": "high",
+      "method": "trackers + cookies + HAR third-party origins + form field inventory + secrets scan",
+      "evidence": "0 third-party origins, 0 trackers, 0 cookies, 0 beacons and 0 exposed secrets. The forms collect only a search term, part number and quantity, with no personal data.",
+      "pathIds": [
+        "catalogue-load",
+        "add-to-cart"
+      ],
+      "artifacts": [
+        "evidence/trackers.json",
+        "evidence/cookies.json",
+        "evidence/page-summary.json",
+        "evidence/secrets.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "in-context-permissions-and-modern-auth",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Script inventory (permission APIs, navigator.credentials) + field inventory for credential inputs",
+      "evidence": "No permission prompt can fire on load (0 scripts, 0 handlers, no iframes), so the permission timing requirement is met. The page has no authentication or email-verification surface (no password, email or credential fields), so there is no password-only flow here to upgrade to passkeys.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "defensive-browser-policies",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "headers primitive",
+      "evidence": "No HSTS, X-Frame-Options/frame-ancestors, Referrer-Policy or Permissions-Policy.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "findingIds": [
+        "F16"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "progressive-enhancement",
+      "status": "pass",
+      "confidence": "high",
+      "method": "discoverability raw HTML vs rendered diff + JS-disabled screenshot; script inventory",
+      "evidence": "coveragePct 100 and isJsShell false; the crawler (JS-off) screenshot is identical to the rendered one. Search is a native GET form and add-to-cart a native POST form, so both are usable with zero JS. The CSS uses only Baseline-widely features (grid, custom properties, :focus-visible).",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/discoverability.json",
+        "evidence/discoverability-crawler.png",
+        "evidence/discoverability-rendered.png"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "resilient-runtime-behaviour",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Overlay census, script inventory, console exception scan",
+      "evidence": "There are no overlays or menus that could be clipped (0 overlays) and no async dependencies or visibility logic (0 scripts). 0 runtime exceptions across all loads.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "offline-and-installable",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "resilience primitive (manifest, service worker, real offline reload)",
+      "evidence": "No manifest linked and no page-origin service worker observed in a 2s window. The offline reload rendered the page from HTTP cache (317 chars), not from a worker.",
+      "reason": "This is a server-rendered catalogue MPA (a browse-and-order website), not an app with a standalone use case. Shopping requires live stock and a server-side cart, so installability and an offline shell are not expected here. Its server-failure handling is judged under network-and-http-failure-states.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/resilience.json",
+        "evidence/resilience-offline.png"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "network-and-http-failure-states",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Representative 404/501 routes reached from the page's own links and forms + screenshot of the failure page",
+      "evidence": "Every failed route renders the host's bare 'Error response' page with no site chrome, navigation, explanation or retry, and form input is lost.",
+      "pathIds": [
+        "search-flow",
+        "pagination",
+        "add-to-cart",
+        "header-nav"
+      ],
+      "artifacts": [
+        "evidence/after-search.png",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "lang-dir-and-logical-properties",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "DOM probe for lang/dir + stylesheet inspection for physical vs logical properties + ar-EG render",
+      "evidence": "<html lang=\"en\"> matches the English copy; no dir is needed for LTR (computed direction ltr). The authored CSS uses no physical left/right declarations: margins and paddings are symmetric shorthands (e.g. margin: 0 auto, padding: 0.75rem 1rem), and layout is grid/flex with gap, so it mirrors correctly under rtl. The 48 physical longhands in the CSSOM are shorthand expansions, not authored left/right.",
+      "pathIds": [
+        "catalogue-load",
+        "catalogue-i18n"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/dom.json",
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "locale-aware-data",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Render diff under ar-EG vs default; inventory of rendered dates/numbers/currency",
+      "evidence": "The rendered text is identical under ar-EG. The only digits are part sizes inside product names ('12mm', '15mm') and page numbers. There are no dates, amounts, currencies or durations; the quantity input is a native type=number control that localises itself.",
+      "reason": "The page currently renders no locale-sensitive data to format. The missing prices that should be locale-formatted are a commercial-clarity defect, judged under safe-commercial-and-account-flows (F3), whose fix carries the Intl formatting advice.",
+      "pathIds": [
+        "catalogue-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "time-zone-correctness",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "Render under Asia/Tokyo vs default; <time> and date-text inventory; script inventory",
+      "evidence": "0 <time> elements, no date or time text, and 0 scripts doing date math; the Tokyo render is identical to the default.",
+      "reason": "The catalogue handles no times, dates, schedules or events.",
+      "pathIds": [
+        "catalogue-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "no-dark-patterns",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Screenshots of the full page + DOM inspection of controls, defaults and copy",
+      "evidence": "There is no consent wall, nag, upsell, pre-selected option, countdown or confirmshaming copy. Controls are native buttons with plain labels ('Search', 'Add to cart') and no hidden-text tricks. The missing prices are an omission judged under safe-commercial-and-account-flows, not a deceptive control.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/desktop-1280-full.png",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "humane-error-handling",
+      "status": "issues",
+      "confidence": "high",
+      "method": "Constraint-validation probe on the empty and filled cart form + CSS census for :user-invalid + live-region inventory",
+      "evidence": "The empty cart form is valid and submittable. There are no required markers, no default quantity, no :user-invalid styling, no hints and no live region.",
+      "pathIds": [
+        "add-to-cart"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F9"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "trustworthy-input-assistance",
+      "status": "issues",
+      "confidence": "high",
+      "method": "Field attribute inventory against MWG forms section 3",
+      "evidence": "Text correction is left on for the part-number and search identifiers, and there is no enterkeyhint. No identity/address/payment fields exist on this page that would need autocomplete tokens.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F10"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "safe-commercial-and-account-flows",
+      "status": "issues",
+      "confidence": "high",
+      "method": "Card and cart-form inspection for price, commitments and confirmation; walkthrough of add-to-cart",
+      "evidence": "No price is shown for any product or in the cart panel despite the 'prices include VAT' footer. Adding requires an unseen part number and ends at a 501.",
+      "pathIds": [
+        "catalogue-load",
+        "add-to-cart"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/desktop-1280-full.png"
+      ],
+      "findingIds": [
+        "F3",
+        "F2"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "optimised-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "HAR by-resource-type + image inventory",
+      "evidence": "0 images, 0 fonts and 0 media; the whole page is 3 requests and 5.4 KB transferred (document 1.8 KB, CSS 3.2 KB). The uncompressed CSS is judged under efficient-resource-delivery.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "no-wasteful-work",
+      "status": "pass",
+      "confidence": "high",
+      "method": "HAR network settle + script inventory + layout long-task observer",
+      "evidence": "networkPendingAtSnapshot 0 and no requests after load; 0 scripts, timers or background fetches; 0 long tasks unthrottled.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/layout-360.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "third-party-and-media-budget",
+      "status": "pass",
+      "confidence": "high",
+      "method": "trackers + HAR third-party origins + media inventory",
+      "evidence": "0 third-party origins and 0 third-party bytes; no web fonts (system stack), video, audio, autoplay or animation.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/trackers.json",
+        "evidence/page-summary.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "structured-agent-capabilities",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Script inventory + navigator.modelContext probe + form inspection",
+      "evidence": "0 scripts, navigator.modelContext absent, and no WebMCP form attributes. Search and add-to-cart are plain, labelled HTML forms that an agent can already drive.",
+      "reason": "Emerging, contextual principle with no declared agent-facing intent. Absence is expected and not penalised. Opportunity: once search and cart work (F1), annotate #search-form and the per-product add forms as WebMCP tools (MWG agentic-forms).",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "on-device-inference",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "Script inventory for built-in AI usage",
+      "evidence": "0 scripts; no LanguageModel or Summarizer usage.",
+      "reason": "A three-item parts listing has no summarisation, generation or classification task that on-device inference would improve.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-leak-under-repeated-interaction",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "heap summary baseline vs after 10x (focus/fill search, fill part number + quantity, reportValidity, clear, blur) via --interact",
+      "evidence": "Heap went from 28,497 nodes / 0.96 MB to 30,364 nodes / 1.05 MB (+1.9k nodes, +93 KB) across 10 cycles of both forms. The page has 0 scripts and 0 listeners, so this growth is the injected harness script plus native validation UI, not page-retained state. No Detached* constructor appears in either summary.",
+      "pathIds": [
+        "add-to-cart"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "bounded-footprint",
+      "status": "pass",
+      "confidence": "high",
+      "method": "heap summary totals + DOM element count + performance.memory",
+      "evidence": "51 DOM elements. usedJSHeapSize is 1.2 MB and heap self size 0.96 MB (mostly V8/native builtins), which is proportionate for a static listing page.",
+      "pathIds": [
+        "catalogue-load"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-detached-dom-or-unbounded-listeners",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Constructor summaries before/after 10x interaction + script/handler inventory",
+      "evidence": "No Detached* constructors before or after. The page registers 0 listeners and 0 timers (0 scripts, 0 inline on* handlers).",
+      "pathIds": [
+        "add-to-cart"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json",
+        "evidence/flow-probe.json"
+      ]
+    }
+  ],
+  "principleOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F11",
+        "F12"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F7",
+        "F4"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "support-core-task-success",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F1",
+        "F2",
+        "F4",
+        "F5",
+        "F6"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F17"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F7",
+        "F8",
+        "F13"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-discoverable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F18",
+        "F1",
+        "F19",
+        "F20"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F15",
+        "F16"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "expectation": "contextual",
+      "status": "issues",
+      "findingIds": [
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "expectation": "contextual",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-trustworthy",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F9",
+        "F10",
+        "F3",
+        "F2"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "expectation": "contextual",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-agent-ready",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "Emerging, contextual principle with no declared agent-facing intent. The page has no scripts or agent tools, and its plain labelled forms are already agent-drivable. Not penalised; WebMCP form annotation is noted as an opportunity once the flows work."
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "expectation": "default",
+      "status": "pass"
+    }
+  ],
+  "taskList": [
+    {
+      "id": "T1",
+      "title": "Back the advertised routes: GET /search (and ?page=N) results, GET /cart, POST /cart with POST-redirect-GET; point 'Catalogue' at /catalogue/",
+      "priority": 1,
+      "findingIds": [
+        "F1"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T2",
+      "title": "Put 'Add to cart' on each product card (hidden part number, quantity value=1, named button) and show part numbers",
+      "priority": 2,
+      "findingIds": [
+        "F2"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T3",
+      "title": "Show VAT-inclusive prices on every card (or 'Price on request')",
+      "priority": 3,
+      "findingIds": [
+        "F3"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T4",
+      "title": "Fix the grid placement: results and pagination in the wide column, cart in the sidebar (grid-template-areas)",
+      "priority": 4,
+      "findingIds": [
+        "F4"
+      ],
+      "guidanceId": "css-layout",
+      "status": "open"
+    },
+    {
+      "id": "T5",
+      "title": "Branded 404/5xx pages with site nav, a pre-filled search and a way back; re-render failed cart POSTs with input kept and a role=alert",
+      "priority": 5,
+      "findingIds": [
+        "F5"
+      ],
+      "guidanceId": "persistent-toast-notifications",
+      "status": "open"
+    },
+    {
+      "id": "T6",
+      "title": "Cart form: required fields, default quantity 1, part-number hint/pattern, :user-invalid styling + inline messages",
+      "priority": 6,
+      "findingIds": [
+        "F9"
+      ],
+      "guidanceId": "required-field-feedback",
+      "status": "open"
+    },
+    {
+      "id": "T7",
+      "title": "Correct aria-current: only on the link to the current URL; unify pagination URLs with /catalogue/",
+      "priority": 7,
+      "findingIds": [
+        "F7",
+        "F19"
+      ],
+      "guidanceId": "accessibility",
+      "status": "open"
+    },
+    {
+      "id": "T8",
+      "title": "Serve over HTTPS with an enforced CSP (object-src 'none', frame-ancestors 'self', form-action 'self'), nosniff, HSTS, Referrer-Policy, Permissions-Policy; add an anti-CSRF token to the cart form",
+      "priority": 8,
+      "findingIds": [
+        "F15",
+        "F16"
+      ],
+      "guidanceId": "security",
+      "status": "open"
+    },
+    {
+      "id": "T9",
+      "title": "Render cart contents / empty state in 'Your cart' and a role=status confirmation after an add",
+      "priority": 9,
+      "findingIds": [
+        "F6"
+      ],
+      "guidanceId": "persistent-toast-notifications",
+      "status": "open"
+    },
+    {
+      "id": "T10",
+      "title": "Add dark mode via color-scheme: light dark + prefers-color-scheme token overrides in base.css",
+      "priority": 10,
+      "findingIds": [
+        "F11"
+      ],
+      "guidanceId": "dark-mode",
+      "status": "open"
+    },
+    {
+      "id": "T11",
+      "title": "Add a visible 'Results' h2 so product h3s nest correctly",
+      "priority": 11,
+      "findingIds": [
+        "F8"
+      ],
+      "guidanceId": "accessibility",
+      "status": "open"
+    },
+    {
+      "id": "T12",
+      "title": "Turn off autocorrect/spellcheck on part number and search; add enterkeyhint",
+      "priority": 12,
+      "findingIds": [
+        "F10"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T13",
+      "title": "Descriptive title with site name, meta description, ItemList/Product JSON-LD and OG tags; canonical + sitemap",
+      "priority": 13,
+      "findingIds": [
+        "F18",
+        "F20",
+        "F19"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T14",
+      "title": "Give buttons a transparent border so they keep an edge in forced-colours mode",
+      "priority": 14,
+      "findingIds": [
+        "F12"
+      ],
+      "guidanceId": "color",
+      "status": "open"
+    },
+    {
+      "id": "T15",
+      "title": "Use a relative body font size (100% / 1rem)",
+      "priority": 15,
+      "findingIds": [
+        "F13"
+      ],
+      "guidanceId": "respect-os-text-scale",
+      "status": "open"
+    },
+    {
+      "id": "T16",
+      "title": "Compress and long-cache base.css; serve over HTTP/2+",
+      "priority": 16,
+      "findingIds": [
+        "F17"
+      ],
+      "guidanceId": "performance",
+      "status": "open"
+    },
+    {
+      "id": "T17",
+      "title": "Opt into cross-document view transitions behind prefers-reduced-motion: no-preference (Limited availability: progressive enhancement only)",
+      "priority": 17,
+      "findingIds": [
+        "F14"
+      ],
+      "guidanceId": "cross-document-transitions",
+      "status": "open"
+    }
+  ],
+  "budget": {
+    "pathCount": 8,
+    "auditPasses": 1
+  },
+  "agent": "claude",
+  "runId": "2026-10-09T00-27-28-894Z"
+}

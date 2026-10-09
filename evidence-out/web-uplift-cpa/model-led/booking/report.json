@@ -1,0 +1,1802 @@
+{
+  "url": "http://127.0.0.1:8765/booking/",
+  "auditedAt": "2026-10-09T00:06:22.914Z",
+  "mode": "report",
+  "status": "completed",
+  "statusDetail": "All 58 catalog checks judged on the booking page and its submit flow. Served by a static Python http.server fixture (HTTP/1.0, directory listing at /), so server-side behaviour (POST /book, headers) reflects this host, not necessarily a production deployment.",
+  "page": {
+    "appType": "mpa",
+    "framework": "none (static HTML + one shared stylesheet, zero scripts)",
+    "notes": "Single evening-class booking form for 'Riverside Training Centre'. 40 DOM elements, 0 scripts, 0 inline handlers, one stylesheet (../base.css, 3 KB) shared by sibling fixture designs. Header nav links to / (a raw directory listing) and /roster (404). The form POSTs to /book, which the host answers with 501. Sibling directories (account-recovery/, catalogue/, contact-lead/, event-registration/) are separate designs, not linked from this page, and out of scope for this run."
+  },
+  "config": {
+    "loaded": false
+  },
+  "evidenceUsed": [
+    "dom",
+    "screenshot (default, prefers-color-scheme: dark, 360x800, forced-colors: active + prefers-contrast: more)",
+    "evaluate-probe (recon of sibling routes; form fields, constraint validation and POST submission; ar-EG + Asia/Tokyo render)",
+    "axe-core 4.13.0 (vendored, axe primitive)",
+    "a11ytree (computed AX tree + real Tab order)",
+    "targets (WCAG 2.5.8 at 1280x720 and 360x800)",
+    "features (live CSSOM census + overlay census)",
+    "layout-metrics (360x800)",
+    "trace (360x800, mobile-lighthouse network + 4x CPU)",
+    "har + har-summary",
+    "headers",
+    "cookies",
+    "trackers",
+    "secrets",
+    "discoverability (raw vs rendered, crawler screenshot pair)",
+    "resilience (service worker, manifest, offline reload)",
+    "heap summaries (baseline and after 10x fill/validate interaction)",
+    "modern-web-guidance@0.0.193 search/retrieve"
+  ],
+  "guidanceConsulted": [
+    "autofill-address-form",
+    "autofill-sign-up-form",
+    "validate-input-after-interaction",
+    "dark-mode",
+    "dark-mode-toggle",
+    "color",
+    "component-specific-light-dark-theme",
+    "security",
+    "trusted-types",
+    "privacy",
+    "restrict-outbound-connections",
+    "sanitize-untrusted-html"
+  ],
+  "coverage": {
+    "catalogVersion": "modern-web-guidance@0.0.193",
+    "catalogChecksum": "sha256:5cb6b09a94a3c27fc78161504f385a086f7a437d1a9f6c321bbac2bdc0fb82b7",
+    "baselineCatalogVersion": "web-features@3.40.0",
+    "expected": 58,
+    "recorded": 58,
+    "judged": 58,
+    "blocked": 0,
+    "notRun": 0,
+    "missing": 0,
+    "unknown": 0,
+    "duplicates": 0,
+    "complete": true
+  },
+  "paths": [
+    {
+      "id": "booking-load",
+      "description": "Booking page initial load at the default desktop viewport: the only page this target exposes, and the primary archetype (form page).",
+      "url": "http://127.0.0.1:8765/booking/",
+      "conditions": [
+        "default desktop viewport",
+        "1280x720 (targets)"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "booking-narrow",
+      "description": "Same page at a 360x800 mobile layout, including a throttled performance trace (mobile-lighthouse: 150ms RTT, ~1.6 Mbps, 4x CPU).",
+      "url": "http://127.0.0.1:8765/booking/",
+      "conditions": [
+        "viewport: 360x800",
+        "network: mobile-lighthouse",
+        "cpu: 4x"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "booking-preferences",
+      "description": "User-preference conditions: dark colour scheme, forced colours with more contrast.",
+      "url": "http://127.0.0.1:8765/booking/",
+      "conditions": [
+        "prefers-color-scheme: dark",
+        "forced-colors: active",
+        "prefers-contrast: more"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "booking-submit",
+      "description": "Primary flow: constraint validation on an empty submit, then a filled submission POSTed to the form action (/book), plus 10x fill/validate cycles for the memory check.",
+      "url": "http://127.0.0.1:8765/booking/",
+      "conditions": [
+        "keyboard/form interaction",
+        "POST /book"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "header-nav",
+      "description": "Header navigation targets reached from this page: '/' (marked aria-current=page) and '/roster'.",
+      "url": "http://127.0.0.1:8765/",
+      "conditions": [
+        "fetch of nav link targets"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "booking-i18n",
+      "description": "Booking page rendered under a second locale and time zone to diff dates, numbers and direction.",
+      "url": "http://127.0.0.1:8765/booking/",
+      "conditions": [
+        "locale: ar-EG",
+        "timezone: Asia/Tokyo"
+      ],
+      "result": "pass"
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "dom",
+      "path": "evidence/dom-booking.json",
+      "caption": "Rendered HTML and full stylesheet of the booking page (not truncated: 1583 html chars, 3143 css chars)."
+    },
+    {
+      "type": "other",
+      "path": "evidence/recon.json",
+      "caption": "Recon fetch of /, /roster, /robots.txt, /sitemap.xml, /manifest.webmanifest, /book and page metadata.",
+      "findingIds": [
+        "F2",
+        "F7",
+        "F11"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/booking-desktop.png",
+      "caption": "Booking page at load, default desktop viewport.",
+      "condition": "default",
+      "findingIds": [
+        "F1"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/booking-dark.png",
+      "caption": "Same page under prefers-color-scheme: dark - byte-identical to the default capture (36147 bytes); surfaces stay light.",
+      "condition": "prefers-color-scheme: dark",
+      "findingIds": [
+        "F4"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/booking-360.png",
+      "caption": "Booking page at 360x800: single column, no overflow.",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/booking-forced-colors.png",
+      "caption": "Forced colours + more contrast: text, borders and controls remain visible with system colours.",
+      "condition": "forced-colors: active, prefers-contrast: more"
+    },
+    {
+      "type": "other",
+      "path": "evidence/axe.json",
+      "caption": "axe-core 4.13.0: 0 violations, 0 incomplete, 33 passes."
+    },
+    {
+      "type": "other",
+      "path": "evidence/a11ytree.json",
+      "caption": "Computed accessibility tree (landmarks, named textboxes) and the real Tab order: 8 stops, all with a 3px accent outline.",
+      "findingIds": [
+        "F6"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/targets.json",
+      "caption": "Target sizes: 0 of 7 targets under 24x24 at both 1280x720 and 360x800."
+    },
+    {
+      "type": "other",
+      "path": "evidence/features.json",
+      "caption": "Live CSSOM census (complete): no color-scheme, no prefers-color-scheme, no @container, no :user-invalid, no @view-transition, no animations; one @media (max-width: 44rem); 0 overlays.",
+      "findingIds": [
+        "F4",
+        "F5",
+        "F14"
+      ]
+    },
+    {
+      "type": "layout",
+      "path": "evidence/layout-360.json",
+      "caption": "Layout at 360x800: scrollWidth 360, horizontal overflow 0px, CLS 0, 0 long tasks.",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "trace",
+      "path": "evidence/trace-mobile.json",
+      "caption": "DevTools performance trace of the throttled mobile load.",
+      "condition": "360x800, mobile-lighthouse, 4x CPU"
+    },
+    {
+      "type": "trace-summary",
+      "path": "evidence/trace-mobile-summary.json",
+      "caption": "FCP = LCP 1340ms; 8 long tasks / TBT 1172ms on a page with zero scripts (renderer work under 4x throttle).",
+      "condition": "360x800, mobile-lighthouse, 4x CPU"
+    },
+    {
+      "type": "har",
+      "path": "evidence/booking.har",
+      "caption": "HAR 1.2 of the page load (3 requests)."
+    },
+    {
+      "type": "har-summary",
+      "path": "evidence/booking-summary.json",
+      "caption": "3 requests, 5.5 KB transferred, 0 third-party; base.css uncompressed with no cache headers; only favicon 404.",
+      "findingIds": [
+        "F12"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/headers.json",
+      "caption": "Security headers: plain HTTP; CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy all missing.",
+      "findingIds": [
+        "F8",
+        "F10"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/cookies.json",
+      "caption": "0 cookies set."
+    },
+    {
+      "type": "other",
+      "path": "evidence/trackers.json",
+      "caption": "1 origin (first party), 0 third-party origins, 0 known trackers."
+    },
+    {
+      "type": "other",
+      "path": "evidence/secrets.json",
+      "caption": "Secrets scan: 0 findings, 0 external scripts."
+    },
+    {
+      "type": "discoverability",
+      "path": "evidence/discoverability.json",
+      "caption": "Raw HTML covers 100% of rendered content; not a JS shell; title and h1 in raw HTML; no meta description.",
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-rendered.png",
+      "caption": "Browser view (JS on).",
+      "condition": "JS enabled"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-crawler.png",
+      "caption": "Crawler view (JS off) - identical to the browser view.",
+      "condition": "JS disabled"
+    },
+    {
+      "type": "other",
+      "path": "evidence/resilience.json",
+      "caption": "No manifest, no page-origin service worker observed in a 2s window; offline reload rendered the page from HTTP cache (337 chars).",
+      "condition": "offline"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/resilience-offline.png",
+      "caption": "Offline reload of the booking page (served from HTTP cache).",
+      "condition": "offline"
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-baseline.json",
+      "caption": "Heap summary at load: 29,744 nodes, 0.97 MB self size; no Detached* constructors."
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-after-10x.json",
+      "caption": "Heap summary after 10x fill/clear/reportValidity cycles: 33,110 nodes, 1.22 MB; no Detached* constructors.",
+      "condition": "after 10x form interaction"
+    },
+    {
+      "type": "other",
+      "path": "evidence/form-probe.json",
+      "caption": "Form probe: field attributes (email autocomplete=username), no class picker, no :user-invalid rules or live/alert regions, POST /book -> 501, aria-current=page on the '/' link, no meta description/canonical/JSON-LD/OG.",
+      "findingIds": [
+        "F1",
+        "F2",
+        "F3",
+        "F5",
+        "F6",
+        "F9",
+        "F11"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/i18n-ar-EG-tokyo.json",
+      "caption": "Render under ar-EG / Asia/Tokyo: text identical to default, lang=en, ltr, 0 physical left/right CSS properties.",
+      "condition": "locale: ar-EG, timezone: Asia/Tokyo"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/booking-after-submit.png",
+      "caption": "Attempted capture after a scripted filled submit. INCONCLUSIVE: it shows the empty form, not the post-submit state, so it is not used as evidence. The 501 is evidenced by form-probe.json instead.",
+      "condition": "after requestSubmit()"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "pathId": "booking-submit",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "primary-flow-completion",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "high",
+      "confidence": "high",
+      "summary": "The booking form has no way to choose which class you are booking. The lede says 'Pick a class, tell us who is coming', but the form only collects personal details and 'Confirm booking' commits to an unspecified class.",
+      "evidence": "form-probe: the form's elements are name, email, address, postcode, notes and a submit button; hasClassPicker=false (no select, radio, date or class-named field). The DOM confirms the lede copy 'Pick a class...'. The page shows no class name, date or time anywhere before the commit.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/booking-desktop.png"
+      ],
+      "suggestedFix": "Add a required class choice inside the form, either a native <select name=\"class\" required> or a radio-group <fieldset> of upcoming sessions with their day and time, and show the chosen class back on the 'Confirm booking' step. Use native controls so validation and autofill still work without JS (MWG 'forms').",
+      "effort": "small"
+    },
+    {
+      "id": "F2",
+      "pathId": "booking-submit",
+      "url": "http://127.0.0.1:8765/book",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "primary-flow-completion",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "high",
+      "confidence": "medium",
+      "summary": "Submitting the form dead-ends: the action /book answers POST with 501 'Unsupported method' (and GET with 404). The user lands on a raw server error page with no recovery path and no confirmation.",
+      "evidence": "form-probe POSTed a valid filled form to form.action (/book): status 501 'Unsupported method (POST)', body is the host's generic 'Error response' page. recon: GET /book -> 404. The console logged 'Failed to load resource: 501' for /book. Confidence is medium because the host is a static fixture server, but this is the behaviour a user of this deployment gets.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/recon.json"
+      ],
+      "suggestedFix": "Back the form action with a handler that accepts POST, stores the booking and redirects (POST-redirect-GET) to a confirmation page naming the class, date and next steps. On failure, re-render the form with the user's input preserved and an error summary at the top (role=alert) that offers a retry.",
+      "effort": "medium"
+    },
+    {
+      "id": "F3",
+      "pathId": "booking-load",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "trustworthy-input-assistance",
+      "guidanceId": "autofill-address-form",
+      "guidanceCategory": "forms",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The contact email field uses autocomplete=\"username\", a sign-in/sign-up token, on a booking form that has no account or password. Autofill gets the wrong hint: browsers may offer saved login identifiers, or treat the form as a credential form, instead of filling the user's contact email.",
+      "evidence": "form-probe and dom: <input id=\"email\" type=\"email\" autocomplete=\"username\">. The form has no password field and no sign-in/sign-up purpose. MWG autofill-address-form (the guide for contact/address forms) prescribes autocomplete=\"email\" for email inputs. The 'username for email' advice in autofill-sign-up-form applies only to credential forms. Secondary point: the street address is a single-line <input>, whereas the guide recommends a <textarea autocomplete=\"street-address\"> for varied address formats.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/dom-booking.json"
+      ],
+      "suggestedFix": "Change the email field to <input type=\"email\" id=\"email\" name=\"email\" autocomplete=\"email\" spellcheck=\"false\" required>. Consider making the address a <textarea autocomplete=\"street-address\">. Keep name=\"name\" autocomplete=\"name\" and postcode autocomplete=\"postal-code\", which are already correct.",
+      "baseline": {
+        "featureId": "input-email-tel-url",
+        "featureName": "Email, telephone, and URL <input> types",
+        "status": "widely",
+        "lowDate": "2015-07-29",
+        "fallbackMandatory": false
+      },
+      "effort": "trivial"
+    },
+    {
+      "id": "F4",
+      "pathId": "booking-preferences",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-color-scheme",
+      "guidanceId": "dark-mode",
+      "guidanceCategory": "visual-design",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "No dark mode: the page ignores prefers-color-scheme and does not declare color-scheme, so the bright #f4f5f8/#fff surfaces and light form controls stay the same for users who ask for dark.",
+      "evidence": "screenshot under prefers-color-scheme: dark is byte-identical to the default capture (both 36147 bytes) and visibly light. The features census (complete, 1 sheet): color-scheme 0, light-dark() 0, prefers-color-scheme conditions 0; the only @media is (max-width: 44rem).",
+      "artifacts": [
+        "evidence/booking-dark.png",
+        "evidence/booking-desktop.png",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "In base.css add :root { color-scheme: light dark; } and define the tokens with light-dark(), e.g. --ink: light-dark(#1b1b1f, #ececf1); --paper: light-dark(#fff, #1c1c22); --wash: light-dark(#f4f5f8, #121216). Then re-check accent/ink contrast in both schemes. Add <meta name=\"color-scheme\" content=\"light dark\"> to avoid a flash (MWG dark-mode). light-dark() is newly available, so ship a plain @media (prefers-color-scheme: dark) token override as the fallback.",
+      "baseline": {
+        "featureId": "color-scheme",
+        "featureName": "color-scheme",
+        "status": "widely",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F5",
+      "pathId": "booking-submit",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "humane-error-handling",
+      "guidanceId": "validate-input-after-interaction",
+      "guidanceCategory": "forms",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "Error handling relies only on the browser's transient native validation bubble. Invalid fields get no persistent visual state, no inline message and no hint, and no error region is announced.",
+      "evidence": "form-probe: the empty form fails checkValidity() (4 required fields, each with 'Please fill out this field.'). The stylesheet has 0 :user-invalid/:invalid/aria-invalid rules (features census also shows :user-invalid 0). No field has aria-describedby. No [role=alert] or [aria-live] region exists. Nothing tells users that the fields are required until they submit, and the email has no format hint.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Follow MWG validate-input-after-interaction: keep the native required/type=email constraints, add input:user-invalid { border-color; background } plus an adjacent .error-msg revealed with input:user-invalid + .error-msg, and link hints and errors with aria-describedby / aria-errormessage. Mark required fields in the label text. :user-invalid is Baseline widely available, so no fallback is mandatory.",
+      "baseline": {
+        "featureId": "user-pseudos",
+        "featureName": ":user-valid and :user-invalid",
+        "status": "widely",
+        "lowDate": "2023-11-02",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F6",
+      "pathId": "booking-load",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "names-roles-labels",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The header link 'Evening classes' (href=\"/\") has aria-current=\"page\" while the user is on /booking/, so assistive technology announces the wrong page as current. The bold style tells sighted users the same wrong thing.",
+      "evidence": "form-probe ariaCurrent: [{href: 'http://127.0.0.1:8765/', cur: 'page'}] while location.href is http://127.0.0.1:8765/booking/. The a11ytree exposes this link with the current-page state, and base.css renders [aria-current=page] at font-weight 600. axe does not flag this (it is a semantic mismatch, not a rule violation).",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/a11ytree.json",
+        "evidence/booking-desktop.png"
+      ],
+      "suggestedFix": "Set aria-current=\"page\" only on the link whose href resolves to the current URL. Add a 'Book a class' nav item pointing to /booking/ and mark that one current, or drop aria-current from the '/' link.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F7",
+      "pathId": "header-nav",
+      "url": "http://127.0.0.1:8765/",
+      "principleId": "provide-guided-navigation",
+      "principleCheckId": "directs-attention",
+      "guidanceId": "html",
+      "guidanceCategory": "html",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "The header navigation does not orient or guide users. 'Roster' goes to a 404, and 'Evening classes' goes to a raw server directory listing. Combined with F6, neither nav item helps users understand where they are or where to go next.",
+      "evidence": "recon fetch: GET /roster -> 404 'File not found'. GET / -> 200 'Directory listing for /' (a list of fixture folders). The console logged a 404 for /roster during the probe. Confidence is medium because the host is a static fixture.",
+      "artifacts": [
+        "evidence/recon.json"
+      ],
+      "suggestedFix": "Point the nav links at real pages: a class listing at the 'Evening classes' URL, and a roster page or remove the link. Include the booking page in the nav with aria-current=\"page\" so users can see where they are.",
+      "effort": "small"
+    },
+    {
+      "id": "F8",
+      "pathId": "booking-load",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "secure-transport-and-headers",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "A form that collects name, email, street address and postcode is served over plain HTTP with no Content-Security-Policy and no X-Content-Type-Options.",
+      "evidence": "headers primitive: https=false; content-security-policy missing; x-content-type-options missing. The navigation entry shows nextHopProtocol http/1.0. The form method=post action=/book is same-origin over http. Confidence is medium: loopback is a secure context and the fixture host may not reflect production, but nothing in the response sets a policy.",
+      "artifacts": [
+        "evidence/headers.json",
+        "evidence/form-probe.json"
+      ],
+      "suggestedFix": "Serve over HTTPS. Send Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'; require-trusted-types-for 'script' (enforced, not report-only), and X-Content-Type-Options: nosniff. The page has no scripts, so a strict policy costs nothing (MWG security).",
+      "effort": "small"
+    },
+    {
+      "id": "F9",
+      "pathId": "booking-load",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "data-minimisation-and-third-parties",
+      "guidanceId": "privacy",
+      "guidanceCategory": "privacy",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "Reserving a place at an evening class requires a full street address and postcode, with no stated purpose. That is more personal data than the task evidently needs.",
+      "evidence": "form-probe: address (autocomplete=street-address) and postcode (autocomplete=postal-code) are both required=true. The page copy gives no reason (for example postal materials or catchment eligibility). Otherwise the page is clean: 0 cookies, 0 third-party origins, 0 trackers, 0 scripts.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/cookies.json",
+        "evidence/trackers.json"
+      ],
+      "suggestedFix": "Ask only for what the booking needs (name and email). If address or postcode is genuinely required, say why next to the field and how long it is kept. Otherwise make those fields optional or remove them (MWG privacy: data minimisation).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F10",
+      "pathId": "booking-load",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "defensive-browser-policies",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "No browser-enforced defences are configured: no HSTS, no clickjacking protection (no frame-ancestors or X-Frame-Options), no Referrer-Policy, no Permissions-Policy.",
+      "evidence": "headers primitive: strict-transport-security, x-frame-options, referrer-policy and permissions-policy all missing, and there is no CSP to carry frame-ancestors. A framed copy of this PII form could be overlaid (clickjacking).",
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "suggestedFix": "Once on HTTPS, send Strict-Transport-Security: max-age=31536000; includeSubDomains, CSP frame-ancestors 'self', Referrer-Policy: strict-origin-when-cross-origin, and Permissions-Policy: camera=(), microphone=(), geolocation=() (MWG security, privacy).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F11",
+      "pathId": "booking-load",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "title-and-description",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "The page has a good descriptive <title> but no meta description, so search and share snippets have to guess.",
+      "evidence": "form-probe metaDescription=false. discoverability metaDescriptionPresentInRaw=null (absent). The title 'Evening class booking - Riverside Training Centre' is present in the raw HTML.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "suggestedFix": "Add <meta name=\"description\" content=\"Book a place on an evening class at Riverside Training Centre, Monday to Thursday 6pm to 9pm.\">. Modern Web Guidance has no SEO guide; this is the Lighthouse SEO bar.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F12",
+      "pathId": "booking-load",
+      "url": "http://127.0.0.1:8765/base.css",
+      "principleId": "be-fast-and-stable",
+      "principleCheckId": "efficient-resource-delivery",
+      "guidanceId": "performance",
+      "guidanceCategory": "performance",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The only render-blocking resource (base.css) is served uncompressed with no Cache-Control or validators, over HTTP/1.0, so repeat visits re-download it.",
+      "evidence": "har-summary hygiene: base.css listed in missingCacheHeaders and uncompressedTextOver2KB (3179 B, content-encoding none). renderBlockingCandidates: base.css (parser-inserted, VeryHigh). Navigation nextHopProtocol http/1.0. The absolute cost is small (5.5 KB total page weight).",
+      "artifacts": [
+        "evidence/booking-summary.json",
+        "evidence/booking.har"
+      ],
+      "suggestedFix": "Serve static assets with compression (br/gzip), a versioned filename and Cache-Control: public, max-age=31536000, immutable, over HTTP/2 or HTTP/3. Optionally inline the 3 KB of critical CSS.",
+      "effort": "small"
+    },
+    {
+      "id": "F13",
+      "pathId": "booking-load",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "legible-text",
+      "guidanceId": "respect-os-text-scale",
+      "guidanceCategory": "typography",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "body sets font: 16px/1.5, a fixed pixel size that overrides the user's browser and OS default text size. People who raise their default font size get no larger text (page zoom still works).",
+      "evidence": "dom css: 'body { font: 16px / 1.5 system-ui, ... }'. Headings use rem, so they inherit from the root, but body copy and form controls (font: inherit) stay pinned at 16px.",
+      "artifacts": [
+        "evidence/dom-booking.json"
+      ],
+      "suggestedFix": "Use a relative size: body { font: 100%/1.5 system-ui, ... } (or 1rem) so body text and inherited controls scale with the user's text-size preference (MWG respect-os-text-scale).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F14",
+      "pathId": "booking-load",
+      "url": "http://127.0.0.1:8765/booking/",
+      "principleId": "implement-natural-interactions",
+      "principleCheckId": "view-transitions",
+      "guidanceId": "cross-document-transitions",
+      "guidanceCategory": "ui-behaviors",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "This multi-page site's navigations (nav to booking, booking to confirmation) swap instantly. There is no cross-document view-transition opt-in.",
+      "evidence": "features census (complete): @view-transition 0, view-transition-name 0. 0 scripts, so there is no same-document transition either.",
+      "artifacts": [
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Add @media (prefers-reduced-motion: no-preference) { @view-transition { navigation: auto; } } to base.css. It is a pure progressive enhancement; browsers without support just navigate normally (MWG cross-document-transitions).",
+      "effort": "trivial"
+    }
+  ],
+  "checkOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-color-scheme",
+      "status": "issues",
+      "confidence": "high",
+      "method": "screenshot under emulated prefers-color-scheme: dark vs default + features CSSOM census",
+      "evidence": "Dark capture byte-identical to default; color-scheme, light-dark() and prefers-color-scheme all 0 in a complete census.",
+      "pathIds": [
+        "booking-preferences"
+      ],
+      "artifacts": [
+        "evidence/booking-dark.png",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F4"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-reduced-motion",
+      "status": "pass",
+      "confidence": "high",
+      "method": "features CSSOM census for animation/transition properties, @keyframes, animation-timeline, view transitions; script count",
+      "evidence": "The complete census lists no animation-*, transition-*, @keyframes or view-transition declarations, and the page has 0 scripts, so nothing moves that would need reducing.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-contrast",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "screenshot under forced-colors: active + prefers-contrast: more; axe contrast rules",
+      "evidence": "Under forced colours, text, nav links (LinkText), form borders, card outlines and the button all stay visible with system colours. No background-image or SVG-only affordances are lost. axe reports 0 contrast violations.",
+      "pathIds": [
+        "booking-preferences"
+      ],
+      "artifacts": [
+        "evidence/booking-forced-colors.png",
+        "evidence/axe.json"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "view-transitions",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "features census for @view-transition / view-transition-name; script inventory",
+      "evidence": "No cross-document @view-transition and no JS. MPA navigations swap instantly.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "scroll-driven-animations",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features census for animation-timeline/scroll-timeline/view-timeline; script inventory (no scroll listeners possible with 0 scripts)",
+      "evidence": "No scroll-linked motion exists (0 scripts, 0 timelines), and a short single-column booking form does not call for any.",
+      "reason": "The page has no scroll-linked effects (parallax, reveals, scrollytelling) to implement either way, and none is warranted for a form page.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "physical-gestures",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "DOM/overlay census for carousels, drawers, swipe lists, drag targets; features census for scroll-snap/overscroll",
+      "evidence": "The page contains only text inputs, a textarea, a submit button and two links. No gesture-driven components.",
+      "reason": "There are no gesture-driven or entry/exit-animated components (no carousel, drawer, swipe-to-remove, drag, or top-layer UI) on this page.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/dom-booking.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "scroll-state-aware-chrome",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "CSS inspection for position: sticky/fixed and scroll-state queries; 360x800 layout height",
+      "evidence": "The header is static (no sticky/fixed in the stylesheet) and the page is 1148px tall at 360px.",
+      "reason": "No sticky or affixed chrome exists, and the page is short enough that scroll-state-aware UI would add nothing.",
+      "pathIds": [
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/dom-booking.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "anchored-positioning",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features overlay census + anchor-* properties",
+      "evidence": "0 dialogs, 0 popovers, 0 role=dialog, 0 high z-index elements; anchor-name/position-anchor 0.",
+      "reason": "The page has no tooltips, popovers or menus to anchor.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "directs-attention",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Fetch of each header nav target + aria-current probe",
+      "evidence": "The nav's current-page cue points at '/' (a directory listing) instead of /booking/, and 'Roster' 404s, so the navigation misleads rather than orients.",
+      "pathIds": [
+        "header-nav",
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/recon.json",
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F7",
+        "F6"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "no-intrusive-interruptions",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Screenshot at load + overlay census",
+      "evidence": "No banner, interstitial or overlay at load (0 dialogs/popovers/high-z elements). The content is visible immediately at both viewports.",
+      "pathIds": [
+        "booking-load",
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/booking-desktop.png",
+        "evidence/booking-360.png",
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "semantic-dismissible-primitives",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "features overlay census + a11ytree roles",
+      "evidence": "All controls are native (input, textarea, button inside form/fieldset/legend), exposed as textbox/button/group in the AX tree. No ad-hoc div overlays or custom pickers exist.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "reduced-chrome",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Screenshots at desktop and 360px + layout metrics",
+      "evidence": "The header is a single 48px bar with two links, and the footer is one line. The form and the opening-hours aside take the viewport. No decorative imagery.",
+      "pathIds": [
+        "booking-load",
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/booking-desktop.png",
+        "evidence/booking-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "responsive-no-horizontal-scroll",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive at 360x800 + screenshot",
+      "evidence": "scrollWidth 360 = innerWidth 360, horizontalOverflowPx 0. A viewport meta is present. The grid collapses to one column under 44rem, fields are width:100%, and nothing is hidden by overflow:hidden.",
+      "pathIds": [
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json",
+        "evidence/booking-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "component-level-responsiveness",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "features census for @container/container-type; screenshots of the form card and aside at two widths",
+      "evidence": "No @container is used, but no component is reused at different sizes: the form card and the aside each appear once. Their intrinsic layout (width:100% fields, grid gap) adapts correctly from 780px down to 360px wide, as the screenshots show.",
+      "pathIds": [
+        "booking-load",
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/booking-desktop.png",
+        "evidence/booking-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "input-modality-aware",
+      "status": "pass",
+      "confidence": "high",
+      "method": "targets primitive at 1280x720 and 360x800 + a11ytree real Tab walk",
+      "evidence": "0 of 7 targets are under 24x24 at either form factor. All 8 Tab stops show a 3px solid accent outline (:focus-visible). There are no hover-only affordances.",
+      "pathIds": [
+        "booking-load",
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/targets.json",
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-purpose-and-primary-action",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "First-viewport screenshot + heading/button inspection",
+      "evidence": "The h1 'Book an evening class' and the lede state the purpose. 'Confirm booking' is the single, high-contrast primary action, with no competing CTAs. The missing class choice is judged under primary-flow-completion.",
+      "pathIds": [
+        "booking-load",
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/booking-desktop.png",
+        "evidence/booking-360.png"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "primary-flow-completion",
+      "status": "issues",
+      "confidence": "high",
+      "method": "Form-field probe + filled POST submission to the form action",
+      "evidence": "Users cannot say which class they want (no picker), and the submission returns 501 from /book.",
+      "pathIds": [
+        "booking-submit"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F1",
+        "F2"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-system-state-and-recovery",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Empty-submit constraint-validation probe + filled POST to /book + inspection for alert/live regions",
+      "evidence": "The success path ends on a raw 501 page with no retry or way back. Error state is limited to transient native bubbles: no inline errors, no live region.",
+      "pathIds": [
+        "booking-submit"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F2",
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "good-core-web-vitals",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "trace under 360x800 + mobile-lighthouse + 4x CPU; layout CLS observer; script inventory for INP",
+      "evidence": "LCP = FCP 1340ms on throttled mobile (good < 2500ms). CLS 0. There are 0 scripts and 0 event handlers, so no page code can add interaction latency. The trace's 8 long tasks (TBT 1172ms) happen during renderer startup and parse under 4x CPU on a script-free page; unthrottled layout recorded 0 long tasks.",
+      "pathIds": [
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/trace-mobile-summary.json",
+        "evidence/trace-mobile.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "visual-stability",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive layout-shift observer at 360x800",
+      "evidence": "CLS 0 with 0 shifts. No images, web fonts or injected content (system font stack).",
+      "pathIds": [
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-main-thread",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Script inventory + layout long-task observer + trace summary",
+      "evidence": "The page ships 0 scripts and 0 inline handlers, and the unthrottled layout observer saw 0 long tasks. Long tasks seen in the 4x-throttled trace are browser startup and parse work, not page-authored work.",
+      "pathIds": [
+        "booking-narrow",
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json",
+        "evidence/trace-mobile-summary.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-resource-delivery",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "HAR summary hygiene + render-blocking candidates confirmed against the DOM <head>",
+      "evidence": "base.css (the sole render-blocking resource, confirmed as a <link rel=stylesheet> in <head>) is uncompressed with no cache headers, over HTTP/1.0.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/booking-summary.json",
+        "evidence/booking.har"
+      ],
+      "findingIds": [
+        "F12"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "trim-unused-and-duplicate-code",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "HAR by-resource-type + stylesheet inspection",
+      "evidence": "0 JS, 0 third-party bytes. The single 3 KB shared stylesheet carries a few rules for sibling templates (.grid, article, .pagination, dl), which is a negligible, cacheable cost and nothing duplicated.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/booking-summary.json",
+        "evidence/dom-booking.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "names-roles-labels",
+      "status": "issues",
+      "confidence": "high",
+      "method": "a11ytree computed names/roles + axe + aria-current probe",
+      "evidence": "Every textbox has a computed name from its <label> (Full name, Email, Address, Postcode, Anything we should know?), the fieldset is the group 'Your details', and axe finds 0 violations. However, aria-current=page is exposed on the wrong link.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/a11ytree.json",
+        "evidence/axe.json",
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F6"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "sufficient-contrast",
+      "status": "pass",
+      "confidence": "high",
+      "method": "axe color-contrast rule + token inspection",
+      "evidence": "axe: 0 violations (color-contrast among the 33 passes). Tokens: ink #1b1b1f on #fff/#f4f5f8, muted #5a5a66 on #fff (~6.7:1), white on #1f4fd8 button (~6.2:1).",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/axe.json",
+        "evidence/dom-booking.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "structure-and-focus",
+      "status": "pass",
+      "confidence": "high",
+      "method": "a11ytree landmarks/headings + real Tab walk",
+      "evidence": "Landmarks: banner > navigation 'Main', main, complementary, contentinfo. Headings are h1 then h2. Tab order follows reading order (2 nav links, 5 fields, button, then wraps to body). Every stop has a visible outline, none sits inside aria-hidden, and the main landmark lets users bypass the two-link nav.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "legible-text",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Stylesheet inspection + screenshots at two widths",
+      "evidence": "Measure (62rem max), line-height 1.5 and wrapping are comfortable, but the body font is pinned at 16px, overriding the user's default text size.",
+      "pathIds": [
+        "booking-load",
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/dom-booking.json",
+        "evidence/booking-360.png"
+      ],
+      "findingIds": [
+        "F13"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "zoom-reflow-targets-and-media",
+      "status": "pass",
+      "confidence": "high",
+      "method": "targets at 360x800, viewport meta inspection, 360px reflow layout",
+      "evidence": "The viewport meta is width=device-width, initial-scale=1 (no user-scalable=no or maximum-scale). The page reflows to one column at 360px with 0 overflow. 0 undersized targets. No media needing captions.",
+      "pathIds": [
+        "booking-narrow"
+      ],
+      "artifacts": [
+        "evidence/targets.json",
+        "evidence/layout-360.json",
+        "evidence/dom-booking.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "no-console-errors",
+      "status": "pass",
+      "confidence": "high",
+      "method": "console collector on every primitive's load (Runtime.consoleAPICalled + exceptionThrown + Log.entryAdded)",
+      "evidence": "0 console errors, 0 exceptions, 0 warnings on load. The only entry is Chrome's automatic /favicon.ico 404, which the page did not request. The /book 501 appears only when the form is submitted and is judged under primary-flow-completion.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/axe.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "sound-document-and-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Raw HTML + DOM probe (doctype, compatMode, charset) + stylesheet inspection",
+      "evidence": "<!doctype html> in standards mode (CSS1Compat), <meta charset=utf-8> first in <head>, lang=en, valid nesting. No images to size. The CSS is token-driven custom properties with no repetition.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/recon.json",
+        "evidence/dom-booking.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "browser-platform-hygiene",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Script/handler inventory, console deprecation/issue scan, navigation timing (notRestoredReasons)",
+      "evidence": "0 scripts and 0 inline handlers, so there are no deprecated APIs, unload handlers, paste blockers or permission prompts. Console shows no deprecation warnings. No source maps or libraries are shipped.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "title-and-description",
+      "status": "issues",
+      "confidence": "high",
+      "method": "DOM probe + discoverability raw-HTML check",
+      "evidence": "The descriptive title is present but there is no meta description.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "crawlable-and-mobile-friendly",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Anchor href probe, viewport meta, robots meta + robots.txt fetch, discoverability raw vs rendered",
+      "evidence": "Both nav anchors have real hrefs with descriptive text. A viewport meta is present. No robots meta. robots.txt is 404 (no crawl restrictions). Raw HTML covers 100% of rendered content (not a JS shell). The broken /roster target is judged under directs-attention (F7).",
+      "pathIds": [
+        "booking-load",
+        "header-nav"
+      ],
+      "artifacts": [
+        "evidence/discoverability.json",
+        "evidence/recon.json",
+        "evidence/discoverability-crawler.png"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "canonical-and-indexing-signals",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Response status, robots meta, robots.txt/sitemap fetch, canonical/hreflang probe",
+      "evidence": "The document returns 200 with no redirect and no noindex/noarchive (no robots meta or header). Single URL and single language, so neither hreflang nor a canonical is needed. robots.txt and sitemap.xml are absent (404), which does not block indexing.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/recon.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "structured-and-shareable-metadata",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Probe for JSON-LD, microdata and og:* tags against the visible content",
+      "evidence": "0 JSON-LD blocks, 0 og: tags. The visible content is a generic booking form with opening hours, not a specific event, course, product or article.",
+      "reason": "The page does not represent a rich entity (no specific class/event/course is shown), so schema.org entity markup has nothing accurate to describe. If F1 adds class sessions, Event/Course structured data becomes applicable.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "secure-transport-and-headers",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "headers primitive + navigation protocol + cookies primitive",
+      "evidence": "Plain HTTP, no CSP, no nosniff on a page collecting PII. 0 cookies, so cookie flags are not at issue.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/headers.json",
+        "evidence/cookies.json"
+      ],
+      "findingIds": [
+        "F8"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "data-minimisation-and-third-parties",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "trackers + cookies + HAR third-party origins + form field inventory",
+      "evidence": "0 third parties, 0 trackers, 0 cookies, 0 beacons. However, the form requires a street address and postcode to book a class, with no stated purpose.",
+      "pathIds": [
+        "booking-load",
+        "booking-submit"
+      ],
+      "artifacts": [
+        "evidence/trackers.json",
+        "evidence/cookies.json",
+        "evidence/booking-summary.json",
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F9"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "in-context-permissions-and-modern-auth",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Script inventory (no permission API callers possible) + form inspection for auth fields",
+      "evidence": "0 scripts, so no permission prompt can fire on load. The page has no authentication or account flow and no password field, so there is nothing to upgrade to passkeys. Email is collected as contact data, not as an identity to verify.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "defensive-browser-policies",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "headers primitive",
+      "evidence": "No HSTS, X-Frame-Options/frame-ancestors, Referrer-Policy or Permissions-Policy.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "findingIds": [
+        "F10"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "progressive-enhancement",
+      "status": "pass",
+      "confidence": "high",
+      "method": "discoverability raw HTML vs rendered diff + JS-disabled screenshot; script inventory",
+      "evidence": "coveragePct 100, isJsShell false. The crawler (JS-off) screenshot is identical to the rendered one. The form is a native HTML POST with native constraint validation, and it works with zero JS.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/discoverability.json",
+        "evidence/discoverability-crawler.png",
+        "evidence/discoverability-rendered.png"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "resilient-runtime-behaviour",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Overlay census, script inventory, console exception scan",
+      "evidence": "No overlays or menus that could be clipped (0 overlays), and no async dependencies or visibility logic (0 scripts). 0 runtime exceptions across all loads.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "offline-and-installable",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "resilience primitive: manifest, service worker (2s window), real offline reload",
+      "evidence": "No manifest linked and no page-origin service worker observed. The offline reload rendered the page from the HTTP cache.",
+      "reason": "A booking form for a local training centre is a brochure-style, intrinsically online task: the booking must reach the server to reserve a place. It is not an app that warrants installability or an offline mode. Failure handling for the submission is judged under network-and-http-failure-states.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/resilience.json",
+        "evidence/resilience-offline.png"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "network-and-http-failure-states",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Filled POST to the form action + offline reload via the resilience primitive",
+      "evidence": "An HTTP failure on submit (501) puts the user on the host's raw error page. There is no intentional error page, retry or preserved input.",
+      "pathIds": [
+        "booking-submit"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/resilience.json"
+      ],
+      "findingIds": [
+        "F2"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "lang-dir-and-logical-properties",
+      "status": "pass",
+      "confidence": "high",
+      "method": "DOM probe of lang/dir + stylesheet scan for physical left/right properties, under ar-EG locale",
+      "evidence": "html lang=en matches the content. Computed direction is ltr (correct for English). 0 physical left/right margin, padding, border, float or text-align declarations. No deprecated window.ai translator use (0 scripts).",
+      "pathIds": [
+        "booking-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "locale-aware-data",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Render under ar-EG + Asia/Tokyo and diff the text against the default run",
+      "evidence": "The rendered text is identical under ar-EG and Asia/Tokyo. The page has no machine-formatted dates, numbers, prices or durations, only fixed English prose ('Monday to Thursday, 6pm to 9pm').",
+      "reason": "This single-language, single-site local training centre page has no locale-formatted data to format with Intl. Its opening hours are static prose about one physical venue.",
+      "pathIds": [
+        "booking-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "time-zone-correctness",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Render under Asia/Tokyo vs default + script inventory",
+      "evidence": "Nothing changes under Asia/Tokyo. There are 0 scripts and no client-side Date handling. The 'bookings close two hours before' rule is not computed in the client.",
+      "reason": "The page performs no time computation or rendering of instants. The venue's hours are local wall-clock prose for an in-person class, so there are no cross-zone or DST concerns in the client.",
+      "pathIds": [
+        "booking-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "no-dark-patterns",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Screenshot + DOM review of copy, defaults and controls",
+      "evidence": "No pre-ticked consent, upsell, countdown, confirmshaming or disguised controls. The button label says exactly what it does, the copy is plain, and no content is hidden. 0 scripts, so no misleading custom actions.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/booking-desktop.png",
+        "evidence/dom-booking.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "humane-error-handling",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Empty-submit constraint validation probe + stylesheet scan for :user-invalid / aria-invalid + live region inventory",
+      "evidence": "Only transient native bubbles: no persistent invalid styling, hints or announced errors.",
+      "pathIds": [
+        "booking-submit"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "trustworthy-input-assistance",
+      "status": "issues",
+      "confidence": "high",
+      "method": "Field attribute probe (autocomplete/autocapitalize/spellcheck/inputmode) judged against MWG autofill-address-form",
+      "evidence": "name=name, street-address and postal-code tokens are correct. The contact email uses the credential token 'username' instead of 'email'.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F3"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "safe-commercial-and-account-flows",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Walkthrough of the booking commitment step (screenshot + form probe)",
+      "evidence": "'Confirm booking' commits the user without showing what they are committing to (no class, date, time or price), and there is no cancellation information. The commitment is not visible before confirmation.",
+      "pathIds": [
+        "booking-submit",
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/booking-desktop.png"
+      ],
+      "findingIds": [
+        "F1"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "optimised-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "HAR by-resource-type + images inventory via DOM",
+      "evidence": "0 images or decorative assets. Total transfer is 5.5 KB (document 1.8 KB, CSS 3.2 KB).",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/booking-summary.json",
+        "evidence/dom-booking.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "no-wasteful-work",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Script inventory + HAR over the load window",
+      "evidence": "0 scripts, 0 timers and 0 background fetches. The HAR shows only the document, the stylesheet and the browser's favicon request.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/booking-summary.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "third-party-and-media-budget",
+      "status": "pass",
+      "confidence": "high",
+      "method": "trackers + HAR third-party origins + DOM media inventory",
+      "evidence": "0 third-party origins and no web fonts (system stack), video, audio or animation.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/trackers.json",
+        "evidence/booking-summary.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "structured-agent-capabilities",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Source/DOM inspection for WebMCP registration and agentic-form affordances",
+      "evidence": "0 scripts, so no WebMCP tool registration. The form is plain semantic HTML with labelled fields, which agents can already read.",
+      "reason": "Emerging, contextual principle. There is no web-uplift.json intent declaring an agent-facing surface, and a single-venue booking form does not need dedicated agent tools. This is an opportunity, not an obligation: once F1/F2 are fixed, a WebMCP 'book_class' tool or agentic-form annotations would be a cheap add.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/dom-booking.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "on-device-inference",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "Source/DOM inspection for built-in AI (LanguageModel/Summarizer) usage",
+      "evidence": "0 scripts. The page has no text-generation, summarisation or classification task.",
+      "reason": "The page has no task that on-device inference would improve. The content is a short form plus two sentences of opening hours.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/dom-booking.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-leak-under-repeated-interaction",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "heap summary baseline vs after 10x (fill all fields, clear, reportValidity) via --interact",
+      "evidence": "Retained heap 0.97 MB -> 1.22 MB (+250 KB, +3.4k nodes) across 10 cycles. The page has 0 scripts and 0 listeners, so this growth is the injected harness script plus native validation UI, not page-retained state. No Detached* constructor appears in either summary.",
+      "pathIds": [
+        "booking-submit"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "bounded-footprint",
+      "status": "pass",
+      "confidence": "high",
+      "method": "heap summary totals + DOM element count + performance.memory",
+      "evidence": "40 DOM elements. usedJSHeapSize 1.2 MB, heap self size 0.97 MB (mostly V8/native builtins). Proportionate for a static form.",
+      "pathIds": [
+        "booking-load"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-detached-dom-or-unbounded-listeners",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Constructor summaries before/after 10x interaction + script/handler inventory",
+      "evidence": "No Detached* constructors before or after. The top-25 constructors bottom out at 84 B entries, so any detached-node population would rank. The page registers 0 listeners and 0 timers (0 scripts, 0 inline on* handlers).",
+      "pathIds": [
+        "booking-submit"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json",
+        "evidence/form-probe.json"
+      ]
+    }
+  ],
+  "principleOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F4"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F7",
+        "F6"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "support-core-task-success",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F1",
+        "F2",
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F12"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F6",
+        "F13"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-discoverable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F8",
+        "F9",
+        "F10"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "expectation": "contextual",
+      "status": "issues",
+      "findingIds": [
+        "F2"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "expectation": "contextual",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-trustworthy",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F1",
+        "F3",
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "expectation": "contextual",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-agent-ready",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "Emerging, contextual principle with no declared agent-facing intent. The page has no scripts or agent tools, and no task that on-device AI would improve. Recorded as an opportunity (a WebMCP booking tool once the flow works), not penalised."
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "expectation": "default",
+      "status": "pass"
+    }
+  ],
+  "taskList": [
+    {
+      "id": "T1",
+      "title": "Let users choose the class (native select or radio group of sessions) and show it before 'Confirm booking'",
+      "priority": 1,
+      "findingIds": [
+        "F1"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T2",
+      "title": "Back /book with a POST handler: redirect to a confirmation page; on failure re-render with input preserved and an error summary",
+      "priority": 2,
+      "findingIds": [
+        "F2"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T3",
+      "title": "Fix the email autofill token: autocomplete=\"email\" (not username) and spellcheck=\"false\"; consider a textarea for street-address",
+      "priority": 3,
+      "findingIds": [
+        "F3"
+      ],
+      "guidanceId": "autofill-address-form",
+      "status": "open"
+    },
+    {
+      "id": "T4",
+      "title": "Add :user-invalid styling, inline error messages and hints linked by aria-describedby; mark required fields",
+      "priority": 4,
+      "findingIds": [
+        "F5"
+      ],
+      "guidanceId": "validate-input-after-interaction",
+      "status": "open"
+    },
+    {
+      "id": "T5",
+      "title": "Fix navigation: put aria-current on the booking link only; point 'Evening classes' and 'Roster' at real pages",
+      "priority": 5,
+      "findingIds": [
+        "F6",
+        "F7"
+      ],
+      "guidanceId": "accessibility",
+      "status": "open"
+    },
+    {
+      "id": "T6",
+      "title": "Serve over HTTPS with an enforced CSP (object-src 'none', frame-ancestors 'self', form-action 'self'), nosniff, HSTS, Referrer-Policy and Permissions-Policy",
+      "priority": 6,
+      "findingIds": [
+        "F8",
+        "F10"
+      ],
+      "guidanceId": "security",
+      "status": "open"
+    },
+    {
+      "id": "T7",
+      "title": "Add dark mode via color-scheme: light dark + light-dark() tokens in base.css",
+      "priority": 7,
+      "findingIds": [
+        "F4"
+      ],
+      "guidanceId": "dark-mode",
+      "status": "open"
+    },
+    {
+      "id": "T8",
+      "title": "Drop the required street address and postcode, or explain why they are needed",
+      "priority": 8,
+      "findingIds": [
+        "F9"
+      ],
+      "guidanceId": "privacy",
+      "status": "open"
+    },
+    {
+      "id": "T9",
+      "title": "Use a relative body font size (100% / 1rem)",
+      "priority": 9,
+      "findingIds": [
+        "F13"
+      ],
+      "guidanceId": "respect-os-text-scale",
+      "status": "open"
+    },
+    {
+      "id": "T10",
+      "title": "Compress and long-cache base.css; serve over HTTP/2+",
+      "priority": 10,
+      "findingIds": [
+        "F12"
+      ],
+      "guidanceId": "performance",
+      "status": "open"
+    },
+    {
+      "id": "T11",
+      "title": "Add a meta description",
+      "priority": 11,
+      "findingIds": [
+        "F11"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T12",
+      "title": "Opt into cross-document view transitions behind prefers-reduced-motion: no-preference",
+      "priority": 12,
+      "findingIds": [
+        "F14"
+      ],
+      "guidanceId": "cross-document-transitions",
+      "status": "open"
+    }
+  ],
+  "budget": {
+    "pathCount": 6,
+    "auditPasses": 1
+  },
+  "agent": "claude",
+  "runId": "2026-10-09T00-06-22-914Z"
+}

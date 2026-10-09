@@ -1,0 +1,15 @@
+{
+  "inputBorderVsFormBg": 1.46,
+  "selectBorderVsFormBg": 1.46,
+  "formCardBorderVsBody": 1.34,
+  "mutedDdVsBody": 6.24,
+  "ledeVsBody": 6.24,
+  "hintVsAside": 6.8,
+  "buttonText": 6.63,
+  "buttonVsForm": 6.63,
+  "focusRingVsForm": 6.63,
+  "footerVsBody": 6.24,
+  "inputBorder": "rgb(213, 213, 221)",
+  "formBg": "rgb(255, 255, 255)",
+  "bodyBg": "rgb(244, 245, 248)"
+}

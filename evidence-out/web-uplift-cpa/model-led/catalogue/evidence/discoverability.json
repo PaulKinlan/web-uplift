@@ -1,0 +1,61 @@
+{
+  "type": "discoverability",
+  "url": "http://127.0.0.1:8765/catalogue/",
+  "finalUrl": "http://127.0.0.1:8765/catalogue/",
+  "fetchedStatus": 200,
+  "fetchError": null,
+  "crawlerUserAgent": "Mozilla/5.0 (compatible; web-uplift-discoverability/1.0; +https://github.com/PaulKinlan/web-uplift)",
+  "coveragePct": 100,
+  "rawComparisonUsable": true,
+  "contentVisibleWithoutJs": 100,
+  "isJsShell": false,
+  "renderedEmpty": false,
+  "emptyMounts": [],
+  "titlePresentInRaw": true,
+  "h1PresentInRaw": true,
+  "metaDescriptionPresentInRaw": null,
+  "rendered": {
+    "textChars": 307,
+    "contentTokens": 23,
+    "title": "Parts catalogue",
+    "h1Count": 1,
+    "framework": null
+  },
+  "raw": {
+    "htmlBytes": 1567,
+    "textChars": 323,
+    "contentTokens": 23
+  },
+  "screenshots": {
+    "rendered": "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/discoverability-rendered.png",
+    "crawler": "reports-cpa/127_0_0_1_8765/2026-10-09T00-27-28-894Z/evidence/discoverability-crawler.png"
+  },
+  "signalsFor": [
+    "be-discoverable",
+    "be-agent-ready"
+  ],
+  "note": "coveragePct = the share of the rendered page's content words that also appear in the RAW server HTML - what a crawler that does not run JavaScript (many AI crawlers, per the url-influence research) can see. Low coverage with an empty SPA mount means the content is effectively invisible to non-JS crawlers and unlikely to enter model training or search. High coverage means it is server-rendered and reachable. Descriptive signal, not a verdict: judge against be-discoverable / be-agent-ready, and confirm surprising results against the raw HTML and the dom primitive.",
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

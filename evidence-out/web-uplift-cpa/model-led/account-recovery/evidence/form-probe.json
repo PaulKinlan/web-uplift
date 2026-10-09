@@ -1,0 +1,248 @@
+{
+  "location": "http://127.0.0.1:8765/account-recovery/",
+  "title": "Your account",
+  "metaDescription": null,
+  "canonical": null,
+  "robotsMeta": null,
+  "ogTags": 0,
+  "jsonLd": 0,
+  "colorSchemeMeta": null,
+  "themeColor": null,
+  "icons": [],
+  "scripts": 0,
+  "iframes": 0,
+  "headings": [
+    "H1: Sign in or create an account",
+    "H2: Keep it safe"
+  ],
+  "landmarks": [
+    "HEADER",
+    "NAV[Main]",
+    "MAIN",
+    "ASIDE",
+    "FOOTER"
+  ],
+  "navLinks": [
+    {
+      "text": "Account",
+      "href": "http://127.0.0.1:8765/",
+      "current": "page"
+    }
+  ],
+  "allLinks": [
+    "http://127.0.0.1:8765/"
+  ],
+  "signInFormPresent": false,
+  "passwordInputs": [
+    {
+      "id": "password",
+      "autocomplete": "new-password",
+      "minlength": -1,
+      "describedby": null
+    }
+  ],
+  "showPasswordToggle": false,
+  "liveRegions": 0,
+  "cssUserInvalid": false,
+  "cssPrefersColorScheme": false,
+  "cssColorScheme": false,
+  "physicalProps": [],
+  "cookieVisibleToJs": "",
+  "forms": [
+    {
+      "id": "signup-form",
+      "method": "post",
+      "action": "http://127.0.0.1:8765/signup",
+      "novalidate": false,
+      "headingOrLegend": "Create an account",
+      "fields": [
+        {
+          "tag": "FIELDSET",
+          "id": "",
+          "name": "",
+          "type": "fieldset",
+          "autocomplete": null,
+          "pattern": null,
+          "label": null,
+          "describedby": null,
+          "validationMessage": ""
+        },
+        {
+          "tag": "INPUT",
+          "id": "email",
+          "name": "email",
+          "type": "email",
+          "autocomplete": "username",
+          "required": true,
+          "minlength": -1,
+          "pattern": null,
+          "label": [
+            "Email"
+          ],
+          "describedby": null,
+          "validationMessage": "Please fill out this field."
+        },
+        {
+          "tag": "INPUT",
+          "id": "password",
+          "name": "password",
+          "type": "password",
+          "autocomplete": "new-password",
+          "required": true,
+          "minlength": -1,
+          "pattern": null,
+          "label": [
+            "Password"
+          ],
+          "describedby": null,
+          "validationMessage": "Please fill out this field."
+        },
+        {
+          "tag": "INPUT",
+          "id": "displayName",
+          "name": "displayName",
+          "type": "text",
+          "autocomplete": null,
+          "required": true,
+          "minlength": -1,
+          "pattern": null,
+          "label": [
+            "Display name"
+          ],
+          "describedby": null,
+          "validationMessage": "Please fill out this field."
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "name": "",
+          "type": "submit",
+          "autocomplete": null,
+          "pattern": null,
+          "label": [],
+          "describedby": null,
+          "validationMessage": ""
+        }
+      ],
+      "valid": false
+    },
+    {
+      "id": "reset-form",
+      "method": "post",
+      "action": "http://127.0.0.1:8765/reset",
+      "novalidate": false,
+      "headingOrLegend": null,
+      "fields": [
+        {
+          "tag": "INPUT",
+          "id": "reset-email",
+          "name": "email",
+          "type": "email",
+          "autocomplete": "username",
+          "required": true,
+          "minlength": -1,
+          "pattern": null,
+          "label": [
+            "Forgot your password?"
+          ],
+          "describedby": null,
+          "validationMessage": "Please fill out this field."
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "name": "",
+          "type": "submit",
+          "autocomplete": null,
+          "pattern": null,
+          "label": [],
+          "describedby": null,
+          "validationMessage": ""
+        }
+      ],
+      "valid": false
+    }
+  ],
+  "net": [
+    {
+      "url": "/",
+      "method": "GET",
+      "status": 200,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Directory listing for /</title>\n</head>\n<body>\n<h1>Directory listing for /</h1>\n<hr>\n<ul>\n<li><a href=\"account-recovery/\">account-recovery/</a></li>\n<li><a href=\"base.css\">base.css</a></li>\n<li><a href=\"booking/\">booking/</a></li>"
+    },
+    {
+      "url": "/robots.txt",
+      "method": "GET",
+      "status": 404,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/robots.txt",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+    },
+    {
+      "url": "/sitemap.xml",
+      "method": "GET",
+      "status": 404,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/sitemap.xml",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+    },
+    {
+      "url": "/signin",
+      "method": "GET",
+      "status": 404,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/signin",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+    },
+    {
+      "url": "/login",
+      "method": "GET",
+      "status": 404,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/login",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+    },
+    {
+      "url": "/.well-known/change-password",
+      "method": "GET",
+      "status": 404,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/.well-known/change-password",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+    },
+    {
+      "url": "/signup",
+      "method": "POST",
+      "status": 501,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/signup",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 501</p>\n        <p>Message: Unsupported method ('POST').</p>\n        <p>Error code explanation: 501 - Server "
+    },
+    {
+      "url": "/reset",
+      "method": "POST",
+      "status": 501,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/reset",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 501</p>\n        <p>Message: Unsupported method ('POST').</p>\n        <p>Error code explanation: 501 - Server "
+    },
+    {
+      "url": "/signup",
+      "method": "GET",
+      "status": 404,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/signup",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+    },
+    {
+      "url": "/reset",
+      "method": "GET",
+      "status": 404,
+      "redirected": false,
+      "finalUrl": "http://127.0.0.1:8765/reset",
+      "bodyStart": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+    }
+  ]
+}

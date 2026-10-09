@@ -1,0 +1,72 @@
+{
+  "layoutViewport": {
+    "pageX": 0,
+    "pageY": 0,
+    "clientWidth": 360,
+    "clientHeight": 800
+  },
+  "visualViewport": {
+    "offsetX": 0,
+    "offsetY": 0,
+    "pageX": 0,
+    "pageY": 0,
+    "clientWidth": 360,
+    "clientHeight": 800,
+    "scale": 1,
+    "zoom": 1
+  },
+  "cssContentSize": {
+    "x": 0,
+    "y": 0,
+    "width": 360,
+    "height": 1210
+  },
+  "observed": {
+    "cls": 0,
+    "shifts": [],
+    "shiftsTotal": 0,
+    "shiftsTruncated": false,
+    "longTasks": [],
+    "longTasksTotal": 0,
+    "longTasksTruncated": false,
+    "scrollWidth": 360,
+    "clientWidth": 360,
+    "innerWidth": 360,
+    "innerHeight": 800,
+    "visualViewportWidth": 360,
+    "hasViewportMeta": true,
+    "horizontalOverflowPx": 0
+  },
+  "conditions": {
+    "viewport": {
+      "profile": "mobile",
+      "width": 360,
+      "height": 800,
+      "deviceScaleFactor": 1,
+      "mobile": true
+    }
+  },
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

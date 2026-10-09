@@ -1,0 +1,51 @@
+{
+  "url": "http://127.0.0.1:8765/booking/",
+  "allowedRoots": [
+    "/home/exedev/worktrees/web-uplift-mwg-drift/reports-cpa"
+  ],
+  "changed": {
+    "added": [
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/a11ytree.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/axe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/booking-360.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/booking-after-submit.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/booking-dark.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/booking-desktop.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/booking-forced-colors.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/booking-summary.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/booking.har",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/cookies.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/discoverability-crawler.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/discoverability-rendered.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/discoverability.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/dom-booking.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/features.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/form-probe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/headers.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/heap-after-10x.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/heap-baseline.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/i18n-ar-EG-tokyo.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/layout-360.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/recon.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/resilience-offline.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/resilience.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/secrets.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/targets.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/trace-mobile-summary.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/trace-mobile.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/evidence/trackers.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/launches.jsonl",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/report.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/report.md",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z/scratch/manifest.mjs",
+      "reports-cpa/127_0_0_1_8765/latest.txt",
+      "reports-cpa/127_0_0_1_8765/scorecard.html",
+      "reports-cpa/127_0_0_1_8765/scorecard.json"
+    ],
+    "modified": [],
+    "deleted": []
+  },
+  "escapedOutsideScope": [],
+  "agentError": null,
+  "recordWrittenTo": "reports-cpa/127_0_0_1_8765/2026-10-09T00-06-22-914Z"
+}

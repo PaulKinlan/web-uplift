@@ -1,0 +1,1885 @@
+{
+  "url": "http://127.0.0.1:8765/account-recovery/",
+  "auditedAt": "2026-10-09T00:17:28.543Z",
+  "mode": "report",
+  "status": "completed",
+  "statusDetail": "All 58 catalog checks judged on the account page (sign-up + password-reset forms) and both of its submit flows. Served by a static Python http.server fixture (HTTP/1.0, directory listing at /), so server-side behaviour (POST /signup and /reset, response headers) reflects this host, not necessarily a production deployment.",
+  "page": {
+    "appType": "mpa",
+    "framework": "none (static HTML + one shared stylesheet, zero scripts)",
+    "notes": "Account entry page titled 'Your account', h1 'Sign in or create an account'. It has 36 DOM elements, 0 scripts, 0 inline handlers and one stylesheet (../base.css, 3 KB) shared with sibling fixture designs. It contains two forms: #signup-form (email, new-password, display name -> POST /signup) and #reset-form (one email field -> POST /reset). There is NO sign-in form (no current-password field, and /signin and /login are 404). The single nav link 'Account' (aria-current=page) points to / (a raw directory listing). Both form actions answer POST with 501. Sibling directories (booking/, catalogue/, contact-lead/, event-registration/) are separate designs, are not linked from this page, and are out of scope: booking/ was audited in run 2026-10-09T00-06-22-914Z."
+  },
+  "config": {
+    "loaded": false
+  },
+  "evidenceUsed": [
+    "dom",
+    "screenshot (default, prefers-color-scheme: dark, 360x800, forced-colors: active + prefers-contrast: more)",
+    "evaluate-probe (form fields, constraint validation, POST to /signup and /reset, nav/robots/sitemap/signin/login/.well-known/change-password fetches, metadata; doctype/protocol/memory; ar-EG + Asia/Tokyo render)",
+    "axe-core 4.13.0 (vendored, axe primitive)",
+    "a11ytree (computed AX tree + real Tab order)",
+    "targets (WCAG 2.5.8 at 1280x720 and 360x800)",
+    "features (live CSSOM census + overlay census)",
+    "layout-metrics (360x800)",
+    "trace (360x800, mobile-lighthouse network + 4x CPU)",
+    "har + har-summary",
+    "headers",
+    "cookies",
+    "trackers",
+    "secrets",
+    "discoverability (raw vs rendered, crawler screenshot pair)",
+    "resilience (service worker, manifest, offline reload)",
+    "heap summaries (baseline and after 10x fill/validate on both forms)",
+    "console collector (on every primitive)",
+    "modern-web-guidance@0.0.193 search/retrieve"
+  ],
+  "guidanceConsulted": [
+    "autofill-sign-up-form",
+    "autofill-sign-in-form",
+    "passkey-authentication",
+    "passkey-reauthentication",
+    "validate-input-after-interaction",
+    "dark-mode",
+    "security",
+    "privacy",
+    "respect-os-text-scale",
+    "cross-document-transitions"
+  ],
+  "coverage": {
+    "catalogVersion": "modern-web-guidance@0.0.193",
+    "catalogChecksum": "sha256:5cb6b09a94a3c27fc78161504f385a086f7a437d1a9f6c321bbac2bdc0fb82b7",
+    "baselineCatalogVersion": "web-features@3.40.0",
+    "expected": 58,
+    "recorded": 58,
+    "judged": 58,
+    "blocked": 0,
+    "notRun": 0,
+    "missing": 0,
+    "unknown": 0,
+    "duplicates": 0,
+    "complete": true
+  },
+  "paths": [
+    {
+      "id": "account-load",
+      "description": "Account page initial load at the default desktop viewport. This is the only page the target exposes and the primary archetype (an auth/account form page). Sibling fixture designs are not linked from it and are out of scope.",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "conditions": [
+        "default desktop viewport",
+        "1280x720 (targets)"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "account-narrow",
+      "description": "Same page at a 360x800 mobile layout, including a throttled performance trace (mobile-lighthouse: 150ms RTT, ~1.6 Mbps, 4x CPU).",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "conditions": [
+        "viewport: 360x800",
+        "network: mobile-lighthouse",
+        "cpu: 4x"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "account-preferences",
+      "description": "User-preference conditions: dark colour scheme, forced colours with more contrast.",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "conditions": [
+        "prefers-color-scheme: dark",
+        "forced-colors: active",
+        "prefers-contrast: more"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "account-submit",
+      "description": "Primary flows: constraint validation on empty submits of both forms, then filled submissions POSTed to /signup and /reset, plus 10x fill/validate cycles on both forms for the memory check.",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "conditions": [
+        "keyboard/form interaction",
+        "POST /signup",
+        "POST /reset"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "returning-user",
+      "description": "Returning-user journey: look for a way to sign in with an existing account (current-password field, sign-in link, /signin, /login, /.well-known/change-password).",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "conditions": [
+        "DOM probe",
+        "fetch of conventional sign-in routes"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "header-nav",
+      "description": "Header navigation target reached from this page: '/' (the 'Account' link, marked aria-current=page).",
+      "url": "http://127.0.0.1:8765/",
+      "conditions": [
+        "fetch of nav link target"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "account-i18n",
+      "description": "Account page rendered under a second locale and time zone to diff text, dates, numbers and direction.",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "conditions": [
+        "locale: ar-EG",
+        "timezone: Asia/Tokyo"
+      ],
+      "result": "pass"
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "dom",
+      "path": "evidence/dom.json",
+      "caption": "Rendered HTML and full stylesheet of the account page (not truncated: 1497 html chars, 3143 css chars).",
+      "findingIds": [
+        "F4",
+        "F7",
+        "F12"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/desktop.png",
+      "caption": "Account page at load, default desktop viewport: h1 'Sign in or create an account', but only a 'Create an account' form and a 'Forgot your password?' form.",
+      "condition": "default",
+      "findingIds": [
+        "F1",
+        "F4"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/dark.png",
+      "caption": "Same page under prefers-color-scheme: dark. It is visually identical to the default capture, and the surfaces stay light.",
+      "condition": "prefers-color-scheme: dark",
+      "findingIds": [
+        "F10"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/narrow-360.png",
+      "caption": "Account page at 360x800: single column, no overflow.",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/forced-colors.png",
+      "caption": "Forced colours + more contrast: text, inputs and cards keep system-colour borders, but the 'Send a reset link' button (border: 0) loses its boundary and reads as plain text.",
+      "condition": "forced-colors: active, prefers-contrast: more",
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/axe.json",
+      "caption": "axe-core 4.13.0: 0 violations, 0 incomplete, 33 passes."
+    },
+    {
+      "type": "other",
+      "path": "evidence/a11ytree.json",
+      "caption": "Computed accessibility tree and the real Tab order: 7 page stops plus the body wrap, all page stops with a 3px accent outline. The reset textbox's computed name is 'Forgot your password?'.",
+      "findingIds": [
+        "F4",
+        "F8"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/targets.json",
+      "caption": "Target sizes: 0 of 7 targets under 24x24 at both 1280x720 and 360x800."
+    },
+    {
+      "type": "other",
+      "path": "evidence/features.json",
+      "caption": "Live CSSOM census (complete, 1 sheet): no color-scheme, no prefers-color-scheme, no @container, no :user-invalid, no @view-transition, no animations; one @media (max-width: 44rem); 0 overlays.",
+      "findingIds": [
+        "F6",
+        "F10",
+        "F15"
+      ]
+    },
+    {
+      "type": "layout",
+      "path": "evidence/layout-360.json",
+      "caption": "Layout at 360x800: scrollWidth 360, horizontal overflow 0px, CLS 0.",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "trace",
+      "path": "evidence/trace-mobile.json",
+      "caption": "DevTools performance trace of the throttled mobile load.",
+      "condition": "360x800, mobile-lighthouse, 4x CPU"
+    },
+    {
+      "type": "trace-summary",
+      "path": "evidence/trace-mobile-summary.json",
+      "caption": "FCP = LCP 511ms; 3 long tasks / TBT 101ms on a page with zero scripts (renderer parse/style work under 4x throttle).",
+      "condition": "360x800, mobile-lighthouse, 4x CPU"
+    },
+    {
+      "type": "har",
+      "path": "evidence/page.har",
+      "caption": "HAR 1.2 of the page load (3 requests)."
+    },
+    {
+      "type": "har-summary",
+      "path": "evidence/page-summary.json",
+      "caption": "3 requests, 5.4 KB transferred, 0 third-party; base.css uncompressed with no cache headers; only favicon 404.",
+      "findingIds": [
+        "F13"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/headers.json",
+      "caption": "Security headers: plain HTTP; CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy all missing.",
+      "findingIds": [
+        "F3",
+        "F9"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/cookies.json",
+      "caption": "0 cookies set at load."
+    },
+    {
+      "type": "other",
+      "path": "evidence/trackers.json",
+      "caption": "1 origin (first party), 0 third-party origins, 0 known trackers."
+    },
+    {
+      "type": "other",
+      "path": "evidence/secrets.json",
+      "caption": "Secrets scan: 0 findings, 0 scripts."
+    },
+    {
+      "type": "discoverability",
+      "path": "evidence/discoverability.json",
+      "caption": "Raw HTML covers 100% of rendered content; not a JS shell; title and h1 in raw HTML; no meta description.",
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-rendered.png",
+      "caption": "Browser view (JS on).",
+      "condition": "JS enabled"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-crawler.png",
+      "caption": "Crawler view (JS off), identical to the browser view.",
+      "condition": "JS disabled"
+    },
+    {
+      "type": "other",
+      "path": "evidence/resilience.json",
+      "caption": "No manifest, no page-origin service worker observed in a 2s window; offline reload rendered the page from HTTP cache (330 chars).",
+      "condition": "offline"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/resilience-offline.png",
+      "caption": "Offline reload of the account page (served from HTTP cache).",
+      "condition": "offline"
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-baseline.json",
+      "caption": "Heap summary at load: 29,715 nodes, 0.98 MB self size; no Detached* constructors."
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-after-10x.json",
+      "caption": "Heap summary after 10x fill/reportValidity/clear cycles on both forms: 31,747 nodes, 1.09 MB; no Detached* constructors.",
+      "condition": "after 10x form interaction"
+    },
+    {
+      "type": "other",
+      "path": "evidence/form-probe.json",
+      "caption": "Form/endpoint probe: field attributes and labels; no current-password field; POST /signup and POST /reset -> 501; /signin, /login, /.well-known/change-password, /robots.txt, /sitemap.xml -> 404; '/' is a directory listing; aria-current=page on the '/' link; no meta description/canonical/JSON-LD/OG; no live regions or :user-invalid rules.",
+      "findingIds": [
+        "F1",
+        "F2",
+        "F4",
+        "F5",
+        "F6",
+        "F7",
+        "F8",
+        "F14"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/doc-probe.json",
+      "caption": "Document probe: doctype html, CSS1Compat, UTF-8, 36 elements, 0 inline handlers, http/1.0, usedJSHeapSize 1.1 MB, PublicKeyCredential available but unused.",
+      "findingIds": [
+        "F3",
+        "F5"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/i18n-ar-EG-tokyo.json",
+      "caption": "Render under ar-EG / Asia/Tokyo: text identical to default, lang=en, ltr, 0 time elements, 0 digits in rendered text.",
+      "condition": "locale: ar-EG, timezone: Asia/Tokyo"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "pathId": "returning-user",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "primary-flow-completion",
+      "guidanceId": "autofill-sign-in-form",
+      "guidanceCategory": "forms",
+      "severity": "critical",
+      "confidence": "high",
+      "summary": "A returning user cannot sign in. The h1 promises 'Sign in or create an account', but the page has only a sign-up form and a reset form. There is no current-password field, no sign-in link, and the conventional routes do not exist. Existing account holders are pushed towards creating a duplicate account.",
+      "evidence": "form-probe: signInFormPresent=false. The only password input is #password with autocomplete=new-password, inside the fieldset legend 'Create an account'. allLinks contains only '/'. GET /signin -> 404 and GET /login -> 404. The desktop screenshot shows the 'Sign in' heading above a 'Create an account' form.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/desktop.png",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Add a dedicated sign-in <form> (separate from sign-up) with <input type=\"email\" id=\"signin-email\" name=\"email\" autocomplete=\"username webauthn\" spellcheck=\"false\" required>, <input type=\"password\" id=\"current-password\" name=\"password\" autocomplete=\"current-password\" required> and a <button>Sign in</button>. Put it first, because returning users are the majority. Move 'Forgot your password?' next to it as a link to the recovery step, and make 'Create an account' the secondary path (MWG autofill-sign-in-form).",
+      "effort": "small"
+    },
+    {
+      "id": "F2",
+      "pathId": "account-submit",
+      "url": "http://127.0.0.1:8765/signup",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "primary-flow-completion",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "high",
+      "confidence": "medium",
+      "summary": "Both flows dead-end. A valid submission of 'Create account' (POST /signup) or 'Send a reset link' (POST /reset) returns 501 'Unsupported method', so the user lands on the host's raw error page with no confirmation, no retry and their input lost.",
+      "evidence": "form-probe POSTed filled, valid bodies: /signup -> 501 'Unsupported method ('POST')' and /reset -> 501. A GET of either URL -> 404. The console logged 'Failed to load resource: 501' for both. Confidence is medium because the host is a static fixture server, but this is what a user of this deployment gets.",
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "suggestedFix": "Back both actions with POST handlers using POST-redirect-GET. Sign-up should go to a 'check your email to verify' page. Reset should go to a neutral 'If an account exists for that address, we have emailed a link' page (no account enumeration). On failure, re-render the form with the input preserved (never the password) and an error summary at the top (role=alert) with a retry.",
+      "effort": "medium"
+    },
+    {
+      "id": "F3",
+      "pathId": "account-load",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "secure-transport-and-headers",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "high",
+      "confidence": "medium",
+      "summary": "A credential form (email + password) is served and posted over plain HTTP with no Content-Security-Policy and no X-Content-Type-Options, while the footer tells users their account is 'protected by a session cookie'.",
+      "evidence": "headers primitive: https=false; content-security-policy and x-content-type-options missing. doc-probe: nextHopProtocol http/1.0. #signup-form posts the password to http://127.0.0.1:8765/signup. The footer copy reads 'Your account is protected by a session cookie.' Confidence is medium: loopback counts as a secure context (isSecureContext=true) and the fixture host may not reflect production, but nothing in the response sets a policy.",
+      "artifacts": [
+        "evidence/headers.json",
+        "evidence/doc-probe.json",
+        "evidence/form-probe.json"
+      ],
+      "suggestedFix": "Serve and post only over HTTPS. Send Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'; require-trusted-types-for 'script' (enforced, not report-only), and X-Content-Type-Options: nosniff. Once a session exists, set it as __Host-session with Secure; HttpOnly; SameSite=Lax; Path=/. The page has no scripts, so a strict policy costs nothing (MWG security).",
+      "effort": "small"
+    },
+    {
+      "id": "F4",
+      "pathId": "account-load",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "names-roles-labels",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The reset field's label is the question 'Forgot your password?', not what to type. Assistive tech announces 'Forgot your password?, edit text, required' for an email box, sighted users see no 'Email' cue, and the reset form has no heading or accessible name to set it apart from sign-up.",
+      "evidence": "a11ytree: the textbox #reset-email has computed name 'Forgot your password?'. Its form has no name, while the sign-up fieldset is the group 'Create an account'. form-probe: reset-form headingOrLegend=null and the label text is 'Forgot your password?'. axe passes it because a label exists; this is a clarity problem, not a missing-label rule.",
+      "artifacts": [
+        "evidence/a11ytree.json",
+        "evidence/form-probe.json",
+        "evidence/desktop.png"
+      ],
+      "suggestedFix": "Give the recovery form a heading ('Reset your password', h2) and name the form with aria-labelledby. Label the field <label for=\"reset-email\">Email</label>, and add a hint ('We'll send a reset link to this address') linked with aria-describedby.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F5",
+      "pathId": "account-load",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "in-context-permissions-and-modern-auth",
+      "guidanceId": "passkey-registration",
+      "guidanceCategory": "security",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "Authentication is password-only. There is no passkey (WebAuthn) option for sign-up or sign-in, and no /.well-known/change-password endpoint for password managers. Recovery relies solely on emailed reset links.",
+      "evidence": "doc-probe: PublicKeyCredential is available in the browser, but the page ships 0 scripts, so there are no navigator.credentials calls. No input carries autocomplete 'webauthn'. form-probe: GET /.well-known/change-password -> 404.",
+      "artifacts": [
+        "evidence/doc-probe.json",
+        "evidence/form-probe.json"
+      ],
+      "suggestedFix": "Offer passkeys: after account creation, prompt to create one (MWG passkey-registration / passkey-conditional-create). On sign-in, add autocomplete=\"username webauthn\" plus conditional mediation (passkey-authentication), feature-detecting PublicKeyCredential and keeping the password form as the fallback. Serve /.well-known/change-password as a redirect to the change-password page.",
+      "baseline": {
+        "featureId": "webauthn",
+        "featureName": "Web authentication",
+        "status": "widely",
+        "lowDate": "2021-09-07",
+        "fallbackMandatory": false
+      },
+      "effort": "medium"
+    },
+    {
+      "id": "F6",
+      "pathId": "account-submit",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "humane-error-handling",
+      "guidanceId": "validate-input-after-interaction",
+      "guidanceCategory": "forms",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "Error handling relies only on the browser's transient validation bubble. Invalid fields get no persistent visual state or inline message, nothing says the fields are required, and no error region is announced.",
+      "evidence": "form-probe: both forms fail checkValidity() when empty (4 required fields, each 'Please fill out this field.'). cssUserInvalid=false, liveRegions=0, and no field has aria-describedby. The features census shows :user-valid 0 and no :user-invalid rule. There is no password-rule hint, so a server-side rejection would be the first time users learn the rules.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Keep the native required/type=email constraints. Add input:user-invalid { border-color: ...; } plus an adjacent message revealed with input:user-invalid + .error-msg. Link hints and errors with aria-describedby, and render server errors in a role=alert summary. :user-invalid is Baseline widely available (MWG validate-input-after-interaction).",
+      "baseline": {
+        "featureId": "user-pseudos",
+        "featureName": ":user-valid and :user-invalid",
+        "status": "widely",
+        "lowDate": "2023-11-02",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F7",
+      "pathId": "account-load",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "trustworthy-input-assistance",
+      "guidanceId": "autofill-sign-up-form",
+      "guidanceCategory": "forms",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The sign-up form misses several input-assistance points from the sign-up guide: no 'Show password' toggle, no stated password rules (no minlength or pattern), no autocomplete token on 'Display name', and no spellcheck=\"false\" on the email identifiers.",
+      "evidence": "form-probe: #password has type=password, autocomplete=new-password (correct), minlength=-1, no pattern and no aria-describedby. showPasswordToggle=false. #displayName has autocomplete=null. #email and #reset-email use autocomplete=username, which is correct per MWG autofill-sign-up-form, but neither sets spellcheck=false. The guide asks for a Show password toggle and validated password strength with clear messages.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Add spellcheck=\"false\" to both email inputs. Add autocomplete=\"nickname\" to the display name (or drop the field until it is needed). State the password rule in a hint linked by aria-describedby and enforce it with minlength (e.g. 8+) rather than composition rules. Add a 'Show password' toggle button with aria-pressed that switches type between password and text.",
+      "baseline": {
+        "featureId": "input-email-tel-url",
+        "featureName": "Email, telephone, and URL <input> types",
+        "status": "widely",
+        "lowDate": "2015-07-29",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F8",
+      "pathId": "header-nav",
+      "url": "http://127.0.0.1:8765/",
+      "principleId": "provide-guided-navigation",
+      "principleCheckId": "directs-attention",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "The only nav item, 'Account', is marked aria-current=\"page\" but points to '/', which is a raw server directory listing rather than this page. The current-page cue is wrong for assistive tech and sighted users, and there is no way to reach classes, bookings or a home page.",
+      "evidence": "form-probe navLinks: [{text:'Account', href:'http://127.0.0.1:8765/', current:'page'}] while location is /account-recovery/. GET / -> 200 'Directory listing for /'. The a11ytree exposes the link with the current-page state, and base.css renders it at font-weight 600. Confidence is medium because the host is a static fixture.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/a11ytree.json"
+      ],
+      "suggestedFix": "Point 'Account' at this page's URL (or set aria-current only on the link that resolves to the current URL). Add the real top-level destinations named in the lede (Classes, Bookings) and a home link that is not a directory listing.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F9",
+      "pathId": "account-load",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "defensive-browser-policies",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "No browser-enforced defences protect this credential page: no HSTS, no clickjacking protection (no frame-ancestors or X-Frame-Options), no Referrer-Policy and no Permissions-Policy. A framed copy of the password form could be overlaid by an attacker.",
+      "evidence": "headers primitive: strict-transport-security, x-frame-options, referrer-policy and permissions-policy all missing, and there is no CSP to carry frame-ancestors. The page hosts a password field, so clickjacking risk matters more here than on a content page.",
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "suggestedFix": "Once on HTTPS, send Strict-Transport-Security: max-age=31536000; includeSubDomains, CSP frame-ancestors 'none' (or 'self'), Referrer-Policy: strict-origin-when-cross-origin, and Permissions-Policy: camera=(), microphone=(), geolocation=() (MWG security, privacy).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F10",
+      "pathId": "account-preferences",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-color-scheme",
+      "guidanceId": "dark-mode",
+      "guidanceCategory": "visual-design",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "No dark mode: the page ignores prefers-color-scheme and does not declare color-scheme, so the bright #f4f5f8/#fff surfaces and light form controls stay the same for users who ask for dark.",
+      "evidence": "The screenshot under prefers-color-scheme: dark is visually identical to the default capture. The features census (complete, 1 sheet) shows color-scheme 0, light-dark() 0 and no prefers-color-scheme condition; the only @media is (max-width: 44rem). form-probe: no <meta name=color-scheme>.",
+      "artifacts": [
+        "evidence/dark.png",
+        "evidence/desktop.png",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "In base.css add :root { color-scheme: light dark; } and a @media (prefers-color-scheme: dark) override of the tokens (--ink, --muted, --line, --paper, --wash, --accent). Optionally express them with light-dark() behind that fallback. Add <meta name=\"color-scheme\" content=\"light dark\"> to avoid a flash, then re-check accent/ink contrast in both schemes (MWG dark-mode).",
+      "baseline": {
+        "featureId": "color-scheme",
+        "featureName": "color-scheme",
+        "status": "widely",
+        "lowDate": "2022-02-03",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F11",
+      "pathId": "account-preferences",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-contrast",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "In forced-colours mode the buttons lose their boundary. They are styled with a background colour and border: 0, so once the system palette replaces the background, 'Send a reset link' and 'Create account' render as bare bold text with no visible control edge.",
+      "evidence": "forced-colors.png (forced-colors: active + prefers-contrast: more): inputs and cards keep system-colour borders, but the 'Send a reset link' button shows no outline or fill. base.css sets 'button { background: var(--accent); border: 0px; }'.",
+      "artifacts": [
+        "evidence/forced-colors.png",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Give buttons a transparent border instead of none: button { border: 2px solid transparent; }. Forced colours then paint it as ButtonText. Alternatively add @media (forced-colors: active) { button { border: 1px solid ButtonText; } }.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F12",
+      "pathId": "account-load",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "legible-text",
+      "guidanceId": "respect-os-text-scale",
+      "guidanceCategory": "typography",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "body sets font: 16px/1.5, a fixed pixel size that overrides the user's browser and OS default text size. People who raise their default font size get no larger body text or form fields (page zoom still works).",
+      "evidence": "dom css: 'body { font: 16px / 1.5 system-ui, ... }'. Headings use rem, but body copy, labels and the inputs/buttons (font: inherit) stay pinned at 16px.",
+      "artifacts": [
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Use a relative size: body { font: 100%/1.5 system-ui, ... } (or 1rem) so text and inherited controls scale with the user's text-size preference (MWG respect-os-text-scale).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F13",
+      "pathId": "account-load",
+      "url": "http://127.0.0.1:8765/base.css",
+      "principleId": "be-fast-and-stable",
+      "principleCheckId": "efficient-resource-delivery",
+      "guidanceId": "performance",
+      "guidanceCategory": "performance",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The only render-blocking resource (base.css) is served uncompressed with no Cache-Control or validators, over HTTP/1.0, so repeat visits re-download it.",
+      "evidence": "har-summary hygiene: base.css is listed in missingCacheHeaders and uncompressedTextOver2KB (3179 B, content-encoding none). renderBlockingCandidates: base.css (parser-inserted, VeryHigh), confirmed in the DOM as a <link rel=stylesheet> in <head>. doc-probe: nextHopProtocol http/1.0. The absolute cost is small (5.4 KB total).",
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/page.har"
+      ],
+      "suggestedFix": "Serve static assets with compression (br/gzip), a versioned filename and Cache-Control: public, max-age=31536000, immutable, over HTTP/2 or HTTP/3. Optionally inline the 3 KB of critical CSS.",
+      "effort": "small"
+    },
+    {
+      "id": "F14",
+      "pathId": "account-load",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "title-and-description",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "The <title> is the generic 'Your account', with no site name and no task, and there is no meta description, so search results, tabs and bookmarks cannot tell this page apart.",
+      "evidence": "form-probe: title 'Your account', metaDescription=null. discoverability: metaDescriptionPresentInRaw=null (absent). The h1 'Sign in or create an account' is more descriptive than the title.",
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "suggestedFix": "Use a task- and site-specific title, e.g. <title>Sign in or create an account - <Site name></title>, and add <meta name=\"description\" content=\"Sign in to manage your classes and bookings, or create a free account.\">. Modern Web Guidance has no SEO guide; this is the Lighthouse SEO bar.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F15",
+      "pathId": "account-load",
+      "url": "http://127.0.0.1:8765/account-recovery/",
+      "principleId": "implement-natural-interactions",
+      "principleCheckId": "view-transitions",
+      "guidanceId": "cross-document-transitions",
+      "guidanceCategory": "ui-behaviors",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "This multi-page flow (account -> sign-up confirmation / reset confirmation) swaps pages instantly. There is no cross-document view-transition opt-in.",
+      "evidence": "features census (complete): @view-transition 0 and view-transition-name 0. There are 0 scripts, so there is no same-document transition either.",
+      "artifacts": [
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Add @media (prefers-reduced-motion: no-preference) { @view-transition { navigation: auto; } } to base.css. It is a pure progressive enhancement; browsers without support navigate normally (MWG cross-document-transitions).",
+      "effort": "trivial"
+    }
+  ],
+  "checkOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-color-scheme",
+      "status": "issues",
+      "confidence": "high",
+      "method": "screenshot under emulated prefers-color-scheme: dark vs default + features CSSOM census",
+      "evidence": "The dark capture is visually identical to the default. color-scheme, light-dark() and prefers-color-scheme are all 0 in a complete census.",
+      "pathIds": [
+        "account-preferences"
+      ],
+      "artifacts": [
+        "evidence/dark.png",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F10"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-reduced-motion",
+      "status": "pass",
+      "confidence": "high",
+      "method": "features CSSOM census for animation/transition properties, @keyframes, animation-timeline, view transitions; script count",
+      "evidence": "The complete census lists no animation-*, transition-*, @keyframes or view-transition declarations, and the page has 0 scripts, so nothing moves that would need reducing.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-contrast",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "screenshot under forced-colors: active + prefers-contrast: more; axe contrast rules",
+      "evidence": "Text, the nav link (LinkText), inputs and card borders stay visible, and axe reports 0 contrast violations. However, the border:0 buttons lose their control boundary under forced colours.",
+      "pathIds": [
+        "account-preferences"
+      ],
+      "artifacts": [
+        "evidence/forced-colors.png",
+        "evidence/axe.json"
+      ],
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "view-transitions",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "features census for @view-transition / view-transition-name; script inventory",
+      "evidence": "No cross-document @view-transition and no JS. The MPA navigations to the sign-up and reset results swap instantly.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F15"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "scroll-driven-animations",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features census for animation-timeline/scroll-timeline/view-timeline; script inventory",
+      "evidence": "No scroll-linked motion exists (0 scripts, 0 timelines). The page is a two-form account screen about one viewport tall.",
+      "reason": "There are no scroll-linked effects (parallax, reveals, scrollytelling) on this page, and an auth form does not call for any.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "physical-gestures",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "DOM/overlay census for carousels, drawers, swipe lists, drag targets",
+      "evidence": "The page contains 4 text inputs, 2 buttons and 1 link. It has no gesture-driven components and 0 overlays.",
+      "reason": "There are no gesture-driven or entry/exit-animated components (no carousel, drawer, swipe-to-remove, drag, or top-layer UI) on this page.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "scroll-state-aware-chrome",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "CSS inspection for position: sticky/fixed and scroll-state queries; 360x800 layout",
+      "evidence": "The header is static (no sticky/fixed in the stylesheet), and the page barely exceeds one viewport at 360px.",
+      "reason": "No sticky or affixed chrome exists, and the page is short enough that scroll-state-aware UI would add nothing.",
+      "pathIds": [
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "anchored-positioning",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features overlay census + anchor-* properties",
+      "evidence": "0 dialogs, 0 popovers, 0 role=dialog, 0 high-z-index elements; anchor-name/position-anchor 0.",
+      "reason": "The page has no tooltips, popovers or menus to anchor.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "directs-attention",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Fetch of the header nav target + aria-current probe + first-viewport screenshot",
+      "evidence": "The only nav item claims to be the current page but leads to a directory listing. Nothing guides a returning user to sign in, because no such path exists (F1).",
+      "pathIds": [
+        "header-nav",
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/a11ytree.json",
+        "evidence/desktop.png"
+      ],
+      "findingIds": [
+        "F8",
+        "F1"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "no-intrusive-interruptions",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Screenshot at load + overlay census",
+      "evidence": "No banner, interstitial or overlay at load (0 dialogs/popovers/high-z elements). The forms are visible immediately at both viewports.",
+      "pathIds": [
+        "account-load",
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/desktop.png",
+        "evidence/narrow-360.png",
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "semantic-dismissible-primitives",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "features overlay census + a11ytree roles",
+      "evidence": "All controls are native (input, button inside form/fieldset/legend), exposed as textbox/button/group/form in the AX tree. There are no ad-hoc div overlays or custom widgets.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "reduced-chrome",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Screenshots at desktop and 360px",
+      "evidence": "The header is a single 48px bar with one link, and the footer is one line. The forms and a short 'Keep it safe' aside take the viewport, with no decorative imagery.",
+      "pathIds": [
+        "account-load",
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/desktop.png",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "responsive-no-horizontal-scroll",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive at 360x800 + screenshot",
+      "evidence": "scrollWidth 360 = innerWidth 360, horizontalOverflowPx 0, and a viewport meta is present. The grid collapses to one column under 44rem and fields are width:100%.",
+      "pathIds": [
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "component-level-responsiveness",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "features census for @container/container-type; screenshots of the form cards at two widths",
+      "evidence": "No @container is used. The reset card does appear in two widths (a ~240px side column on desktop and full width at 360px), and its intrinsic layout (width:100% field, block label, inline button) adapts correctly in both, as the screenshots show. No component breaks at either size.",
+      "pathIds": [
+        "account-load",
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/desktop.png",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "input-modality-aware",
+      "status": "pass",
+      "confidence": "high",
+      "method": "targets primitive at 1280x720 and 360x800 + a11ytree real Tab walk",
+      "evidence": "0 of 7 targets are under 24x24 at either form factor. All 7 page Tab stops show a 3px solid accent outline (:focus-visible); the 8th stop is the body wrap. Email inputs use type=email for the right mobile keyboard. There are no hover-only affordances.",
+      "pathIds": [
+        "account-load",
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/targets.json",
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-purpose-and-primary-action",
+      "status": "issues",
+      "confidence": "high",
+      "method": "First-viewport screenshot + heading/button inspection",
+      "evidence": "The h1 announces 'Sign in or create an account', but the visible primary action is only 'Create account'. The stated purpose (sign in) has no action at all, and the title 'Your account' is generic.",
+      "pathIds": [
+        "account-load",
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/desktop.png",
+        "evidence/narrow-360.png",
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F1"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "primary-flow-completion",
+      "status": "issues",
+      "confidence": "high",
+      "method": "Returning-user walkthrough (DOM + route probes) + filled POST submissions of both forms",
+      "evidence": "Sign-in is impossible (no form, /signin and /login 404), and sign-up and reset both end at 501.",
+      "pathIds": [
+        "returning-user",
+        "account-submit"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/desktop.png"
+      ],
+      "findingIds": [
+        "F1",
+        "F2"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-system-state-and-recovery",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Empty-submit constraint-validation probe + filled POSTs + inspection for alert/live regions",
+      "evidence": "Successful submissions end on a raw 501 page with no retry or way back. Error state is limited to transient native bubbles, with no inline errors and no live region.",
+      "pathIds": [
+        "account-submit"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F2",
+        "F6"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "good-core-web-vitals",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "trace under 360x800 + mobile-lighthouse + 4x CPU; layout CLS observer; script inventory for INP",
+      "evidence": "LCP = FCP 511ms on throttled mobile (good < 2500ms), and CLS is 0. There are 0 scripts and 0 handlers, so no page code can add interaction latency. The trace's 3 long tasks (TBT 101ms) are renderer parse/style work under 4x CPU on a script-free page.",
+      "pathIds": [
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/trace-mobile-summary.json",
+        "evidence/trace-mobile.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "visual-stability",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive layout-shift observer at 360x800",
+      "evidence": "CLS 0 with 0 shifts. There are no images, web fonts or injected content (system font stack).",
+      "pathIds": [
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-main-thread",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Script inventory + trace summary",
+      "evidence": "The page ships 0 scripts and 0 inline handlers. The longest task in the 4x-throttled trace is 131ms (TBT 101ms) during parse/style, which is browser work rather than page-authored work.",
+      "pathIds": [
+        "account-narrow",
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/trace-mobile-summary.json",
+        "evidence/doc-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-resource-delivery",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "HAR summary hygiene + render-blocking candidates confirmed against the DOM <head>",
+      "evidence": "base.css (the sole render-blocking resource) is uncompressed with no cache headers, over HTTP/1.0.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/page.har"
+      ],
+      "findingIds": [
+        "F13"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "trim-unused-and-duplicate-code",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "HAR by-resource-type + stylesheet inspection",
+      "evidence": "0 JS and 0 third-party bytes. The single 3 KB shared stylesheet carries a few rules for sibling templates (.grid, article, .pagination, dl). That is a negligible, cacheable cost, and nothing is duplicated.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "names-roles-labels",
+      "status": "issues",
+      "confidence": "high",
+      "method": "a11ytree computed names/roles + axe + aria-current probe",
+      "evidence": "Sign-up textboxes are named Email, Password and Display name, and the fieldset is the group 'Create an account'. axe finds 0 violations. However, the reset textbox is named 'Forgot your password?' and its form is unnamed, and aria-current=page is exposed on a link to a different URL.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/a11ytree.json",
+        "evidence/axe.json",
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F4",
+        "F8"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "sufficient-contrast",
+      "status": "pass",
+      "confidence": "high",
+      "method": "axe color-contrast rule + token inspection",
+      "evidence": "axe: 0 violations, with color-contrast among the 33 passes. Tokens: ink #1b1b1f on #fff/#f4f5f8, muted #5a5a66 on #f4f5f8/#fff (>6:1), and white on the #1f4fd8 button (~6.2:1).",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/axe.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "structure-and-focus",
+      "status": "pass",
+      "confidence": "high",
+      "method": "a11ytree landmarks/headings + real Tab walk",
+      "evidence": "Landmarks: banner > navigation 'Main', main, complementary, contentinfo. Headings are h1 then h2. Tab order follows reading order (nav link, 3 sign-up fields, Create account, reset email, Send a reset link, then wraps to body). Every page stop has a visible outline, none sits inside aria-hidden, and the single-link nav needs no skip link. The unnamed reset form is judged under names-roles-labels (F4).",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "legible-text",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Stylesheet inspection + screenshots at two widths",
+      "evidence": "The measure (62rem max), line-height 1.5 and wrapping are comfortable, but the body font is pinned at 16px, which overrides the user's default text size.",
+      "pathIds": [
+        "account-load",
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/narrow-360.png"
+      ],
+      "findingIds": [
+        "F12"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "zoom-reflow-targets-and-media",
+      "status": "pass",
+      "confidence": "high",
+      "method": "targets at 360x800, viewport meta inspection, 360px reflow layout",
+      "evidence": "The viewport meta is width=device-width, initial-scale=1 (no user-scalable=no or maximum-scale). The page reflows to one column at 360px with 0 overflow, there are 0 undersized targets, and there is no media needing captions.",
+      "pathIds": [
+        "account-narrow"
+      ],
+      "artifacts": [
+        "evidence/targets.json",
+        "evidence/layout-360.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "no-console-errors",
+      "status": "pass",
+      "confidence": "high",
+      "method": "console collector on every primitive's load (Runtime.consoleAPICalled + exceptionThrown + Log.entryAdded)",
+      "evidence": "0 console errors, 0 exceptions and 0 warnings on load across all primitives. The only entry is Chrome's automatic /favicon.ico 404, which the page did not request. The 501s appear only on submit and are judged under primary-flow-completion.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/axe.json",
+        "evidence/doc-probe.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "sound-document-and-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "DOM probe (doctype, compatMode, charset) + stylesheet inspection",
+      "evidence": "doctype html in standards mode (CSS1Compat), <meta charset=utf-8> first in <head>, lang=en, and valid nesting (forms > fieldset > legend/label/input). There are no images to size. The CSS is token-driven custom properties with no repetition.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/doc-probe.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "browser-platform-hygiene",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Script/handler inventory, console deprecation scan, navigation notRestoredReasons",
+      "evidence": "0 scripts and 0 inline handlers, so there are no deprecated APIs, unload handlers, paste blockers on the password field, or permission prompts. The console shows no deprecation warnings, and no source maps or libraries are shipped.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/doc-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "title-and-description",
+      "status": "issues",
+      "confidence": "high",
+      "method": "DOM probe + discoverability raw-HTML check",
+      "evidence": "The title 'Your account' is generic and not descriptive, and there is no meta description.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "crawlable-and-mobile-friendly",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Anchor href probe, viewport meta, robots meta + robots.txt fetch, discoverability raw vs rendered",
+      "evidence": "The nav anchor has a real href and text. A viewport meta is present and there is no robots meta. robots.txt is 404 (no crawl restrictions). Raw HTML covers 100% of rendered content (not a JS shell). The misleading link target is judged under directs-attention (F8).",
+      "pathIds": [
+        "account-load",
+        "header-nav"
+      ],
+      "artifacts": [
+        "evidence/discoverability.json",
+        "evidence/form-probe.json",
+        "evidence/discoverability-crawler.png"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "canonical-and-indexing-signals",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Response status, robots meta, robots.txt/sitemap fetch, canonical/hreflang probe",
+      "evidence": "The document returns 200 with no redirect and no noindex/noarchive (no robots meta or header). It is a single URL in a single language, so neither hreflang nor a canonical is required. robots.txt and sitemap.xml are absent (404), which does not block indexing; indexing a sign-in entry page is acceptable.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/discoverability.json"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "structured-and-shareable-metadata",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Probe for JSON-LD, microdata and og:* tags against the visible content",
+      "evidence": "0 JSON-LD blocks and 0 og: tags. The visible content is an account sign-up/recovery form.",
+      "reason": "An account/auth form page does not represent a rich entity (article, product, event, organisation), so there is no structured data to describe accurately. A share preview of a sign-in page has no user value.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "secure-transport-and-headers",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "headers primitive + navigation protocol + cookies primitive",
+      "evidence": "Plain HTTP, no CSP and no nosniff on a page that posts passwords. 0 cookies at load, so cookie flags are not yet at issue.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/headers.json",
+        "evidence/cookies.json",
+        "evidence/doc-probe.json"
+      ],
+      "findingIds": [
+        "F3"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "data-minimisation-and-third-parties",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "trackers + cookies + HAR third-party origins + form field inventory",
+      "evidence": "0 third-party origins, 0 trackers, 0 cookies and 0 beacons. Sign-up asks only for email, password and a display name, and recovery asks only for email. That is proportionate for an account (the display name has no stated purpose, but it is a self-chosen, non-identifying value).",
+      "pathIds": [
+        "account-load",
+        "account-submit"
+      ],
+      "artifacts": [
+        "evidence/trackers.json",
+        "evidence/cookies.json",
+        "evidence/page-summary.json",
+        "evidence/form-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "in-context-permissions-and-modern-auth",
+      "status": "issues",
+      "confidence": "high",
+      "method": "Script inventory (permission APIs, navigator.credentials) + form inspection for webauthn autocomplete + /.well-known/change-password fetch",
+      "evidence": "No permission prompts (0 scripts). Authentication is password-only, with no passkey path and no change-password well-known URL.",
+      "pathIds": [
+        "account-load",
+        "returning-user"
+      ],
+      "artifacts": [
+        "evidence/doc-probe.json",
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "defensive-browser-policies",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "headers primitive",
+      "evidence": "No HSTS, X-Frame-Options/frame-ancestors, Referrer-Policy or Permissions-Policy on a credential page.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "findingIds": [
+        "F9"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "progressive-enhancement",
+      "status": "pass",
+      "confidence": "high",
+      "method": "discoverability raw HTML vs rendered diff + JS-disabled screenshot; script inventory",
+      "evidence": "coveragePct 100 and isJsShell false; the crawler (JS-off) screenshot is identical to the rendered one. Both forms are native HTML POSTs with native constraint validation that work with zero JS.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/discoverability.json",
+        "evidence/discoverability-crawler.png",
+        "evidence/discoverability-rendered.png"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "resilient-runtime-behaviour",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Overlay census, script inventory, console exception scan",
+      "evidence": "There are no overlays or menus that could be clipped (0 overlays) and no async dependencies or visibility logic (0 scripts). 0 runtime exceptions across all loads.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/doc-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "offline-and-installable",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "resilience primitive: manifest, service worker (2s window), real offline reload",
+      "evidence": "No manifest is linked and no page-origin service worker was observed. The offline reload rendered the page from the HTTP cache.",
+      "reason": "Creating an account and requesting a password reset are intrinsically online actions that must reach the server. This entry page is not an app shell that warrants installability or an offline mode. Failure handling for submission is judged under network-and-http-failure-states.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/resilience.json",
+        "evidence/resilience-offline.png"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "network-and-http-failure-states",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Filled POSTs to both form actions + offline reload via the resilience primitive",
+      "evidence": "An HTTP failure on submit (501 from /signup and /reset) puts the user on the host's raw error page, with no intentional error page, no retry and no preserved input.",
+      "pathIds": [
+        "account-submit"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/resilience.json"
+      ],
+      "findingIds": [
+        "F2"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "lang-dir-and-logical-properties",
+      "status": "pass",
+      "confidence": "high",
+      "method": "DOM probe of lang/dir + authored-stylesheet scan for physical left/right properties, under ar-EG locale",
+      "evidence": "html lang=en matches the content, and the computed direction is ltr (correct for English). The authored CSS has 0 physical left/right margin, padding, border, float or text-align declarations; the features census rows for margin-left etc. are shorthand expansions of symmetric margin/padding. There is no deprecated window.ai translator use (0 scripts).",
+      "pathIds": [
+        "account-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json",
+        "evidence/form-probe.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "locale-aware-data",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Render under ar-EG + Asia/Tokyo and diff the text against the default run",
+      "evidence": "The rendered text is identical under ar-EG and Asia/Tokyo. It contains 0 digits and 0 <time> elements: no dates, numbers, prices or durations.",
+      "reason": "The account entry page renders no locale-formattable data, so there is nothing to format with Intl.",
+      "pathIds": [
+        "account-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "time-zone-correctness",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Render under Asia/Tokyo vs default + script inventory",
+      "evidence": "Nothing changes under Asia/Tokyo. There are 0 scripts and no client-side Date handling.",
+      "reason": "The page performs no time computation or rendering of instants, so there are no cross-zone or DST concerns in the client. Reset-link expiry, if any, is a server concern not exposed here.",
+      "pathIds": [
+        "account-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "no-dark-patterns",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "Screenshot + DOM review of copy, defaults and controls",
+      "evidence": "No pre-ticked consent, marketing opt-in, upsell, countdown, confirmshaming or disguised controls. Button labels say exactly what they do and no content is hidden. The missing sign-in path (F1) is an omission, not a deceptive design, and is judged under primary-flow-completion.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/desktop.png",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "humane-error-handling",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Empty-submit constraint validation probe + stylesheet scan for :user-invalid / aria-invalid + live region inventory",
+      "evidence": "Only transient native bubbles: no persistent invalid styling, no hints (including password rules) and no announced errors.",
+      "pathIds": [
+        "account-submit"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F6"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "trustworthy-input-assistance",
+      "status": "issues",
+      "confidence": "high",
+      "method": "Field attribute probe (autocomplete/spellcheck/minlength/toggle) judged against MWG autofill-sign-up-form",
+      "evidence": "email=username and password=new-password are correct. However, there is no show-password toggle, no password rule or minlength, no autocomplete on the display name, and no spellcheck=false on the identifiers.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json"
+      ],
+      "findingIds": [
+        "F7"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "safe-commercial-and-account-flows",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "Walkthrough of the sign-up, sign-in and recovery flows (screenshot + form/route probes)",
+      "evidence": "The account flows are not clear or complete. Returning users have no sign-in, recovery is offered without a sign-in to return to, both submissions dead-end, and there is no passkey path or change-password URL.",
+      "pathIds": [
+        "returning-user",
+        "account-submit",
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/form-probe.json",
+        "evidence/desktop.png"
+      ],
+      "findingIds": [
+        "F1",
+        "F2",
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "optimised-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "HAR by-resource-type + DOM image inventory",
+      "evidence": "0 images or decorative assets. Total transfer is 5.4 KB (document 1.7 KB, CSS 3.2 KB).",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "no-wasteful-work",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Script inventory + HAR over the load window",
+      "evidence": "0 scripts, 0 timers and 0 background fetches. The HAR shows only the document, the stylesheet and the browser's favicon request.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/doc-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "third-party-and-media-budget",
+      "status": "pass",
+      "confidence": "high",
+      "method": "trackers + HAR third-party origins + DOM media inventory",
+      "evidence": "0 third-party origins, and no web fonts (system stack), video, audio or animation.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/trackers.json",
+        "evidence/page-summary.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "structured-agent-capabilities",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "Source/DOM inspection for WebMCP registration and agentic-form affordances",
+      "evidence": "0 scripts, so there is no WebMCP tool registration. The forms are plain semantic HTML with labelled fields and standard autocomplete tokens, which agents and password managers can already read.",
+      "reason": "Emerging, contextual principle with no web-uplift.json intent declaring an agent-facing surface. Credential entry is deliberately a human/password-manager step rather than an agent tool. This is recorded as an opportunity, not penalised.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "on-device-inference",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "Source/DOM inspection for built-in AI (LanguageModel/Summarizer) usage",
+      "evidence": "0 scripts. The page has no text-generation, summarisation or classification task.",
+      "reason": "An account sign-up/recovery form has no task that on-device inference would improve.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-leak-under-repeated-interaction",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "heap summary baseline vs after 10x (fill every field of both forms, reportValidity, clear, reportValidity) via --interact",
+      "evidence": "Heap went from 29,715 nodes / 0.98 MB to 31,747 nodes / 1.09 MB (+2.0k nodes, +100 KB) across 10 cycles of both forms. The page has 0 scripts and 0 listeners, so this growth is the injected harness script plus native validation UI, not page-retained state. No Detached* constructor appears in either summary.",
+      "pathIds": [
+        "account-submit"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "bounded-footprint",
+      "status": "pass",
+      "confidence": "high",
+      "method": "heap summary totals + DOM element count + performance.memory",
+      "evidence": "36 DOM elements. usedJSHeapSize is 1.1 MB and heap self size 0.98 MB (mostly V8/native builtins), which is proportionate for a static form page.",
+      "pathIds": [
+        "account-load"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/doc-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-detached-dom-or-unbounded-listeners",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Constructor summaries before/after 10x interaction + script/handler inventory",
+      "evidence": "No Detached* constructors before or after. The page registers 0 listeners and 0 timers (0 scripts, 0 inline on* handlers).",
+      "pathIds": [
+        "account-submit"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json",
+        "evidence/doc-probe.json"
+      ]
+    }
+  ],
+  "principleOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F10",
+        "F11"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F15"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F8",
+        "F1"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "support-core-task-success",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F1",
+        "F2",
+        "F6"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F13"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F4",
+        "F8",
+        "F12"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-discoverable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F3",
+        "F5",
+        "F9"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "expectation": "contextual",
+      "status": "issues",
+      "findingIds": [
+        "F2"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "expectation": "contextual",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-trustworthy",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F6",
+        "F7",
+        "F1",
+        "F2",
+        "F5"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "expectation": "contextual",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-agent-ready",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "Emerging, contextual principle with no declared agent-facing intent. The page has no scripts or agent tools, and credential entry is a human/password-manager step. Not penalised."
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "expectation": "default",
+      "status": "pass"
+    }
+  ],
+  "taskList": [
+    {
+      "id": "T1",
+      "title": "Add a real sign-in form (email autocomplete=\"username webauthn\" + current-password) first on the page; make sign-up and recovery secondary",
+      "priority": 1,
+      "findingIds": [
+        "F1"
+      ],
+      "guidanceId": "autofill-sign-in-form",
+      "status": "open"
+    },
+    {
+      "id": "T2",
+      "title": "Back /signup and /reset with POST handlers: PRG to 'verify your email' / neutral 'if an account exists we emailed a link' pages; on failure re-render with input preserved and a role=alert summary",
+      "priority": 2,
+      "findingIds": [
+        "F2"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T3",
+      "title": "Serve over HTTPS with an enforced CSP (object-src 'none', frame-ancestors 'none', form-action 'self'), nosniff, HSTS, Referrer-Policy, Permissions-Policy; __Host- Secure HttpOnly session cookie",
+      "priority": 3,
+      "findingIds": [
+        "F3",
+        "F9"
+      ],
+      "guidanceId": "security",
+      "status": "open"
+    },
+    {
+      "id": "T4",
+      "title": "Give the recovery form a heading and an 'Email' label with a hint",
+      "priority": 4,
+      "findingIds": [
+        "F4"
+      ],
+      "guidanceId": "accessibility",
+      "status": "open"
+    },
+    {
+      "id": "T5",
+      "title": "Sign-up input assistance: show-password toggle, stated password rule + minlength, autocomplete=\"nickname\" on display name, spellcheck=\"false\" on emails",
+      "priority": 5,
+      "findingIds": [
+        "F7"
+      ],
+      "guidanceId": "autofill-sign-up-form",
+      "status": "open"
+    },
+    {
+      "id": "T6",
+      "title": "Add :user-invalid styling, inline error messages and hints linked by aria-describedby; mark required fields",
+      "priority": 6,
+      "findingIds": [
+        "F6"
+      ],
+      "guidanceId": "validate-input-after-interaction",
+      "status": "open"
+    },
+    {
+      "id": "T7",
+      "title": "Offer passkeys (registration after sign-up, conditional mediation on sign-in) and serve /.well-known/change-password",
+      "priority": 7,
+      "findingIds": [
+        "F5"
+      ],
+      "guidanceId": "passkey-registration",
+      "status": "open"
+    },
+    {
+      "id": "T8",
+      "title": "Fix navigation: aria-current only on the link to this page; link real destinations instead of the '/' directory listing",
+      "priority": 8,
+      "findingIds": [
+        "F8"
+      ],
+      "guidanceId": "accessibility",
+      "status": "open"
+    },
+    {
+      "id": "T9",
+      "title": "Add dark mode via color-scheme: light dark + prefers-color-scheme token overrides in base.css",
+      "priority": 9,
+      "findingIds": [
+        "F10"
+      ],
+      "guidanceId": "dark-mode",
+      "status": "open"
+    },
+    {
+      "id": "T10",
+      "title": "Give buttons a transparent border so they keep an edge in forced-colours mode",
+      "priority": 10,
+      "findingIds": [
+        "F11"
+      ],
+      "guidanceId": "accessibility",
+      "status": "open"
+    },
+    {
+      "id": "T11",
+      "title": "Use a relative body font size (100% / 1rem)",
+      "priority": 11,
+      "findingIds": [
+        "F12"
+      ],
+      "guidanceId": "respect-os-text-scale",
+      "status": "open"
+    },
+    {
+      "id": "T12",
+      "title": "Descriptive <title> and a meta description",
+      "priority": 12,
+      "findingIds": [
+        "F14"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "T13",
+      "title": "Compress and long-cache base.css; serve over HTTP/2+",
+      "priority": 13,
+      "findingIds": [
+        "F13"
+      ],
+      "guidanceId": "performance",
+      "status": "open"
+    },
+    {
+      "id": "T14",
+      "title": "Opt into cross-document view transitions behind prefers-reduced-motion: no-preference",
+      "priority": 14,
+      "findingIds": [
+        "F15"
+      ],
+      "guidanceId": "cross-document-transitions",
+      "status": "open"
+    }
+  ],
+  "budget": {
+    "pathCount": 7,
+    "auditPasses": 1
+  },
+  "agent": "claude",
+  "runId": "2026-10-09T00-17-28-543Z"
+}

@@ -1,0 +1,51 @@
+[
+  {
+    "p": "/",
+    "status": 200,
+    "ct": "text/html; charset=utf-8",
+    "len": 487,
+    "head": "<!DOCTYPE HTML>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Directory listing for /</title>\n</head>\n<body>\n<h1>Directory listing for /</h1>\n<hr>\n<ul>\n<li><a href=\"account-recovery/\">account-recovery/</a></li>\n<li><a href=\"base.css\">base.css</a></li>\n<li><a href=\"booking/\">booking/</a></li>"
+  },
+  {
+    "p": "/attendees",
+    "status": 404,
+    "ct": "text/html;charset=utf-8",
+    "len": 335,
+    "head": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+  },
+  {
+    "p": "/register",
+    "status": 404,
+    "ct": "text/html;charset=utf-8",
+    "len": 335,
+    "head": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+  },
+  {
+    "p": "/robots.txt",
+    "status": 404,
+    "ct": "text/html;charset=utf-8",
+    "len": 335,
+    "head": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+  },
+  {
+    "p": "/sitemap.xml",
+    "status": 404,
+    "ct": "text/html;charset=utf-8",
+    "len": 335,
+    "head": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+  },
+  {
+    "p": "/event-registration/attendees",
+    "status": 404,
+    "ct": "text/html;charset=utf-8",
+    "len": 335,
+    "head": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+  },
+  {
+    "p": "/nope-404",
+    "status": 404,
+    "ct": "text/html;charset=utf-8",
+    "len": 335,
+    "head": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 404</p>\n        <p>Message: File not found.</p>\n        <p>Error code explanation: 404 - Nothing matches the "
+  }
+]

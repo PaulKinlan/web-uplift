@@ -1,0 +1,22 @@
+{
+  "host": "127_0_0_1_8765",
+  "generatedAt": "2026-10-09 01:07",
+  "runId": "2026-10-09T00-17-28-543Z",
+  "url": "http://127.0.0.1:8765/account-recovery/",
+  "overall": 85,
+  "outcomes": {
+    "speed": 95,
+    "memory": 100,
+    "usability": 73,
+    "inclusive": 83,
+    "discoverable": 85,
+    "trust": 75
+  },
+  "findingsBySeverity": {
+    "critical": 1,
+    "high": 2,
+    "medium": 7,
+    "low": 5
+  },
+  "findingsTotal": 15
+}

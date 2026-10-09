@@ -1,0 +1,45 @@
+{
+  "viewport": "780x900",
+  "aside": {
+    "w": 269,
+    "h": 273
+  },
+  "dlColumns": "160px 63.1719px",
+  "dt": [
+    {
+      "text": "Phone",
+      "w": 160,
+      "h": 48
+    },
+    {
+      "text": "Opening hours",
+      "w": 160,
+      "h": 120
+    }
+  ],
+  "dd": [
+    {
+      "text": "01234 567800",
+      "w": 63,
+      "h": 48,
+      "lines": 2
+    },
+    {
+      "text": "Monday to Friday, 8am to 6pm",
+      "w": 63,
+      "h": 120,
+      "lines": 5
+    }
+  ],
+  "buttonBorder": "none 0px",
+  "containerQueries": false,
+  "conditions": {
+    "viewport": {
+      "profile": "mobile",
+      "width": 780,
+      "height": 900,
+      "deviceScaleFactor": 1,
+      "mobile": true
+    }
+  }
+}

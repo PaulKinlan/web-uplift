@@ -1,0 +1,129 @@
+{
+  "totals": {
+    "requestCount": 3,
+    "totalTransferredBytes": 5363,
+    "totalContentBytes": 558,
+    "byResourceType": {
+      "document": {
+        "count": 1,
+        "transferredBytes": 1664,
+        "contentBytes": 187
+      },
+      "stylesheet": {
+        "count": 1,
+        "transferredBytes": 3179,
+        "contentBytes": 186
+      },
+      "other": {
+        "count": 1,
+        "transferredBytes": 520,
+        "contentBytes": 185
+      }
+    }
+  },
+  "thirdParty": {
+    "mainOrigin": "http://127.0.0.1:8765",
+    "thirdPartyRequestCount": 0,
+    "thirdPartyTransferredBytes": 0,
+    "topOriginsByBytes": [
+      {
+        "origin": "http://127.0.0.1:8765",
+        "party": "first-party",
+        "count": 3,
+        "transferredBytes": 5363
+      }
+    ],
+    "topOriginsByBytesTotal": 1,
+    "topOriginsByBytesTruncated": false
+  },
+  "renderBlockingCandidates": [
+    {
+      "url": "http://127.0.0.1:8765/base.css",
+      "type": "stylesheet",
+      "initiator": {
+        "type": "parser",
+        "url": "http://127.0.0.1:8765/event-registration/",
+        "lineNumber": 0
+      },
+      "priority": "VeryHigh",
+      "basis": "parser-inserted stylesheet, VeryHigh priority",
+      "startedDateTime": "2026-10-09T00:53:04.634Z"
+    }
+  ],
+  "renderBlockingCandidatesTotal": 1,
+  "renderBlockingCandidatesTruncated": false,
+  "weightOffenders": {
+    "largestByBytes": [
+      {
+        "url": "http://127.0.0.1:8765/base.css",
+        "type": "stylesheet",
+        "transferredBytes": 3179
+      },
+      {
+        "url": "http://127.0.0.1:8765/event-registration/",
+        "type": "document",
+        "transferredBytes": 1664
+      },
+      {
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "type": "other",
+        "transferredBytes": 520
+      }
+    ],
+    "largestByBytesTotal": 3,
+    "largestByBytesTruncated": false,
+    "slowestByTime": [
+      {
+        "url": "http://127.0.0.1:8765/base.css",
+        "type": "stylesheet",
+        "timeMs": 19.28
+      },
+      {
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "type": "other",
+        "timeMs": 8.3
+      },
+      {
+        "url": "http://127.0.0.1:8765/event-registration/",
+        "type": "document",
+        "timeMs": 7.48
+      }
+    ],
+    "slowestByTimeTotal": 3,
+    "slowestByTimeTruncated": false
+  },
+  "hygiene": {
+    "uncompressedTextOver2KB": [
+      {
+        "url": "http://127.0.0.1:8765/base.css",
+        "type": "stylesheet",
+        "transferredBytes": 3179,
+        "contentEncoding": "none"
+      }
+    ],
+    "uncompressedTextOver2KBTotal": 1,
+    "uncompressedTextOver2KBTruncated": false,
+    "missingCacheHeaders": [
+      {
+        "url": "http://127.0.0.1:8765/base.css",
+        "type": "stylesheet",
+        "transferredBytes": 3179
+      }
+    ],
+    "missingCacheHeadersTotal": 1,
+    "missingCacheHeadersTruncated": false,
+    "redirects": [],
+    "redirectsTotal": 0,
+    "redirectsTruncated": false,
+    "httpErrors": [
+      {
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "status": 404,
+        "type": "other"
+      }
+    ],
+    "httpErrorsTotal": 1,
+    "httpErrorsTruncated": false
+  },
+  "note": "Compact, model-readable summary of network SIGNALS distilled from a HAR 1.2 log (the network analogue of the trace/heap summaries; the in-repo, lightweight memlab analogue). These are DESCRIPTIVE signals, not pass/fail verdicts: the model judges them against the principles (be-fast-and-stable, be-sustainable, be-private-and-secure). renderBlockingCandidates is GROUNDED in the real CDP signals we capture per request: the rich initiator (_initiator.type parser|script|preload + the inserting document url/line, or the script call frame), the request _priority (initial + final, after Network.resourceChangedPriority), and _renderBlockingStatus WHEN this Chrome build exposes it (omitted when not). Each candidate states its basis. This is the STARTING signal, not the final word: the HAR alone is partial, so CONFIRM and refine each candidate against the live DOM - use the dom and evaluate primitives to read the actual <head> placement and the async / defer / type=module attributes on the real elements (e.g. a parser-inserted module script is deferred by spec and is NOT render-blocking). Read this summary, never the raw .har; the raw .har is retained for the report, cross-run compare, and DevTools/HAR viewers."
+}

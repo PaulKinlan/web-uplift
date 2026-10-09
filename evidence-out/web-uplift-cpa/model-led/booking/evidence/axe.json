@@ -1,0 +1,44 @@
+{
+  "url": "http://127.0.0.1:8765/booking/",
+  "cspBypassedForInjection": true,
+  "cspBypassNote": "The vendored axe-core source is injected with the page's Content-Security-Policy lifted (Page.setBypassCSP), because a strict script-src refuses an injected script. The page is navigated and analysed with its policy enforced, so the page's own blocked scripts never ran, and the bypass covers the injection call only. Read this with the rest of the run's evidence: what is reported here describes the page as its own policy allows it to behave.",
+  "toolVersion": "4.13.0",
+  "violations": {
+    "critical": [],
+    "serious": [],
+    "moderate": [],
+    "minor": [],
+    "other": []
+  },
+  "violationCount": 0,
+  "incomplete": [],
+  "counts": {
+    "violations": 0,
+    "incomplete": 0,
+    "passes": 33,
+    "inapplicable": 56
+  },
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

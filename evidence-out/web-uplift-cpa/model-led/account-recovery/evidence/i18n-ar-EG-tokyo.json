@@ -1,0 +1,14 @@
+{
+  "lang": "en",
+  "dir": "ltr",
+  "navigatorLanguage": "en-US",
+  "tz": "Asia/Tokyo",
+  "text": "Account\nSign in or create an account\n\nOne account for classes, bookings and your history.\n\nCreate an account\nEmail\nPassword\nDisplay name\nCreate account\nForgot your password?\nSend a reset link\nKeep it safe\n\nUse a password you do not use anywhere else. We will email you a reset link.\n\nYour account is protected by a session cookie.",
+  "timeEls": 0,
+  "numbersInText": 0,
+  "emailInputDir": "ltr",
+  "conditions": {
+    "locale": "ar-EG",
+    "timezone": "Asia/Tokyo"
+  }
+}

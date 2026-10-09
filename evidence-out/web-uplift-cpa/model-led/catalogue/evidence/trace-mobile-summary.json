@@ -1,0 +1,29 @@
+{
+  "timings": {
+    "navigationStartMs": 0,
+    "firstContentfulPaintMs": 528.72,
+    "largestContentfulPaintMs": 528.72,
+    "domContentLoadedMs": 308.75,
+    "loadEventEndMs": 518.44,
+    "traceDurationMs": 2085.17
+  },
+  "mainThread": {
+    "longTaskCount": 2,
+    "longestTaskMs": 83.06,
+    "totalBlockingTimeMs": 41.75,
+    "longTasks": [
+      {
+        "durationMs": 83.06,
+        "startMs": 203.05
+      },
+      {
+        "durationMs": 58.69,
+        "startMs": 306.33
+      }
+    ],
+    "longTasksTotal": 2,
+    "longTasksTruncated": false
+  },
+  "eventCount": 14173,
+  "note": "Compact summary of a DevTools performance trace. Timings are ms from navigationStart (or the first trace event if navigationStart was not recorded). totalBlockingTimeMs sums per-long-task time over 50ms. The raw trace.json artifact loads in the DevTools Performance panel / chrome://tracing."
+}

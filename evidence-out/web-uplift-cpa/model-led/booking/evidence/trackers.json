@@ -1,0 +1,36 @@
+{
+  "primitive": "trackers",
+  "url": "http://127.0.0.1:8765/booking/",
+  "scannedAt": "2026-10-09T00:12:11.643Z",
+  "firstParty": "127.0.0.1",
+  "totalOrigins": 1,
+  "thirdPartyOrigins": 0,
+  "knownTrackers": [],
+  "topThirdPartyByRequests": [],
+  "topThirdPartyByRequestsTotal": 0,
+  "topThirdPartyByRequestsTruncated": false,
+  "note": "Descriptive signal. Judge against be-private-and-secure (tracking footprint) and be-sustainable (third-party bytes). Known tracker domains indicate active tracking.",
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

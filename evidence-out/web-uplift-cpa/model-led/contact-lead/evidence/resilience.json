@@ -1,0 +1,113 @@
+{
+  "primitive": "resilience",
+  "url": "http://127.0.0.1:8765/contact-lead/",
+  "scannedAt": "2026-10-09T00:41:19.948Z",
+  "manifest": {
+    "href": null,
+    "found": false,
+    "fetchError": null,
+    "data": null,
+    "fields": null,
+    "icons": []
+  },
+  "serviceWorker": {
+    "cdp": {
+      "pageOrigin": "http://127.0.0.1:8765",
+      "registrations": [
+        {
+          "scopeURL": "chrome-extension://glbjnfimcajjenihimblfaponejbkoph/",
+          "isDeleted": false,
+          "pageOrigin": false
+        },
+        {
+          "scopeURL": "chrome-extension://nkeimhogjdpnpccoofpliimaahmaaome/",
+          "isDeleted": false,
+          "pageOrigin": false
+        }
+      ],
+      "versions": [
+        {
+          "registrationId": "1",
+          "status": "activated",
+          "scriptURL": "chrome-extension://glbjnfimcajjenihimblfaponejbkoph/background.js",
+          "pageOrigin": false,
+          "runningStatus": "running",
+          "controlledClients": 0
+        },
+        {
+          "registrationId": "0",
+          "status": "activated",
+          "scriptURL": "chrome-extension://nkeimhogjdpnpccoofpliimaahmaaome/thunk.js",
+          "pageOrigin": false,
+          "runningStatus": "running",
+          "controlledClients": 0
+        }
+      ],
+      "errorMessage": null
+    },
+    "page": {
+      "supported": true,
+      "controller": null,
+      "registrations": []
+    },
+    "scriptURL": null,
+    "scriptTextHasFetchListener": null,
+    "observation": {
+      "budgetMs": 2000,
+      "waitedMs": 2000,
+      "registrationObserved": false,
+      "budgetExhausted": true,
+      "note": "No page-origin service worker registration was observed within 2000ms of waiting after the settle window. This is an observation window that expired, not evidence of absence: a page that registers later, or a browser under load, produces the same empty state."
+    }
+  },
+  "installabilitySignals": {
+    "secureContext": true,
+    "manifestLinked": false,
+    "manifestResolved": false,
+    "hasName": false,
+    "declaresStartUrl": false,
+    "display": null,
+    "displayStandaloneish": false,
+    "has192Icon": false,
+    "has512Icon": false,
+    "serviceWorkerRegistered": false,
+    "serviceWorkerControlling": false,
+    "serviceWorkerHasFetchListener": null
+  },
+  "offline": {
+    "navigationFailed": false,
+    "errorText": null,
+    "rendered": {
+      "title": "Contact the council",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "textChars": 272,
+      "textSample": "Contact Inbox Contact the council Tell us what you need and we will give you a reference. Your enquiry Your name Email How can we help? Send enquiry Other ways to reach us Phone 01234 567800 Opening hours Monday to Friday, 8am to 6pm We reply within three working days.",
+      "controlled": false
+    },
+    "screenshot": "reports-cpa/127_0_0_1_8765/2026-10-09T00-39-23-039Z/evidence/resilience-offline.png"
+  },
+  "note": "Offline and installable evidence for be-resilient. The page is loaded ONLINE first so a service worker can install, activate and cache, then Network.emulateNetworkConditions(offline: true) is applied and the URL is reloaded: `offline.navigationFailed` is the net error Page.navigate reported, and `offline.rendered` is what actually painted (title, text, controller state) with `offline.screenshot` as the legible artifact - a failed navigation with no worker means the site is unusable offline, while a rendered fallback (or the cached page) is the offline story. `installabilitySignals` are the mechanical signals Chrome uses (secure context, resolved manifest with a name, 192 and 512 icons, a standalone-ish display, a registered service worker, and a fetch listener found by reading the worker script - a stated text heuristic, not a browser verdict), so judge installability from them rather than from any one field. Worker state comes from the ServiceWorker CDP domain (every entry says whether it belongs to the audited origin, because the domain also reports the browser's own extension workers) and is cross-checked against the page view, which is the only source for the controller. `serviceWorker.observation` states the bounded window registration was looked for in: `registrationObserved` false with `budgetExhausted` true means none was seen inside that window, which is NOT the same claim as the page having no worker, and must not be reported as one. Descriptive signal, not a verdict.",
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

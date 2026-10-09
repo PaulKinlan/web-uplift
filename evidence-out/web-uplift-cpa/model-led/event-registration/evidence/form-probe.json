@@ -1,0 +1,74 @@
+{
+  "post": {
+    "url": "http://127.0.0.1:8765/register",
+    "status": 501,
+    "statusText": "Unsupported method ('POST')",
+    "body": "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 501</p>\n        <p>Message: Unsupported method ('POST').</p>\n        <p>Error code explanation: 501 - Server does not support this operation.</p>\n    </body>\n</html>\n"
+  },
+  "valid": {
+    "formValid": false,
+    "nameMsg": "Please fill out this field.",
+    "emailMsg": "Please fill out this field.",
+    "nameAutocomplete": null,
+    "emailAutocomplete": "email",
+    "ticketAutocomplete": null,
+    "ariaInvalid": [
+      null,
+      null
+    ],
+    "novalidate": false,
+    "requiredMarkers": [
+      "Attendee name",
+      "Email",
+      "Ticket"
+    ],
+    "ticketOptions": [
+      {
+        "text": "standard",
+        "value": "standard"
+      },
+      {
+        "text": "accessible",
+        "value": "accessible"
+      },
+      {
+        "text": "student",
+        "value": "student"
+      }
+    ],
+    "priceText": false
+  },
+  "emailBad": {
+    "valid": false,
+    "msg": "Please include an '@' in the email address. 'not-an-email' is missing an '@'.",
+    "userInvalidMatches": false
+  },
+  "navCurrent": [
+    {
+      "text": "Register",
+      "href": "http://127.0.0.1:8765/",
+      "current": "page"
+    },
+    {
+      "text": "Attendees",
+      "href": "http://127.0.0.1:8765/attendees",
+      "current": null
+    }
+  ],
+  "location": "http://127.0.0.1:8765/event-registration/",
+  "metaDesc": null,
+  "canonical": null,
+  "jsonld": 0,
+  "og": 0,
+  "themeColor": null,
+  "colorSchemeMeta": null,
+  "doctype": "html",
+  "charset": "UTF-8",
+  "dir": "",
+  "scripts": 0,
+  "imgs": 0,
+  "nodes": 44,
+  "isSecureContext": true,
+  "dateText": "Sunday 7 June, 10am",
+  "timeEls": 0
+}

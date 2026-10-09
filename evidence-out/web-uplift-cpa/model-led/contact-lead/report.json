@@ -1,0 +1,2015 @@
+{
+  "url": "http://127.0.0.1:8765/contact-lead/",
+  "auditedAt": "2026-10-09T00:39:23.039Z",
+  "mode": "report",
+  "status": "completed",
+  "statusDetail": "All 58 catalog checks were judged on the council contact page. Evidence covers the page at load, the narrow and preference conditions, a real native submission of a valid enquiry, and the targets of its header navigation. The page is served by a static Python http.server fixture (HTTP/1.0, directory listing at /). Server-side behaviour therefore reflects this host, not necessarily a production deployment: POST /enquiry -> 501, GET /inbox -> 404, and no response headers.",
+  "page": {
+    "appType": "mpa",
+    "framework": "none (static HTML + one shared stylesheet, zero scripts)",
+    "notes": "Single-template contact page titled 'Contact the council'. It has 37 DOM elements, 0 scripts, 0 inline handlers, 0 images and one stylesheet (../base.css, 3 KB) shared with sibling fixture designs. Contents: a header nav (Contact -> '/', marked aria-current=page; Inbox -> /inbox), an h1, a lede promising 'we will give you a reference', and a POST form (#enquiry-form -> /enquiry) in a fieldset with three required fields: name (autocomplete=name), email (type=email, autocomplete=email) and message (textarea). There is a 'Send enquiry' button and an aside 'Other ways to reach us' (a dl with phone 01234 567800 and opening hours). The footer reads 'We reply within three working days.' The target exposes only this page. Sibling directories (account-recovery/, booking/, catalogue/, event-registration/) are separate designs, are not linked from it, and are out of scope (three were audited in earlier runs). The page has a single template, so one page plus its submit journey and nav targets is the full representative set."
+  },
+  "config": {
+    "loaded": false
+  },
+  "evidenceUsed": [
+    "dom",
+    "screenshot (default 780px, 1280x900, 360x800, prefers-color-scheme: dark, forced-colors: active + prefers-contrast: more at 780 and 1280; nav target '/')",
+    "transition-video (real native requestSubmit of a valid enquiry; final frame extracted with ffmpeg as after-submit.png)",
+    "evaluate-probe (form fields, constraint validation incl. invalid email and whitespace-only message, links + aria-current, heading outline, grid placement; GET/POST of /enquiry, /, /inbox, /inbox/, /robots.txt, /sitemap.xml, /favicon.ico and a 404 URL; document metadata, protocol, memory)",
+    "evaluate-probe of the aside definition list at 780x900 and 1280x900",
+    "evaluate-probe under locale ar-EG + timezone Asia/Tokyo",
+    "axe-core 4.13.0 (vendored, axe primitive)",
+    "a11ytree (computed AX tree + real Tab order)",
+    "targets (WCAG 2.5.8 at 1280x720 and 360x800)",
+    "features (live CSSOM census + overlay census)",
+    "layout-metrics (360x800)",
+    "trace (360x800, mobile-lighthouse network + 4x CPU)",
+    "har + har-summary",
+    "headers",
+    "cookies",
+    "trackers",
+    "secrets",
+    "discoverability (raw vs rendered, crawler screenshot pair)",
+    "resilience (service worker, manifest, offline reload)",
+    "heap summaries (baseline and after 10x fill/validate/focus/reset of the form)",
+    "console collector (on every primitive)",
+    "modern-web-guidance@0.0.193 search/retrieve",
+    "baseline oracle (knowledge/baseline.mjs)"
+  ],
+  "guidanceConsulted": [
+    "forms",
+    "required-field-feedback",
+    "validate-input-after-interaction",
+    "accessible-error-announcement",
+    "agentic-forms",
+    "size-aware-styling",
+    "fluid-scaling",
+    "responsive-design",
+    "dark-mode",
+    "color",
+    "cross-document-transitions",
+    "security",
+    "privacy",
+    "respect-os-text-scale",
+    "accessibility",
+    "performance"
+  ],
+  "coverage": {
+    "catalogVersion": "modern-web-guidance@0.0.193",
+    "catalogChecksum": "sha256:5cb6b09a94a3c27fc78161504f385a086f7a437d1a9f6c321bbac2bdc0fb82b7",
+    "baselineCatalogVersion": "web-features@3.40.0",
+    "expected": 58,
+    "recorded": 58,
+    "judged": 58,
+    "blocked": 0,
+    "notRun": 0,
+    "missing": 0,
+    "unknown": 0,
+    "duplicates": 0,
+    "complete": true
+  },
+  "paths": [
+    {
+      "id": "contact-load",
+      "description": "Contact page at load, at the default 780px capture and at 1280x900. It is the only page the target exposes and the primary archetype (a public-service contact form with an alternative-contact aside).",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "conditions": [
+        "default viewport (780px capture)",
+        "1280x900",
+        "1280x720 (targets)"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "contact-narrow",
+      "description": "Same page at a 360x800 mobile layout, including a throttled performance trace (mobile-lighthouse: 150ms RTT, ~1.6 Mbps, 4x CPU).",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "conditions": [
+        "viewport: 360x800",
+        "network: mobile-lighthouse",
+        "cpu: 4x"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "contact-preferences",
+      "description": "User-preference conditions: dark colour scheme, and forced colours with more contrast.",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "conditions": [
+        "prefers-color-scheme: dark",
+        "forced-colors: active",
+        "prefers-contrast: more"
+      ],
+      "result": "issues"
+    },
+    {
+      "id": "enquiry-submit",
+      "description": "Primary journey: fill name, email and message with valid values and submit #enquiry-form natively (POST /enquiry). Also covers the empty, invalid-email and whitespace-only constraint-validation cases, and 10 fill/validate/reset cycles for the memory check.",
+      "url": "http://127.0.0.1:8765/enquiry",
+      "conditions": [
+        "native form submission (requestSubmit)",
+        "POST application/x-www-form-urlencoded"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "header-nav",
+      "description": "Header navigation targets reached from this page: '/' (the 'Contact' link, marked aria-current=page) and '/inbox' (the 'Inbox' link).",
+      "url": "http://127.0.0.1:8765/",
+      "conditions": [
+        "link follow",
+        "fetch of nav targets"
+      ],
+      "result": "failed"
+    },
+    {
+      "id": "contact-i18n",
+      "description": "Contact page rendered under a second locale and time zone, to diff text, numbers and direction against the default run.",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "conditions": [
+        "locale: ar-EG",
+        "timezone: Asia/Tokyo"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "contact-offline",
+      "description": "Online load followed by a reload under emulated offline network (resilience primitive).",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "conditions": [
+        "network: offline (after online load)"
+      ],
+      "result": "pass"
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "dom",
+      "path": "evidence/dom.json",
+      "caption": "Rendered HTML and full stylesheet (not truncated: 1253 html chars, 3143 css chars).",
+      "findingIds": [
+        "F2",
+        "F4",
+        "F12",
+        "F14",
+        "F16"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/desktop.png",
+      "caption": "Contact page at 1280x900. Form in the wide column, 'Other ways to reach us' in the narrow one, with the phone number already wrapping onto two lines.",
+      "condition": "viewport: 1280x900",
+      "findingIds": [
+        "F7"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/narrow-360.png",
+      "caption": "Contact page at 360x800: single column, no overflow, form fully usable.",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/dark.png",
+      "caption": "Under prefers-color-scheme: dark the page renders identically to the light default (byte-identical capture size to the 780px default).",
+      "condition": "prefers-color-scheme: dark",
+      "findingIds": [
+        "F6"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/forced-colors.png",
+      "caption": "Forced colours + more contrast at the default 780px capture; text, links and field borders survive.",
+      "condition": "forced-colors: active, prefers-contrast: more"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/forced-colors-1280.png",
+      "caption": "Forced colours at 1280x900: 'Send enquiry' loses its filled background and has border: 0, so it renders as bare bold text with no control boundary.",
+      "condition": "forced-colors: active, prefers-contrast: more, viewport: 1280x900",
+      "findingIds": [
+        "F5"
+      ]
+    },
+    {
+      "type": "video",
+      "path": "evidence/submit.mp4",
+      "caption": "Screencast of a real native submission of a valid enquiry (name, email, message filled; requestSubmit). The page navigates to the server's 501 response.",
+      "condition": "native form submission",
+      "findingIds": [
+        "F1",
+        "F3"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/after-submit.png",
+      "caption": "Final frame of submit.mp4: a bare 'Error response / Error code: 501 / Unsupported method (POST)' page with no site header, no explanation and no way back.",
+      "condition": "after native submit",
+      "findingIds": [
+        "F1",
+        "F2",
+        "F3"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/contact-nav-target.png",
+      "caption": "Where the 'Contact' nav link (aria-current=page) actually goes: a raw 'Directory listing for /'.",
+      "condition": "link follow '/'",
+      "findingIds": [
+        "F4"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/flow-probe.json",
+      "caption": "Form/field/validation probe, links + aria-current, heading outline, document metadata, and fetches of /enquiry (POST 501, GET 404), / (directory listing), /inbox (404), robots.txt, sitemap.xml and favicon.ico (all 404).",
+      "findingIds": [
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F8",
+        "F9",
+        "F11",
+        "F14",
+        "F15",
+        "F16",
+        "F18"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/aside-780.json",
+      "caption": "Aside definition list at 780x900: grid columns '160px 63px'; opening hours wrap to 5 lines and the phone number to 2.",
+      "condition": "viewport: 780x900",
+      "findingIds": [
+        "F7"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/aside-1280.json",
+      "caption": "Aside definition list at 1280x900: grid columns '160px 106px'; the phone number still wraps to 2 lines; no container queries in the stylesheet.",
+      "condition": "viewport: 1280x900",
+      "findingIds": [
+        "F7"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/axe.json",
+      "caption": "axe-core 4.13.0: 0 violations, 0 incomplete, 35 passes."
+    },
+    {
+      "type": "other",
+      "path": "evidence/a11ytree.json",
+      "caption": "Computed accessibility tree (72 nodes) and the real Tab order: 6 stops (Contact, Inbox, name, email, message, Send enquiry), each with a 3px #1f4fd8 outline, then the cycle wraps to body.",
+      "findingIds": [
+        "F4"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/targets.json",
+      "caption": "WCAG 2.5.8: 0 of 5 targets under 24x24 at 1280x720 and at 360x800."
+    },
+    {
+      "type": "other",
+      "path": "evidence/features.json",
+      "caption": "Live CSSOM census (complete): one @media (max-width: 44rem); 0 @container, color-scheme, light-dark(), prefers-color-scheme, @view-transition, animations; 5 :focus-visible rules; 0 overlays.",
+      "findingIds": [
+        "F6",
+        "F7",
+        "F17"
+      ]
+    },
+    {
+      "type": "layout",
+      "path": "evidence/layout-360.json",
+      "caption": "360x800 layout: scrollWidth 360 = innerWidth (0px horizontal overflow), CLS 0, no long tasks.",
+      "condition": "viewport: 360x800"
+    },
+    {
+      "type": "trace",
+      "path": "evidence/trace-mobile.json",
+      "caption": "DevTools performance trace of the load under mobile-lighthouse throttling.",
+      "condition": "viewport: 360x800, network: mobile-lighthouse, cpu: 4x"
+    },
+    {
+      "type": "trace-summary",
+      "path": "evidence/trace-mobile-summary.json",
+      "caption": "FCP = LCP 1070 ms, DCL 857 ms, load 1045 ms, 3 long tasks (max 81 ms), TBT 52 ms.",
+      "condition": "viewport: 360x800, network: mobile-lighthouse, cpu: 4x"
+    },
+    {
+      "type": "har",
+      "path": "evidence/page.har",
+      "caption": "HAR 1.2 of the load: 3 requests, 5145 bytes transferred, all first-party."
+    },
+    {
+      "type": "har-summary",
+      "path": "evidence/page-summary.json",
+      "caption": "HAR summary: one parser-inserted render-blocking stylesheet; base.css uncompressed and sent without cache headers; favicon.ico 404.",
+      "findingIds": [
+        "F13"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/headers.json",
+      "caption": "Security headers on the document: CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy and Permissions-Policy all missing; https: false.",
+      "findingIds": [
+        "F9",
+        "F10"
+      ]
+    },
+    {
+      "type": "other",
+      "path": "evidence/cookies.json",
+      "caption": "0 cookies set."
+    },
+    {
+      "type": "other",
+      "path": "evidence/trackers.json",
+      "caption": "1 origin, 0 third-party origins, 0 known trackers."
+    },
+    {
+      "type": "other",
+      "path": "evidence/secrets.json",
+      "caption": "0 secret findings; no external scripts."
+    },
+    {
+      "type": "discoverability",
+      "path": "evidence/discoverability.json",
+      "caption": "Raw vs rendered: coveragePct 100, not a JS shell; title and h1 present in raw HTML; no meta description.",
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-rendered.png",
+      "caption": "Browser view with JavaScript on.",
+      "condition": "javascript enabled"
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/discoverability-crawler.png",
+      "caption": "Crawler view with JavaScript disabled: identical content (the page ships no scripts).",
+      "condition": "javascript disabled"
+    },
+    {
+      "type": "other",
+      "path": "evidence/resilience.json",
+      "caption": "No page-origin service worker, no manifest; the offline reload rendered the page (272 chars) from the HTTP cache, uncontrolled."
+    },
+    {
+      "type": "screenshot",
+      "path": "evidence/resilience-offline.png",
+      "caption": "Offline reload after an online load: the cached page renders, but submitting would still need the network.",
+      "condition": "network: offline"
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-baseline.json",
+      "caption": "Baseline heap: 29,773 nodes, 0.99 MB self size."
+    },
+    {
+      "type": "heap",
+      "path": "evidence/heap-after-10x.json",
+      "caption": "After 10x fill/validate/focus/reset of the form: 31,758 nodes, 1.09 MB self size; no Detached* constructors in the summary."
+    },
+    {
+      "type": "other",
+      "path": "evidence/i18n-ar-EG-tokyo.json",
+      "caption": "Under ar-EG + Asia/Tokyo: resolved locale ar-EG, zone Asia/Tokyo, and rendered text identical to the default run (no dates, times or numbers are formatted by code; no <time> elements).",
+      "condition": "locale: ar-EG, timezone: Asia/Tokyo"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "pathId": "enquiry-submit",
+      "url": "http://127.0.0.1:8765/enquiry",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "primary-flow-completion",
+      "guidanceId": "forms",
+      "guidanceCategory": "forms",
+      "severity": "critical",
+      "confidence": "high",
+      "summary": "A resident cannot send an enquiry. Submitting a valid name, email and message to POST /enquiry returns '501 Unsupported method', so the page's only task fails every time.",
+      "evidence": "submit.mp4 records a real native requestSubmit() with valid values (the form's checkValidity() is true). The console logged 'Failed to load resource: ... 501 (Unsupported method ('POST'))' for /enquiry, and after-submit.png shows the resulting bare 'Error response / Error code: 501' page. flow-probe confirms POST /enquiry -> 501 and GET /enquiry -> 404. The host is a static fixture, but this is what a user of this deployment gets.",
+      "artifacts": [
+        "evidence/submit.mp4",
+        "evidence/after-submit.png",
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "Back the form with a real POST /enquiry handler. It should validate server-side, store or route the enquiry, and answer with POST-redirect-GET (303) to a confirmation page such as /contact-lead/sent?ref=ENQ-123456. If online submission is not available yet, say so on the page and lead with the phone route, rather than shipping a form that cannot submit.",
+      "effort": "medium"
+    },
+    {
+      "id": "F2",
+      "pathId": "enquiry-submit",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "support-core-task-success",
+      "principleCheckId": "clear-system-state-and-recovery",
+      "guidanceId": "accessible-error-announcement",
+      "guidanceCategory": "accessibility",
+      "severity": "high",
+      "confidence": "high",
+      "summary": "The page promises 'we will give you a reference', but no success state exists anywhere in the flow. There is no confirmation route, no status region and no reference, so a resident cannot tell whether the council received their enquiry.",
+      "evidence": "dom.json: the lede reads 'Tell us what you need and we will give you a reference.' The form posts straight to /enquiry with no confirmation target. flow-probe meta reports liveRegions 0 and 0 scripts. The only post-submit state is the 501 page in after-submit.png, which has no reference, no confirmation of receipt and no next step.",
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/flow-probe.json",
+        "evidence/after-submit.png"
+      ],
+      "suggestedFix": "Design the success state. After a 303 redirect, render a confirmation page with a <h1>Enquiry sent</h1>, the reference number in large text, the email it was sent to, and the 'we reply within three working days' expectation. Add a link back to the council home. Move focus to the h1 on arrival, or announce it with role=\"status\". Email the same reference to the user.",
+      "effort": "small"
+    },
+    {
+      "id": "F3",
+      "pathId": "enquiry-submit",
+      "url": "http://127.0.0.1:8765/enquiry",
+      "principleId": "be-resilient",
+      "principleCheckId": "network-and-http-failure-states",
+      "guidanceId": "persistent-toast-notifications",
+      "guidanceCategory": "ui-components",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "When the submission fails, the user lands on the server's raw error page. It has no site header, no plain-language explanation, no retry and no route back to the form or the phone number, so the typed message is stranded behind the browser Back button.",
+      "evidence": "after-submit.png shows the stock http.server page 'Error response / Error code: 501 / Message: Unsupported method ('POST') / Error code explanation: 501 - Server does not support this operation', with no navigation. flow-probe shows the same raw template for every 404 (/inbox, /enquiry, robots.txt, any unknown URL).",
+      "artifacts": [
+        "evidence/after-submit.png",
+        "evidence/submit.mp4",
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "Serve branded error pages for 4xx/5xx that keep the site header and say what happened in plain words ('We could not send your enquiry. Nothing was lost.'). Offer the phone number and opening hours as a fallback. On a failed POST, re-render the form with the user's values preserved and a retry button, rather than a dead end.",
+      "effort": "small"
+    },
+    {
+      "id": "F4",
+      "pathId": "header-nav",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "provide-guided-navigation",
+      "principleCheckId": "directs-attention",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The header navigation misleads users. 'Contact' is announced as the current page (aria-current=page) but links to '/', a raw directory listing, and 'Inbox' links to a 404.",
+      "evidence": "flow-probe links: Contact href http://127.0.0.1:8765/ with aria-current=page and pointsAtThisPage=false; Inbox href /inbox. GET / returns 200 'Directory listing for /' (contact-nav-target.png), and GET /inbox and /inbox/ return 404. The a11ytree exposes the 'Contact' link as the first Tab stop, so screen-reader users hear it as 'current page' while it leads elsewhere.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/contact-nav-target.png",
+        "evidence/a11ytree.json",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Point 'Contact' at /contact-lead/ (the page that carries aria-current=page), and make '/' a real council home rather than a directory listing. Either build /inbox or remove the link until it exists. Only the link whose href matches the current URL should carry aria-current=\"page\".",
+      "effort": "trivial"
+    },
+    {
+      "id": "F5",
+      "pathId": "contact-preferences",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-contrast",
+      "guidanceId": "color",
+      "guidanceCategory": "visual-design",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "In forced-colours (Windows High Contrast) mode, the 'Send enquiry' button stops looking like a button. Its background is dropped and it has border: 0, so it renders as bare bold text with no boundary.",
+      "evidence": "forced-colors-1280.png (forced-colors: active, prefers-contrast: more) shows the fields and cards keeping their outlines, while 'Send enquiry' is plain text with no box. aside-1280.json reports the computed button border as 'none 0px', and the features census finds no forced-colors or prefers-contrast rule.",
+      "artifacts": [
+        "evidence/forced-colors-1280.png",
+        "evidence/aside-1280.json",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Give the button a real border that is transparent in normal mode: `button { border: 2px solid transparent; }`. Forced colours then paint it with ButtonBorder/CanvasText. Optionally add `@media (forced-colors: active) { button { border-color: ButtonText; } }`.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F6",
+      "pathId": "contact-preferences",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "respect-user-preferences",
+      "principleCheckId": "respects-color-scheme",
+      "guidanceId": "dark-mode",
+      "guidanceCategory": "visual-design",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "There is no dark mode. Under prefers-color-scheme: dark the page renders the same light #f4f5f8 / #ffffff surfaces, and form controls do not adopt the dark UA styling.",
+      "evidence": "dark.png is visually and byte-size identical to the light default capture. The complete features census reports color-scheme 0, light-dark() 0 and no prefers-color-scheme condition (the only @media is max-width: 44rem). flow-probe reports colorSchemeMeta null.",
+      "artifacts": [
+        "evidence/dark.png",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Declare `:root { color-scheme: light dark; }` and define the tokens with light-dark() (e.g. `--paper: light-dark(#fff, #1c1c22); --wash: light-dark(#f4f5f8, #121216); --ink: light-dark(#1b1b1f, #ececf1)`). Because light-dark() is Baseline Newly available, first declare the light values plainly and wrap the light-dark() overrides in `@supports (color: light-dark(#000, #fff))`, or use an `@media (prefers-color-scheme: dark)` block.",
+      "baseline": {
+        "featureId": "light-dark",
+        "featureName": "light-dark()",
+        "status": "newly",
+        "lowDate": "2024-05-13",
+        "fallbackMandatory": true
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F7",
+      "pathId": "contact-load",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "adapt-to-the-form-factor",
+      "principleCheckId": "component-level-responsiveness",
+      "guidanceId": "size-aware-styling",
+      "guidanceCategory": "css",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The 'Other ways to reach us' box does not adapt to its own width. The shared dl rule fixes the term column at 10rem (160px), so in the narrow aside the values are squeezed: the phone number breaks across two lines at every desktop width, and at 780px the opening hours wrap one word per line.",
+      "evidence": "aside-780.json shows the dl grid columns '160px 63px'; 'Monday to Friday, 8am to 6pm' takes 5 lines and '01234 567800' takes 2. aside-1280.json shows the columns '160px 106px', with the phone number still on 2 lines. desktop.png shows '01234 / 567800' split. features.json and the probe find 0 @container rules. The layout is driven only by the viewport @media (max-width: 44rem).",
+      "artifacts": [
+        "evidence/aside-780.json",
+        "evidence/aside-1280.json",
+        "evidence/desktop.png",
+        "evidence/features.json"
+      ],
+      "suggestedFix": "Make the aside a container (`aside { container-type: inline-size; }`) and size the term column to its content: `dl { grid-template-columns: max-content 1fr; }`. Stack the terms above their values when the box is narrow: `@container (max-width: 22rem) { dl { grid-template-columns: 1fr; } }`. Keep the phone number on one line with `white-space: nowrap` on its link (see F18).",
+      "baseline": {
+        "featureId": "container-queries",
+        "featureName": "Container queries (size)",
+        "status": "widely",
+        "lowDate": "2023-02-14",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F8",
+      "pathId": "enquiry-submit",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "humane-error-handling",
+      "guidanceId": "required-field-feedback",
+      "guidanceCategory": "forms",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "Error feedback relies only on the browser's transient validation bubble. Fields are not visibly marked invalid, no persistent inline message says what to fix, aria-invalid is never set, and a message of only spaces passes 'required'.",
+      "evidence": "flow-probe: all three fields are required, with no aria-describedby, no hint text and no aria-invalid. An empty form fails checkValidity() with only the UA message 'Please fill out this field.', and 'jo@' fails with the UA bubble text. whitespaceOnlyMessagePassesRequired is true. The features census finds 0 :user-invalid or :user-valid rules, and there is no error styling in the stylesheet.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/features.json",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Follow required-field-feedback and validate-input-after-interaction. Add a persistent error element per field (linked with aria-describedby or aria-errormessage), shown via `input:user-invalid + .error-msg { display: block; }`, with a border change plus an icon so colour is not the only cue. Use a small script to sync aria-invalid on blur and submit (accessible-error-announcement). Add `minlength=\"10\"` (or a server-side trim check) to the message, and repeat all validation on the server.",
+      "baseline": {
+        "featureId": "user-pseudos",
+        "featureName": ":user-valid and :user-invalid",
+        "status": "widely",
+        "lowDate": "2023-11-02",
+        "fallbackMandatory": false
+      },
+      "effort": "small"
+    },
+    {
+      "id": "F9",
+      "pathId": "enquiry-submit",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "secure-transport-and-headers",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "medium",
+      "confidence": "medium",
+      "summary": "The form collects a resident's name, email and free-text message (which can include personal circumstances) and posts it over plain HTTP. There is no Content-Security-Policy and no anti-forgery token on the POST.",
+      "evidence": "headers.json reports https: false and content-security-policy missing. flow-probe reports protocol 'http:', nextHopProtocol http/1.0, the form action http://127.0.0.1:8765/enquiry, and hasCsrfField false. isSecureContext is true only because the host is 127.0.0.1; deployed as served, the same page would be an insecure context. Confidence is medium because a production host may terminate TLS in front of this fixture.",
+      "artifacts": [
+        "evidence/headers.json",
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "Serve over HTTPS only, and redirect HTTP to HTTPS. Send a CSP such as `default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'; require-trusted-types-for 'script'` (the page has no scripts, so this costs nothing). Protect POST /enquiry with a per-session CSRF token or a SameSite=Lax session cookie plus an Origin check.",
+      "effort": "small"
+    },
+    {
+      "id": "F10",
+      "pathId": "contact-load",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "be-private-and-secure",
+      "principleCheckId": "defensive-browser-policies",
+      "guidanceId": "security",
+      "guidanceCategory": "security",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "No browser-enforced defences are configured: no HSTS, no clickjacking protection (no X-Frame-Options or CSP frame-ancestors), no X-Content-Type-Options: nosniff, no Referrer-Policy and no Permissions-Policy. A form page can therefore be framed and overlaid.",
+      "evidence": "headers.json: strict-transport-security, x-frame-options, x-content-type-options, referrer-policy and permissions-policy all have present: false, and content-security-policy is missing (so there is no frame-ancestors).",
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "suggestedFix": "Add `Strict-Transport-Security: max-age=31536000; includeSubDomains`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`, and `frame-ancestors 'self'` in the CSP from F9 (plus `X-Frame-Options: SAMEORIGIN` for older agents).",
+      "effort": "trivial"
+    },
+    {
+      "id": "F11",
+      "pathId": "contact-load",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "be-trustworthy",
+      "principleCheckId": "safe-commercial-and-account-flows",
+      "guidanceId": "privacy",
+      "guidanceCategory": "privacy",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The page asks for a name, email and an open message but never says how the council will use, share or keep that data. There is no privacy notice link at the point of collection.",
+      "evidence": "dom.json and flow-probe: the page has exactly two links (Contact, Inbox) and no privacy or terms link. The fieldset has no hint text, and the footer only says 'We reply within three working days.'",
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "Add a short line above the submit button: 'We use your details only to answer this enquiry. How we handle your data' (linking to the council privacy notice), and state the retention period on that page.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F12",
+      "pathId": "contact-load",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "be-inclusive",
+      "principleCheckId": "legible-text",
+      "guidanceId": "respect-os-text-scale",
+      "guidanceCategory": "accessibility",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "Body text is fixed at 16px (`font: 16px / 1.5 ...`), so a user's browser or OS default text size is overridden rather than respected.",
+      "evidence": "dom.json css: `body { font: 16px / 1.5 system-ui, ... }`. flow-probe reports rootFontSize and bodyFont both 16px. Headings use rem, so they scale from the root while the body copy is pinned in px.",
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/flow-probe.json"
+      ],
+      "suggestedFix": "Use relative units: `body { font: 100%/1.5 system-ui, ...; }` (or 1rem), so the user's default size applies. See respect-os-text-scale for the `<meta name=\"text-scale\" content=\"scale\">` opt-in where supported.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F13",
+      "pathId": "contact-load",
+      "url": "http://127.0.0.1:8765/base.css",
+      "principleId": "be-fast-and-stable",
+      "principleCheckId": "efficient-resource-delivery",
+      "guidanceId": "performance",
+      "guidanceCategory": "performance",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "The one render-blocking stylesheet is sent uncompressed and with no cache headers, over HTTP/1.0, so every visit re-downloads it.",
+      "evidence": "page-summary.json hygiene: base.css (3179 B) is in uncompressedTextOver2KB (contentEncoding none) and missingCacheHeaders. renderBlockingCandidates lists it as a parser-inserted, VeryHigh-priority stylesheet. flow-probe reports nextHopProtocol http/1.0. The absolute cost is small (LCP 1070 ms under mobile-lighthouse).",
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/page.har",
+        "evidence/trace-mobile-summary.json"
+      ],
+      "suggestedFix": "Serve static assets with gzip or brotli and a fingerprinted filename plus `Cache-Control: public, max-age=31536000, immutable`, over HTTP/2 or HTTP/3. At 3 KB the stylesheet could also be inlined in <head>.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F14",
+      "pathId": "contact-load",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "title-and-description",
+      "guidanceId": "html",
+      "guidanceCategory": "html",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "There is no meta description, and the title 'Contact the council' does not say which council. Search results and shared links show a generic, unattributed snippet.",
+      "evidence": "flow-probe meta: title 'Contact the council', metaDescription null. discoverability.json: metaDescriptionPresentInRaw null, titlePresentInRaw true.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/discoverability.json",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Use a specific title, e.g. 'Contact us – Example District Council', and add `<meta name=\"description\" content=\"Send an enquiry to Example District Council online, or call 01234 567800 (Mon–Fri 8am–6pm). We reply within three working days.\">`.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F15",
+      "pathId": "header-nav",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "canonical-and-indexing-signals",
+      "guidanceId": "html",
+      "guidanceCategory": "html",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "There are no indexing signals: no canonical link, and both robots.txt and sitemap.xml return 404.",
+      "evidence": "flow-probe: canonical null, robotsMeta null, hreflang 0; GET /robots.txt -> 404 and GET /sitemap.xml -> 404. The page itself returns 200 (discoverability fetchedStatus 200).",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "suggestedFix": "Add `<link rel=\"canonical\" href=\"https://<council-domain>/contact/\">`, publish a robots.txt that references a sitemap.xml, and list the contact page in it.",
+      "effort": "trivial"
+    },
+    {
+      "id": "F16",
+      "pathId": "contact-load",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "be-discoverable",
+      "principleCheckId": "structured-and-shareable-metadata",
+      "guidanceId": "html",
+      "guidanceCategory": "html",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The page shows a public body's phone number and opening hours, but none of it is machine-readable. There is no schema.org ContactPoint or opening hours data and no Open Graph preview, so search engines and assistants cannot surface 'call the council, open 8 to 6'.",
+      "evidence": "flow-probe meta reports jsonLd 0 and ogTags 0. dom.json shows the phone and hours only as plain <dd> text.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/dom.json"
+      ],
+      "suggestedFix": "Add JSON-LD for a GovernmentOrganization with a contactPoint (telephone '+44 1234 567800', contactType 'customer service', hoursAvailable Mo–Fr 08:00–18:00). Add og:title, og:description and og:url that match the visible content.",
+      "effort": "small"
+    },
+    {
+      "id": "F17",
+      "pathId": "enquiry-submit",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "implement-natural-interactions",
+      "principleCheckId": "view-transitions",
+      "guidanceId": "cross-document-transitions",
+      "guidanceCategory": "ui-behaviors",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "The page-to-page changes in this flow (submit to confirmation, nav links) are hard cuts. The site does not opt in to cross-document view transitions.",
+      "evidence": "The complete features census finds @view-transition 0 and view-transition-name 0. submit.mp4 shows an instant swap from the form to the response page.",
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/submit.mp4"
+      ],
+      "suggestedFix": "Once the confirmation page from F2 exists, add `@view-transition { navigation: auto; }` to the shared stylesheet. Name the h1 (`view-transition-name: page-title`) so the heading morphs from 'Contact the council' to 'Enquiry sent'. This is a progressive enhancement: browsers without support simply navigate. Wrap any custom animation in `@media (prefers-reduced-motion: no-preference)`.",
+      "baseline": {
+        "featureId": "cross-document-view-transitions",
+        "featureName": "Cross-document view transitions",
+        "status": "limited",
+        "lowDate": null,
+        "fallbackMandatory": true
+      },
+      "effort": "trivial"
+    },
+    {
+      "id": "F18",
+      "pathId": "contact-narrow",
+      "url": "http://127.0.0.1:8765/contact-lead/",
+      "principleId": "adapt-to-the-form-factor",
+      "principleCheckId": "input-modality-aware",
+      "guidanceId": "accessibility",
+      "guidanceCategory": "accessibility",
+      "severity": "low",
+      "confidence": "high",
+      "summary": "The phone number, the main alternative to the form, is plain text. On a phone it cannot be tapped to call, and on desktop it cannot be handed to a softphone.",
+      "evidence": "flow-probe phone: '01234 567800' hasTelLink false. targets.json counts only 5 pointer targets, none of which is the phone number. narrow-360.png shows the number as static text.",
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/targets.json",
+        "evidence/narrow-360.png"
+      ],
+      "suggestedFix": "Mark it up as `<a href=\"tel:+441234567800\">01234 567800</a>`, keeping the national format visible.",
+      "effort": "trivial"
+    }
+  ],
+  "checkOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-color-scheme",
+      "status": "issues",
+      "confidence": "high",
+      "method": "screenshot under emulated prefers-color-scheme: dark vs default + features CSSOM census",
+      "evidence": "The dark capture is identical to the default. color-scheme, light-dark() and prefers-color-scheme are all 0 in a complete census.",
+      "pathIds": [
+        "contact-preferences"
+      ],
+      "artifacts": [
+        "evidence/dark.png",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F6"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-reduced-motion",
+      "status": "pass",
+      "confidence": "high",
+      "method": "features CSSOM census for animation/transition properties, @keyframes, timelines and view transitions; script count",
+      "evidence": "The complete census lists no animation-*, transition-*, @keyframes, scroll/view timeline or view-transition declarations, and the page has 0 scripts. Nothing moves that would need reducing.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "respect-user-preferences",
+      "checkId": "respects-contrast",
+      "status": "issues",
+      "confidence": "high",
+      "method": "screenshots under forced-colors: active + prefers-contrast: more at 780 and 1280; computed button border; axe contrast rules",
+      "evidence": "Text, links, field borders and card borders survive forced colours, and axe reports 0 contrast violations. The border: 0 'Send enquiry' button loses its filled background and renders as bare text with no control boundary.",
+      "pathIds": [
+        "contact-preferences"
+      ],
+      "artifacts": [
+        "evidence/forced-colors-1280.png",
+        "evidence/forced-colors.png",
+        "evidence/aside-1280.json",
+        "evidence/axe.json"
+      ],
+      "findingIds": [
+        "F5"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "view-transitions",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "transition video of the real submit navigation + features census for @view-transition / view-transition-name",
+      "evidence": "The submit navigation is an instant swap (submit.mp4), and the census finds 0 @view-transition and 0 view-transition-name.",
+      "pathIds": [
+        "enquiry-submit"
+      ],
+      "artifacts": [
+        "evidence/submit.mp4",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F17"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "scroll-driven-animations",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features census for animation-timeline/scroll-timeline/view-timeline; script inventory",
+      "evidence": "No scroll-linked motion exists (0 scripts, 0 timelines, 0 animations).",
+      "reason": "A one-screen contact form has no scroll-linked effects (parallax, reveals, scrollytelling), and a public-service form does not call for any.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "checkId": "physical-gestures",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "DOM and overlay census for carousels, drawers, swipe lists, drag targets and top-layer UI",
+      "evidence": "The page has 3 fields, 1 button and 2 links in static blocks, with 0 overlays, 0 dialogs and 0 popovers.",
+      "reason": "There are no gesture-driven or entry/exit-animated components (no carousel, drawer, swipe-to-remove, drag or top-layer UI) on this page.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "scroll-state-aware-chrome",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "CSS inspection for position: sticky/fixed and scroll-state queries; 360x800 layout",
+      "evidence": "The header is static (no sticky or fixed positioning in the stylesheet). The page is 1001px tall at 360px wide and fits a desktop viewport.",
+      "reason": "No sticky or affixed chrome exists, and the page is about one screen long, so scroll-state-aware UI would add nothing.",
+      "pathIds": [
+        "contact-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "anchored-positioning",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features census for anchor-name/position-anchor/position-try and overlay census",
+      "evidence": "There are 0 tooltips, popovers, menus or overlays, and every anchor-positioning property is 0.",
+      "reason": "The page has no anchored UI (tooltip, popover or menu) to position.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "checkId": "directs-attention",
+      "status": "issues",
+      "confidence": "high",
+      "method": "link + aria-current probe, fetch and screenshot of each nav target, a11ytree",
+      "evidence": "'Contact' carries aria-current=page but links to '/', a raw directory listing, and 'Inbox' links to a 404. The 'you are here' cue is wrong, and both nav destinations dead-end.",
+      "pathIds": [
+        "header-nav"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/contact-nav-target.png",
+        "evidence/a11ytree.json"
+      ],
+      "findingIds": [
+        "F4"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "no-intrusive-interruptions",
+      "status": "pass",
+      "confidence": "high",
+      "method": "screenshots on load at 360, 780 and 1280; overlay census",
+      "evidence": "There are no pop-ups, banners, interstitials or cookie walls on load (0 dialogs, 0 popovers, 0 high-z-index elements). The form is the first thing below the heading.",
+      "pathIds": [
+        "contact-load",
+        "contact-narrow"
+      ],
+      "artifacts": [
+        "evidence/desktop.png",
+        "evidence/narrow-360.png",
+        "evidence/features.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "semantic-dismissible-primitives",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "features overlay census (dialog/popover/details vs role=dialog/aria-modal/z-index); a11ytree",
+      "evidence": "There are 0 dialog, popover, details, role=dialog, aria-modal or high-z-index elements, and no custom select or picker controls.",
+      "reason": "The page has no overlays or rich custom controls; native input, textarea and button are the right primitives for what it does.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/a11ytree.json"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "checkId": "reduced-chrome",
+      "status": "pass",
+      "confidence": "high",
+      "method": "screenshots at 360 and 1280 + layout metrics",
+      "evidence": "The chrome is a 48px header with two links and a one-line footer. At 360x800 the h1, lede and all form fields are in the first viewport, and nothing is decorative.",
+      "pathIds": [
+        "contact-load",
+        "contact-narrow"
+      ],
+      "artifacts": [
+        "evidence/narrow-360.png",
+        "evidence/desktop.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "responsive-no-horizontal-scroll",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive at 360x800 (scrollWidth vs innerWidth) + screenshot",
+      "evidence": "scrollWidth 360 = innerWidth 360 (0px horizontal overflow), and a viewport meta is present. Below 44rem the grid collapses to one column, and fields are width: 100%.",
+      "pathIds": [
+        "contact-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json",
+        "evidence/narrow-360.png"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "component-level-responsiveness",
+      "status": "issues",
+      "confidence": "high",
+      "method": "features census for @container; computed dl grid columns and dd line counts at 780 and 1280",
+      "evidence": "There are 0 @container rules. The aside dl keeps a fixed 160px term column, leaving 63px for values at 780px (opening hours on 5 lines) and 106px at 1280px (phone number on 2 lines).",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/aside-780.json",
+        "evidence/aside-1280.json",
+        "evidence/desktop.png",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F7"
+      ]
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "checkId": "input-modality-aware",
+      "status": "issues",
+      "confidence": "high",
+      "method": "targets at 1280x720 and 360x800; a11ytree Tab walk with computed focus indicators; tel-link probe",
+      "evidence": "All 5 targets are at least 24px (0 under the minimum at both sizes), and every Tab stop shows a 3px outline. There are no hover-only affordances. However, the phone number, the main non-form contact route, is not a tel: link, so touch users cannot tap to call.",
+      "pathIds": [
+        "contact-narrow",
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/targets.json",
+        "evidence/a11ytree.json",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F18"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-purpose-and-primary-action",
+      "status": "pass",
+      "confidence": "high",
+      "method": "first-viewport screenshots at 360 and 1280; heading outline; button text",
+      "evidence": "The h1 'Contact the council' and the lede state the purpose. The form starts in the first viewport at every size, with one clear primary action ('Send enquiry') and no competing calls to action.",
+      "pathIds": [
+        "contact-load",
+        "contact-narrow"
+      ],
+      "artifacts": [
+        "evidence/desktop.png",
+        "evidence/narrow-360.png",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "primary-flow-completion",
+      "status": "issues",
+      "confidence": "high",
+      "method": "real native submit of a valid enquiry, recorded as a video; POST/GET probes of /enquiry",
+      "evidence": "A valid submission ends at '501 Unsupported method (POST)'. The enquiry cannot be sent.",
+      "pathIds": [
+        "enquiry-submit"
+      ],
+      "artifacts": [
+        "evidence/submit.mp4",
+        "evidence/after-submit.png",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F1"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "checkId": "clear-system-state-and-recovery",
+      "status": "issues",
+      "confidence": "high",
+      "method": "submit walkthrough; probe for live regions, confirmation route and status messaging",
+      "evidence": "The promised reference and any confirmation are absent: there is no success route, 0 live regions and no status text. The failure state is a raw server page with no recovery.",
+      "pathIds": [
+        "enquiry-submit"
+      ],
+      "artifacts": [
+        "evidence/after-submit.png",
+        "evidence/flow-probe.json",
+        "evidence/dom.json"
+      ],
+      "findingIds": [
+        "F2"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "good-core-web-vitals",
+      "status": "pass",
+      "confidence": "high",
+      "method": "trace at 360x800 under mobile-lighthouse network + 4x CPU; layout CLS observer",
+      "evidence": "FCP = LCP 1070 ms (well under 2.5 s), CLS 0 and TBT 52 ms under mid-tier mobile throttling. There are 0 scripts, so no handler can cause INP.",
+      "pathIds": [
+        "contact-narrow"
+      ],
+      "artifacts": [
+        "evidence/trace-mobile-summary.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "visual-stability",
+      "status": "pass",
+      "confidence": "high",
+      "method": "layout primitive layout-shift observer at 360x800",
+      "evidence": "CLS 0, with 0 shifts recorded. There are no images, web fonts or injected content.",
+      "pathIds": [
+        "contact-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-main-thread",
+      "status": "pass",
+      "confidence": "high",
+      "method": "trace long tasks + TBT under 4x CPU; layout long-task observer unthrottled",
+      "evidence": "There are 0 long tasks unthrottled. Under 4x CPU there are 3 parse/style tasks (max 81 ms) for TBT 52 ms, and 0 page scripts.",
+      "pathIds": [
+        "contact-narrow"
+      ],
+      "artifacts": [
+        "evidence/trace-mobile-summary.json",
+        "evidence/layout-360.json"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "efficient-resource-delivery",
+      "status": "issues",
+      "confidence": "high",
+      "method": "HAR summary hygiene + render-blocking candidates, confirmed against the DOM (<link rel=stylesheet> in head)",
+      "evidence": "The single render-blocking stylesheet is uncompressed, has no cache headers and is served over HTTP/1.0.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/page.har"
+      ],
+      "findingIds": [
+        "F13"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "checkId": "trim-unused-and-duplicate-code",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "HAR byte totals + full stylesheet read from dom",
+      "evidence": "The page ships 0 JavaScript and one 3 KB stylesheet. About a third of its rules (.grid, article, .pagination, .hint) serve sibling templates, which is roughly 1 KB of unused CSS with no measurable cost (LCP 1070 ms throttled). There are no third parties or duplicates.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "names-roles-labels",
+      "status": "pass",
+      "confidence": "high",
+      "method": "a11ytree computed names/roles + axe",
+      "evidence": "Every field has a computed name from its <label for>. The fieldset is a group named 'Your enquiry', the button is named 'Send enquiry', and the landmarks are banner, navigation 'Main', main and form. axe reports 0 violations (35 passes). There are no images.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/a11ytree.json",
+        "evidence/axe.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "sufficient-contrast",
+      "status": "pass",
+      "confidence": "high",
+      "method": "axe color-contrast rule + computed colours",
+      "evidence": "axe reports 0 contrast violations. The muted text rgb(90,90,102) on #f4f5f8 and #fff is about 6.4–6.9:1, and white on the #1f4fd8 button is about 6.6:1.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/axe.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "structure-and-focus",
+      "status": "pass",
+      "confidence": "high",
+      "method": "a11ytree real Tab walk with focus indicators; heading outline; landmark tree",
+      "evidence": "The headings are H1 then H2. The Tab order (Contact, Inbox, name, email, message, Send enquiry) follows the reading order, and all 6 stops show a 3px #1f4fd8 outline. There are 0 stops inside aria-hidden. No skip link exists, but only two nav links precede main, so the cost is two Tab presses. (The aria-current misuse is recorded under directs-attention, F4.)",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/a11ytree.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "legible-text",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "stylesheet read + computed root/body font size; screenshots",
+      "evidence": "The body font is pinned at 16px in px, overriding the user's default text size. Line length and wrapping are otherwise comfortable (max-width 62rem; the aside wrapping is F7).",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F12"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "checkId": "zoom-reflow-targets-and-media",
+      "status": "pass",
+      "confidence": "high",
+      "method": "viewport meta read; 360x800 reflow (≈ 400% zoom of 1280 on width) layout + screenshot; targets at both sizes",
+      "evidence": "The viewport meta is 'width=device-width, initial-scale=1' (no user-scalable=no or maximum-scale). Content reflows to one column at 360px with 0 overflow, 0 targets are under 24px, and there is no media needing captions.",
+      "pathIds": [
+        "contact-narrow"
+      ],
+      "artifacts": [
+        "evidence/layout-360.json",
+        "evidence/narrow-360.png",
+        "evidence/targets.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "no-console-errors",
+      "status": "pass",
+      "confidence": "high",
+      "method": "console collector across every primitive's load (and the submit interaction)",
+      "evidence": "There are 0 console errors and 0 uncaught exceptions on load. The only load-time entry is Chrome's automatic /favicon.ico request returning 404 (not page-authored). The 501 seen during submit is the server failure recorded as F1, not a page script error.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "sound-document-and-assets",
+      "status": "pass",
+      "confidence": "high",
+      "method": "doctype/compatMode/charset probe; full HTML and CSS read",
+      "evidence": "The doctype is html (CSS1Compat) and the charset is UTF-8 via meta, with lang=en and a viewport meta. There are no images to size, and the HTML is valid and minimal (37 elements). The CSS is tokenised with custom properties and not repetitive.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "checkId": "browser-platform-hygiene",
+      "status": "pass",
+      "confidence": "high",
+      "method": "script/inline-handler inventory; console deprecation/issue messages; permission prompt check",
+      "evidence": "There are 0 scripts and 0 inline handlers, so there are no deprecated APIs, unload handlers, paste-prevention or prompts on load. The console shows no deprecation or inspector issues, and nothing on the page blocks the back/forward cache.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "title-and-description",
+      "status": "issues",
+      "confidence": "high",
+      "method": "DOM probe for <title>/meta description; discoverability raw HTML",
+      "evidence": "The title 'Contact the council' is generic (it does not name the council), and the meta description is missing.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/discoverability.json"
+      ],
+      "findingIds": [
+        "F14"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "crawlable-and-mobile-friendly",
+      "status": "pass",
+      "confidence": "high",
+      "method": "discoverability raw-vs-rendered + anchor/viewport/robots probe",
+      "evidence": "Coverage is 100% without JavaScript and the page is not a JS shell. Both anchors have real hrefs and descriptive text, a viewport meta is present, and no robots meta or header blocks indexing. (Where those links lead is F4.)",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/discoverability.json",
+        "evidence/discoverability-crawler.png",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "canonical-and-indexing-signals",
+      "status": "issues",
+      "confidence": "high",
+      "method": "probe for canonical/hreflang/robots meta; fetch of robots.txt and sitemap.xml",
+      "evidence": "The page returns 200, but there is no canonical, and robots.txt and sitemap.xml both return 404.",
+      "pathIds": [
+        "header-nav",
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F15"
+      ]
+    },
+    {
+      "principleId": "be-discoverable",
+      "checkId": "structured-and-shareable-metadata",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "probe for JSON-LD and og:* tags against visible content",
+      "evidence": "The page presents an organisation's phone number and opening hours, but has 0 JSON-LD blocks and 0 og: tags.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/dom.json"
+      ],
+      "findingIds": [
+        "F16"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "secure-transport-and-headers",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "headers primitive + protocol/form-action probe",
+      "evidence": "The page is served and posts personal data over http:, with no CSP and no CSRF token on the POST form. There are no cookies, so no cookie-flag issues.",
+      "pathIds": [
+        "contact-load",
+        "enquiry-submit"
+      ],
+      "artifacts": [
+        "evidence/headers.json",
+        "evidence/flow-probe.json",
+        "evidence/cookies.json"
+      ],
+      "findingIds": [
+        "F9"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "data-minimisation-and-third-parties",
+      "status": "pass",
+      "confidence": "high",
+      "method": "trackers + HAR third-party origins + cookies + field inventory",
+      "evidence": "There is 1 origin, with 0 third parties, 0 trackers and 0 cookies. The form asks only for name, email and message, the minimum needed to reply. There is no analytics or beacon traffic.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/trackers.json",
+        "evidence/page-summary.json",
+        "evidence/cookies.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "in-context-permissions-and-modern-auth",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "script inventory (no permission API calls possible) + form inventory",
+      "evidence": "There are 0 scripts, so no permission prompts on load. There are no sign-in, password or account fields.",
+      "reason": "This is an anonymous contact form: no authentication flow and no permission-gated capability exists for passkeys or in-context prompts to apply to. Email ownership verification would be disproportionate for a reply-to address.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "defensive-browser-policies",
+      "status": "issues",
+      "confidence": "high",
+      "method": "headers primitive",
+      "evidence": "HSTS, X-Frame-Options and CSP frame-ancestors, nosniff, Referrer-Policy and Permissions-Policy are all absent.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/headers.json"
+      ],
+      "findingIds": [
+        "F10"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "progressive-enhancement",
+      "status": "pass",
+      "confidence": "high",
+      "method": "discoverability no-JS crawler render vs rendered; script inventory",
+      "evidence": "The page ships 0 scripts. The crawler view (JS disabled) is identical to the browser view (coverage 100%), and the form is a native HTML POST that needs no JavaScript to submit. Nothing depends on non-Baseline features.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/discoverability.json",
+        "evidence/discoverability-crawler.png",
+        "evidence/discoverability-rendered.png"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "resilient-runtime-behaviour",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "overlay census + script inventory",
+      "evidence": "There are 0 overlays, menus, custom elements and scripts, and no async dependencies or visibility-state logic.",
+      "reason": "With no runtime behaviour (no scripts, overlays, menus or DOM moves), there is nothing to behave robustly or fragilely at runtime.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/features.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "offline-and-installable",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "resilience primitive (service worker, manifest, offline reload)",
+      "evidence": "No service worker or manifest. The offline reload rendered the page from the HTTP cache only (uncontrolled).",
+      "reason": "A single public-service contact page is not an app that users install or revisit offline, and sending an enquiry intrinsically needs the network. Installability and an offline fallback are not proportionate here. Telling users when a submission fails is judged under network-and-http-failure-states.",
+      "pathIds": [
+        "contact-offline"
+      ],
+      "artifacts": [
+        "evidence/resilience.json",
+        "evidence/resilience-offline.png"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "checkId": "network-and-http-failure-states",
+      "status": "issues",
+      "confidence": "high",
+      "method": "real submit against the failing endpoint (video + final frame); fetch of 404 routes",
+      "evidence": "Every failure (the 501 on submit, and 404s on /inbox and unknown URLs) renders the server's bare error template, with no site chrome, explanation, retry or route back.",
+      "pathIds": [
+        "enquiry-submit",
+        "header-nav"
+      ],
+      "artifacts": [
+        "evidence/after-submit.png",
+        "evidence/submit.mp4",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F3"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "lang-dir-and-logical-properties",
+      "status": "pass",
+      "confidence": "high",
+      "method": "DOM probe for lang/dir; stylesheet read for physical vs logical properties; ar-EG render",
+      "evidence": "html lang=en is correct for the English copy (dir defaults to ltr). The stylesheet authors no physical left/right properties: margin and padding are shorthands, and the 48 '-left/-right' longhands the CSSOM reports come from those shorthands and symmetric values. The ar-EG render is unchanged and correctly LTR for English content.",
+      "pathIds": [
+        "contact-load",
+        "contact-i18n"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/flow-probe.json",
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "locale-aware-data",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "rendered diff under ar-EG + Asia/Tokyo vs default; script inventory",
+      "evidence": "The rendered text is identical under ar-EG. There are 0 scripts and 0 Intl usage, and no dates, prices, quantities or durations are formatted. The phone number and opening hours are static authored copy.",
+      "reason": "A local council contact page in one language with no code-formatted dates, numbers or currencies has no locale-sensitive data to format. The static phone and hours copy is local-audience content (the tel: link in F18 adds the international form).",
+      "pathIds": [
+        "contact-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "checkId": "time-zone-correctness",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "rendered diff under Asia/Tokyo vs default; <time> and script inventory",
+      "evidence": "Under Asia/Tokyo the page is identical. There are 0 <time> elements and 0 scripts, and no times are computed or stored client-side.",
+      "reason": "The page handles no event times or stored timestamps. 'Monday to Friday, 8am to 6pm' is static local-office copy, not a computed or cross-zone time.",
+      "pathIds": [
+        "contact-i18n"
+      ],
+      "artifacts": [
+        "evidence/i18n-ar-EG-tokyo.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "no-dark-patterns",
+      "status": "pass",
+      "confidence": "high",
+      "method": "screenshots + DOM read for pre-ticked consent, upsells, confirmshaming, hidden text and misleading controls",
+      "evidence": "There are no checkboxes, pre-ticked consent, upsells, nags or disguised controls. The one button does exactly what its label says. The copy is plain and sets an honest reply expectation ('three working days').",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/desktop.png",
+        "evidence/dom.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "humane-error-handling",
+      "status": "issues",
+      "confidence": "high",
+      "method": "constraint-validation probe (empty, 'jo@', whitespace-only); features census for :user-invalid; field ARIA read",
+      "evidence": "Only transient UA bubbles appear. There is no inline error text, no :user-invalid styling, no aria-invalid and no hints, and a whitespace-only message satisfies 'required'.",
+      "pathIds": [
+        "enquiry-submit"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json",
+        "evidence/features.json"
+      ],
+      "findingIds": [
+        "F8"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "trustworthy-input-assistance",
+      "status": "pass",
+      "confidence": "high",
+      "method": "field inventory: type, autocomplete, inputmode, spellcheck/autocapitalize",
+      "evidence": "The name field has autocomplete=name and the email field has type=email + autocomplete=email. type=email already disables autocapitalisation and autocorrect on mobile keyboards and is not spell-checked, so the identifier field is assisted correctly. There are no OTP, address or payment fields.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-trustworthy",
+      "checkId": "safe-commercial-and-account-flows",
+      "status": "issues",
+      "confidence": "medium",
+      "method": "DOM read of the data-collection flow for consent/privacy information",
+      "evidence": "There is no checkout or account flow, but the form collects personal data with no privacy notice or explanation of use at the point of collection.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/dom.json",
+        "evidence/flow-probe.json"
+      ],
+      "findingIds": [
+        "F11"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "optimised-assets",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "HAR by resource type + DOM image census + CSS background-image scan",
+      "evidence": "There are 0 images and 0 decorative pseudo-element images (background-image is 'none' throughout), and 0 fonts. The total transfer is 5 KB.",
+      "reason": "The page has no image or decorative media assets to optimise.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "no-wasteful-work",
+      "status": "pass",
+      "confidence": "high",
+      "method": "HAR request inventory + trace + script inventory",
+      "evidence": "The load makes 3 requests (document, stylesheet, favicon) and nothing afterwards. There are 0 scripts, timers or background fetches.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/page.har",
+        "evidence/page-summary.json",
+        "evidence/trace-mobile-summary.json"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "checkId": "third-party-and-media-budget",
+      "status": "pass",
+      "confidence": "high",
+      "method": "HAR third-party summary + trackers + media census",
+      "evidence": "There are 0 third-party requests and no web fonts (system-ui stack), video, audio, autoplay or animation.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/page-summary.json",
+        "evidence/trackers.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "structured-agent-capabilities",
+      "status": "not-applicable",
+      "confidence": "medium",
+      "method": "DOM probe for WebMCP toolname attributes and navigator.modelContext",
+      "evidence": "There are 0 [toolname] attributes and navigator.modelContext is undefined. The form is a clean native form (labelled fields, autocomplete), so it is already reasonably agent-legible.",
+      "reason": "This is an emerging, opportunity-only principle and the site declares no agent intent. Opportunity, not a failing: once POST /enquiry works, annotating #enquiry-form with WebMCP form attributes (agentic-forms) would let an assistant file an enquiry on a resident's behalf.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-agent-ready",
+      "checkId": "on-device-inference",
+      "status": "not-applicable",
+      "confidence": "high",
+      "method": "script inventory",
+      "evidence": "There are 0 scripts and no built-in AI usage.",
+      "reason": "A three-field contact form has no task where on-device language-model inference would improve the experience enough to justify it.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-leak-under-repeated-interaction",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "heap baseline vs after 10x fill/validate/focus/reset of the form (memory-tracer method)",
+      "evidence": "Heap went from 29,773 to 31,758 nodes and from 0.99 to 1.09 MB. The page has 0 scripts, so the ~97 KB delta is V8 compiling and running the injected interaction script itself, not page-retained state. There are no Detached* or listener constructors in the after summary.",
+      "pathIds": [
+        "enquiry-submit"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "bounded-footprint",
+      "status": "pass",
+      "confidence": "high",
+      "method": "heap summary totals + usedJSHeapSize + DOM element count",
+      "evidence": "usedJSHeapSize is 1.29 MB, there are 37 elements, and the heap snapshot self size is 0.99 MB (mostly Chrome built-ins). That is proportionate to a static form.",
+      "pathIds": [
+        "contact-load"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/flow-probe.json"
+      ]
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "checkId": "no-detached-dom-or-unbounded-listeners",
+      "status": "pass",
+      "confidence": "medium",
+      "method": "heap constructor summaries before/after + script/inline-handler inventory",
+      "evidence": "Neither summary lists Detached* constructors. The page registers 0 scripts and 0 inline handlers, so no page code exists that could add listeners or timers.",
+      "pathIds": [
+        "contact-load",
+        "enquiry-submit"
+      ],
+      "artifacts": [
+        "evidence/heap-baseline.json",
+        "evidence/heap-after-10x.json",
+        "evidence/flow-probe.json"
+      ]
+    }
+  ],
+  "principleOutcomes": [
+    {
+      "principleId": "respect-user-preferences",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F5",
+        "F6"
+      ]
+    },
+    {
+      "principleId": "implement-natural-interactions",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F17"
+      ]
+    },
+    {
+      "principleId": "provide-guided-navigation",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F4"
+      ]
+    },
+    {
+      "principleId": "maximize-content-reduce-noise",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "adapt-to-the-form-factor",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F7",
+        "F18"
+      ]
+    },
+    {
+      "principleId": "support-core-task-success",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F1",
+        "F2"
+      ]
+    },
+    {
+      "principleId": "be-fast-and-stable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F13"
+      ]
+    },
+    {
+      "principleId": "be-inclusive",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F12"
+      ]
+    },
+    {
+      "principleId": "follow-best-practices",
+      "expectation": "default",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-discoverable",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F14",
+        "F15",
+        "F16"
+      ]
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F9",
+        "F10"
+      ]
+    },
+    {
+      "principleId": "be-resilient",
+      "expectation": "contextual",
+      "status": "issues",
+      "findingIds": [
+        "F3"
+      ]
+    },
+    {
+      "principleId": "be-internationalised",
+      "expectation": "contextual",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-trustworthy",
+      "expectation": "default",
+      "status": "issues",
+      "findingIds": [
+        "F8",
+        "F11"
+      ]
+    },
+    {
+      "principleId": "be-sustainable",
+      "expectation": "contextual",
+      "status": "pass"
+    },
+    {
+      "principleId": "be-agent-ready",
+      "expectation": "contextual",
+      "status": "not-applicable",
+      "reason": "Emerging, opportunity-only principle with no declared agent intent and no agent-facing surface. Both checks were judged not-applicable with rationale; the agentic-forms opportunity is noted on structured-agent-capabilities."
+    },
+    {
+      "principleId": "be-memory-efficient",
+      "expectation": "default",
+      "status": "pass"
+    }
+  ],
+  "taskList": [
+    {
+      "id": "T1",
+      "title": "Make POST /enquiry work: validate server-side, store/route the enquiry, 303-redirect to a confirmation page",
+      "priority": 1,
+      "findingIds": [
+        "F1"
+      ],
+      "guidanceId": "forms",
+      "status": "open"
+    },
+    {
+      "id": "T2",
+      "title": "Build the success state: confirmation page with the promised reference, reply expectation and focus/role=status announcement",
+      "priority": 2,
+      "findingIds": [
+        "F2"
+      ],
+      "guidanceId": "accessible-error-announcement",
+      "status": "open"
+    },
+    {
+      "id": "T3",
+      "title": "Replace raw server error pages with branded 4xx/5xx pages; on a failed POST, re-render the form with values kept and a retry",
+      "priority": 3,
+      "findingIds": [
+        "F3"
+      ],
+      "guidanceId": "persistent-toast-notifications",
+      "status": "open"
+    },
+    {
+      "id": "T4",
+      "title": "Fix the header nav: 'Contact' -> /contact-lead/ (the aria-current page), real home at '/', build or remove 'Inbox'",
+      "priority": 4,
+      "findingIds": [
+        "F4"
+      ],
+      "guidanceId": "accessibility",
+      "status": "open"
+    },
+    {
+      "id": "T5",
+      "title": "Serve over HTTPS with CSP (frame-ancestors 'self', form-action 'self'), CSRF protection, HSTS, nosniff, Referrer-Policy, Permissions-Policy",
+      "priority": 5,
+      "findingIds": [
+        "F9",
+        "F10"
+      ],
+      "guidanceId": "security",
+      "status": "open"
+    },
+    {
+      "id": "T6",
+      "title": "Humane inline validation: :user-invalid styling + persistent error text, aria-invalid sync, minlength on message",
+      "priority": 6,
+      "findingIds": [
+        "F8"
+      ],
+      "guidanceId": "required-field-feedback",
+      "status": "open"
+    },
+    {
+      "id": "T7",
+      "title": "Give the button a transparent border so it stays a visible control in forced-colors mode",
+      "priority": 7,
+      "findingIds": [
+        "F5"
+      ],
+      "guidanceId": "color",
+      "status": "open"
+    },
+    {
+      "id": "T8",
+      "title": "Make the contact aside a container: max-content term column, stack below ~22rem; tel: link for the phone number",
+      "priority": 8,
+      "findingIds": [
+        "F7",
+        "F18"
+      ],
+      "guidanceId": "size-aware-styling",
+      "status": "open"
+    },
+    {
+      "id": "T9",
+      "title": "Add dark mode via color-scheme + light-dark() tokens with an @supports / prefers-color-scheme fallback",
+      "priority": 9,
+      "findingIds": [
+        "F6"
+      ],
+      "guidanceId": "dark-mode",
+      "status": "open"
+    },
+    {
+      "id": "T10",
+      "title": "Add a privacy-notice line at the point of collection",
+      "priority": 10,
+      "findingIds": [
+        "F11"
+      ],
+      "guidanceId": "privacy",
+      "status": "open"
+    },
+    {
+      "id": "T11",
+      "title": "Discoverability: specific title + meta description, canonical, robots.txt/sitemap, GovernmentOrganization ContactPoint JSON-LD + OG tags",
+      "priority": 11,
+      "findingIds": [
+        "F14",
+        "F15",
+        "F16"
+      ],
+      "guidanceId": "html",
+      "status": "open"
+    },
+    {
+      "id": "T12",
+      "title": "Use a relative body font size (100% / 1rem) to respect the user's text size",
+      "priority": 12,
+      "findingIds": [
+        "F12"
+      ],
+      "guidanceId": "respect-os-text-scale",
+      "status": "open"
+    },
+    {
+      "id": "T13",
+      "title": "Compress and long-cache base.css (fingerprinted, immutable) over HTTP/2+",
+      "priority": 13,
+      "findingIds": [
+        "F13"
+      ],
+      "guidanceId": "performance",
+      "status": "open"
+    },
+    {
+      "id": "T14",
+      "title": "Opt in to cross-document view transitions between the form and its confirmation",
+      "priority": 14,
+      "findingIds": [
+        "F17"
+      ],
+      "guidanceId": "cross-document-transitions",
+      "status": "open"
+    }
+  ],
+  "budget": {
+    "pathCount": 7,
+    "auditPasses": 1
+  },
+  "agent": "claude",
+  "runId": "2026-10-09T00-39-23-039Z"
+}

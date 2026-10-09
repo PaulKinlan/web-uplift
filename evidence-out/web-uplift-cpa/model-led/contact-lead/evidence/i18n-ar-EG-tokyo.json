@@ -1,0 +1,15 @@
+{
+  "navigatorLanguage": "en-US",
+  "resolvedLocale": "ar-EG",
+  "timeZone": "Asia/Tokyo",
+  "htmlLang": "en",
+  "dir": null,
+  "computedDirection": "ltr",
+  "textSample": "Contact Inbox Contact the council Tell us what you need and we will give you a reference. Your enquiry Your name Email How can we help? Send enquiry Other ways to reach us Phone 01234 567800 Opening hours Monday to Friday, 8am to 6pm We reply within three working days.",
+  "timeElements": 0,
+  "scripts": 0,
+  "conditions": {
+    "locale": "ar-EG",
+    "timezone": "Asia/Tokyo"
+  }
+}

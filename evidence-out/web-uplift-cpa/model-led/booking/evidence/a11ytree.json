@@ -1,0 +1,975 @@
+{
+  "primitive": "a11ytree",
+  "url": "http://127.0.0.1:8765/booking/",
+  "scannedAt": "2026-10-09T00:08:36.206Z",
+  "tree": {
+    "root": {
+      "nodeId": "11",
+      "role": "RootWebArea",
+      "name": "Evening class booking - Riverside Training Centre",
+      "properties": {
+        "focusable": true
+      },
+      "childCount": 1,
+      "depth": 0,
+      "children": [
+        {
+          "nodeId": "46",
+          "role": "none",
+          "ignored": true,
+          "ignoredReasons": [
+            "uninteresting"
+          ],
+          "childCount": 1,
+          "depth": 1,
+          "children": [
+            {
+              "nodeId": "51",
+              "role": "none",
+              "ignored": true,
+              "ignoredReasons": [
+                "uninteresting"
+              ],
+              "childCount": 3,
+              "depth": 2,
+              "children": [
+                {
+                  "nodeId": "13",
+                  "role": "banner",
+                  "childCount": 1,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "14",
+                      "role": "navigation",
+                      "name": "Main",
+                      "childCount": 2,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "15",
+                          "role": "link",
+                          "name": "Evening classes",
+                          "properties": {
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "16",
+                              "role": "StaticText",
+                              "name": "Evening classes",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000002",
+                                  "role": "InlineTextBox",
+                                  "name": "Evening classes",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "17",
+                          "role": "link",
+                          "name": "Roster",
+                          "properties": {
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "18",
+                              "role": "StaticText",
+                              "name": "Roster",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000003",
+                                  "role": "InlineTextBox",
+                                  "name": "Roster",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "19",
+                  "role": "main",
+                  "childCount": 4,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "20",
+                      "role": "heading",
+                      "name": "Book an evening class",
+                      "properties": {
+                        "level": 1
+                      },
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "21",
+                          "role": "StaticText",
+                          "name": "Book an evening class",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000004",
+                              "role": "InlineTextBox",
+                              "name": "Book an evening class",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "22",
+                      "role": "paragraph",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "23",
+                          "role": "StaticText",
+                          "name": "Pick a class, tell us who is coming, and we will keep your place.",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000005",
+                              "role": "InlineTextBox",
+                              "name": "Pick a class, tell us who is coming, and we will keep your place.",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "3",
+                      "role": "form",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "9",
+                          "role": "group",
+                          "name": "Your details",
+                          "properties": {
+                            "invalid": "false"
+                          },
+                          "childCount": 7,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "52",
+                              "role": "Legend",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "24",
+                                  "role": "StaticText",
+                                  "name": "Your details",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "-1000000006",
+                                      "role": "InlineTextBox",
+                                      "name": "Your details",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "53",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "54",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "25",
+                                      "role": "StaticText",
+                                      "name": "Full name",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000007",
+                                          "role": "InlineTextBox",
+                                          "name": "Full name",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "4",
+                                  "role": "textbox",
+                                  "name": "Full name",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "26",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "55",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "56",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "27",
+                                      "role": "StaticText",
+                                      "name": "Email",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000008",
+                                          "role": "InlineTextBox",
+                                          "name": "Email",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "5",
+                                  "role": "textbox",
+                                  "name": "Email",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "28",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "57",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "58",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "29",
+                                      "role": "StaticText",
+                                      "name": "Address",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000009",
+                                          "role": "InlineTextBox",
+                                          "name": "Address",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "6",
+                                  "role": "textbox",
+                                  "name": "Address",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "30",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "59",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "60",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "31",
+                                      "role": "StaticText",
+                                      "name": "Postcode",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000010",
+                                          "role": "InlineTextBox",
+                                          "name": "Postcode",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "7",
+                                  "role": "textbox",
+                                  "name": "Postcode",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "32",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "61",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "62",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "33",
+                                      "role": "StaticText",
+                                      "name": "Anything we should know?",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000011",
+                                          "role": "InlineTextBox",
+                                          "name": "Anything we should know?",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "8",
+                                  "role": "textbox",
+                                  "name": "Anything we should know?",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": false
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "63",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "64",
+                              "role": "generic",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "10",
+                                  "role": "button",
+                                  "name": "Confirm booking",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "35",
+                                      "role": "StaticText",
+                                      "name": "Confirm booking",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000012",
+                                          "role": "InlineTextBox",
+                                          "name": "Confirm booking",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "36",
+                      "role": "complementary",
+                      "childCount": 3,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "37",
+                          "role": "heading",
+                          "name": "Opening hours",
+                          "properties": {
+                            "level": 2
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "38",
+                              "role": "StaticText",
+                              "name": "Opening hours",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000013",
+                                  "role": "InlineTextBox",
+                                  "name": "Opening hours",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "39",
+                          "role": "paragraph",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "40",
+                              "role": "StaticText",
+                              "name": "Monday to Thursday, 6pm to 9pm.",
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000014",
+                                  "role": "InlineTextBox",
+                                  "name": "Monday to Thursday, ",
+                                  "childCount": 0,
+                                  "depth": 7
+                                },
+                                {
+                                  "nodeId": "-1000000015",
+                                  "role": "InlineTextBox",
+                                  "name": "6pm to 9pm.",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "41",
+                          "role": "paragraph",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "42",
+                              "role": "StaticText",
+                              "name": "Bookings close two hours before a class starts.",
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000016",
+                                  "role": "InlineTextBox",
+                                  "name": "Bookings close two hours ",
+                                  "childCount": 0,
+                                  "depth": 7
+                                },
+                                {
+                                  "nodeId": "-1000000017",
+                                  "role": "InlineTextBox",
+                                  "name": "before a class starts.",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "43",
+                  "role": "contentinfo",
+                  "childCount": 1,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "44",
+                      "role": "paragraph",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "45",
+                          "role": "StaticText",
+                          "name": "Riverside Training Centre, 4 Bridge Row.",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000018",
+                              "role": "InlineTextBox",
+                              "name": "Riverside Training Centre, 4 Bridge Row.",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "totalNodes": 73,
+    "nodesProjected": 73,
+    "truncated": false,
+    "maxDepth": 9,
+    "ignoredCount": 7,
+    "roleCounts": {
+      "RootWebArea": 1,
+      "banner": 1,
+      "navigation": 1,
+      "link": 2,
+      "StaticText": 15,
+      "InlineTextBox": 17,
+      "main": 1,
+      "heading": 2,
+      "paragraph": 4,
+      "form": 1,
+      "group": 1,
+      "Legend": 1,
+      "LabelText": 5,
+      "textbox": 5,
+      "generic": 6,
+      "button": 1,
+      "complementary": 1,
+      "contentinfo": 1
+    },
+    "maxNodes": 400
+  },
+  "focusOrder": {
+    "stops": [
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Evening classes",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 16,
+          "y": 12,
+          "width": 143,
+          "height": 24
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||Evening classes"
+      },
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Roster",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 175,
+          "y": 12,
+          "width": 51,
+          "height": 24
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||Roster"
+      },
+      {
+        "tag": "input",
+        "id": "name",
+        "class": "",
+        "type": "text",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 260,
+          "width": 449,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|name||"
+      },
+      {
+        "tag": "input",
+        "id": "email",
+        "class": "",
+        "type": "email",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 343,
+          "width": 449,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|email||"
+      },
+      {
+        "tag": "input",
+        "id": "address",
+        "class": "",
+        "type": "text",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 394,
+          "width": 449,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|address||"
+      },
+      {
+        "tag": "input",
+        "id": "postcode",
+        "class": "",
+        "type": "text",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 196,
+          "width": 449,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|postcode||"
+      },
+      {
+        "tag": "textarea",
+        "id": "notes",
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 280,
+          "width": 449,
+          "height": 92
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "TEXTAREA|notes||"
+      },
+      {
+        "tag": "button",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Confirm booking",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 391,
+          "width": 184,
+          "height": 45
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "BUTTON|||Confirm booking"
+      },
+      {
+        "tag": "body",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Evening classes Roster Book an evening class Pick a class, tell us who is coming",
+        "isBody": true,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 0,
+          "y": -314,
+          "width": 780,
+          "height": 878
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "none",
+          "color": "rgb(27, 27, 31)",
+          "offset": "0px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": false,
+        "key": "BODY|||Evening classes Roster Book an evening class Pick a class, tell us who is coming"
+      }
+    ],
+    "stopCount": 9,
+    "cycleDetected": true,
+    "truncated": false,
+    "maxStops": 60,
+    "stopsWithoutVisibleIndicator": 1,
+    "stopsInsideAriaHidden": 0
+  },
+  "note": "What assistive technology is actually handed, not what the DOM says: `tree` is Accessibility.getFullAXTree projected to role, computed name, ignored (with reasons), the flag properties the checks turn on, and depth, so an aria-label overridden by aria-labelledby or a subtree hidden by an ancestor aria-hidden shows up here and not in a DOM-attribute probe. `focusOrder` is the REAL tab order: Tab is dispatched with CDP key events and each stop records the focused element, its rect and whether it is on screen, its computed outline/box-shadow with a mechanical `hasVisibleIndicator` reading, and whether it sits inside an aria-hidden subtree (which removes it from the accessibility tree but NOT from the tab order - a real mismatch, counted in stopsInsideAriaHidden). Judge perceivability yourself. The walk stops when the cycle wraps or at maxStops. Nodes and stops are capped and say so (nodesProjected/totalNodes, truncated, maxStops). Descriptive signal, not a verdict: judge against be-inclusive names-roles-labels and structure-and-focus.",
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

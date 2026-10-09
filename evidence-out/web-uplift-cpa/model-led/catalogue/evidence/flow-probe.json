@@ -1,0 +1,376 @@
+{
+  "meta": {
+    "doctype": "html",
+    "compatMode": "CSS1Compat",
+    "charset": "UTF-8",
+    "lang": "en",
+    "dir": null,
+    "title": "Parts catalogue",
+    "metaDescription": null,
+    "canonical": null,
+    "robotsMeta": null,
+    "colorSchemeMeta": null,
+    "themeColor": null,
+    "manifest": null,
+    "icon": null,
+    "jsonLd": 0,
+    "ogTags": 0,
+    "hreflang": 0,
+    "scripts": 0,
+    "inlineHandlers": 0,
+    "elements": 51,
+    "iframes": 0,
+    "imgs": 0,
+    "timeEls": 0,
+    "liveRegions": 0,
+    "skipLink": false,
+    "nextHopProtocol": "http/1.0",
+    "transferSize": 1867,
+    "isSecureContext": true,
+    "publicKeyCredential": true,
+    "modelContext": false,
+    "usedJSHeapSize": 1207510,
+    "physicalProps": 48,
+    "rootFontSize": "16px",
+    "bodyFont": "16px"
+  },
+  "forms": [
+    {
+      "id": "search-form",
+      "method": "get",
+      "action": "http://127.0.0.1:8765/search",
+      "role": null,
+      "ariaLabel": null,
+      "checkValidityEmpty": true
+    },
+    {
+      "id": "cart-form",
+      "method": "post",
+      "action": "http://127.0.0.1:8765/cart",
+      "role": null,
+      "ariaLabel": null,
+      "checkValidityEmpty": true
+    }
+  ],
+  "fields": [
+    {
+      "tag": "input",
+      "id": "q",
+      "name": "q",
+      "type": "search",
+      "form": "search-form",
+      "label": "Search parts",
+      "required": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "pattern": null,
+      "inputmode": null,
+      "autocomplete": null,
+      "spellcheck": null,
+      "autocapitalize": null,
+      "autocorrect": null,
+      "placeholder": null,
+      "ariaDescribedby": null,
+      "value": null,
+      "validity": {
+        "valid": true,
+        "message": ""
+      }
+    },
+    {
+      "tag": "button",
+      "id": null,
+      "name": null,
+      "type": "submit",
+      "form": "search-form",
+      "label": null,
+      "required": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "pattern": null,
+      "inputmode": null,
+      "autocomplete": null,
+      "spellcheck": null,
+      "autocapitalize": null,
+      "autocorrect": null,
+      "placeholder": null,
+      "ariaDescribedby": null,
+      "value": null,
+      "validity": {
+        "valid": true,
+        "message": ""
+      }
+    },
+    {
+      "tag": "input",
+      "id": "item",
+      "name": "item",
+      "type": "text",
+      "form": "cart-form",
+      "label": "Part number",
+      "required": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "pattern": null,
+      "inputmode": null,
+      "autocomplete": null,
+      "spellcheck": null,
+      "autocapitalize": null,
+      "autocorrect": null,
+      "placeholder": null,
+      "ariaDescribedby": null,
+      "value": null,
+      "validity": {
+        "valid": true,
+        "message": ""
+      }
+    },
+    {
+      "tag": "input",
+      "id": "quantity",
+      "name": "quantity",
+      "type": "number",
+      "form": "cart-form",
+      "label": "Quantity",
+      "required": false,
+      "min": "1",
+      "max": null,
+      "step": null,
+      "pattern": null,
+      "inputmode": null,
+      "autocomplete": null,
+      "spellcheck": null,
+      "autocapitalize": null,
+      "autocorrect": null,
+      "placeholder": null,
+      "ariaDescribedby": null,
+      "value": null,
+      "validity": {
+        "valid": true,
+        "message": ""
+      }
+    },
+    {
+      "tag": "button",
+      "id": null,
+      "name": null,
+      "type": "submit",
+      "form": "cart-form",
+      "label": null,
+      "required": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "pattern": null,
+      "inputmode": null,
+      "autocomplete": null,
+      "spellcheck": null,
+      "autocapitalize": null,
+      "autocorrect": null,
+      "placeholder": null,
+      "ariaDescribedby": null,
+      "value": null,
+      "validity": {
+        "valid": true,
+        "message": ""
+      }
+    }
+  ],
+  "headings": [
+    "H1: Parts catalogue",
+    "H3: Bearing 12mm",
+    "H3: Bearing 15mm",
+    "H3: Bushing 12mm",
+    "H2: Your cart"
+  ],
+  "links": [
+    {
+      "text": "Catalogue",
+      "href": "http://127.0.0.1:8765/",
+      "current": "page",
+      "inNav": "Main"
+    },
+    {
+      "text": "Cart",
+      "href": "http://127.0.0.1:8765/cart",
+      "current": null,
+      "inNav": "Main"
+    },
+    {
+      "text": "1",
+      "href": "http://127.0.0.1:8765/search?page=1",
+      "current": "page",
+      "inNav": "Pagination"
+    },
+    {
+      "text": "2",
+      "href": "http://127.0.0.1:8765/search?page=2",
+      "current": null,
+      "inNav": "Pagination"
+    },
+    {
+      "text": "3",
+      "href": "http://127.0.0.1:8765/search?page=3",
+      "current": null,
+      "inNav": "Pagination"
+    }
+  ],
+  "articles": [
+    {
+      "heading": "Bearing 12mm",
+      "hasLink": false,
+      "hasButton": false,
+      "hasPrice": false,
+      "hasPartNumber": false,
+      "text": "Bearing 12mmSealed steel bearing, pack of two.In stock"
+    },
+    {
+      "heading": "Bearing 15mm",
+      "hasLink": false,
+      "hasButton": false,
+      "hasPrice": false,
+      "hasPartNumber": false,
+      "text": "Bearing 15mmSealed steel bearing, pack of two.In stock"
+    },
+    {
+      "heading": "Bushing 12mm",
+      "hasLink": false,
+      "hasButton": false,
+      "hasPrice": false,
+      "hasPartNumber": false,
+      "text": "Bushing 12mmBronze bushing for light loads.Ordered on request"
+    }
+  ],
+  "mainKids": [
+    {
+      "el": "h1",
+      "x": 16,
+      "y": 73,
+      "w": 748,
+      "h": 46
+    },
+    {
+      "el": "form#search-form",
+      "x": 16,
+      "y": 143,
+      "w": 483,
+      "h": 150
+    },
+    {
+      "el": "section[Results]",
+      "x": 523,
+      "y": 143,
+      "w": 241,
+      "h": 475
+    },
+    {
+      "el": "nav[Pagination]",
+      "x": 16,
+      "y": 641,
+      "w": 483,
+      "h": 37
+    },
+    {
+      "el": "aside",
+      "x": 523,
+      "y": 641,
+      "w": 241,
+      "h": 293
+    }
+  ],
+  "flows": [
+    {
+      "url": "/",
+      "method": "GET",
+      "status": 200,
+      "type": "basic",
+      "contentType": "text/html; charset=utf-8",
+      "title": "Directory listing for /",
+      "bodySample": "Directory listing for / Directory listing for / account-recovery/ base.css booking/ catalogue/ contact-lead/ event-registration/"
+    },
+    {
+      "url": "/cart",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/search?q=bearing",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/search?page=2",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/search",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/cart",
+      "method": "POST",
+      "status": 501,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 501 Message: Unsupported method ('POST'). Error code explanation: 501 - Server does not support this operation."
+    },
+    {
+      "url": "/robots.txt",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/sitemap.xml",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/catalogue/bearing-12mm",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/no-such-page-xyz",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    }
+  ]
+}

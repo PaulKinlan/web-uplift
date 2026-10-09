@@ -1,0 +1,5 @@
+http://127.0.0.1:8765/booking/
+http://127.0.0.1:8765/account-recovery/
+http://127.0.0.1:8765/catalogue/
+http://127.0.0.1:8765/contact-lead/
+http://127.0.0.1:8765/event-registration/

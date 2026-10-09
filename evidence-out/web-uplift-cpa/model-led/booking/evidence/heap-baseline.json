@@ -1,0 +1,192 @@
+{
+  "totals": {
+    "nodeCount": 29744,
+    "edgeCount": 124131,
+    "totalSelfSizeBytes": 973713
+  },
+  "topNodeTypesBySize": [
+    {
+      "name": "native",
+      "count": 11296,
+      "selfSize": 660977
+    },
+    {
+      "name": "object shape",
+      "count": 2117,
+      "selfSize": 125800
+    },
+    {
+      "name": "array",
+      "count": 54,
+      "selfSize": 78588
+    },
+    {
+      "name": "closure",
+      "count": 2539,
+      "selfSize": 72164
+    },
+    {
+      "name": "code",
+      "count": 6142,
+      "selfSize": 14816
+    },
+    {
+      "name": "string",
+      "count": 6010,
+      "selfSize": 12312
+    },
+    {
+      "name": "object",
+      "count": 330,
+      "selfSize": 8776
+    },
+    {
+      "name": "number",
+      "count": 1164,
+      "selfSize": 192
+    },
+    {
+      "name": "symbol",
+      "count": 59,
+      "selfSize": 64
+    },
+    {
+      "name": "regexp",
+      "count": 1,
+      "selfSize": 24
+    },
+    {
+      "name": "synthetic",
+      "count": 32,
+      "selfSize": 0
+    }
+  ],
+  "topConstructorsBySize": [
+    {
+      "name": "Object",
+      "count": 63,
+      "selfSize": 1708
+    },
+    {
+      "name": "TypedArray",
+      "count": 36,
+      "selfSize": 1008
+    },
+    {
+      "name": "Error",
+      "count": 36,
+      "selfSize": 1008
+    },
+    {
+      "name": "JSON",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Atomics",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Intl",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Reflect",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Math",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Array Iterator",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Generator",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "AsyncGenerator",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Iterator Helper",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Map Iterator",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Set Iterator",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Set",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "String Iterator",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Promise",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "WeakMap",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "WeakRef",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "FinalizationRegistry",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Map",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "WeakSet",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "AsyncDisposableStack",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Intl.NumberFormat",
+      "count": 3,
+      "selfSize": 84
+    },
+    {
+      "name": "Intl.Collator",
+      "count": 3,
+      "selfSize": 84
+    }
+  ],
+  "note": "Summary of a V8 heap snapshot. Compare two snapshots (e.g. before vs after repeated interaction) to spot retained growth; a single snapshot shows the current object population by type and constructor."
+}

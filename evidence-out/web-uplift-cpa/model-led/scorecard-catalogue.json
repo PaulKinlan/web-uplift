@@ -1,0 +1,22 @@
+{
+  "host": "127_0_0_1_8765",
+  "generatedAt": "2026-10-09 01:07",
+  "runId": "2026-10-09T00-27-28-894Z",
+  "url": "http://127.0.0.1:8765/catalogue/",
+  "overall": 86,
+  "outcomes": {
+    "speed": 95,
+    "memory": 100,
+    "usability": 72,
+    "inclusive": 83,
+    "discoverable": 85,
+    "trust": 78
+  },
+  "findingsBySeverity": {
+    "critical": 1,
+    "high": 1,
+    "medium": 7,
+    "low": 11
+  },
+  "findingsTotal": 20
+}

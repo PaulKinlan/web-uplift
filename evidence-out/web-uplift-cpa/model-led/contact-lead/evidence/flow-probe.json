@@ -1,0 +1,296 @@
+{
+  "meta": {
+    "doctype": "html",
+    "compatMode": "CSS1Compat",
+    "charset": "UTF-8",
+    "lang": "en",
+    "dir": null,
+    "title": "Contact the council",
+    "metaDescription": null,
+    "canonical": null,
+    "robotsMeta": null,
+    "colorSchemeMeta": null,
+    "themeColor": null,
+    "manifest": null,
+    "icon": null,
+    "jsonLd": 0,
+    "ogTags": 0,
+    "hreflang": 0,
+    "scripts": 0,
+    "inlineHandlers": 0,
+    "elements": 37,
+    "iframes": 0,
+    "imgs": 0,
+    "timeEls": 0,
+    "liveRegions": 0,
+    "skipLink": false,
+    "nextHopProtocol": "http/1.0",
+    "transferSize": 1559,
+    "isSecureContext": true,
+    "protocol": "http:",
+    "modelContext": false,
+    "toolnameAttrs": 0,
+    "usedJSHeapSize": 1288422,
+    "physicalProps": 48,
+    "rootFontSize": "16px",
+    "bodyFont": "16px",
+    "mutedColor": "rgb(90, 90, 102)"
+  },
+  "forms": [
+    {
+      "id": "enquiry-form",
+      "method": "post",
+      "action": "http://127.0.0.1:8765/enquiry",
+      "novalidate": false,
+      "checkValidityEmpty": false,
+      "hasCsrfField": false
+    }
+  ],
+  "fields": [
+    {
+      "tag": "input",
+      "id": "name",
+      "name": "name",
+      "type": "text",
+      "form": "enquiry-form",
+      "label": "Your name",
+      "required": true,
+      "minlength": null,
+      "maxlength": null,
+      "pattern": null,
+      "inputmode": null,
+      "autocomplete": "name",
+      "spellcheck": null,
+      "autocapitalize": null,
+      "placeholder": null,
+      "ariaDescribedby": null,
+      "validity": {
+        "valid": false,
+        "message": "Please fill out this field."
+      }
+    },
+    {
+      "tag": "input",
+      "id": "email",
+      "name": "email",
+      "type": "email",
+      "form": "enquiry-form",
+      "label": "Email",
+      "required": true,
+      "minlength": null,
+      "maxlength": null,
+      "pattern": null,
+      "inputmode": null,
+      "autocomplete": "email",
+      "spellcheck": null,
+      "autocapitalize": null,
+      "placeholder": null,
+      "ariaDescribedby": null,
+      "validity": {
+        "valid": false,
+        "message": "Please fill out this field."
+      }
+    },
+    {
+      "tag": "textarea",
+      "id": "message",
+      "name": "message",
+      "type": "textarea",
+      "form": "enquiry-form",
+      "label": "How can we help?",
+      "required": true,
+      "minlength": null,
+      "maxlength": null,
+      "pattern": null,
+      "inputmode": null,
+      "autocomplete": null,
+      "spellcheck": null,
+      "autocapitalize": null,
+      "placeholder": null,
+      "ariaDescribedby": null,
+      "validity": {
+        "valid": false,
+        "message": "Please fill out this field."
+      }
+    },
+    {
+      "tag": "button",
+      "id": null,
+      "name": null,
+      "type": "submit",
+      "form": "enquiry-form",
+      "label": null,
+      "required": false,
+      "minlength": null,
+      "maxlength": null,
+      "pattern": null,
+      "inputmode": null,
+      "autocomplete": null,
+      "spellcheck": null,
+      "autocapitalize": null,
+      "placeholder": null,
+      "ariaDescribedby": null,
+      "validity": {
+        "valid": true,
+        "message": ""
+      }
+    }
+  ],
+  "emailBad": {
+    "valid": false,
+    "message": "Please enter a part following '@'. 'jo@' is incomplete."
+  },
+  "whitespaceOnlyMessagePassesRequired": true,
+  "headings": [
+    "H1: Contact the council",
+    "H2: Other ways to reach us"
+  ],
+  "links": [
+    {
+      "text": "Contact",
+      "href": "http://127.0.0.1:8765/",
+      "current": "page",
+      "pointsAtThisPage": false,
+      "inNav": "Main"
+    },
+    {
+      "text": "Inbox",
+      "href": "http://127.0.0.1:8765/inbox",
+      "current": null,
+      "pointsAtThisPage": false,
+      "inNav": "Main"
+    }
+  ],
+  "mainKids": [
+    {
+      "el": "h1",
+      "x": 16,
+      "y": 73,
+      "w": 748,
+      "h": 46
+    },
+    {
+      "el": "p",
+      "x": 16,
+      "y": 143,
+      "w": 748,
+      "h": 24
+    },
+    {
+      "el": "form#enquiry-form",
+      "x": 16,
+      "y": 191,
+      "w": 455,
+      "h": 433
+    },
+    {
+      "el": "aside",
+      "x": 495,
+      "y": 191,
+      "w": 269,
+      "h": 273
+    }
+  ],
+  "phone": [
+    {
+      "text": "01234 567800",
+      "hasTelLink": false
+    },
+    {
+      "text": "Monday to Friday, 8am to 6pm",
+      "hasTelLink": false
+    }
+  ],
+  "flows": [
+    {
+      "url": "/enquiry",
+      "method": "POST",
+      "status": 501,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "location": null,
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 501 Message: Unsupported method ('POST'). Error code explanation: 501 - Server does not support this operation."
+    },
+    {
+      "url": "/enquiry",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "location": null,
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/",
+      "method": "GET",
+      "status": 200,
+      "type": "basic",
+      "contentType": "text/html; charset=utf-8",
+      "location": null,
+      "title": "Directory listing for /",
+      "bodySample": "Directory listing for / Directory listing for / account-recovery/ base.css booking/ catalogue/ contact-lead/ event-registration/"
+    },
+    {
+      "url": "/inbox",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "location": null,
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/inbox/",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "location": null,
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/robots.txt",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "location": null,
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/sitemap.xml",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "location": null,
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/favicon.ico",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "location": null,
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    },
+    {
+      "url": "/no-such-page-xyz",
+      "method": "GET",
+      "status": 404,
+      "type": "basic",
+      "contentType": "text/html;charset=utf-8",
+      "location": null,
+      "title": "Error response",
+      "bodySample": "Error response Error response Error code: 404 Message: File not found. Error code explanation: 404 - Nothing matches the given URI."
+    }
+  ]
+}

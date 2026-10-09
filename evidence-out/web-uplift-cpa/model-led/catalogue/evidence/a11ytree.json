@@ -1,0 +1,1260 @@
+{
+  "primitive": "a11ytree",
+  "url": "http://127.0.0.1:8765/catalogue/",
+  "scannedAt": "2026-10-09T00:29:03.318Z",
+  "tree": {
+    "root": {
+      "nodeId": "9",
+      "role": "RootWebArea",
+      "name": "Parts catalogue",
+      "properties": {
+        "focusable": true
+      },
+      "childCount": 1,
+      "depth": 0,
+      "children": [
+        {
+          "nodeId": "68",
+          "role": "none",
+          "ignored": true,
+          "ignoredReasons": [
+            "uninteresting"
+          ],
+          "childCount": 1,
+          "depth": 1,
+          "children": [
+            {
+              "nodeId": "73",
+              "role": "none",
+              "ignored": true,
+              "ignoredReasons": [
+                "uninteresting"
+              ],
+              "childCount": 3,
+              "depth": 2,
+              "children": [
+                {
+                  "nodeId": "10",
+                  "role": "banner",
+                  "childCount": 1,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "11",
+                      "role": "navigation",
+                      "name": "Main",
+                      "childCount": 2,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "12",
+                          "role": "link",
+                          "name": "Catalogue",
+                          "properties": {
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "13",
+                              "role": "StaticText",
+                              "name": "Catalogue",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000002",
+                                  "role": "InlineTextBox",
+                                  "name": "Catalogue",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "14",
+                          "role": "link",
+                          "name": "Cart",
+                          "properties": {
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "15",
+                              "role": "StaticText",
+                              "name": "Cart",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000003",
+                                  "role": "InlineTextBox",
+                                  "name": "Cart",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "16",
+                  "role": "main",
+                  "childCount": 5,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "17",
+                      "role": "heading",
+                      "name": "Parts catalogue",
+                      "properties": {
+                        "level": 1
+                      },
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "18",
+                          "role": "StaticText",
+                          "name": "Parts catalogue",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000004",
+                              "role": "InlineTextBox",
+                              "name": "Parts catalogue",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "3",
+                      "role": "form",
+                      "childCount": 3,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "74",
+                          "role": "LabelText",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "19",
+                              "role": "StaticText",
+                              "name": "Search parts",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000005",
+                                  "role": "InlineTextBox",
+                                  "name": "Search parts",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "4",
+                          "role": "searchbox",
+                          "name": "Search parts",
+                          "properties": {
+                            "invalid": "false",
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "75",
+                              "role": "none",
+                              "ignored": true,
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "20",
+                                  "role": "generic",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "21",
+                          "role": "button",
+                          "name": "Search",
+                          "properties": {
+                            "invalid": "false",
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "22",
+                              "role": "StaticText",
+                              "name": "Search",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000006",
+                                  "role": "InlineTextBox",
+                                  "name": "Search",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "23",
+                      "role": "region",
+                      "name": "Results",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "78",
+                          "role": "none",
+                          "ignored": true,
+                          "ignoredReasons": [
+                            "uninteresting"
+                          ],
+                          "childCount": 3,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "24",
+                              "role": "article",
+                              "childCount": 3,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "25",
+                                  "role": "heading",
+                                  "name": "Bearing 12mm",
+                                  "properties": {
+                                    "level": 3
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "26",
+                                      "role": "StaticText",
+                                      "name": "Bearing 12mm",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000007",
+                                          "role": "InlineTextBox",
+                                          "name": "Bearing 12mm",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "27",
+                                  "role": "paragraph",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "28",
+                                      "role": "StaticText",
+                                      "name": "Sealed steel bearing, pack of two.",
+                                      "childCount": 2,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000008",
+                                          "role": "InlineTextBox",
+                                          "name": "Sealed steel bearing, ",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        },
+                                        {
+                                          "nodeId": "-1000000009",
+                                          "role": "InlineTextBox",
+                                          "name": "pack of two.",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "29",
+                                  "role": "paragraph",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "30",
+                                      "role": "StaticText",
+                                      "name": "In stock",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000010",
+                                          "role": "InlineTextBox",
+                                          "name": "In stock",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "31",
+                              "role": "article",
+                              "childCount": 3,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "32",
+                                  "role": "heading",
+                                  "name": "Bearing 15mm",
+                                  "properties": {
+                                    "level": 3
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "33",
+                                      "role": "StaticText",
+                                      "name": "Bearing 15mm",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000011",
+                                          "role": "InlineTextBox",
+                                          "name": "Bearing 15mm",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "34",
+                                  "role": "paragraph",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "35",
+                                      "role": "StaticText",
+                                      "name": "Sealed steel bearing, pack of two.",
+                                      "childCount": 2,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000012",
+                                          "role": "InlineTextBox",
+                                          "name": "Sealed steel bearing, ",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        },
+                                        {
+                                          "nodeId": "-1000000013",
+                                          "role": "InlineTextBox",
+                                          "name": "pack of two.",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "36",
+                                  "role": "paragraph",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "37",
+                                      "role": "StaticText",
+                                      "name": "In stock",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000014",
+                                          "role": "InlineTextBox",
+                                          "name": "In stock",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "38",
+                              "role": "article",
+                              "childCount": 3,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "39",
+                                  "role": "heading",
+                                  "name": "Bushing 12mm",
+                                  "properties": {
+                                    "level": 3
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "40",
+                                      "role": "StaticText",
+                                      "name": "Bushing 12mm",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000015",
+                                          "role": "InlineTextBox",
+                                          "name": "Bushing 12mm",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "41",
+                                  "role": "paragraph",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "42",
+                                      "role": "StaticText",
+                                      "name": "Bronze bushing for light loads.",
+                                      "childCount": 2,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000016",
+                                          "role": "InlineTextBox",
+                                          "name": "Bronze bushing for light ",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        },
+                                        {
+                                          "nodeId": "-1000000017",
+                                          "role": "InlineTextBox",
+                                          "name": "loads.",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "43",
+                                  "role": "paragraph",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "44",
+                                      "role": "StaticText",
+                                      "name": "Ordered on request",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000018",
+                                          "role": "InlineTextBox",
+                                          "name": "Ordered on request",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "45",
+                      "role": "navigation",
+                      "name": "Pagination",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "46",
+                          "role": "list",
+                          "childCount": 3,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "47",
+                              "role": "listitem",
+                              "properties": {
+                                "level": 1
+                              },
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "48",
+                                  "role": "link",
+                                  "name": "1",
+                                  "properties": {
+                                    "focusable": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "49",
+                                      "role": "StaticText",
+                                      "name": "1",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000019",
+                                          "role": "InlineTextBox",
+                                          "name": "1",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "50",
+                              "role": "listitem",
+                              "properties": {
+                                "level": 1
+                              },
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "51",
+                                  "role": "link",
+                                  "name": "2",
+                                  "properties": {
+                                    "focusable": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "52",
+                                      "role": "StaticText",
+                                      "name": "2",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000020",
+                                          "role": "InlineTextBox",
+                                          "name": "2",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "53",
+                              "role": "listitem",
+                              "properties": {
+                                "level": 1
+                              },
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "54",
+                                  "role": "link",
+                                  "name": "3",
+                                  "properties": {
+                                    "focusable": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "55",
+                                      "role": "StaticText",
+                                      "name": "3",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000021",
+                                          "role": "InlineTextBox",
+                                          "name": "3",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "56",
+                      "role": "complementary",
+                      "childCount": 2,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "57",
+                          "role": "heading",
+                          "name": "Your cart",
+                          "properties": {
+                            "level": 2
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "58",
+                              "role": "StaticText",
+                              "name": "Your cart",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000022",
+                                  "role": "InlineTextBox",
+                                  "name": "Your cart",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "7",
+                          "role": "form",
+                          "childCount": 3,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "79",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "80",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "59",
+                                      "role": "StaticText",
+                                      "name": "Part number",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000023",
+                                          "role": "InlineTextBox",
+                                          "name": "Part number",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "5",
+                                  "role": "textbox",
+                                  "name": "Part number",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": false
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "60",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "81",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "82",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "61",
+                                      "role": "StaticText",
+                                      "name": "Quantity",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000024",
+                                          "role": "InlineTextBox",
+                                          "name": "Quantity",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "6",
+                                  "role": "spinbutton",
+                                  "name": "Quantity",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "required": false,
+                                    "valuemin": 1,
+                                    "valuemax": 0,
+                                    "valuetext": ""
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "83",
+                                      "role": "none",
+                                      "ignored": true,
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "62",
+                                          "role": "generic",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "63",
+                              "role": "button",
+                              "name": "Add to cart",
+                              "properties": {
+                                "invalid": "false",
+                                "focusable": true
+                              },
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "64",
+                                  "role": "StaticText",
+                                  "name": "Add to cart",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "-1000000025",
+                                      "role": "InlineTextBox",
+                                      "name": "Add to cart",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "65",
+                  "role": "contentinfo",
+                  "childCount": 1,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "66",
+                      "role": "paragraph",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "67",
+                          "role": "StaticText",
+                          "name": "Catalogue prices include VAT.",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000026",
+                              "role": "InlineTextBox",
+                              "name": "Catalogue prices include VAT.",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "totalNodes": 99,
+    "nodesProjected": 99,
+    "truncated": false,
+    "maxDepth": 9,
+    "ignoredCount": 7,
+    "roleCounts": {
+      "RootWebArea": 1,
+      "banner": 1,
+      "navigation": 2,
+      "link": 5,
+      "StaticText": 22,
+      "InlineTextBox": 25,
+      "main": 1,
+      "heading": 5,
+      "form": 2,
+      "LabelText": 3,
+      "searchbox": 1,
+      "generic": 3,
+      "button": 2,
+      "region": 1,
+      "article": 3,
+      "paragraph": 7,
+      "list": 1,
+      "listitem": 3,
+      "complementary": 1,
+      "textbox": 1,
+      "spinbutton": 1,
+      "contentinfo": 1
+    },
+    "maxNodes": 400
+  },
+  "focusOrder": {
+    "stops": [
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Catalogue",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 16,
+          "y": 12,
+          "width": 91,
+          "height": 24
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||Catalogue"
+      },
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Cart",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 123,
+          "y": 12,
+          "width": 34,
+          "height": 24
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||Cart"
+      },
+      {
+        "tag": "input",
+        "id": "q",
+        "class": "",
+        "type": "search",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 188,
+          "width": 449,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|q||"
+      },
+      {
+        "tag": "button",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Search",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 231,
+          "width": 97,
+          "height": 45
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "BUTTON|||Search"
+      },
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "1",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 16,
+          "y": 199,
+          "width": 35,
+          "height": 37
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||1"
+      },
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "2",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 59,
+          "y": 199,
+          "width": 35,
+          "height": 37
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||2"
+      },
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "3",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 101,
+          "y": 199,
+          "width": 35,
+          "height": 37
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||3"
+      },
+      {
+        "tag": "input",
+        "id": "item",
+        "class": "",
+        "type": "text",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 557,
+          "y": 298,
+          "width": 173,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|item||"
+      },
+      {
+        "tag": "input",
+        "id": "quantity",
+        "class": "",
+        "type": "number",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 557,
+          "y": 370,
+          "width": 173,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|quantity||"
+      },
+      {
+        "tag": "button",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Add to cart",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 557,
+          "y": 392,
+          "width": 136,
+          "height": 45
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "BUTTON|||Add to cart"
+      },
+      {
+        "tag": "body",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Catalogue Cart Parts catalogue Search parts Search Bearing 12mm Sealed steel bea",
+        "isBody": true,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 0,
+          "y": -463,
+          "width": 780,
+          "height": 1046
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "none",
+          "color": "rgb(27, 27, 31)",
+          "offset": "0px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": false,
+        "key": "BODY|||Catalogue Cart Parts catalogue Search parts Search Bearing 12mm Sealed steel bea"
+      }
+    ],
+    "stopCount": 11,
+    "cycleDetected": true,
+    "truncated": false,
+    "maxStops": 60,
+    "stopsWithoutVisibleIndicator": 1,
+    "stopsInsideAriaHidden": 0
+  },
+  "note": "What assistive technology is actually handed, not what the DOM says: `tree` is Accessibility.getFullAXTree projected to role, computed name, ignored (with reasons), the flag properties the checks turn on, and depth, so an aria-label overridden by aria-labelledby or a subtree hidden by an ancestor aria-hidden shows up here and not in a DOM-attribute probe. `focusOrder` is the REAL tab order: Tab is dispatched with CDP key events and each stop records the focused element, its rect and whether it is on screen, its computed outline/box-shadow with a mechanical `hasVisibleIndicator` reading, and whether it sits inside an aria-hidden subtree (which removes it from the accessibility tree but NOT from the tab order - a real mismatch, counted in stopsInsideAriaHidden). Judge perceivability yourself. The walk stops when the cycle wraps or at maxStops. Nodes and stops are capped and say so (nodesProjected/totalNodes, truncated, maxStops). Descriptive signal, not a verdict: judge against be-inclusive names-roles-labels and structure-and-focus.",
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

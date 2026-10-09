@@ -1,0 +1,55 @@
+{
+  "animations": 0,
+  "transitions": 0,
+  "rmMatches": true,
+  "contrastMore": true,
+  "bodyFontSize": "16px",
+  "rootFontSize": "16px",
+  "inputBorder": "rgb(213, 213, 221)",
+  "legendFont": "400",
+  "skipLink": false,
+  "mainBox": 780,
+  "formBox": {
+    "x": 522.65625,
+    "y": 190.609375,
+    "width": 241.328125,
+    "height": 350.5625,
+    "top": 190.609375,
+    "right": 763.984375,
+    "bottom": 541.171875,
+    "left": 522.65625
+  },
+  "sectionBox": {
+    "x": 16,
+    "y": 190.609375,
+    "width": 482.65625,
+    "height": 83.1875,
+    "top": 190.609375,
+    "right": 498.65625,
+    "bottom": 273.796875,
+    "left": 16
+  },
+  "asideBox": {
+    "x": 16,
+    "y": 565.171875,
+    "width": 482.65625,
+    "height": 134.796875,
+    "top": 565.171875,
+    "right": 498.65625,
+    "bottom": 699.96875,
+    "left": 16
+  },
+  "vw": 780,
+  "conditions": {
+    "emulateMedia": [
+      {
+        "name": "prefers-reduced-motion",
+        "value": "reduce"
+      },
+      {
+        "name": "prefers-contrast",
+        "value": "more"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "host": "127_0_0_1_8765",
+  "generatedAt": "2026-10-09 01:07",
+  "runId": "2026-10-09T00-39-23-039Z",
+  "url": "http://127.0.0.1:8765/contact-lead/",
+  "overall": 86,
+  "outcomes": {
+    "speed": 93,
+    "memory": 100,
+    "usability": 66,
+    "inclusive": 95,
+    "discoverable": 85,
+    "trust": 76
+  },
+  "findingsBySeverity": {
+    "critical": 1,
+    "high": 1,
+    "medium": 8,
+    "low": 8
+  },
+  "findingsTotal": 18
+}

@@ -1,0 +1,7 @@
+{
+  "isolation": "operator-supplied:host-permission-model",
+  "unverified": true,
+  "reason": "declared by the operator; the tool did not and cannot verify it",
+  "recordedAt": "2026-10-09T00:06:22.903Z",
+  "tool": "web-uplift batch"
+}

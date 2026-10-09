@@ -1,0 +1,51 @@
+{
+  "url": "http://127.0.0.1:8765/account-recovery/",
+  "allowedRoots": [
+    "/home/exedev/worktrees/web-uplift-mwg-drift/reports-cpa"
+  ],
+  "changed": {
+    "added": [
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/a11ytree.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/axe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/cookies.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/dark.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/desktop.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/discoverability-crawler.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/discoverability-rendered.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/discoverability.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/doc-probe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/dom.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/features.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/forced-colors.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/form-probe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/headers.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/heap-after-10x.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/heap-baseline.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/i18n-ar-EG-tokyo.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/layout-360.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/narrow-360.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/page-summary.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/page.har",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/resilience-offline.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/resilience.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/secrets.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/targets.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/trace-mobile-summary.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/trace-mobile.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/evidence/trackers.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/launches.jsonl",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/report.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/report.md",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z/scratch/manifest.mjs"
+    ],
+    "modified": [
+      "reports-cpa/127_0_0_1_8765/latest.txt",
+      "reports-cpa/127_0_0_1_8765/scorecard.html",
+      "reports-cpa/127_0_0_1_8765/scorecard.json"
+    ],
+    "deleted": []
+  },
+  "escapedOutsideScope": [],
+  "agentError": null,
+  "recordWrittenTo": "reports-cpa/127_0_0_1_8765/2026-10-09T00-17-28-543Z"
+}

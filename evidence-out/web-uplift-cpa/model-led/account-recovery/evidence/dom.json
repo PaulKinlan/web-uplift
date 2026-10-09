@@ -1,0 +1,38 @@
+{
+  "page": {
+    "title": "Your account",
+    "url": "http://127.0.0.1:8765/account-recovery/",
+    "lang": "en",
+    "hasViewportMeta": true,
+    "outerHTML": "<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Your account</title><link rel=\"stylesheet\" href=\"../base.css\"></head>\n<body>\n<header><nav aria-label=\"Main\"><a href=\"/\" aria-current=\"page\">Account</a></nav></header>\n<main>\n  <h1>Sign in or create an account</h1>\n  <p class=\"lede\">One account for classes, bookings and your history.</p>\n  <form id=\"signup-form\" method=\"post\" action=\"/signup\">\n    <fieldset>\n      <legend>Create an account</legend>\n      <div><label for=\"email\">Email</label><input id=\"email\" name=\"email\" type=\"email\" autocomplete=\"username\" required=\"\"></div>\n      <div><label for=\"password\">Password</label><input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"new-password\" required=\"\"></div>\n      <div><label for=\"displayName\">Display name</label><input id=\"displayName\" name=\"displayName\" type=\"text\" required=\"\"></div>\n      <div><button type=\"submit\">Create account</button></div>\n    </fieldset>\n  </form>\n  <form id=\"reset-form\" method=\"post\" action=\"/reset\"><label for=\"reset-email\">Forgot your password?</label><input id=\"reset-email\" name=\"email\" type=\"email\" autocomplete=\"username\" required=\"\"><button type=\"submit\">Send a reset link</button></form>\n  <aside><h2>Keep it safe</h2><p class=\"hint\">Use a password you do not use anywhere else. We will email you a reset link.</p></aside>\n</main>\n<footer><p>Your account is protected by a session cookie.</p></footer>\n\n</body></html>",
+    "outerHTMLChars": 1497,
+    "outerHTMLTruncated": false,
+    "css": ":root { --ink: #1b1b1f; --muted: #5a5a66; --line: #d5d5dd; --paper: #ffffff; --wash: #f4f5f8; --accent: #1f4fd8; --accent-ink: #ffffff; --radius: 10px; --gap: 1rem; }\n* { box-sizing: border-box; }\nbody { margin: 0px; font: 16px / 1.5 system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif; color: var(--ink); background: var(--wash); }\nbody > header { background: var(--paper); border-bottom: 1px solid var(--line); }\nbody > header nav { max-width: 62rem; margin: 0px auto; padding: 0.75rem 1rem; display: flex; align-items: center; gap: var(--gap); }\nbody > header nav a { color: var(--ink); text-decoration: none; }\nbody > header nav a[aria-current=\"page\"] { font-weight: 600; }\nmain { max-width: 62rem; margin: 0px auto; padding: 1.5rem 1rem; display: grid; gap: 1.5rem; grid-template-columns: 2fr 1fr; align-items: start; }\nmain > h1, main > p.lede { grid-column: 1 / -1; }\naside { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; }\nfooter { max-width: 62rem; margin: 0px auto; padding: 1rem; color: var(--muted); }\nh1 { font-size: 1.9rem; margin: 0px; }\nh2 { font-size: 1.2rem; margin: 0px 0px 0.5rem; }\n.lede { color: var(--muted); margin: 0px; }\nform { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; }\nfieldset { border: 0px; padding: 0px; margin: 0px; display: grid; gap: 0.75rem; }\nlabel { display: block; font-weight: 600; margin-bottom: 0.25rem; }\ninput, select, textarea { width: 100%; padding: 0.55rem 0.65rem; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: var(--paper); }\ninput:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }\nbutton { background: var(--accent); color: var(--accent-ink); border: 0px; border-radius: 8px; padding: 0.65rem 1.1rem; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; font-weight: 600; cursor: pointer; }\n.grid { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }\narticle { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; }\narticle h3 { margin: 0px 0px 0.25rem; font-size: 1rem; }\narticle p { margin: 0px 0px 0.5rem; color: var(--muted); }\n.pagination { display: flex; gap: 0.5rem; list-style: none; padding: 0px; margin: 0px; }\n.pagination a { display: inline-block; padding: 0.35rem 0.7rem; border: 1px solid var(--line); border-radius: 8px; text-decoration: none; color: var(--ink); background: var(--paper); }\n.hint { color: var(--muted); font-size: 0.9rem; }\ndl { display: grid; grid-template-columns: 10rem 1fr; gap: 0.35rem 0.75rem; margin: 0px; }\ndt { font-weight: 600; }\ndd { margin: 0px; color: var(--muted); }\n@media (max-width: 44rem) {\n  main { grid-template-columns: 1fr; }\n}\n",
+    "cssChars": 3143,
+    "cssTruncated": false,
+    "computed": {}
+  },
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

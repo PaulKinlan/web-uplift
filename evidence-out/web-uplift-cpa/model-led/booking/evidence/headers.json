@@ -1,0 +1,80 @@
+{
+  "primitive": "headers",
+  "url": "http://127.0.0.1:8765/booking/",
+  "scannedAt": "2026-10-09T00:08:28.719Z",
+  "securityHeaders": {
+    "content-security-policy": {
+      "present": false,
+      "empty": false,
+      "value": null,
+      "issues": [
+        "missing"
+      ]
+    },
+    "strict-transport-security": {
+      "present": false,
+      "empty": false,
+      "value": null,
+      "issues": [
+        "missing"
+      ]
+    },
+    "x-content-type-options": {
+      "present": false,
+      "empty": false,
+      "value": null,
+      "issues": [
+        "missing or not nosniff"
+      ]
+    },
+    "x-frame-options": {
+      "present": false,
+      "empty": false,
+      "value": null,
+      "issues": [
+        "missing (check CSP frame-ancestors)"
+      ]
+    },
+    "referrer-policy": {
+      "present": false,
+      "empty": false,
+      "value": null,
+      "issues": [
+        "missing"
+      ]
+    },
+    "permissions-policy": {
+      "present": false,
+      "empty": false,
+      "value": null,
+      "issues": [
+        "missing"
+      ]
+    }
+  },
+  "https": false,
+  "note": "Descriptive signal. Judge against be-private-and-secure. A missing CSP/HSTS/X-Content-Type-Options is a security gap, and a header that is present but EMPTY is not a pass either: `present` says whether the response carried the header at all, `empty` says it carried no value, and `issues` names what is wrong with it. unsafe-inline/unsafe-eval weakens XSS protection.",
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

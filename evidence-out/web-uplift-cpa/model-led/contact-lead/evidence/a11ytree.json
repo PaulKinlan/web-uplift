@@ -1,0 +1,896 @@
+{
+  "primitive": "a11ytree",
+  "url": "http://127.0.0.1:8765/contact-lead/",
+  "scannedAt": "2026-10-09T00:41:08.940Z",
+  "tree": {
+    "root": {
+      "nodeId": "7",
+      "role": "RootWebArea",
+      "name": "Contact the council",
+      "properties": {
+        "focusable": true
+      },
+      "childCount": 1,
+      "depth": 0,
+      "children": [
+        {
+          "nodeId": "45",
+          "role": "none",
+          "ignored": true,
+          "ignoredReasons": [
+            "uninteresting"
+          ],
+          "childCount": 1,
+          "depth": 1,
+          "children": [
+            {
+              "nodeId": "50",
+              "role": "none",
+              "ignored": true,
+              "ignoredReasons": [
+                "uninteresting"
+              ],
+              "childCount": 3,
+              "depth": 2,
+              "children": [
+                {
+                  "nodeId": "9",
+                  "role": "banner",
+                  "childCount": 1,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "10",
+                      "role": "navigation",
+                      "name": "Main",
+                      "childCount": 2,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "11",
+                          "role": "link",
+                          "name": "Contact",
+                          "properties": {
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "12",
+                              "role": "StaticText",
+                              "name": "Contact",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000002",
+                                  "role": "InlineTextBox",
+                                  "name": "Contact",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "13",
+                          "role": "link",
+                          "name": "Inbox",
+                          "properties": {
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "14",
+                              "role": "StaticText",
+                              "name": "Inbox",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000003",
+                                  "role": "InlineTextBox",
+                                  "name": "Inbox",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "15",
+                  "role": "main",
+                  "childCount": 4,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "16",
+                      "role": "heading",
+                      "name": "Contact the council",
+                      "properties": {
+                        "level": 1
+                      },
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "17",
+                          "role": "StaticText",
+                          "name": "Contact the council",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000004",
+                              "role": "InlineTextBox",
+                              "name": "Contact the council",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "18",
+                      "role": "paragraph",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "19",
+                          "role": "StaticText",
+                          "name": "Tell us what you need and we will give you a reference.",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000005",
+                              "role": "InlineTextBox",
+                              "name": "Tell us what you need and we will give you a reference.",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "3",
+                      "role": "form",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "20",
+                          "role": "group",
+                          "name": "Your enquiry",
+                          "properties": {
+                            "invalid": "false"
+                          },
+                          "childCount": 5,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "51",
+                              "role": "Legend",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "21",
+                                  "role": "StaticText",
+                                  "name": "Your enquiry",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "-1000000006",
+                                      "role": "InlineTextBox",
+                                      "name": "Your enquiry",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "52",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "53",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "22",
+                                      "role": "StaticText",
+                                      "name": "Your name",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000007",
+                                          "role": "InlineTextBox",
+                                          "name": "Your name",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "4",
+                                  "role": "textbox",
+                                  "name": "Your name",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "23",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "54",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "55",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "24",
+                                      "role": "StaticText",
+                                      "name": "Email",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000008",
+                                          "role": "InlineTextBox",
+                                          "name": "Email",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "5",
+                                  "role": "textbox",
+                                  "name": "Email",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "25",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "56",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "57",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "26",
+                                      "role": "StaticText",
+                                      "name": "How can we help?",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000009",
+                                          "role": "InlineTextBox",
+                                          "name": "How can we help?",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "6",
+                                  "role": "textbox",
+                                  "name": "How can we help?",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "58",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "59",
+                              "role": "generic",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "28",
+                                  "role": "button",
+                                  "name": "Send enquiry",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "29",
+                                      "role": "StaticText",
+                                      "name": "Send enquiry",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000010",
+                                          "role": "InlineTextBox",
+                                          "name": "Send enquiry",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "30",
+                      "role": "complementary",
+                      "childCount": 2,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "31",
+                          "role": "heading",
+                          "name": "Other ways to reach us",
+                          "properties": {
+                            "level": 2
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "32",
+                              "role": "StaticText",
+                              "name": "Other ways to reach us",
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000011",
+                                  "role": "InlineTextBox",
+                                  "name": "Other ways to reach ",
+                                  "childCount": 0,
+                                  "depth": 7
+                                },
+                                {
+                                  "nodeId": "-1000000012",
+                                  "role": "InlineTextBox",
+                                  "name": "us",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "33",
+                          "role": "DescriptionList",
+                          "childCount": 4,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "34",
+                              "role": "term",
+                              "name": "Phone",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "35",
+                                  "role": "StaticText",
+                                  "name": "Phone",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "-1000000013",
+                                      "role": "InlineTextBox",
+                                      "name": "Phone",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "36",
+                              "role": "definition",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "37",
+                                  "role": "StaticText",
+                                  "name": "01234 567800",
+                                  "childCount": 2,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "-1000000014",
+                                      "role": "InlineTextBox",
+                                      "name": "01234 ",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    },
+                                    {
+                                      "nodeId": "-1000000015",
+                                      "role": "InlineTextBox",
+                                      "name": "567800",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "38",
+                              "role": "term",
+                              "name": "Opening hours",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "39",
+                                  "role": "StaticText",
+                                  "name": "Opening hours",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "-1000000016",
+                                      "role": "InlineTextBox",
+                                      "name": "Opening hours",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "40",
+                              "role": "definition",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "41",
+                                  "role": "StaticText",
+                                  "name": "Monday to Friday, 8am to 6pm",
+                                  "childCount": 5,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "-1000000017",
+                                      "role": "InlineTextBox",
+                                      "name": "Monday ",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    },
+                                    {
+                                      "nodeId": "-1000000018",
+                                      "role": "InlineTextBox",
+                                      "name": "to ",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    },
+                                    {
+                                      "nodeId": "-1000000019",
+                                      "role": "InlineTextBox",
+                                      "name": "Friday, ",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    },
+                                    {
+                                      "nodeId": "-1000000020",
+                                      "role": "InlineTextBox",
+                                      "name": "8am to ",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    },
+                                    {
+                                      "nodeId": "-1000000021",
+                                      "role": "InlineTextBox",
+                                      "name": "6pm",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "42",
+                  "role": "contentinfo",
+                  "childCount": 1,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "43",
+                      "role": "paragraph",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "44",
+                          "role": "StaticText",
+                          "name": "We reply within three working days.",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000022",
+                              "role": "InlineTextBox",
+                              "name": "We reply within three working days.",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "totalNodes": 72,
+    "nodesProjected": 72,
+    "truncated": false,
+    "maxDepth": 9,
+    "ignoredCount": 5,
+    "roleCounts": {
+      "RootWebArea": 1,
+      "banner": 1,
+      "navigation": 1,
+      "link": 2,
+      "StaticText": 15,
+      "InlineTextBox": 21,
+      "main": 1,
+      "heading": 2,
+      "paragraph": 2,
+      "form": 1,
+      "group": 1,
+      "Legend": 1,
+      "LabelText": 3,
+      "textbox": 3,
+      "generic": 4,
+      "button": 1,
+      "complementary": 1,
+      "DescriptionList": 1,
+      "term": 2,
+      "definition": 2,
+      "contentinfo": 1
+    },
+    "maxNodes": 400
+  },
+  "focusOrder": {
+    "stops": [
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Contact",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 16,
+          "y": 12,
+          "width": 70,
+          "height": 24
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||Contact"
+      },
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Inbox",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 102,
+          "y": 12,
+          "width": 44,
+          "height": 24
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||Inbox"
+      },
+      {
+        "tag": "input",
+        "id": "name",
+        "class": "",
+        "type": "text",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 260,
+          "width": 421,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|name||"
+      },
+      {
+        "tag": "input",
+        "id": "email",
+        "class": "",
+        "type": "email",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 343,
+          "width": 421,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|email||"
+      },
+      {
+        "tag": "textarea",
+        "id": "message",
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 197,
+          "width": 421,
+          "height": 116
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "TEXTAREA|message||"
+      },
+      {
+        "tag": "button",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Send enquiry",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 331,
+          "width": 155,
+          "height": 45
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "BUTTON|||Send enquiry"
+      },
+      {
+        "tag": "body",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Contact Inbox Contact the council Tell us what you need and we will give you a r",
+        "isBody": true,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 0,
+          "y": -230,
+          "width": 780,
+          "height": 735
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "none",
+          "color": "rgb(27, 27, 31)",
+          "offset": "0px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": false,
+        "key": "BODY|||Contact Inbox Contact the council Tell us what you need and we will give you a r"
+      }
+    ],
+    "stopCount": 7,
+    "cycleDetected": true,
+    "truncated": false,
+    "maxStops": 60,
+    "stopsWithoutVisibleIndicator": 1,
+    "stopsInsideAriaHidden": 0
+  },
+  "note": "What assistive technology is actually handed, not what the DOM says: `tree` is Accessibility.getFullAXTree projected to role, computed name, ignored (with reasons), the flag properties the checks turn on, and depth, so an aria-label overridden by aria-labelledby or a subtree hidden by an ancestor aria-hidden shows up here and not in a DOM-attribute probe. `focusOrder` is the REAL tab order: Tab is dispatched with CDP key events and each stop records the focused element, its rect and whether it is on screen, its computed outline/box-shadow with a mechanical `hasVisibleIndicator` reading, and whether it sits inside an aria-hidden subtree (which removes it from the accessibility tree but NOT from the tab order - a real mismatch, counted in stopsInsideAriaHidden). Judge perceivability yourself. The walk stops when the cycle wraps or at maxStops. Nodes and stops are capped and say so (nodesProjected/totalNodes, truncated, maxStops). Descriptive signal, not a verdict: judge against be-inclusive names-roles-labels and structure-and-focus.",
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}

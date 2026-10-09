@@ -1,0 +1,58 @@
+{
+  "url": "http://127.0.0.1:8765/event-registration/",
+  "allowedRoots": [
+    "/home/exedev/worktrees/web-uplift-mwg-drift/reports-cpa"
+  ],
+  "changed": {
+    "added": [
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/.keep",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/a11ytree.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/after-empty-submit.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/after-valid-submit.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/axe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/console.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/contrast-probe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/cookies.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/dark.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/desktop-1280-full.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/desktop.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/discoverability-crawler.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/discoverability-rendered.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/discoverability.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/dom.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/features.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/forced-colors.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/form-probe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/headers.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/heap-after-10x.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/heap-baseline.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/i18n-ar-EG-tokyo.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/layout-360.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/motion-contrast-probe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/narrow-360.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/page-summary.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/page.har",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/resilience-offline.png",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/resilience.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/routes-probe.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/secrets.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/targets.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/trace-mobile-summary.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/trace-mobile.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/evidence/trackers.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/launches.jsonl",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/report.json",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/report.md",
+      "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z/scratch/manifest.mjs"
+    ],
+    "modified": [
+      "reports-cpa/127_0_0_1_8765/latest.txt",
+      "reports-cpa/127_0_0_1_8765/scorecard.html",
+      "reports-cpa/127_0_0_1_8765/scorecard.json"
+    ],
+    "deleted": []
+  },
+  "escapedOutsideScope": [],
+  "agentError": null,
+  "recordWrittenTo": "reports-cpa/127_0_0_1_8765/2026-10-09T00-51-22-040Z"
+}

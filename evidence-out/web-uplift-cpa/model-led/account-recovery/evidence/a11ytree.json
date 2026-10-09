@@ -1,0 +1,857 @@
+{
+  "primitive": "a11ytree",
+  "url": "http://127.0.0.1:8765/account-recovery/",
+  "scannedAt": "2026-10-09T00:18:52.577Z",
+  "tree": {
+    "root": {
+      "nodeId": "12",
+      "role": "RootWebArea",
+      "name": "Your account",
+      "properties": {
+        "focusable": true
+      },
+      "childCount": 1,
+      "depth": 0,
+      "children": [
+        {
+          "nodeId": "42",
+          "role": "none",
+          "ignored": true,
+          "ignoredReasons": [
+            "uninteresting"
+          ],
+          "childCount": 1,
+          "depth": 1,
+          "children": [
+            {
+              "nodeId": "47",
+              "role": "none",
+              "ignored": true,
+              "ignoredReasons": [
+                "uninteresting"
+              ],
+              "childCount": 3,
+              "depth": 2,
+              "children": [
+                {
+                  "nodeId": "14",
+                  "role": "banner",
+                  "childCount": 1,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "15",
+                      "role": "navigation",
+                      "name": "Main",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "16",
+                          "role": "link",
+                          "name": "Account",
+                          "properties": {
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "17",
+                              "role": "StaticText",
+                              "name": "Account",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000002",
+                                  "role": "InlineTextBox",
+                                  "name": "Account",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "18",
+                  "role": "main",
+                  "childCount": 5,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "19",
+                      "role": "heading",
+                      "name": "Sign in or create an account",
+                      "properties": {
+                        "level": 1
+                      },
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "20",
+                          "role": "StaticText",
+                          "name": "Sign in or create an account",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000003",
+                              "role": "InlineTextBox",
+                              "name": "Sign in or create an account",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "21",
+                      "role": "paragraph",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "22",
+                          "role": "StaticText",
+                          "name": "One account for classes, bookings and your history.",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000004",
+                              "role": "InlineTextBox",
+                              "name": "One account for classes, bookings and your history.",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "3",
+                      "role": "form",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "9",
+                          "role": "group",
+                          "name": "Create an account",
+                          "properties": {
+                            "invalid": "false"
+                          },
+                          "childCount": 5,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "48",
+                              "role": "Legend",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "23",
+                                  "role": "StaticText",
+                                  "name": "Create an account",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "-1000000005",
+                                      "role": "InlineTextBox",
+                                      "name": "Create an account",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "49",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "50",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "24",
+                                      "role": "StaticText",
+                                      "name": "Email",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000006",
+                                          "role": "InlineTextBox",
+                                          "name": "Email",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "4",
+                                  "role": "textbox",
+                                  "name": "Email",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "25",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "51",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "52",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "26",
+                                      "role": "StaticText",
+                                      "name": "Password",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000007",
+                                          "role": "InlineTextBox",
+                                          "name": "Password",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "5",
+                                  "role": "textbox",
+                                  "name": "Password",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "27",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "53",
+                              "role": "none",
+                              "ignored": true,
+                              "ignoredReasons": [
+                                "uninteresting"
+                              ],
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "54",
+                                  "role": "LabelText",
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "28",
+                                      "role": "StaticText",
+                                      "name": "Display name",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000008",
+                                          "role": "InlineTextBox",
+                                          "name": "Display name",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nodeId": "6",
+                                  "role": "textbox",
+                                  "name": "Display name",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true,
+                                    "readonly": false,
+                                    "required": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "29",
+                                      "role": "generic",
+                                      "childCount": 0,
+                                      "depth": 8
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "nodeId": "55",
+                              "role": "generic",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "10",
+                                  "role": "button",
+                                  "name": "Create account",
+                                  "properties": {
+                                    "invalid": "false",
+                                    "focusable": true
+                                  },
+                                  "childCount": 1,
+                                  "depth": 7,
+                                  "children": [
+                                    {
+                                      "nodeId": "30",
+                                      "role": "StaticText",
+                                      "name": "Create account",
+                                      "childCount": 1,
+                                      "depth": 8,
+                                      "children": [
+                                        {
+                                          "nodeId": "-1000000009",
+                                          "role": "InlineTextBox",
+                                          "name": "Create account",
+                                          "childCount": 0,
+                                          "depth": 9
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "8",
+                      "role": "form",
+                      "childCount": 3,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "56",
+                          "role": "LabelText",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "31",
+                              "role": "StaticText",
+                              "name": "Forgot your password?",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000010",
+                                  "role": "InlineTextBox",
+                                  "name": "Forgot your password?",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "7",
+                          "role": "textbox",
+                          "name": "Forgot your password?",
+                          "properties": {
+                            "invalid": "false",
+                            "focusable": true,
+                            "readonly": false,
+                            "required": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "32",
+                              "role": "generic",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "11",
+                          "role": "button",
+                          "name": "Send a reset link",
+                          "properties": {
+                            "invalid": "false",
+                            "focusable": true
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "33",
+                              "role": "StaticText",
+                              "name": "Send a reset link",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000011",
+                                  "role": "InlineTextBox",
+                                  "name": "Send a reset link",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "nodeId": "34",
+                      "role": "complementary",
+                      "childCount": 2,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "35",
+                          "role": "heading",
+                          "name": "Keep it safe",
+                          "properties": {
+                            "level": 2
+                          },
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "36",
+                              "role": "StaticText",
+                              "name": "Keep it safe",
+                              "childCount": 1,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000012",
+                                  "role": "InlineTextBox",
+                                  "name": "Keep it safe",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "nodeId": "37",
+                          "role": "paragraph",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "38",
+                              "role": "StaticText",
+                              "name": "Use a password you do not use anywhere else. We will email you a reset link.",
+                              "childCount": 2,
+                              "depth": 6,
+                              "children": [
+                                {
+                                  "nodeId": "-1000000013",
+                                  "role": "InlineTextBox",
+                                  "name": "Use a password you do not use anywhere else. We will email ",
+                                  "childCount": 0,
+                                  "depth": 7
+                                },
+                                {
+                                  "nodeId": "-1000000014",
+                                  "role": "InlineTextBox",
+                                  "name": "you a reset link.",
+                                  "childCount": 0,
+                                  "depth": 7
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "nodeId": "39",
+                  "role": "contentinfo",
+                  "childCount": 1,
+                  "depth": 3,
+                  "children": [
+                    {
+                      "nodeId": "40",
+                      "role": "paragraph",
+                      "childCount": 1,
+                      "depth": 4,
+                      "children": [
+                        {
+                          "nodeId": "41",
+                          "role": "StaticText",
+                          "name": "Your account is protected by a session cookie.",
+                          "childCount": 1,
+                          "depth": 5,
+                          "children": [
+                            {
+                              "nodeId": "-1000000015",
+                              "role": "InlineTextBox",
+                              "name": "Your account is protected by a session cookie.",
+                              "childCount": 0,
+                              "depth": 6
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "totalNodes": 63,
+    "nodesProjected": 63,
+    "truncated": false,
+    "maxDepth": 9,
+    "ignoredCount": 5,
+    "roleCounts": {
+      "RootWebArea": 1,
+      "banner": 1,
+      "navigation": 1,
+      "link": 1,
+      "StaticText": 13,
+      "InlineTextBox": 14,
+      "main": 1,
+      "heading": 2,
+      "paragraph": 3,
+      "form": 2,
+      "group": 1,
+      "Legend": 1,
+      "LabelText": 4,
+      "textbox": 4,
+      "generic": 5,
+      "button": 2,
+      "complementary": 1,
+      "contentinfo": 1
+    },
+    "maxNodes": 400
+  },
+  "focusOrder": {
+    "stops": [
+      {
+        "tag": "a",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Account",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 16,
+          "y": 12,
+          "width": 73,
+          "height": 24
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "A|||Account"
+      },
+      {
+        "tag": "input",
+        "id": "email",
+        "class": "",
+        "type": "email",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 260,
+          "width": 449,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|email||"
+      },
+      {
+        "tag": "input",
+        "id": "password",
+        "class": "",
+        "type": "password",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 343,
+          "width": 449,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|password||"
+      },
+      {
+        "tag": "input",
+        "id": "displayName",
+        "class": "",
+        "type": "text",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 394,
+          "width": 449,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|displayName||"
+      },
+      {
+        "tag": "button",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Create account",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 33,
+          "y": 196,
+          "width": 172,
+          "height": 45
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "BUTTON|||Create account"
+      },
+      {
+        "tag": "input",
+        "id": "reset-email",
+        "class": "",
+        "type": "email",
+        "role": null,
+        "tabindex": null,
+        "name": "",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 540,
+          "y": 197,
+          "width": 207,
+          "height": 44
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "INPUT|reset-email||"
+      },
+      {
+        "tag": "button",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Send a reset link",
+        "isBody": false,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 540,
+          "y": 240,
+          "width": 188,
+          "height": 45
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "solid",
+          "color": "rgb(31, 79, 216)",
+          "offset": "2px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": true,
+        "key": "BUTTON|||Send a reset link"
+      },
+      {
+        "tag": "body",
+        "id": null,
+        "class": "",
+        "type": null,
+        "role": null,
+        "tabindex": null,
+        "name": "Account Sign in or create an account One account for classes, bookings and your ",
+        "isBody": true,
+        "insideAriaHidden": false,
+        "rect": {
+          "x": 0,
+          "y": -39,
+          "width": 780,
+          "height": 815
+        },
+        "onScreen": true,
+        "outline": {
+          "width": "3px",
+          "style": "none",
+          "color": "rgb(27, 27, 31)",
+          "offset": "0px"
+        },
+        "boxShadow": null,
+        "hasVisibleIndicator": false,
+        "key": "BODY|||Account Sign in or create an account One account for classes, bookings and your "
+      }
+    ],
+    "stopCount": 8,
+    "cycleDetected": true,
+    "truncated": false,
+    "maxStops": 60,
+    "stopsWithoutVisibleIndicator": 1,
+    "stopsInsideAriaHidden": 0
+  },
+  "note": "What assistive technology is actually handed, not what the DOM says: `tree` is Accessibility.getFullAXTree projected to role, computed name, ignored (with reasons), the flag properties the checks turn on, and depth, so an aria-label overridden by aria-labelledby or a subtree hidden by an ancestor aria-hidden shows up here and not in a DOM-attribute probe. `focusOrder` is the REAL tab order: Tab is dispatched with CDP key events and each stop records the focused element, its rect and whether it is on screen, its computed outline/box-shadow with a mechanical `hasVisibleIndicator` reading, and whether it sits inside an aria-hidden subtree (which removes it from the accessibility tree but NOT from the tab order - a real mismatch, counted in stopsInsideAriaHidden). Judge perceivability yourself. The walk stops when the cycle wraps or at maxStops. Nodes and stops are capped and say so (nodesProjected/totalNodes, truncated, maxStops). Descriptive signal, not a verdict: judge against be-inclusive names-roles-labels and structure-and-focus.",
+  "console": {
+    "entryCount": 1,
+    "consoleErrorCount": 0,
+    "exceptionCount": 0,
+    "warningCount": 0,
+    "networkErrorCount": 1,
+    "browserLogErrorCount": 0,
+    "errorCount": 1,
+    "hasErrors": true,
+    "entries": [
+      {
+        "kind": "log",
+        "level": "error",
+        "source": "network",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+        "url": "http://127.0.0.1:8765/favicon.ico",
+        "repeat": 1
+      }
+    ],
+    "entriesTotal": 1,
+    "entriesTruncated": false,
+    "note": "What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome's automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError."
+  }
+}
