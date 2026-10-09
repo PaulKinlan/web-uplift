@@ -1,0 +1,16 @@
+claude --version:
+2.1.284 (Claude Code)
+
+claude binary:
+/usr/local/bin/claude
+
+exact invocation (dry-run echo of the real gated command):
+python3 -m http.server 8765 --directory /tmp/mwg-train/docs/eval/targets &
+node runner/run-batch.mjs --agent claude --concurrency 1 --urls /tmp/cpa-urls.txt --out reports-cpa --max-turns 80 --isolation host-permission-model
+
+corpus ref verification (git -C /tmp/mwg-train log -1):
+44424fb37feabeb44ab2cae91a8b5a7031b99893 Merge fleet/6ek (mwg-train-6ek)
+
+repo commit the runner ran at:
+0a58dc3487da16424be4e8d670583bd78f7a9ab9
+8ada3397c04726a61939389f22afe1b56925dcdc fix(mwg-drift): close z5j review bypasses (web-uplift-z5j)

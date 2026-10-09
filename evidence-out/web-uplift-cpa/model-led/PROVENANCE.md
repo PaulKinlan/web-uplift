@@ -6,13 +6,29 @@ harness. **The score numbers below are NOT reproducible by design** (a model-led
 audit is non-deterministic); what this record makes reproducible is the
 PROVENANCE of the run.
 
+**Attestation levels.** The model, per-run turns/cost/denials, coverage, and
+terminal status are independently recoverable from the committed run dirs
+(`<target>/run.json`, `<target>/report.json`). The CLI version and binary path,
+the exact invocation, and the prompt/runner/corpus commit refs are
+OPERATOR-ATTESTED: they are not independently recoverable from the committed
+artifacts, so the attesting outputs are committed alongside this file in
+`OPERATOR-ATTESTED.txt` (captured `claude --version`, `which claude`, the exact
+invocation, the `git log` output for the corpus ref, and the repo commit the
+runner ran at).
+
 ## Instrument (web-uplift's own, unmodified)
 
 - **Runner:** `runner/run-batch.mjs` (the repo's batch orchestrator; it contains
-  no checks). No scripts were written for this run; nothing in this run decides
-  check outcomes except the model applying the skill.
+  no checks). No CHECK-DECIDING script was written for this run; nothing in it
+  decides check outcomes except the model applying the skill. (The
+  `<target>/scratch/` files committed here - `manifest.mjs`, `flow-probe.js` and
+  similar - were authored BY THE AGENT during its own run as evidence-gathering
+  and coverage-manifest probes, which the skill explicitly instructs it to keep
+  in the run's scratch dir; they gather and organise evidence, they do not
+  judge checks.)
 - **Repo commit:** `8ada339` (`origin/master` at run time; branch
   `fleet/mwg-drift-cpa` carries only this evidence-out/ directory).
+  (Operator-attested; see `OPERATOR-ATTESTED.txt`.)
 - **Prompt source:** the `/web-audit` slash command, i.e.
   `.claude/skills/web-audit/SKILL.md` @ `8ada339`, with the skill-contract
   scoped Bash allowlist (7tj) enforced by the claude CLI
@@ -28,17 +44,22 @@ PROVENANCE of the run.
   `Done. 0 failure(s)`; every run `terminal_reason: completed`, 58/58 checks
   judged per target (`coverage.complete: true`).
 - **Isolation assertion:** `operator-supplied:host-permission-model`, recorded
-  in `run-security.json` (the claude CLI's scoped permission model is the
-  boundary; the tool records, it does not verify). Judgement recorded on
-  web-uplift-cpa: a `vm` assertion would not protect the agent-writable
-  `latest` pointer (same filesystem); the scoped allowlist is the mechanism
-  that actually constrains the agent, and the fixtures are trusted static
-  content served from localhost.
+  in `run-security.json` with its own `unverified: true` qualifier (the tool
+  records, it does not verify). Naming note: the scoped CLI allowlist is NOT an
+  execution sandbox - `runner/agents.mjs` says so verbatim ("This list narrows
+  which commands are reachable; it is NOT an execution sandbox, and container/VM
+  isolation stays the enforcement boundary for untrusted sites"). The assertion
+  names the permission model because that is the mechanism that actually
+  constrains the agent on this run; it is not a claim of confinement.
+  Judgement recorded on web-uplift-cpa: a `vm` assertion would not protect the
+  agent-writable `latest` pointer (same filesystem), and the fixtures are
+  trusted static content served from localhost.
 
 ## Agent and MODEL (captured, not guessed)
 
 - **Agent CLI:** `claude` (Claude Code) **v2.1.284**, `/usr/local/bin/claude`,
-  headless `-p` mode, `--output-format json`.
+  headless `-p` mode, `--output-format json`. (Operator-attested; captured
+  outputs in `OPERATOR-ATTESTED.txt`.)
 - **Model:** **`claude-opus-5-5`** (`canonicalModel`, provider `firstParty`,
   costBasis `list`), read from each run's `run.json` `modelUsage` — identical
   in all 5 runs.
@@ -60,7 +81,8 @@ PROVENANCE of the run.
 ## Corpus (mwg-train's, unchanged)
 
 - **Ref:** `mwg-train @ 44424fb37feabeb44ab2cae91a8b5a7031b99893`
-  (`Merge fleet/6ek`), clone at `/tmp/mwg-train` (ref verified before serving).
+  (`Merge fleet/6ek`), clone at `/tmp/mwg-train` (ref verified before serving;
+  verification output in `OPERATOR-ATTESTED.txt`).
 - **Targets:** the 5 held-out eval targets in `docs/eval/targets/`
   (booking, account-recovery, catalogue, contact-lead, event-registration) —
   the sealed measurement set per mwg-train's own docs ("The sealed eval set is
@@ -89,7 +111,14 @@ PROVENANCE of the run.
 | event-registration | 79 | 93 | 100 | 68 | 77 | 65 | 71 | 20 (1/2/9/8) |
 | **mean** | **84.4** | 94.2 | 100 | 71.6 | 84.2 | 81.0 | 75.2 | 87 total |
 
-No previously computed delta is carried forward. This run supersedes the
-proxy-harness numbers (94.4/100, 22 findings) produced by the rejected
-deterministic path; the comparison and the reasons the model-led floor is
-harsher are for the review and the hub, not for this record.
+No previously computed delta is carried forward.
+
+**Not directly comparable.** The model-led floor above (84.4/100) and the
+rejected proxy harness's number (94.4/100) come from DIFFERENT INSTRUMENTS with
+different judgement rules, so the two numbers are not directly comparable and
+no measured delta between them is claimed here. Separately, as a matter of
+record, this run SUPERSEDES the proxy run as the floor of record: the proxy
+path was rejected by the hub ruling, whatever its number was. Any analysis of
+WHY the instruments diverge (for example the proxy's contextual free passes on
+native-only validation, 404 submit flows, and bare-host headers) is a matter
+for the review and the hub, not a measurement asserted by this record.
