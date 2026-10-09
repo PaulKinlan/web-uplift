@@ -2040,6 +2040,40 @@ async function testFlowRecordSensitiveRedaction() {
   const serialized = JSON.stringify(flow);
   assert(!serialized.includes('sec123'), 'serialized flow must not leak token');
   assert(!serialized.includes('alice@test.com'), 'serialized flow must not leak email');
+
+  // 12. End-to-end recordFlow execution with opt-in flags (captureHidden, captureSensitive).
+  const bindingListenersOpt = [];
+  const frameNavListenersOpt = [];
+  const mockCdpOpt = {
+    Runtime: {
+      addBinding: async () => {},
+      bindingCalled: (fn) => bindingListenersOpt.push(fn),
+    },
+    Page: {
+      frameNavigated: (fn) => frameNavListenersOpt.push(fn),
+      addScriptToEvaluateOnNewDocument: async () => {},
+      navigate: async () => {},
+    },
+  };
+  const flowOptPromise = recordFlow(mockCdpOpt, 'https://example.com/checkout', { captureHidden: true, captureSensitive: true });
+  await new Promise((r) => setTimeout(r, 10));
+
+  for (const fn of frameNavListenersOpt) {
+    fn({ frame: { parentId: null, url: 'https://example.com/checkout?step=2&token=sec123&user_email=alice@test.com' } });
+  }
+  for (const fn of bindingListenersOpt) {
+    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#hiddenToken']], value: 'csrf_secret_123' }) });
+    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#email']], value: 'alice@test.com' }) });
+    fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: '__done' }) });
+  }
+  const flowOpt = await flowOptPromise;
+  assert(flowOpt.steps[1].url.includes('token=sec123'), 'opt-in flow preserves URL parameters verbatim');
+  assert(flowOpt.steps[2].value === 'csrf_secret_123', 'opt-in flow preserves hidden inputs');
+  assert(flowOpt.steps[3].value === 'alice@test.com', 'opt-in flow preserves email value');
+
+  const serializedOpt = JSON.stringify(flowOpt);
+  assert(serializedOpt.includes('csrf_secret_123'), 'serialized opt-in flow retains token');
+  assert(serializedOpt.includes('alice@test.com'), 'serialized opt-in flow retains email');
 }
 
 async function testFlowReplayMutationGate() {

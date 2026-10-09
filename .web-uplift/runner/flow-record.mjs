@@ -17,12 +17,12 @@
 //    tokens, session identifiers, or internal state into durable flow files.
 //    Capturing hidden input values requires explicit opt-in (--capture-hidden).
 // 3. Credential-shaped and PII-bearing fields (email, phone, name, address, payment,
-//    tokens, and sensitive identity numbers, by type, autocomplete tokens, or name
+//    tokens, and sensitive identity numbers, by type, tokenized autocomplete, or name
 //    heuristics) have their values redacted (value: "", redacted: true). Capturing
 //    unredacted sensitive values for local test replay requires explicit opt-in
 //    (--capture-sensitive).
-// 4. Navigation URLs: Query parameter keys and values containing sensitive credentials,
-//    tokens, or PII (e.g. emails, phone numbers, auth tokens) are redacted in
+// 4. Navigation URLs: Query parameter keys matching sensitive field tokens and query
+//    values matching PII formats (emails, phone numbers, auth tokens) are redacted in
 //    captured navigation steps, while innocent search queries and postal codes
 //    remain preserved.
 
@@ -113,20 +113,6 @@ export function isSensitiveField(desc, { captureHidden = false, captureSensitive
   return false;
 }
 
-export function isSensitiveNavParam(k) {
-  if (!k || typeof k !== 'string') return false;
-  const lower = k.toLowerCase();
-  if (lower === 'email' || lower.includes('email')) return true;
-  if (lower === 'phone' || lower.includes('phone') || lower === 'tel') return true;
-  if (lower === 'token' || lower.includes('token')) return true;
-  if (lower === 'code' || lower === 'auth_code' || lower === 'authcode' || lower === 'one_time_code' || lower === 'passcode' || lower === 'pin' || lower === 'otp') return true;
-  if (lower === 'password' || lower.includes('pass') || lower === 'pwd' || lower === 'passwd') return true;
-  if (lower === 'session' || lower.includes('session') || lower === 'sessionid') return true;
-  if (lower === 'secret' || lower.includes('secret')) return true;
-  if (lower === 'key' || lower.startsWith('api_key') || lower.startsWith('apikey') || lower.endsWith('_key') || lower === 'secret_key' || lower === 'private_key') return true;
-  return hasSensitiveWord(k);
-}
-
 export function isSensitiveNavValue(v) {
   if (!v || typeof v !== 'string') return false;
   if (/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(v)) return true;
@@ -143,7 +129,7 @@ export function sanitizeNavUrl(raw) {
     let modified = false;
     for (const [k, v] of [...u.searchParams.entries()]) {
       if (!v) continue;
-      if (isSensitiveNavParam(k) || isSensitiveNavValue(v)) {
+      if (hasSensitiveWord(k) || isSensitiveNavValue(v)) {
         u.searchParams.set(k, '[redacted]');
         modified = true;
       }
