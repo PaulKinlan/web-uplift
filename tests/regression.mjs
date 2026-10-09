@@ -48,6 +48,7 @@ try {
   await testSafeFetchContentDecoding();
   await testLaunchRetryAndDiagnostics();
   await testChromeSandboxPolicy();
+  testCommittedProbeIsInert();
   testSchemaValidation();
   testAtomicCoverageValidator();
   testGuidanceUsage();
@@ -3679,6 +3680,30 @@ async function testChromeSandboxPolicy() {
     else process.env.WEB_UPLIFT_NO_SANDBOX = savedOptOut;
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// web-uplift-pv1: evidence-out is a committed provenance record of real runs, so
+// its scratch probes are copy-pasteable samples. The contact-lead submit probe
+// shipped with a live POST to the page's own form action and real-looking sample
+// data. It has to keep its path (write-scope.json:49 references it), so it is
+// neutralised in place rather than deleted, and this guard keeps it that way: the
+// request stays commented out and the payload stays a placeholder.
+function testCommittedProbeIsInert() {
+  const file = join(repoRoot, 'evidence-out', 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch', 'submit-render.js');
+  assert(existsSync(file), `the neutralised probe must keep the path write-scope.json references: ${file}`);
+  const text = readFileSync(file, 'utf8');
+  // Executable lines only: the record of the original request is a comment, and a
+  // comment cannot POST anything.
+  const live = text
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
+  assert(!/\bfetch\s*\(/.test(live), `the live POST must stay disabled (uncommented fetch):\n${live}`);
+  assert(!/requestSubmit\s*\(/.test(live), `the probe must not submit the form:\n${live}`);
+  for (const pii of ['Jo Bloggs', 'jo@example.com']) {
+    assert(!text.includes(pii), `sample personal data must be a placeholder, found ${JSON.stringify(pii)}`);
+  }
+  assert(text.includes('user@example.invalid'), 'the sample email must be an RFC 2606 placeholder');
 }
 
 // har records the network while a page loads, but a response can land after the
