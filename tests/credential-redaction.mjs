@@ -102,11 +102,28 @@ export async function testCredentialRedactorsAgree() {
   }
 
   // 5. looksLikeToken is the one place the path/fragment shapes are decided, so its
-  // answer is pinned here (flow's own path tests drive it end to end).
-  for (const token of ['a8f9c0e2d4b6', 'ya29.a0AfH6SMBxxxxxxxx', 'AbCdEf1234567890', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signaturePart']) {
+  // answer is pinned here (flow's own path tests drive it end to end). Both
+  // directions matter: a false positive rewrites a real route and breaks replay, a
+  // false negative leaves a token in flow.json (web-uplift-hi3 review).
+  for (const token of [
+    'a8f9c0e2d4b6',
+    'ya29.a0AfH6SMBxxxxxxxx',
+    'AbCdEf1234567890',
+    'sK_9-dF0_xZ2aB123456',
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signaturePart',
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0',
+  ]) {
     assert(terms.looksLikeToken(token), `"${token}" must be recognised as a token shape`);
   }
-  for (const word of ['about-us', 'my-first-post', 'settings', 'v2-Release-Notes-2024', 'dashboard', 'abc123', 'tab2', '4f3a9b2c.js']) {
+  for (const word of [
+    'about-us', 'my-first-post', 'settings', 'v2-Release-Notes-2024', 'dashboard', 'abc123', 'tab2', '4f3a9b2c.js',
+    // The review's false positives: multi-dot filenames, version strings and long
+    // camelCase route words are not tokens.
+    'bundle.min.js', 'styles.min.css', 'archive.tar.gz', 'release-1.0.0', 'v1.2.3456789', 'en-US.messages.json',
+    'OrderConfirmation123', 'UserProfileStep2Page', 'SummerSalePromo2024',
+    // A resource UUID is an identifier, not a credential: redacting it breaks replay.
+    '550e8400-e29b-41d4-a716-446655440000',
+  ]) {
     assert(!terms.looksLikeToken(word), `"${word}" is a route/filename, not a token, and must not be redacted`);
   }
 }

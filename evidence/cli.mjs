@@ -2702,6 +2702,34 @@ export function scanTextForSecrets(text, source, seen = new Set()) {
   return findings;
 }
 
+// The in-page script fetch can fail in ways the Node side must not confuse with a
+// clean read (web-uplift-6fe review). This decision table is exported and SERIALIZED
+// into the page with .toString() - the same idiom runner/flow.mjs uses for its
+// resolver - so the browser test drives the exact function the page runs instead of
+// a re-implementation.
+//
+// It fails closed on every ambiguity. A non-2xx body is not the script. A classic
+// script cannot be served as text/html (the browser refuses to execute it, so the
+// body is an error page, and a redirect to one must not read as coverage). A body
+// with no readable stream cannot be bounded in-page, so it is REFUSED rather than
+// read with only its DECLARED length as the bound: a declared length is not a
+// guarantee about the bytes delivered, and an absent header used to arrive as
+// Number(null) === 0 and let an unbounded read through.
+export function classifyScriptFetch({ httpOk, status, contentType, hasStream, declaredLength }) {
+  if (!httpOk) return { ok: false, error: 'HTTP ' + status };
+  const type = String(contentType || '').toLowerCase();
+  if (type.startsWith('text/html')) {
+    return { ok: false, error: 'HTML response (content-type ' + type + '), not JavaScript' };
+  }
+  if (!hasStream) {
+    const declared = declaredLength === null || declaredLength === undefined || declaredLength === ''
+      ? 'no content-length'
+      : 'declared content-length ' + declaredLength;
+    return { ok: false, error: 'no readable stream: the body size cannot be bounded in-page (' + declared + ')' };
+  }
+  return { ok: true };
+}
+
 async function secrets(client, url, opts, log) {
   log('[secrets] scanning ' + url);
   await navigate(client, url, { settleMs: opts.wait || 3000, log });
@@ -2724,31 +2752,34 @@ async function secrets(client, url, opts, log) {
   let scriptsScanned = 0;
   let scriptsCapped = 0;
   for (const su of scriptUrls) {
-    const scriptLabel = su.split('/').pop();
+    // The label reaches the artifact (`source`) and the log, and a page-selected URL
+    // can carry a credential in its query, so both go through the same redactor the
+    // rest of the artifact uses (6fe review: this path used to persist ?api_key=...).
+    const scriptLabel = redactUrlCredentialValues(su).split('/').pop();
     try {
       const got = await evaluate(client, `(async () => {
+        const classifyScriptFetch = ${classifyScriptFetch.toString()};
         try {
           const MAX = ${FETCH_MAX_BYTES};
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), ${fetchDeadlineMsDefault});
           try {
             const res = await fetch(${JSON.stringify(su)}, { signal: controller.signal });
-            // A 404/500 body is not the script: reporting it as scanned would claim
-            // coverage that does not exist (web-uplift-6fe).
-            if (!res.ok) return { text: '', truncated: false, ok: false, error: 'HTTP ' + res.status };
-            if (!res.body || !res.body.getReader) {
-              // No stream means no way to stop an oversized body mid-read, so the
-              // cap can only be enforced against the DECLARED length. Fail closed
-              // when it is absent or over the cap rather than reading unbounded.
-              const declared = Number(res.headers.get('content-length'));
-              if (!Number.isFinite(declared)) {
-                return { text: '', truncated: false, ok: false, error: 'no readable stream and no content-length: the body size cannot be bounded' };
-              }
-              if (declared > MAX) {
-                return { text: '', truncated: true, ok: false, error: 'no readable stream and content-length ' + declared + ' exceeds the ' + MAX + ' byte cap' };
-              }
-              const t = await res.text();
-              return { text: t.slice(0, MAX), truncated: t.length > MAX, ok: true };
+            const verdict = classifyScriptFetch({
+              httpOk: res.ok,
+              status: res.status,
+              contentType: res.headers.get('content-type'),
+              hasStream: !!(res.body && res.body.getReader),
+              declaredLength: res.headers.get('content-length'),
+            });
+            if (!verdict.ok) {
+              return {
+                text: '',
+                truncated: !!verdict.truncated,
+                ok: false,
+                error: verdict.error,
+                finalUrl: typeof res.url === 'string' ? res.url : null,
+              };
             }
             const reader = res.body.getReader();
             const chunks = [];
@@ -2780,7 +2811,9 @@ async function secrets(client, url, opts, log) {
       })()`, { awaitPromise: true });
       if (!got || got.ok !== true) {
         const reason = (got && got.error) || 'the in-page fetch returned no result';
-        scriptFailures.push({ url: su, reason });
+        const failure = { url: redactUrlCredentialValues(su), reason };
+        if (got && got.finalUrl && got.finalUrl !== su) failure.finalUrl = redactUrlCredentialValues(got.finalUrl);
+        scriptFailures.push(failure);
         log(`[secrets] external JS NOT scanned (${reason}): ${scriptLabel}`);
         continue;
       }
@@ -2825,7 +2858,7 @@ async function secrets(client, url, opts, log) {
     externalScriptFailures: scriptFailures,
     externalScriptsTotal: scripts?.total ?? scriptUrls.length,
     externalScriptsTruncated: (scripts?.total ?? scriptUrls.length) > scriptUrls.length,
-    note: 'Descriptive signal, not a verdict. externalScriptsScanned counts only the scripts that were actually READ: an entry in externalScriptFailures (HTTP error, fetch deadline, bounded-read refusal) was NOT scanned, so a miss there is not evidence of absence. The MODEL must REASON about each finding: legitimate public API keys (e.g. Google Maps keys, Stripe publishable keys) are EXPECTED to be client-side and are NOT security issues. Actual sensitive secrets (AWS keys, Stripe SECRET keys, JWTs, private keys, DB connection strings, GitHub/Slack tokens) exposed client-side ARE critical be-private-and-secure failures. Judge each finding accordingly.',
+    note: 'Descriptive signal, not a verdict. externalScriptsScanned counts only the scripts that were actually READ; a script counted there may be only PARTIALLY read when externalScriptsCapped > 0 (the body was cut at the byte cap), so treat the tail of a capped script as unscanned. An entry in externalScriptFailures (HTTP error, HTML response, fetch deadline, bounded-read refusal) was NOT scanned, so a miss there is not evidence of absence. The MODEL must REASON about each finding: legitimate public API keys (e.g. Google Maps keys, Stripe publishable keys) are EXPECTED to be client-side and are NOT security issues. Actual sensitive secrets (AWS keys, Stripe SECRET keys, JWTs, private keys, DB connection strings, GitHub/Slack tokens) exposed client-side ARE critical be-private-and-secure failures. Judge each finding accordingly.',
   };
   return emit(opts, summary, client);
 }

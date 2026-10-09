@@ -34,6 +34,7 @@ import {
 import { testFlowNormalize, testFlowRecordSensitiveRedaction, testFlowReplayMutationGate } from './flow.mjs';
 import { testFlowPierceShadowRootBrowser } from './flow-shadow-browser.mjs';
 import { testCredentialRedactorsAgree } from './credential-redaction.mjs';
+import { testSecretsCoverageClassification } from './secrets-coverage.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
@@ -154,6 +155,9 @@ try {
   // glar/lw6: the HAR credential redactor and the flow recorder read ONE word
   // table, so both are driven over the same credential/innocent case list.
   await testCredentialRedactorsAgree();
+  // 6fe: what "read" means for the secrets primitive's external scripts, driven
+  // against the exact function the page expression is built from.
+  await testSecretsCoverageClassification();
   await testLaunchSessionLoop();
   await testNoOrphanBrowser();
   console.log('tests OK');
@@ -5565,6 +5569,7 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
   const { configureFetchDeadline } = await import('../evidence/cli.mjs');
   const earlyKey = 'NOTAREALKEY_FIXTURE_EARLY1234567890ABCDEFGH';
   const lateKey = 'NOTAREALKEY_FIXTURE_LATE1234567890ABCDEFGHIJ';
+  const missingKey = 'NOTAREALKEY_FIXTURE_URLQUERY1234567890';
   let slowRequests = 0;
   const server = http.createServer((req, res) => {
     const path = (req.url || '').split('?')[0];
@@ -5580,9 +5585,17 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
     }
     if (path === '/missing.js') {
       // A script URL the page references but the server cannot serve. A 404 body is
-      // not the script, so counting it as scanned over-claims coverage (6fe).
+      // not the script, so counting it as scanned over-claims coverage (6fe). The
+      // credential in its query string must NOT reach the artifact's failure list.
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
+      return;
+    }
+    if (path === '/notjs.js') {
+      // A redirect chain that ends on an HTML error page: res.ok is true, but this
+      // is not JavaScript and the browser would refuse to execute it (6fe review).
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><title>error</title><p>not a script</p>');
       return;
     }
     if (path === '/slow.js') {
@@ -5594,7 +5607,7 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(
       '<!doctype html><title>capped</title><link rel="icon" href="data:,">' +
-        '<script src="/early.js"></script><script src="/big.js"></script><script src="/missing.js"></script><script>window.addEventListener("load",()=>{const s=document.createElement("script");s.src="/slow.js";document.body.appendChild(s);})</script><body>page</body>',
+        `<script src="/early.js"></script><script src="/big.js"></script><script src="/missing.js?api_key=${missingKey}"></script><script src="/notjs.js"></script><script>window.addEventListener("load",()=>{const s=document.createElement("script");s.src="/slow.js";document.body.appendChild(s);})</script><body>page</body>`,
     );
   });
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
@@ -5620,11 +5633,12 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
     );
 
     // web-uplift-6fe: a script that could not be READ must say so and must not be
-    // counted as covered. Of the four sampled URLs, early.js alone is a clean read
-    // (big.js is capped, missing.js is a 404, slow.js hits the deadline).
+    // counted as covered. Of the five sampled URLs, early.js alone is a clean read
+    // (big.js is capped, missing.js is a 404, notjs.js is served as HTML, slow.js
+    // hits the deadline).
     assert(
-      result.externalScriptsAttempted === 4,
-      `all four script URLs must be accounted for: ${JSON.stringify({ attempted: result.externalScriptsAttempted })}`
+      result.externalScriptsAttempted === 5,
+      `all five script URLs must be accounted for: ${JSON.stringify({ attempted: result.externalScriptsAttempted })}`
     );
     assert(
       result.externalScriptsScanned === 2,
@@ -5632,12 +5646,12 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
     );
     assert(result.externalScriptsCapped === 1, `the capped body must be reported as capped: ${result.externalScriptsCapped}`);
     assert(
-      result.externalScriptsFailed === 2,
-      `the 404 and the deadline must both be reported as failed: ${JSON.stringify(result.externalScriptFailures)}`
+      result.externalScriptsFailed === 3,
+      `the 404, the HTML body and the deadline must all be reported as failed: ${JSON.stringify(result.externalScriptFailures)}`
     );
     const reasons = (result.externalScriptFailures || []).map((f) => f.reason).sort();
     assert(
-      reasons.some((r) => r === 'HTTP 404') && reasons.some((r) => /deadline/.test(r)),
+      reasons.some((r) => r === 'HTTP 404') && reasons.some((r) => /HTML/.test(r)) && reasons.some((r) => /deadline/.test(r)),
       `each failure must name its cause: ${JSON.stringify(reasons)}`
     );
     assert(
@@ -5647,6 +5661,19 @@ async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
     assert(
       result.note.includes('NOT scanned'),
       'the artifact note must warn that an unread script is not coverage'
+    );
+    // The failure list is a surface this change owns, so a credential in a
+    // page-selected URL must be redacted there like everywhere else (6fe review).
+    // NOTE: the artifact's `console` block still carries the same URL verbatim from
+    // the CDP Log entry - that is a pre-existing, wider surface (every primitive
+    // emits it) and is filed separately rather than widened into this change.
+    assert(
+      !JSON.stringify(result.externalScriptFailures).includes(missingKey),
+      'a credential in a failed script URL must not reach the failure list'
+    );
+    assert(
+      (result.externalScriptFailures || []).some((f) => /api_key=%5Bredacted%5D/.test(f.url)),
+      `the failed URL must keep its shape with the value redacted: ${JSON.stringify(result.externalScriptFailures)}`
     );
   } finally {
     configureFetchDeadline(30000); // restore the production default for the rest of the suite

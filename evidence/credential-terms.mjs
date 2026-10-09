@@ -143,18 +143,28 @@ export function isSensitiveName(name) {
 // classify: /reset-password/a8f9c0e2d4b6, ?returnTo=..., #ya29.a0AfH6SMB...
 // Deliberately conservative, because redacting an innocent route segment breaks
 // replay: a word-shaped segment (about-us, my-first-post) never matches, and the
-// alphanumeric rule refuses separators so v2-Release-Notes-2024 stays intact.
-// Shapes covered: a hex id with at least one letter (a8f9c0e2d4b6), a
-// three-part JWT, a short digits-dot-opaque token (Google's ya29.* access
-// tokens), and a long, separator-free, mixed-case-plus-digit opaque string.
+// alphanumeric rule refuses a run that contains a natural-language word (four or
+// more consecutive lowercase letters), so OrderConfirmation123,
+// UserProfileStep2Page and SummerSalePromo2024 are routes while AbCdEf1234567890
+// is an opaque id. Also refused on purpose: multi-dot filenames (bundle.min.js,
+// archive.tar.gz), version strings (release-1.0.0, en-US.messages.json) and plain
+// UUIDs. A UUID is a resource identifier far more often than it is a credential
+// (/orders/<uuid> must keep replaying), and it carries no token shape, so neither
+// this rule nor the route-marker rule below rewrites it.
+// Shapes covered: a hex id with at least one letter, a JWT (its segments are
+// base64url of JSON, so the header and payload start 'eyJ'), a short
+// digits-dot-opaque token (Google's ya29.* access tokens), and a long
+// separator-free-or-base64url opaque string with no word in it.
 export function looksLikeToken(value) {
   if (!value || typeof value !== 'string') return false;
   if (value.length < 10) return false;
   if (/^[0-9a-f]{10,}$/i.test(value) && /\d/.test(value) && /[a-f]/i.test(value)) return true;
-  if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)) return true;
+  // A JWT, in 2- or 3-part form. 'eyJ' is the base64url of '{"': requiring it is
+  // what keeps bundle.min.js and en-US.messages.json out of this rule.
+  if (/^eyJ[A-Za-z0-9_-]{4,}(\.[A-Za-z0-9_-]{4,}){1,2}$/.test(value)) return true;
   if (/^[0-9]{2,}\.[A-Za-z0-9_-]{12,}$/.test(value)) return true;
   if (/^[A-Za-z]{2}[0-9]{2,}\.[A-Za-z0-9_-]{12,}$/.test(value)) return true;
-  if (value.length >= 16 && /^[A-Za-z0-9]+$/.test(value) && /\d/.test(value) && /[A-Z]/.test(value) && /[a-z]/.test(value)) return true;
+  if (value.length >= 16 && /^[A-Za-z0-9_-]+$/.test(value) && /\d/.test(value) && /[A-Z]/.test(value) && /[a-z]/.test(value) && !/[a-z]{4,}/.test(value)) return true;
   return false;
 }
 

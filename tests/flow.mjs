@@ -344,10 +344,36 @@ export async function testFlowRecordSensitiveRedaction() {
     'hi3: an innocent anchor fragment must survive');
   assert(sanitizeNavUrl('https://example.com/files/AbCdEf1234567890') === 'https://example.com/files/[redacted]',
     'hi3: a token-shaped path segment must be redacted');
+  assert(sanitizeNavUrl('https://example.com/files/sK_9-dF0_xZ2aB123456') === 'https://example.com/files/[redacted]',
+    'hi3 review: a base64url token must be redacted');
   assert(sanitizeNavUrl('https://example.com/v2-Release-Notes-2024') === 'https://example.com/v2-Release-Notes-2024',
     'hi3: a word-shaped path segment must survive');
   assert(sanitizeNavUrl('https://example.com/my-first-post-2024') === 'https://example.com/my-first-post-2024',
     'hi3: a slug path segment must survive');
+  // hi3 REVIEW FPs: the JWT rule must not eat multi-dot filenames or versions, and
+  // the route-marker rule must not redact a route word that merely contains a digit.
+  for (const [url, why] of [
+    ['https://example.com/static/bundle.min.js', 'a multi-dot filename'],
+    ['https://example.com/files/archive.tar.gz', 'a multi-extension archive'],
+    ['https://example.com/docs/release-1.0.0', 'a version string'],
+    ['https://example.com/locales/en-US.messages.json', 'a locale bundle'],
+    ['https://example.com/auth/v1', 'a versioned route after auth'],
+    ['https://example.com/auth/oauth2', 'a route after auth'],
+    ['https://example.com/auth/2fa', 'a route after auth'],
+    ['https://example.com/auth/step1', 'a step route after auth'],
+    ['https://example.com/settings/password/step2', 'a step route after password'],
+    ['https://example.com/OrderConfirmation123', 'a long camelCase route'],
+    ['https://example.com/UserProfileStep2Page', 'a long camelCase route'],
+    ['https://example.com/orders/550e8400-e29b-41d4-a716-446655440000', 'a resource UUID (identifier, not a credential)'],
+  ]) {
+    assert(sanitizeNavUrl(url) === url, `hi3 review: ${why} must survive: ${sanitizeNavUrl(url)}`);
+  }
+  // hi3 REVIEW FNs: a code after a marker is a credential whatever its alphabet,
+  // and a marker still redacts a value-shaped next segment.
+  assert(sanitizeNavUrl('https://example.com/verify/ABCDEF') === 'https://example.com/verify/[redacted]',
+    'hi3 review: an all-letter OTP after a marker must be redacted');
+  assert(sanitizeNavUrl('https://example.com/verify/A1B2C3') === 'https://example.com/verify/[redacted]',
+    'hi3 review: an alphanumeric OTP after a marker must be redacted');
   assert(sanitizeNavUrl('https://user:pass@example.com/x') === 'https://%5Bredacted%5D:%5Bredacted%5D@example.com/x',
     'hi3: URL userinfo carrying a password must be scrubbed');
   assert(sanitizeNavUrl('https://example.com/x') === 'https://example.com/x', 'hi3: an innocent URL must pass through unchanged');

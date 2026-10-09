@@ -118,12 +118,19 @@ const PATH_VALUE_MARKERS = new Set(['token', 'secret', 'key', 'session']);
 // Markers that are ALSO ordinary route words (web-uplift-hi3): /auth/callback and
 // /settings/password/change are routes, /verify/abc123 and /reset-password/<tok>
 // are credentials. These only redact the next segment when that segment itself
-// carries a value shape, so a real route word is never thrown away.
+// carries a value shape - a token, PII, or a short OTP-style code - so a real
+// route word is never thrown away. That last test is anchored (/^[A-Z0-9]{4,10}$/)
+// rather than a bare /\d/, which used to redact /auth/v1, /auth/oauth2, /auth/2fa,
+// /auth/step1 and /settings/password/step2.
 const ROUTE_VALUE_MARKERS = new Set([
   'auth', 'authorize', 'authorization', 'verify', 'verification', 'validate',
   'confirm', 'confirmation', 'activate', 'activation', 'reset', 'password',
   'code', 'otp', 'totp', 'invite', 'unlock', 'recover', 'recovery',
 ]);
+
+// A short uppercase code after a route marker: 483920, ABCDEF, A1B2C3. An
+// all-letter OTP is as much a credential as a numeric one (web-uplift-hi3 review).
+const ROUTE_CODE_SHAPE = /^[A-Z0-9]{4,10}$/;
 
 // The words of one path segment, so a hyphenated marker (/reset-password) is
 // recognised by its parts.
@@ -165,9 +172,12 @@ export function isSensitiveNavValue(v, key = '') {
     const digits = v.replace(/[^\d]/g, '');
     if (digits.length >= 13 && digits.length <= 19 && (luhnValid(digits) || hasPaymentWord(key))) return true;
   }
-  // Phone numbers require phone formatting (separators, parentheses, or a +) so a
-  // bare 10-13 digit id is not mistaken for a phone number.
-  if (/[-.\s()+]/.test(v) && /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/.test(v)) return true;
+  // Phone numbers require phone FORMATTING: a separator between each group, which
+  // also requires the whole value to be a number and nothing else. A bare 10-13
+  // digit id is not a phone number, and neither is a UUID or a date that merely
+  // contains a 3-3-4 digit run - the separators are what make this a phone
+  // (review of web-uplift-hi3 found /orders/<uuid> being rewritten as a phone).
+  if (v.trim() === v && /^\+?(?:\d{1,3}[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}$/.test(v)) return true;
   return false;
 }
 
@@ -213,7 +223,7 @@ export function sanitizeNavUrl(raw) {
           const prevWords = segmentWords(prev);
           if (prevWords.some((w) => PATH_VALUE_MARKERS.has(w))) { pathModified = true; return '[redacted]'; }
           if (prevWords.some((w) => ROUTE_VALUE_MARKERS.has(w)) &&
-              (looksLikeToken(decoded) || isSensitiveNavValue(decoded) || /\d/.test(decoded))) {
+              (looksLikeToken(decoded) || isSensitiveNavValue(decoded) || ROUTE_CODE_SHAPE.test(decoded))) {
             pathModified = true;
             return '[redacted]';
           }
