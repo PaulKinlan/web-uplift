@@ -60,6 +60,23 @@ export async function testMwgCatalogExtract() {
     numbers[0].e === 16 && numbers[0].f === 15 && numbers[0].g === 5 && numbers[0].h === 0.035,
     `numeric literals are data: ${JSON.stringify(numbers[0])}`);
 
+  // 1d. true/false/null are literals. This is the class that a stray identifier reference in
+  // the reader turned into a ReferenceError for any table containing one, which no fixture
+  // covered until a review pointed at the line (the published table has none, so only a unit
+  // case can catch it).
+  const scalars = parseUseCasesTable('[ { "a": true, "b": false, "c": null } ]');
+  assert(scalars[0].a === true && scalars[0].b === false && scalars[0].c === null,
+    `true/false/null must parse as literals: ${JSON.stringify(scalars[0])}`);
+
+  // 1e. Every escape JavaScript defines must decode to the value the language would produce,
+  // because the alternative (flattening or dropping) silently changes the catalog text.
+  const escapes = parseUseCasesTable('[ { "a": "\\x41", "b": "\\u0041", "c": "\\u{1F600}", "d": "line\\\n  continued", "e": "tab\\there", "f": "\\q" } ]');
+  assert(escapes[0].a === 'A' && escapes[0].b === 'A', `hex and unicode escapes must decode: ${JSON.stringify(escapes[0])}`);
+  assert(escapes[0].c === '\u{1F600}' && escapes[0].c.length === 2, `a code point escape must decode: ${JSON.stringify(escapes[0].c)}`);
+  assert(escapes[0].d === 'line  continued', `a line continuation contributes nothing: ${JSON.stringify(escapes[0].d)}`);
+  assert(escapes[0].e === 'tab\there', `a tab escape decodes: ${JSON.stringify(escapes[0].e)}`);
+  assert(escapes[0].f === 'q', `an undefined escape drops the backslash, as JavaScript does: ${JSON.stringify(escapes[0].f)}`);
+
   // 2. Anything that is not a literal is REFUSED, and the refusal names the reason.
   for (const [table, why] of [
     ['[ { "id": "a" }, (function () { throw new Error("boom"); })() ]', 'an expression element'],
@@ -91,19 +108,19 @@ export async function testMwgCatalogExtract() {
     `a table with content after the literal must be refused: ${trailing && trailing.message}`);
   assert(parseUseCasesTable('[ { "id": "a" } ] /* a trailing comment is not content */').length === 1,
     'a trailing comment is not trailing content');
-  for (const [table, why] of [
-    ['[]', 'an empty table (no guides would be a silent, empty catalog)'],
-    ['{ "id": "a" }', 'an object instead of an array'],
-  ]) {
-    let refused = null;
-    try {
-      const parsed = parseUseCasesTable(table);
-      if (parsed.length === 0) throw new CatalogRefusal('an empty table');
-    } catch (err) {
-      refused = err;
-    }
-    assert(refused instanceof CatalogRefusal, `the reader must refuse ${why}`);
+  // The READER accepts an empty array (an empty table is well-formed data); it is the
+  // catalog builder that refuses to write a catalog with no guides. The first version of this
+  // block asserted a refusal it had thrown itself, so it would have passed either way
+  // (web-uplift-w0y review).
+  assert(JSON.stringify(parseUseCasesTable('[]')) === '[]', 'the reader accepts an empty array as data');
+  let notAnArray = null;
+  try {
+    parseUseCasesTable('{ "id": "a" }');
+  } catch (err) {
+    notAnArray = err;
   }
+  assert(notAnArray instanceof CatalogRefusal && /not an array/.test(notAnArray.message),
+    `an object instead of an array must be refused: ${notAnArray && notAnArray.message}`);
 
   // 2c. buildCatalog's per-entry guards. Each of these was reachable before as a silent
   // path or an unhelpful crash; a mutation run found the category check untested.
@@ -120,12 +137,21 @@ export async function testMwgCatalogExtract() {
     }
     return dir;
   };
+  const fields = '"description": "d", "featuresUsed": [], "tokenCount": 1';
   const guardCases = [
-    ['non-slug-category', '[ { "id": "a", "category": "../outside", "tokenCount": 1 } ]', /non-slug category/],
-    ['non-slug-id', '[ { "id": "../a", "category": "x", "tokenCount": 1 } ]', /non-slug id/],
-    ['duplicate-id', '[ { "id": "a", "category": "x" }, { "id": "a", "category": "x" } ]', /lists a twice/],
-    ['no-id', '[ { "category": "x" } ]', /no string id/],
+    ['non-slug-category', `[ { "id": "a", "category": "../outside", ${fields} } ]`, /non-slug category/],
+    ['non-slug-id', `[ { "id": "../a", "category": "x", ${fields} } ]`, /non-slug id/],
+    ['duplicate-id', `[ { "id": "a", "category": "x", ${fields} }, { "id": "a", "category": "x", ${fields} } ]`, /lists a twice/],
+    ['no-id', `[ { "category": "x", ${fields} } ]`, /no string id/],
     ['not-an-object', '[ 42 ]', /not an object/],
+    // A changed upstream field shape must refuse rather than substitute or filter: a silent
+    // default would read as a guide that lost its description, features or token count.
+    ['description-missing', '[ { "id": "a", "category": "x", "featuresUsed": [], "tokenCount": 1 } ]', /no string description/],
+    ['description-not-a-string', '[ { "id": "a", "category": "x", "description": 7, "featuresUsed": [], "tokenCount": 1 } ]', /no string description/],
+    ['features-not-an-array', '[ { "id": "a", "category": "x", "description": "d", "featuresUsed": "nope", "tokenCount": 1 } ]', /featuresUsed that is not an array/],
+    ['features-non-string-member', `[ { "id": "a", "category": "x", "description": "d", "featuresUsed": ["a", null], "tokenCount": 1 } ]`, /non-string featuresUsed member/],
+    ['tokenCount-missing', '[ { "id": "a", "category": "x", "description": "d", "featuresUsed": [] } ]', /not a finite number/],
+    ['tokenCount-not-a-number', '[ { "id": "a", "category": "x", "description": "d", "featuresUsed": [], "tokenCount": "9" } ]', /not a finite number/],
   ];
   // A package whose entry point has no table at all is its own case, because the helper
   // above always writes the declaration.

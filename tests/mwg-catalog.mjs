@@ -93,14 +93,40 @@ function readLiteralAt(text, start) {
       }
       if (c === '\\') {
         const next = text[i + 1];
-        if (next === 'u') {
-          const hex = text.slice(i + 2, i + 6);
-          if (!/^[0-9a-fA-F]{4}$/.test(hex)) fail('a malformed \\u escape');
+        // Every escape a JavaScript string defines is decoded, because a description that
+        // contains one is DATA and decoding it is what makes this parser equivalent to the
+        // evaluator it replaces (a review caught \\x41 being flattened to "x41", which
+        // silently changed the catalog text).
+        if (next === 'u' && text[i + 2] === '{') {
+          const close = text.indexOf('}', i + 3);
+          const hex = close === -1 ? '' : text.slice(i + 3, close);
+          if (!/^[0-9a-fA-F]{1,6}$/.test(hex) || parseInt(hex, 16) > 0x10ffff) fail('a malformed \\u{...} escape');
+          out += String.fromCodePoint(parseInt(hex, 16));
+          i = close + 1;
+          continue;
+        }
+        if (next === 'u' || next === 'x') {
+          const width = next === 'u' ? 4 : 2;
+          const hex = text.slice(i + 2, i + 2 + width);
+          if (!new RegExp(`^[0-9a-fA-F]{${width}}$`).test(hex)) fail(`a malformed \\${next} escape`);
           out += String.fromCharCode(parseInt(hex, 16));
-          i += 6;
+          i += 2 + width;
+          continue;
+        }
+        // A line continuation contributes nothing, exactly as in JavaScript.
+        if (next === '\n') {
+          i += 2;
+          if (text[i] === '\r') i++;
+          continue;
+        }
+        if (next === '\r') {
+          i += 2;
+          if (text[i] === '\n') i++;
           continue;
         }
         const simple = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v', 0: '\0' };
+        // An escape JavaScript does not define drops the backslash (the language's own
+        // behaviour, so the parsed value still matches what eval would have produced).
         out += Object.hasOwn(simple, next) ? simple[next] : next;
         i += 2;
         continue;
@@ -140,7 +166,7 @@ function readLiteralAt(text, start) {
       return readNumber();
     }
     for (const [word, value] of [['true', true], ['false', false], ['null', null]]) {
-      if (text.startsWith(word, i) && !/[A-Za-z0-9_$]/.test(table[i + word.length] ?? '')) {
+      if (text.startsWith(word, i) && !/[A-Za-z0-9_$]/.test(text[i + word.length] ?? '')) {
         i += word.length;
         return value;
       }
@@ -276,12 +302,24 @@ export function buildCatalog({ packageDir, version, existing = null, now = () =>
       throw new CatalogRefusal(`USE_CASES entry ${entry.id} has a non-slug category ${JSON.stringify(entry.category)}`);
     }
     if (byId.has(entry.id)) throw new CatalogRefusal(`USE_CASES lists ${entry.id} twice`);
+    // Every field the catalog carries is validated rather than defaulted or filtered: a
+    // missing or oddly shaped field is a CHANGED upstream contract, and the old recipe would
+    // have copied whatever it found straight into the catalog (or dropped the key). A silent
+    // substitute would register as a real guide losing its description or features
+    // (web-uplift-w0y review).
+    const bad = (what) => {
+      throw new CatalogRefusal(`USE_CASES entry ${entry.id} has ${what}: refusing rather than writing an altered catalog`);
+    };
+    if (typeof entry.description !== 'string') bad(`no string description (${JSON.stringify(entry.description ?? null)})`);
+    if (!Array.isArray(entry.featuresUsed)) bad(`a featuresUsed that is not an array (${JSON.stringify(entry.featuresUsed ?? null)})`);
+    if (!entry.featuresUsed.every((f) => typeof f === 'string')) bad(`a non-string featuresUsed member (${JSON.stringify(entry.featuresUsed)})`);
+    if (typeof entry.tokenCount !== 'number' || !Number.isFinite(entry.tokenCount)) bad(`a tokenCount that is not a finite number (${JSON.stringify(entry.tokenCount ?? null)})`);
     byId.set(entry.id, {
       id: entry.id,
       category: entry.category,
-      description: typeof entry.description === 'string' ? entry.description : '',
-      featuresUsed: Array.isArray(entry.featuresUsed) ? entry.featuresUsed.filter((f) => typeof f === 'string') : [],
-      tokenCount: typeof entry.tokenCount === 'number' ? entry.tokenCount : 0,
+      description: entry.description,
+      featuresUsed: entry.featuresUsed,
+      tokenCount: entry.tokenCount,
     });
   }
 
