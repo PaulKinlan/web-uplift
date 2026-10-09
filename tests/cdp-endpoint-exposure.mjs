@@ -193,6 +193,20 @@ export async function testCdpEndpointExposure() {
     assert((await cdpEndpointExposure(0, { interfaces })).exposed === false, 'a launch with no port yet must not be reported as exposed');
     assert(readBoundListeners(99999999) === null, 'an unreadable pid must be null, not an empty list that reads as safe');
 
+    // A read that found NO listener for the announced port is also incomplete (review finding):
+    // the endpoint was announced, so not seeing it means the read did not cover it, and the
+    // reachability-only verdict must not read as if the kernel had confirmed anything.
+    const noSocket = await cdpEndpointExposure(9222, {
+      interfaces,
+      pid: 4242,
+      readListeners: () => ({ listeners: [{ address: '127.0.0.1', port: 1, family: 'IPv4' }], unreadable: [] }),
+      connect: respond('refused'),
+    });
+    assert(noSocket.verifiedBy === 'reachability' && /no listening socket for port 9222/.test(noSocket.note),
+      `a port with no listener must say the read did not cover it: ${JSON.stringify(noSocket)}`);
+    assert(/kernel binding was incomplete/.test(noSocket.note),
+      `and it must say the binding was not the verifier: ${JSON.stringify(noSocket)}`);
+
     // 5b. web-uplift-03da: an unreadable address-family table is an INCOMPLETE read, never a
     // verified-safe binding. A v4-only kernel or a sandbox without /proc/net/tcp6 leaves the IPv4
     // half looking perfect while a browser bound to a non-loopback IPv6 address is invisible.

@@ -613,12 +613,18 @@ export async function cdpEndpointExposure(port, {
       if (!verdict.unknown && !bindingIncomplete) {
         return { exposed: false, verifiedBy: 'the kernel binding', note: notes.join('; ') || undefined };
       }
-      if (verdict.unknown) notes.push(verdict.note);
+      if (verdict.unknown) {
+        // No listener for the port is also an INCOMPLETE binding answer, not a clean one: the
+        // browser announced that port, so not finding it means the read did not cover it. The
+        // verdict is already prevented from claiming the kernel, and this makes the note say why.
+        bindingIncomplete = true;
+        notes.push(verdict.note);
+      }
     } else {
       // null means /proc could not be read at all, and any other shape is a caller's reader we
       // cannot interpret: either way the binding check did not run, so it is incomplete.
       bindingIncomplete = true;
-      if (!readFailed) notes.push(`the socket binding of pid ${pid} could not be read, so an address family is unchecked`);
+      if (!readFailed) notes.push(`the socket binding of pid ${pid} could not be read, so the socket bindings are unchecked`);
     }
   } else if (Number.isInteger(pid)) {
     bindingIncomplete = true;
