@@ -357,6 +357,29 @@ function basisCatalogViolations(basis, catalog) {
   return violations;
 }
 
+// Everything about a registry that only the baseline corpus can answer: whether each registered
+// guide is actually IN the corpus, and whether its anchors are still verbatim in that guide's text.
+// Shared by verification and classification (web-uplift-uxr) because the two disagreed:
+// verification failed loud over a rule whose guide was missing from the corpus while
+// classification ran on and reported the reversed guide as an ordinary change - the same silent
+// loss of reversal detection as an empty registry, one level up.
+function basisCorpusViolations(basis, corpus) {
+  const violations = [];
+  for (const rule of basis.rules) {
+    if (!Object.prototype.hasOwnProperty.call(corpus.guides, rule.guide)) {
+      violations.push(`Rule "${rule.id}": registered guide "${rule.guide}" does not exist in corpus`);
+      continue;
+    }
+    const guideText = corpus.guides[rule.guide];
+    for (const anchor of rule.anchors) {
+      if (!guideText.includes(anchor)) {
+        violations.push(`Rule "${rule.id}" for guide "${rule.guide}": anchor not found in guide text: ${JSON.stringify(anchor)}`);
+      }
+    }
+  }
+  return violations;
+}
+
 function verifyBasisAgainstCorpus(corpusPath, basisPath, catalogPath) {
   const corpusRaw = readJsonFile(corpusPath, 'corpus file');
   const corpus = validateCorpus(corpusRaw, 'corpus file');
@@ -381,19 +404,7 @@ function verifyBasisAgainstCorpus(corpusPath, basisPath, catalogPath) {
     }
   }
 
-  const violations = [];
-  for (const rule of basis.rules) {
-    if (!Object.prototype.hasOwnProperty.call(corpus.guides, rule.guide)) {
-      violations.push(`Rule "${rule.id}": registered guide "${rule.guide}" does not exist in corpus`);
-      continue;
-    }
-    const guideText = corpus.guides[rule.guide];
-    for (const anchor of rule.anchors) {
-      if (!guideText.includes(anchor)) {
-        violations.push(`Rule "${rule.id}" for guide "${rule.guide}": anchor not found in guide text: ${JSON.stringify(anchor)}`);
-      }
-    }
-  }
+  const violations = basisCorpusViolations(basis, corpus);
 
   if (violations.length > 0) {
     console.error(`FAIL: ${violations.length} basis verification violation(s):`);
@@ -418,6 +429,18 @@ function classifyDelta(oldCorpusPath, newCorpusPath, basisPath, jsonMode) {
   const bindErr = basisVersionBindingError(basis, oldCorpus.version, 'the baseline corpus version');
   if (bindErr) {
     console.error(`FAIL: ${bindErr}`);
+    process.exit(1);
+  }
+
+  // The check verification already makes, for the same reason: a rule whose guide is missing from
+  // the baseline cannot notice that the guide's text moved upstream, so classifying with it would
+  // report a reversal as an ordinary change (web-uplift-uxr).
+  const corpusViolations = basisCorpusViolations(basis, oldCorpus);
+  if (corpusViolations.length > 0) {
+    console.error(`FAIL: ${corpusViolations.length} basis-vs-corpus violation(s):`);
+    for (const v of corpusViolations) {
+      console.error(`  - ${v}`);
+    }
     process.exit(1);
   }
 

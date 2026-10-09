@@ -63,7 +63,23 @@ export async function testMwgDriftBasisFloor() {
       `classification must refuse an empty registry rather than downgrade the reversal: exit ${emptyClassify.code} ${emptyClassify.out}`);
     assert(!/CHANGED \(1\)/.test(emptyClassify.out), `no classification output may be produced: ${emptyClassify.out}`);
 
-    // 4. A registry with no rules field at all is refused too, and the message distinguishes the
+    // 4. THE SAME SILENT LOSS, ONE LEVEL UP: a rule whose guide is missing from the baseline
+    // cannot notice that guide's text moving upstream. Verification failed loud over this while
+    // classification ran on and re-filed the reversal as a change, so both are pinned here.
+    const absent = join(tmp, 'basis-absent-guide.json');
+    writeFileSync(absent, `${JSON.stringify({
+      catalogueVersion: '1.0.0',
+      rules: [{ id: 'r-absent', guide: 'a-guide-that-is-not-in-the-corpus', where: 'nowhere', anchors: ['any anchor text'] }],
+    }, null, 2)}\n`, 'utf8');
+    const absentVerify = await runCli(['--verify-basis', corpusOld, '--basis', absent]);
+    assert(absentVerify.code === 1 && /does not exist in corpus/.test(absentVerify.err),
+      `verification must refuse a rule whose guide is missing: ${absentVerify.code} ${absentVerify.err}`);
+    const absentClassify = await runCli(['--old-corpus', corpusOld, '--new-corpus', reversal, '--basis', absent, '--json']);
+    assert(absentClassify.code === 1 && /basis-vs-corpus violation/.test(absentClassify.err),
+      `classification must refuse it too instead of downgrading the reversal to a change: ${absentClassify.code} ${absentClassify.out}${absentClassify.err}`);
+    assert(!/CHANGED \(1\)/.test(absentClassify.out), `no classification output may be produced: ${absentClassify.out}`);
+
+    // 5. A registry with no rules field at all is refused too, and the message distinguishes the
     // two cases rather than lumping them together.
     const noField = await runCli(['--verify-basis', corpusOld, '--basis', missing]);
     assert(noField.code === 1 && /rules field must be an array/.test(noField.err),
