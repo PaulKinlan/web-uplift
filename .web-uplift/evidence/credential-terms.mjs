@@ -228,7 +228,13 @@ export function redactUrlCredentialValues(raw) {
 // or a "//" inside a path ('https://x.test/a//b?token=..') would be treated as a second URL and the
 // path segment before it would be re-emitted as a protocol-relative URL by the relative branch,
 // which drops the host and mangles the path (found by the test below, not by a review).
-const URL_START = /(?<=^|[\s,;:([{|"'<=>])(?:https?:)?\/\/|(?<=^|[\s,;:([{|"'<=>])\/(?=[^\s"'`<>()\[\]{}|]*\?)/gi;
+// NOTE there is deliberately no "does this path have a query?" lookahead here. Every candidate
+// start is bounded by the lookbehind, but an unbounded lookahead for a '?' made the SCAN quadratic:
+// ",/".repeat(50000) has a boundary slash every two characters, and each one scanned the rest of a
+// page-controlled string looking for a '?' that never comes (20k chars 438ms, 40k 1708ms, 80k
+// 8610ms - web-uplift-lsn3 review pass 4). Whether a span carries a query is decided AFTER the span
+// is bounded, where the check is proportional to that span.
+const URL_START = /(?<=^|[\s,;:([{|"'<=>])(?:https?:)?\/\/?/gi;
 // Where a URL span cannot continue: whitespace, or a delimiter that ends a token in prose.
 const URL_SPAN_STOP = /[\s"'`<>()\[\]{}|]/;
 
@@ -264,7 +270,10 @@ export function redactUrlsInText(text) {
     const trailing = /[.,;:!?=|"'<([{+]+$/.exec(raw);
     const body = trailing ? raw.slice(0, -trailing[0].length) : raw;
     out += text.slice(cursor, start);
-    out += body ? redactUrlCredentialValues(body) : '';
+    // Only a span that carries a query can hold a credential parameter, and checking here keeps the
+    // work proportional to the text: the no-query case (the quadratic stress input above) never
+    // reaches the URL parser at all.
+    out += body && body.includes('?') ? redactUrlCredentialValues(body) : body;
     out += trailing ? trailing[0] : '';
     cursor = end;
   }

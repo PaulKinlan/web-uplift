@@ -92,6 +92,25 @@ export async function testConsoleEvidenceRedaction() {
     redactUrlsInText(`https://one.test/?page=1,https://two.test/?token=${SECRET}`) === `https://one.test/?page=1,https://two.test/?token=${REDACTED}`,
     'a credential in a second URL after a comma must be redacted',
   );
+  // LINEARITY (review pass 4). ",/" repeated is the worst case for a scanner that looked ahead for a
+  // '?' from every boundary slash: every character is a candidate start and the lookahead scanned
+  // the rest of a page-controlled string, so the work was quadratic (20k chars 438ms, 40k 1708ms,
+  // 80k 8610ms before the fix). A console message is page-controlled text, so that is a hang, not an
+  // inconvenience. The bound below is far above the fixed cost (about 50ms for this input) and far
+  // below the quadratic one (tens of seconds), so it fails on the old shape and cannot flake on a
+  // loaded machine.
+  const noQuerySlash = ',/'.repeat(100000); // 200k characters
+  const started = Date.now();
+  const slashOut = redactUrlsInText(noQuerySlash);
+  const elapsed = Date.now() - started;
+  assert(slashOut === noQuerySlash, 'a long run of slashes with no query must be returned unchanged');
+  assert(elapsed < 3000, `a 200k-character run of slashes must not take a quadratic amount of time (took ${elapsed}ms)`);
+  // The same stress with a credential at the end still redacts it, so the cheap path is not a
+  // blind path.
+  const slashWithSecret = `${',/'.repeat(1000)}/api/send?access_token=${SECRET}`;
+  const slashSecretOut = redactUrlsInText(slashWithSecret);
+  assert(!slashSecretOut.includes(SECRET) && slashSecretOut.includes(REDACTED), 'a credential at the end of a long slash run must still be redacted');
+
   // The separator that let the NEXT url start must not be swallowed by this URL's redacted value.
   // With '=' between the two urls the first version fused them and a SECOND pass found a different
   // shape, so redaction was not idempotent. Found by fuzzing the scanner rather than by a review,
