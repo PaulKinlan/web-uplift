@@ -61,7 +61,7 @@ export async function testFlowNormalize() {
 
 export async function testFlowRecordSensitiveRedaction() {
   const { runInNewContext } = await import('node:vm');
-  const { isSensitiveField, makeCaptureJs, sanitizeNavUrl, RECORDER_WORLD } = await import('../runner/flow-record.mjs');
+  const { isSensitiveField, makeCaptureJs, sanitizeNavUrl, RECORDER_WORLD, NAME_WORD_DATA, isSensitiveAutocomplete, SENSITIVE_WORDS } = await import('../runner/flow-record.mjs');
 
   // 1. Password inputs are always sensitive.
   assert(isSensitiveField({ type: 'password', name: 'pwd' }), 'password field must be sensitive');
@@ -146,7 +146,7 @@ export async function testFlowRecordSensitiveRedaction() {
       ...props
     };
   }
-  function testCaptureSession({ captureHidden = false, captureSensitive = false, token = 'tok-test-1234' } = {}) {
+  function testCaptureSession({ captureHidden = false, captureSensitive = false, token = 'tok-test-1234', wordData } = {}) {
     const steps = [];
     const tokens = [];
     const rawPayloads = [];
@@ -179,7 +179,7 @@ export async function testFlowRecordSensitiveRedaction() {
       // authenticate; the recorder refuses a payload without it.
       __wuRecordStep: (str) => { const msg = JSON.parse(str); steps.push(msg.step); tokens.push(msg.__wu); rawPayloads.push(str); },
     };
-    runInNewContext(makeCaptureJs({ captureHidden, captureSensitive, token }), {
+    runInNewContext(makeCaptureJs({ captureHidden, captureSensitive, token, wordData }), {
       window: mockWin,
       document: mockDoc,
       CSS: { escape: (s) => s },
@@ -360,6 +360,44 @@ export async function testFlowRecordSensitiveRedaction() {
     agreeIndex++;
     assert((step.redacted === true) === isSensitiveName(name),
       `page-side and Node-side classifiers must agree on field "${name}": page=${step.redacted === true} node=${isSensitiveName(name)}`);
+  }
+
+  // web-uplift-fejl: assert single source of truth for sensitive field classifiers
+  // 1. Mutant word test: a mutant added to wordData appears in the page set and is redacted
+  const mutantSession = testCaptureSession({
+    wordData: {
+      ...NAME_WORD_DATA,
+      credential: [...NAME_WORD_DATA.credential, 'mutantsecrettoken'],
+    },
+  });
+  // Normal session without mutant does NOT redact mutantsecrettoken
+  const baselineSession = testCaptureSession();
+  baselineSession.triggerChange({ type: 'text', name: 'mutantsecrettoken', value: 'secret_val', id: 'mutant1' });
+  assert(baselineSession.steps.length === 1 && !baselineSession.steps[0].redacted,
+    'baseline session must not treat unknown mutant as sensitive');
+  // Mutant session DOES redact mutantsecrettoken
+  mutantSession.triggerChange({ type: 'text', name: 'mutantsecrettoken', value: 'secret_val', id: 'mutant2' });
+  assert(mutantSession.steps.length === 1 && mutantSession.steps[0].redacted === true && mutantSession.steps[0].value === '',
+    'mutant added to wordData must immediately take effect in page capture script');
+
+  // 2. Autocomplete mutant test: mutant token in autocomplete
+  mutantSession.triggerChange({ type: 'text', autocomplete: 'section-test mutantsecrettoken', value: 'secret_val', id: 'mutant3' });
+  assert(mutantSession.steps.length === 2 && mutantSession.steps[1].redacted === true,
+    'mutant added to wordData must also be recognized in autocomplete');
+
+  // 3. Module scope and page script must agree on autocomplete tokens
+  const testAutocompletes = [
+    'cc-number', 'tel', 'email', 'one-time-code', 'current-password', 'new-password',
+    'name', 'given-name', 'street-address', 'country', 'bday', 'transaction-amount',
+    'username', 'off', 'on', 'billing address-line1', 'shipping postal-code',
+  ];
+  for (const ac of testAutocompletes) {
+    const pageSession = testCaptureSession();
+    pageSession.triggerChange({ type: 'text', autocomplete: ac, value: 'val', id: 'ac-test' });
+    const pageRedacted = pageSession.steps[0].redacted === true;
+    const nodeRedacted = isSensitiveAutocomplete(ac);
+    assert(pageRedacted === nodeRedacted,
+      `module and page isSensitiveAutocomplete must agree on "${ac}": node=${nodeRedacted}, page=${pageRedacted}`);
   }
 
   // B. Opt-in session (captureSensitive:true): values are captured verbatim, on

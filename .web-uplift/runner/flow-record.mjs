@@ -74,6 +74,7 @@ import {
   isSensitiveWord,
   looksLikeToken,
   NAME_WORD_DATA,
+  splitName,
 } from '../evidence/credential-terms.mjs';
 import { randomUUID } from 'node:crypto';
 
@@ -189,7 +190,7 @@ export function validateRecordedStep(raw) {
   return { ok: true, step };
 }
 
-export { SENSITIVE_WORDS, isSensitiveWord, MAX_RECORDED_STEPS };
+export { SENSITIVE_WORDS, isSensitiveWord, MAX_RECORDED_STEPS, NAME_WORD_DATA };
 
 export const hasSensitiveWord = (str) => isSensitiveName(str);
 export function isSensitiveAutocomplete(ac) {
@@ -445,7 +446,9 @@ export const RECORDER_WORLD = '__wuRecorderWorld';
 
 // The page-side capture script. Kept as a string template so it can be injected via
 // Page.addScriptToEvaluateOnNewDocument (runs before page scripts, every load).
-export function makeCaptureJs({ captureHidden = false, captureSensitive = false, token = '' } = {}) {
+// Sensitive classifier logic and word data are generated from the module definitions
+// so there is a single source of truth (web-uplift-fejl).
+export function makeCaptureJs({ captureHidden = false, captureSensitive = false, token = '', wordData = NAME_WORD_DATA } = {}) {
   return `
 (() => {
   if (window.__wuRec) return;
@@ -467,22 +470,16 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
   // shared with the HAR redactor): a third hand-maintained list here is exactly
   // how web-uplift-so2 happened. The matching logic below mirrors the module's
   // isSensitiveName; the flow test suite drives both on the same case list.
-  const CREDENTIAL_WORDS = new Set(${JSON.stringify(NAME_WORD_DATA.credential)});
-  const PII_WORDS = new Set(${JSON.stringify(NAME_WORD_DATA.pii)});
-  const SHORT_PII_WORDS = new Set(${JSON.stringify(NAME_WORD_DATA.shortPii)});
+  const CREDENTIAL_WORDS = new Set(${JSON.stringify(wordData.credential)});
+  const PII_WORDS = new Set(${JSON.stringify(wordData.pii)});
+  const SHORT_PII_WORDS = new Set(${JSON.stringify(wordData.shortPii)});
   const member = (set, w) => set.has(w) || (w.endsWith('s') && set.has(w.slice(0, -1)));
   const credentialWord = (w) => member(CREDENTIAL_WORDS, w);
   const piiWord = (w) => member(PII_WORDS, w) || SHORT_PII_WORDS.has(w);
   const sensitiveWord = (w) => credentialWord(w) || piiWord(w);
+  const isSensitiveWord = sensitiveWord;
 
-  const splitName = (str) => {
-    if (!str || typeof str !== 'string') return [];
-    return str
-      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean);
-  };
+  ${splitName.toString()}
 
   const isSensitiveName = (str) => {
     const words = splitName(str);
@@ -496,22 +493,7 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
     return false;
   };
 
-  const isSensitiveAutocomplete = (ac) => {
-    if (!ac || typeof ac !== 'string') return false;
-    const tokens = ac.toLowerCase().split(/\\s+/).filter(Boolean);
-    if (!tokens.length) return false;
-    return tokens.some((s) => {
-      if (s.startsWith('cc-')) return true;
-      if (s.startsWith('tel')) return true;
-      if (s === 'email') return true;
-      if (s === 'one-time-code' || s === 'current-password' || s === 'new-password' || s.includes('password')) return true;
-      if (s === 'name' || s === 'given-name' || s === 'family-name' || s === 'additional-name' || s === 'nickname' || s === 'username') return true;
-      if (s.startsWith('address-') || s === 'street-address' || s === 'country' || s === 'country-name') return true;
-      if (s.startsWith('bday') || s === 'sex') return true;
-      if (s.startsWith('transaction-')) return true;
-      return sensitiveWord(s.replace(/[^a-z0-9]+/g, ''));
-    });
-  };
+  ${isSensitiveAutocomplete.toString()}
 
   const isSensitiveField = (el) => {
     if (!el) return false;
