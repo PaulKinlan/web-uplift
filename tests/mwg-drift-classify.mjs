@@ -553,16 +553,20 @@ function classifyDelta(oldCorpusPath, newCorpusPath, basisPath, jsonMode) {
     }
   }
 
-  console.log(report);
+  // Both of these are unbounded in the size of the delta, so they go through the same
+  // synchronous emitter as the extracted corpus: console.log() to a pipe is not lossless, and a
+  // 12000-guide delta lost 572803 of its 638339 bytes at exactly the pipe buffer while still
+  // exiting 2 (web-uplift-as3).
+  writeStdout(`${report}\n`);
 
   if (jsonMode) {
-    console.log(JSON.stringify({
+    writeStdout(`${JSON.stringify({
       reversed,
       changed,
       new: newGuides,
       oldVersion: oldCorpus.version,
       newVersion: newCorpus.version,
-    }));
+    })}\n`);
   }
 
   if (hasDelta) {
@@ -573,7 +577,9 @@ function classifyDelta(oldCorpusPath, newCorpusPath, basisPath, jsonMode) {
 }
 
 // Main CLI parsing
-// Emitting the corpus on stdout (web-uplift-as3).
+// Emitting a payload on stdout (web-uplift-as3). stderr is synchronous in Node, so the error
+// paths above are already safe; stdout is not, which is why every unbounded payload - the
+// extracted corpus and the classification report - comes through here.
 //
 // process.stdout.write() is ASYNCHRONOUS, and process.exit() does not wait for it. Piping an
 // extracted corpus larger than the pipe buffer therefore handed the consumer whatever had been

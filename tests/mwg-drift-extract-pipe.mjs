@@ -40,6 +40,22 @@ const runCli = (args) => new Promise((resolveRun) => {
   child.once('close', (code, signal) => resolveRun({ code, signal, out: Buffer.concat(out), err: Buffer.concat(err).toString('utf8') }));
 });
 
+// Two corpora whose delta is big enough that the REPORT outgrows the pipe buffer: the
+// classification report and its --json line are the other unbounded thing this tool emits.
+function makeBigDelta(dir, count) {
+  const body = 'x'.repeat(40);
+  const guides = (prefix, n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`${prefix}-${i + 1}`, body]));
+  const oldCorpus = join(dir, 'corpus-old.json');
+  const newCorpus = join(dir, 'corpus-new.json');
+  writeFileSync(oldCorpus, JSON.stringify({ version: '1.0.0', guides: guides('guide', count), provenance: {} }), 'utf8');
+  writeFileSync(newCorpus, JSON.stringify({
+    version: '2.0.0',
+    guides: { ...guides('guide', count), ...guides('brand-new', count) },
+    provenance: {},
+  }), 'utf8');
+  return { oldCorpus, newCorpus };
+}
+
 export async function testMwgDriftExtractPipe() {
   const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-as3-'));
   try {
@@ -76,6 +92,21 @@ export async function testMwgDriftExtractPipe() {
     assert(result.code !== 0, `a closed consumer must not exit 0 (code=${result.code} signal=${result.signal})`);
     assert(/could not write the extracted corpus to stdout \(\d+ of \d+ bytes written\)/.test(err.join('')),
       `the failure must name how much was written: ${err.join('')}`);
+    // 3. THE CLASSIFICATION REPORT IS A PAYLOAD TOO, and it goes out with the same emitter: a
+    // 12000-guide delta lost 572803 of its 638339 bytes to the pipe buffer while still exiting 2.
+    const { oldCorpus, newCorpus } = makeBigDelta(tmp, 6000);
+    const basis = join(repoRoot, 'tests', 'fixtures', 'mwg-drift', 'basis-fixture.json');
+    const classifyArgs = ['--old-corpus', oldCorpus, '--new-corpus', newCorpus, '--basis', basis, '--json'];
+    const toFileReport = await runCli(classifyArgs);
+    assert(toFileReport.code === 2, `a delta must still exit 2: ${toFileReport.code} ${toFileReport.err}`);
+    assert(toFileReport.out.length > 256 * 1024, `the fixture delta must exceed the pipe buffer: ${toFileReport.out.length} bytes`);
+    const pipedReport = await runCli(classifyArgs);
+    assert(pipedReport.code === 2, `the piped run must exit 2 as well: ${pipedReport.code}`);
+    assert(pipedReport.out.length === toFileReport.out.length,
+      `the piped report must be the whole report: ${pipedReport.out.length} bytes through a pipe vs ${toFileReport.out.length} to a file`);
+    assert(Buffer.compare(pipedReport.out, toFileReport.out) === 0, 'the piped report must be byte-identical to the file report');
+    const summary = JSON.parse(pipedReport.out.toString('utf8').trim().split('\n').slice(-1)[0]);
+    assert(summary.new.length === 6000, `the JSON summary line must survive the pipe: ${summary.new?.length} new guides`);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
