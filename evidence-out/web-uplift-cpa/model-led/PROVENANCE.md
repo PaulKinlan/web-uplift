@@ -61,7 +61,7 @@ runner ran at).
   headless `-p` mode, `--output-format json`. (Operator-attested; captured
   outputs in `OPERATOR-ATTESTED.txt`.)
 - **Model:** **`claude-opus-5-5`** (`canonicalModel`, provider `firstParty`,
-  costBasis `list`), read from each run's `run.json` `modelUsage` — identical
+  costBasis `list`), read from each run's `run.json` `modelUsage` - identical
   in all 5 runs.
 - **Per-run usage** (from `<target>/run.json`):
 
@@ -84,7 +84,7 @@ runner ran at).
   (`Merge fleet/6ek`), clone at `/tmp/mwg-train` (ref verified before serving;
   verification output in `OPERATOR-ATTESTED.txt`).
 - **Targets:** the 5 held-out eval targets in `docs/eval/targets/`
-  (booking, account-recovery, catalogue, contact-lead, event-registration) —
+  (booking, account-recovery, catalogue, contact-lead, event-registration) -
   the sealed measurement set per mwg-train's own docs ("The sealed eval set is
   never trained on - it exists only to measure"). Served read-only by
   `python3 -m http.server 8765`; server lifetime scoped inside the gate.
