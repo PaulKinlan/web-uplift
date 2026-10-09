@@ -371,9 +371,12 @@ the audit covers the pages a user actually reaches.
 web-uplift flow record https://example.com --out checkout.json
 
 # Replay it (or a Chrome DevTools Recorder export, or a hand-authored flow.json),
-# capturing a screenshot per step. Mutating actions (submitting forms on Enter,
-# clicking submit buttons) are dry-run protected by default. Pass --allow-mutations
-# to authorize real form submissions against live targets.
+# capturing a screenshot per step. A DRY RUN is the default and is read-only: it
+# follows navigation and read-only links, and refuses everything that can write -
+# any button, checkbox, select, [role] control or inline handler (whatever its
+# label), a change step (typing can trigger autosave/AJAX), a password field, a
+# link or navigation whose URL names a write, and Enter on a form field. Pass
+# --allow-mutations to authorize those steps against a live target.
 web-uplift flow replay checkout.json --out reports/checkout/evidence
 ```
 

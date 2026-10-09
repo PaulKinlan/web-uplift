@@ -144,40 +144,102 @@ async function screenshot(client, outDir, index, label, log) {
   }
 }
 
-// Mutating-control predicate: which element would a click on `node` actually
-// trigger, and is it the kind of control that MUTATES a live target (submits a
-// form, or carries a mutating term like delete/pay/confirm)? Exported and
-// self-contained because it is serialized with .toString() into the click
-// expression - the regression suite drives the exact predicate the page runs
-// against a DOM stub, so a passing test cannot be a mock agreeing with itself.
-export function findMutatingControl(node) {
-  if (!node || (node.nodeType && node.nodeType !== 1)) return null;
-  const target = (typeof node.closest === 'function' ? node.closest('button, input, [role="button"], a[onclick]') : null) || node;
-  const tag = (target.tagName || '').toUpperCase();
-  const type = (target.type || (typeof target.getAttribute === 'function' ? target.getAttribute('type') : '') || '').toLowerCase();
+// What a click would DO, decided before it happens (web-uplift-d31).
+//
+// The old gate was keyword-and-form based: it blocked a submit button, a form
+// owner, or a label containing delete/pay/confirm, so a <button>Update Profile
+// </button> outside a form, a <div role="menuitem" onclick="..."> or a "Post" /
+// "Apply" / "Continue" SPA control was clicked for REAL in a dry run. The gate is
+// now default-deny for every interactive control, with one allowlist: read-only
+// navigation (an <a>/[role=link] with no inline handler and no javascript:/data:
+// href) and client-side disclosure (summary, [role=tab]), plus controls that can
+// only take focus (a text field click focuses it and writes nothing). A label that
+// names a write is still REPORTED in the reason, but it is no longer what decides.
+//
+// Exported and self-contained: serialized with .toString() into the click
+// expression, so the suite drives the exact predicate the page runs.
+export function classifyClickControl(node) {
+  const DENY = (reason) => ({ gated: true, reason });
+  const ALLOW = (reason) => ({ gated: false, reason });
+  if (!node || (node.nodeType && node.nodeType !== 1)) return ALLOW('not an element');
+  const at = (el, key) => (el && typeof el.getAttribute === 'function' ? el.getAttribute(key) : null);
+  const interactive = 'button, input, select, textarea, summary, [role], [onclick], [onmousedown], [ontouchstart], [onpointerdown], [contenteditable]';
+  const control = (typeof node.closest === 'function' ? node.closest(interactive) : null) || node;
+  const tag = String(control.tagName || '').toUpperCase();
+  const type = String(control.type || at(control, 'type') || '').toLowerCase();
+  const role = String(at(control, 'role') || control.role || '').toLowerCase();
+  const href = String(at(control, 'href') || '');
+  const label = String((control.textContent || control.value || '') + ' ' + (at(control, 'aria-label') || '')).trim();
+  const name = String(control.name || control.id || '');
+  const inline = ['onclick', 'onmousedown', 'ontouchstart', 'onpointerdown'].some((key) => at(control, key) != null);
+  // A label that NAMES a write is not what decides any more, but it is what makes
+  // the refusal readable: "a control that may write (button) labelled Update Profile".
+  const WRITE_TERMS = ['submit', 'save', 'delete', 'remove', 'destroy', 'purge', 'trash', 'checkout', 'pay', 'order',
+    'confirm', 'send', 'buy', 'purchase', 'register', 'create', 'add', 'update', 'edit', 'modify', 'post', 'apply',
+    'publish', 'upload', 'invite', 'move', 'rename', 'merge', 'deploy', 'revoke', 'deactivate', 'disable',
+    'unsubscribe', 'logout', 'signout', 'sign-out', 'cancel', 'reset', 'clear', 'archive', 'unlink', 'disconnect',
+    'suspend', 'block', 'proceed', 'continue', 'finish', 'complete'];
+  const named = WRITE_TERMS.find((term) => label.toLowerCase().includes(term) || name.toLowerCase().includes(term));
+  const namedDetail = named ? ` labelled "${label.slice(0, 40)}"` : '';
 
-  if (type === 'submit' || type === 'image') return target;
-  if (target.form || target.hasForm || (typeof target.closest === 'function' && target.closest('form')) || (typeof target.getAttribute === 'function' && target.getAttribute('form'))) {
-    return target;
+  if (type === 'submit' || type === 'image' || type === 'reset' || type === 'file') {
+    return DENY(`a form control (${tag.toLowerCase()} type=${type})${namedDetail}`);
   }
-  // An anchor with an inline onclick handler is mutating by nature: its display
-  // label says nothing about what the handler runs, so gate a[onclick]
-  // regardless of the label (<a onclick="deleteItem()">More</a>).
-  if (tag === 'A' && typeof target.getAttribute === 'function' && target.getAttribute('onclick') != null) {
-    return target;
+  if (control.form || at(control, 'form')) return DENY(`a control owned by a form${namedDetail}`);
+  if (inline) return DENY(`an inline event handler${namedDetail}`);
+
+  const codeHref = /^\s*(javascript|data|blob|vbscript):/i.test(href);
+  // A link whose URL names a write is a write too: <a href="/account/delete"> is a
+  // GET that deletes. Segment-anchored, so /reset-password/<tok> stays a read.
+  const writeHref = /\/(delete|remove|destroy|purge|trash|logout|signout|sign-out|unsubscribe|revoke|deactivate|disable|cancel|archive|unlink)(\/|$|[?#])/i.test(href);
+  if (codeHref) return DENY('a javascript:/data: link');
+  if (tag === 'A' || role === 'link') {
+    if (named) return DENY(`a link that names a write${namedDetail}`);
+    if (writeHref) return DENY(`a link to a URL that names a write (${href.slice(0, 40)})`);
+    return ALLOW('read-only navigation link');
   }
-  // Anchors count too: <a onclick="...">Delete</a> fails a BUTTON-only check and
-  // would otherwise run its handler against the live target in dry-run.
-  if (tag === 'BUTTON' || tag === 'A' || (typeof target.getAttribute === 'function' && target.getAttribute('role') === 'button')) {
-    const text = (target.textContent || '').trim().toLowerCase();
-    const aria = (typeof target.getAttribute === 'function' ? target.getAttribute('aria-label') : '') || '';
-    const name = (target.name || target.id || '').toLowerCase();
-    const MUTATING_TERMS = ['submit', 'save', 'delete', 'checkout', 'pay', 'order', 'confirm', 'send', 'buy', 'purchase', 'register', 'create'];
-    if (MUTATING_TERMS.some((term) => text.includes(term) || aria.toLowerCase().includes(term) || name.includes(term))) {
-      return target;
-    }
+  // Client-side disclosure: it changes what is on screen, not what is on the server.
+  if (tag === 'SUMMARY' || role === 'tab') return ALLOW('a client-side disclosure toggle');
+  if (role === 'presentation' || role === 'none') return ALLOW('a presentational element');
+
+  if (tag === 'INPUT') {
+    const acts = ['submit', 'image', 'reset', 'button', 'checkbox', 'radio', 'file', 'color', 'range'];
+    if (acts.includes(type)) return DENY(`an input that acts on click (type=${type})${namedDetail}`);
+    return ALLOW('a text field: a click only focuses it');
   }
-  return null;
+  if (tag === 'TEXTAREA') return ALLOW('a text field: a click only focuses it');
+  if (tag === 'BUTTON') return DENY(`a button that may write${namedDetail}`);
+  if (tag === 'SELECT') return DENY(`a select that may write${namedDetail}`);
+  if (tag === 'LABEL') return DENY('a label (it forwards the click to its control)');
+  if (role) return DENY(`an element with role=${role} that may write${namedDetail}`);
+  return ALLOW('not an interactive control');
+}
+
+// Kept for callers (and the suite) that ask the older question "which element
+// would this click mutate?". The serialized predicate the page runs is
+// classifyClickControl, which answers the same question with default-deny.
+export function findMutatingControl(node) {
+  const verdict = classifyClickControl(node);
+  if (!verdict.gated) return null;
+  const interactive = 'button, input, select, textarea, summary, [role], [onclick], [onmousedown], [ontouchstart], [onpointerdown], [contenteditable]';
+  return (node && typeof node.closest === 'function' ? node.closest(interactive) : null) || node;
+}
+
+// A NAVIGATION whose URL names a write is gated in a dry run: a GET that deletes is
+// still a delete (web-uplift-d31). Matched on whole path segments, so /delete is a
+// write while /reset-password/<token> and /checkout are ordinary reads.
+const WRITE_URL_SEGMENTS = new Set(['delete', 'remove', 'destroy', 'purge', 'trash', 'logout', 'signout', 'sign-out',
+  'unsubscribe', 'revoke', 'deactivate', 'disable', 'cancel', 'archive', 'unlink']);
+export function isWriteUrl(raw) {
+  if (!raw || typeof raw !== 'string') return false;
+  let u;
+  try { u = new URL(raw, 'http://relative.invalid'); } catch { return false; }
+  const segs = u.pathname.toLowerCase().split('/').filter(Boolean);
+  if (segs.some((seg) => WRITE_URL_SEGMENTS.has(seg))) return true;
+  for (const [k, v] of u.searchParams.entries()) {
+    if (['action', 'op', 'method', '_method', 'do'].includes(k.toLowerCase()) && WRITE_URL_SEGMENTS.has(String(v).toLowerCase())) return true;
+  }
+  return false;
 }
 
 export function isSubmitControl(el) {
@@ -203,19 +265,31 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
           });
           break;
         case 'navigate':
+          // A dry run MUST be able to follow the journey's pages (a top-level GET is
+          // read-only by the HTTP contract), so navigation is allowed - except a URL
+          // that names a write, because a GET that deletes is still a delete
+          // (web-uplift-d31).
+          if (!allowMutations && isWriteUrl(step.url || startUrl)) {
+            outcome = {
+              ok: true,
+              mutationBlocked: true,
+              detail: `dry-run: navigation to a URL that names a write (${step.url || startUrl}) prevented (use --allow-mutations)`,
+            };
+            break;
+          }
           await navigate(client, step.url || startUrl, { settleMs, log });
           break;
         case 'click':
         case 'doubleClick':
           outcome = await pageAction(client, step.selectors, `
-            const findMutatingControl = ${findMutatingControl.toString()};
+            const classifyClickControl = ${classifyClickControl.toString()};
 
-            const mutating = findMutatingControl(el);
-            if (!${allowMutations ? 'true' : 'false'} && mutating) {
-              const label = (mutating.tagName || '') + ' ' + (mutating.textContent || mutating.value || '').trim().slice(0, 40);
+            const verdict = classifyClickControl(el);
+            if (!${allowMutations ? 'true' : 'false'} && verdict.gated) {
+              const label = (el.tagName || '') + ' ' + (el.textContent || el.value || '').trim().slice(0, 40);
               return {
                 ok: true,
-                detail: 'dry-run: click on mutating control (' + label + ') prevented (use --allow-mutations)',
+                detail: 'dry-run: click on ' + verdict.reason + ' prevented (' + label.trim() + '; use --allow-mutations)',
                 mutationBlocked: true
               };
             }
@@ -236,8 +310,24 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
             };
             break;
           }
+          // web-uplift-e4z: a password field is never filled in a dry run whatever the
+          // flow says. An imported Chrome Recorder export or a hand-authored flow.json
+          // carries no `redacted` flag, so the old check (redacted && empty) let a
+          // captured password be typed into the live page.
+          //
+          // web-uplift-d31: neither is any OTHER field. Setting .value and dispatching
+          // input/change is exactly what an autosave or inline-AJAX listener writes on,
+          // and nothing can tell an autosave field from a plain one, so a dry run does
+          // not type at all. --allow-mutations performs the step.
           outcome = await pageAction(client, step.selectors, `
             const v=${JSON.stringify(step.value ?? '')};
+            const type=(el.type||'').toLowerCase();
+            if (!${allowMutations ? 'true' : 'false'} && type === 'password') {
+              return { ok:true, mutationBlocked:true, detail:'dry-run: password field not filled (use --allow-mutations)' };
+            }
+            if (!${allowMutations ? 'true' : 'false'}) {
+              return { ok:true, mutationBlocked:true, detail:'dry-run: change step not dispatched because typing can trigger autosave/AJAX against the live target (use --allow-mutations)' };
+            }
             el.focus();
             if('value' in el){ el.value=v; }
             el.dispatchEvent(new Event('input',{bubbles:true}));

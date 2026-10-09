@@ -615,7 +615,7 @@ export async function testFlowRecordSensitiveRedaction() {
 
 export async function testFlowReplayMutationGate() {
   const { runInNewContext } = await import('node:vm');
-  const { findMutatingControl, isSubmitControl, parseFlowArgs, replayFlow, resolveSelectorCandidate } = await import('../runner/flow.mjs');
+  const { classifyClickControl, findMutatingControl, isSubmitControl, isWriteUrl, parseFlowArgs, replayFlow, resolveSelectorCandidate } = await import('../runner/flow.mjs');
 
   // 1. Argument parsing flag order independence (boolean flags do not consume positionals).
   const p1 = parseFlowArgs(['replay', '--allow-mutations', 'checkout.json']);
@@ -662,6 +662,55 @@ export async function testFlowReplayMutationGate() {
   assert(findMutatingControl(onclickMoreAnchor) === onclickMoreAnchor,
     '<a onclick="deleteItem()">More</a> must be gated despite its innocuous label');
   assert(findMutatingControl(innocentLink) === null, 'innocent anchor must stay clickable in dry-run');
+
+  // 2c. web-uplift-d31: a dry run is DEFAULT-DENY for interactive controls, not a
+  // keyword check. The old predicate returned null for a plain
+  // <button>Update Profile</button> outside a form, so a click on it fell through
+  // to el.click() against the live target.
+  const mk = (props) => ({ nodeType: 1, getAttribute: () => null, closest: () => null, ...props });
+  const reasonFor = (el) => classifyClickControl(el).reason;
+  const outsideFormButton = mk({ tagName: 'BUTTON', textContent: 'Update Profile' });
+  assert(classifyClickControl(outsideFormButton).gated, 'a button outside a form is gated by default');
+  assert(reasonFor(outsideFormButton).includes('Update Profile'), `the refusal names the control: ${reasonFor(outsideFormButton)}`);
+  for (const label of ['Post', 'Apply', 'Continue', 'Proceed', 'Publish', 'Archive', 'Rename']) {
+    assert(classifyClickControl(mk({ tagName: 'BUTTON', textContent: label })).gated,
+      `a button labelled "${label}" must be gated in dry-run`);
+  }
+  const menuItem = mk({
+    tagName: 'DIV', role: 'menuitem', textContent: 'Rename',
+    getAttribute: (k) => (k === 'onclick' ? 'renameItem()' : k === 'role' ? 'menuitem' : null),
+  });
+  assert(classifyClickControl(menuItem).gated,
+    'a <div role=menuitem onclick> is gated (it was invisible to the old form/BUTTON check)');
+  // The allowlist is read-only navigation and client-side disclosure, not labels.
+  assert(!classifyClickControl(mk({ tagName: 'A', textContent: 'About Us', getAttribute: (k) => (k === 'href' ? '/about' : null) })).gated,
+    'a plain link is read-only navigation');
+  assert(!classifyClickControl(mk({ tagName: 'SUMMARY', textContent: 'Details' })).gated, 'a summary disclosure toggle does not write');
+  assert(!classifyClickControl(mk({ tagName: 'DIV', role: 'tab', textContent: 'Tab 1' })).gated, 'a tab switch is client-side');
+  assert(!classifyClickControl(mk({ tagName: 'INPUT', type: 'text' })).gated, 'clicking a text field only focuses it');
+  assert(classifyClickControl(mk({ tagName: 'INPUT', type: 'checkbox' })).gated, 'a checkbox click fires a change handler');
+  assert(classifyClickControl(mk({ tagName: 'SELECT' })).gated, 'a select sets a value');
+  assert(classifyClickControl(mk({ tagName: 'A', textContent: 'Delete account', getAttribute: (k) => (k === 'href' ? '/account/delete' : null) })).gated,
+    'a link whose label or URL names a write is gated (a GET that deletes is a delete)');
+  assert(classifyClickControl(mk({ tagName: 'A', textContent: 'More', getAttribute: (k) => (k === 'href' ? 'javascript:void(0)' : null) })).gated,
+    'a javascript: link is code, not navigation');
+  assert(classifyClickControl(mk({ tagName: 'BUTTON', textContent: 'Continue', getAttribute: (k) => (k === 'form' ? 'checkout' : null) })).gated,
+    'a control owned by a form is gated');
+  assert(findMutatingControl(menuItem) === menuItem && findMutatingControl(outsideFormButton) === outsideFormButton,
+    'findMutatingControl still answers which element would be triggered');
+  assert(findMutatingControl(mk({ tagName: 'A', getAttribute: (k) => (k === 'href' ? '/about' : null) })) === null,
+    'findMutatingControl returns null for read-only navigation');
+
+  // 2d. web-uplift-d31: a NAVIGATION whose URL names a write is gated, while the
+  // journey's ordinary pages are the reason dry-run exists.
+  assert(isWriteUrl('https://example.test/delete?id=1'), '/delete is a write');
+  assert(isWriteUrl('https://example.test/account/delete'), 'a trailing /delete segment is a write');
+  assert(isWriteUrl('https://example.test/account/logout'), '/logout is a write');
+  assert(isWriteUrl('https://example.test/x?action=delete'), 'action=delete is a write');
+  assert(!isWriteUrl('https://example.test/reset-password/abc123'), '/reset-password is a read (its segment is reset-password)');
+  assert(!isWriteUrl('https://example.test/checkout'), 'loading the checkout page is a read');
+  assert(!isWriteUrl('https://example.test/deleted-items'), 'a segment that merely starts with delete is not a write');
+  assert(!isWriteUrl(''), 'no URL is not a write');
 
   // 2b. Selector resolution: text/ and pierce/ (Chrome DevTools Recorder emits
   // them) are restored, aria/ matching is exact-attribute (a double-quote in the
@@ -793,6 +842,7 @@ export async function testFlowReplayMutationGate() {
       closest: () => null,
       scrollIntoView: () => {},
       click: () => {},
+      focus: () => {},
       ...props,
     };
   }
@@ -800,6 +850,8 @@ export async function testFlowReplayMutationGate() {
   function makeVmReplayClient({ activeElement } = {}) {
     const clicks = [];
     const submits = [];
+    const typed = [];
+    const navigations = [];
     const formStub = { tagName: 'FORM', nodeType: 1, requestSubmit: () => submits.push('form') };
     // The Enter step acts on document.activeElement; default to a form field.
     const active = activeElement ?? stubEl({ tagName: 'INPUT', form: formStub });
@@ -825,6 +877,18 @@ export async function testFlowReplayMutationGate() {
       click() { clicks.push('moreAnchor'); },
     });
     const byId = { '#childSpan': spanChildEl, '#about': aboutLinkEl, '#deleteLink': deleteAnchorEl, '#moreLink': moreAnchorEl };
+    // web-uplift-d31 / e4z fixtures: an SPA button outside a form, a
+    // role=menuitem with an inline handler, an autosave text field and a
+    // password field whose flow carries a real value and no `redacted` flag.
+    const updateBtnEl = stubEl({ tagName: 'BUTTON', textContent: 'Update Profile', click() { clicks.push('updateBtn'); } });
+    const menuItemEl = stubEl({
+      tagName: 'DIV', textContent: 'Rename', role: 'menuitem',
+      getAttribute: (k) => (k === 'onclick' ? 'renameItem()' : k === 'role' ? 'menuitem' : null),
+      click() { clicks.push('menuItem'); },
+    });
+    const emailInputEl = stubEl({ tagName: 'INPUT', type: 'email', value: '', id: 'email', dispatchEvent: (e) => { typed.push(`${e.type}:${emailInputEl.value}`); } });
+    const pwdInputEl = stubEl({ tagName: 'INPUT', type: 'password', value: '', id: 'pwd', dispatchEvent: (e) => { typed.push(`${e.type}:${pwdInputEl.value}`); } });
+    Object.assign(byId, { '#update': updateBtnEl, '#menu': menuItemEl, '#email': emailInputEl, '#pwd': pwdInputEl });
     const documentStub = {
       activeElement: active,
       querySelector: (sel) => byId[sel] ?? null,
@@ -845,7 +909,13 @@ export async function testFlowReplayMutationGate() {
       clicks,
       submits,
       Emulation: { setDeviceMetricsOverride: async () => {} },
-      Page: { captureScreenshot: async () => ({ data: 'AAAA' }) },
+      typed,
+      navigations,
+      Page: {
+        captureScreenshot: async () => ({ data: 'AAAA' }),
+        navigate: async ({ url }) => { navigations.push(url); },
+        loadEventFired: () => Promise.resolve(),
+      },
       Runtime: {
         evaluate: async ({ expression }) => {
           try {
@@ -870,6 +940,14 @@ export async function testFlowReplayMutationGate() {
       { type: 'click', selectors: [['#about']], target: 'main' },
       { type: 'click', selectors: [['.stale-css'], ['text/About Us']], target: 'main' },
       { type: 'keyDown', key: 'Enter', target: 'main' },
+      // 7-12: web-uplift-d31 (default-deny clicks, change steps, write URLs) and
+      // e4z (an imported flow's password step carries a value and no redacted flag).
+      { type: 'click', selectors: [['#update']], target: 'main' },
+      { type: 'click', selectors: [['#menu']], target: 'main' },
+      { type: 'change', selectors: [['#email']], value: 'alice@example.com' },
+      { type: 'navigate', url: 'https://example.test/delete?id=1' },
+      { type: 'navigate', url: 'https://example.test/about' },
+      { type: 'change', selectors: [['#pwd']], value: 'secret123' },
     ],
   };
 
@@ -893,6 +971,29 @@ export async function testFlowReplayMutationGate() {
     `dry-run must click ONLY the innocent links, got: ${JSON.stringify(dryClient.clicks)}`);
   assert(dryClient.submits.length === 0, 'dry-run must never submit a form');
 
+  // 7. A button outside a form, whatever its label, is gated (d31).
+  assert(resDefault.steps[7].mutationBlocked === true, 'click on a plain <button>Update Profile</button> blocked in dry-run');
+  assert(resDefault.steps[7].detail.includes('Update Profile'), `the refusal names the control: ${resDefault.steps[7].detail}`);
+  assert(resDefault.steps[7].detail.includes('--allow-mutations'), 'the refusal says how to proceed');
+  // 8. A role=menuitem with an inline handler is gated even though it is a DIV.
+  assert(resDefault.steps[8].mutationBlocked === true, 'click on <div role=menuitem onclick> blocked in dry-run');
+  assert(!dryClient.clicks.includes('updateBtn') && !dryClient.clicks.includes('menuItem'),
+    `dry-run must not click an ungated SPA control, got: ${JSON.stringify(dryClient.clicks)}`);
+  // 9. A change step is not dispatched: autosave/inline-AJAX listens on input/change.
+  assert(resDefault.steps[9].mutationBlocked === true, 'dry-run must not dispatch a change step');
+  assert(/autosave/.test(resDefault.steps[9].detail), `the refusal explains the autosave risk: ${resDefault.steps[9].detail}`);
+  assert(dryClient.typed.length === 0, `dry-run must type nothing, got: ${JSON.stringify(dryClient.typed)}`);
+  // 10-11. A navigation that names a write is gated; an ordinary page is not.
+  assert(resDefault.steps[10].mutationBlocked === true, 'dry-run must not navigate to a URL that names a write');
+  assert(!dryClient.navigations.includes('https://example.test/delete?id=1'),
+    `the write URL must never be requested, got: ${JSON.stringify(dryClient.navigations)}`);
+  assert(resDefault.steps[11].ok === true && !resDefault.steps[11].mutationBlocked, 'ordinary navigation still runs in dry-run');
+  assert(dryClient.navigations.includes('https://example.test/about'), 'the journey page is still loaded');
+  // 12. e4z: a password field is never filled in dry-run, even though this flow
+  // step carries a value and no `redacted` flag (an imported Recorder export).
+  assert(resDefault.steps[12].mutationBlocked === true, 'dry-run must not fill a password field from an imported flow');
+  assert(/password/.test(resDefault.steps[12].detail), `the refusal names the password field: ${resDefault.steps[12].detail}`);
+
   // Enter on a contenteditable element: contenteditable="" makes getAttribute
   // return "" (falsy) while the element IS editable - isContentEditable is the
   // correct probe, and dry-run must still suppress the keydown.
@@ -913,6 +1014,21 @@ export async function testFlowReplayMutationGate() {
   assert(allowClient.clicks.includes('spanChild') && allowClient.clicks.includes('deleteAnchor') && allowClient.clicks.includes('moreAnchor'),
     `allowed run clicks every control: ${JSON.stringify(allowClient.clicks)}`);
   assert(allowClient.submits.length === 1, 'allowed run submits the form exactly once');
+  // --allow-mutations is the documented way to perform the gated steps, and it
+  // performs every one of them (the gate is a gate, not a removal).
+  assert(resAllow.steps[7].ok === true && !resAllow.steps[7].mutationBlocked && allowClient.clicks.includes('updateBtn'),
+    'allowed run clicks the SPA button');
+  assert(resAllow.steps[8].ok === true && !resAllow.steps[8].mutationBlocked && allowClient.clicks.includes('menuItem'),
+    'allowed run clicks the role=menuitem');
+  assert(resAllow.steps[9].ok === true && !resAllow.steps[9].mutationBlocked, 'allowed run dispatches the change step');
+  assert(allowClient.typed.includes('change:alice@example.com'),
+    `allowed change step dispatches input+change, got: ${JSON.stringify(allowClient.typed)}`);
+  assert(resAllow.steps[10].ok === true && !resAllow.steps[10].mutationBlocked && allowClient.navigations.includes('https://example.test/delete?id=1'),
+    'allowed run performs the write URL navigation');
+  assert(resAllow.steps[12].ok === true && !resAllow.steps[12].mutationBlocked,
+    'allowed run fills the password field (explicit --allow-mutations)');
+  assert(allowClient.typed.includes('change:secret123'),
+    `allowed password step types the value, got: ${JSON.stringify(allowClient.typed)}`);
 }
 
 // Run directly (node tests/flow.mjs), not when imported by the regression
