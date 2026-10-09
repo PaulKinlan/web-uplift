@@ -321,6 +321,11 @@ DevTools Recorder export, or a hand-authored flow.json). It drives the steps ove
 CDP and captures a screenshot per step into `<dir>`; judge the per-step states as
 additional paths and record the flow in `paths`.
 
+**Replay safety invariant:** Audits must not mutate target state without operator
+consent. Flow replay defaults to dry-run mode for mutating steps (form submission
+on Enter, clicks on submit controls); passing `--allow-mutations` is required to
+execute real submissions against target sites.
+
 ### 2. Build the check manifest and plan evidence, per check
 
 First generate the full `(principleId, checkId)` manifest required by the atomic

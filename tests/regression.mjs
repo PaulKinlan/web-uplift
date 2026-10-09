@@ -144,6 +144,7 @@ try {
   await testBaselineOracle();
   await testFlowNormalize();
   await testFlowRecordSensitiveRedaction();
+  await testFlowReplayMutationGate();
   await testLaunchSessionLoop();
   await testNoOrphanBrowser();
   console.log('tests OK');
@@ -1911,6 +1912,22 @@ async function testFlowRecordSensitiveRedaction() {
   assert(srcDefault.includes('CAPTURE_HIDDEN = false;'), 'default capture script must disable hidden capture');
   const srcOptIn = makeCaptureJs({ captureHidden: true });
   assert(srcOptIn.includes('CAPTURE_HIDDEN = true;'), 'opt-in capture script must enable hidden capture');
+}
+
+async function testFlowReplayMutationGate() {
+  const { isSubmitControl } = await import('../runner/flow.mjs');
+
+  // 1. Submit controls identified correctly.
+  assert(isSubmitControl({ tagName: 'BUTTON', type: 'submit' }), 'button type=submit must be submit control');
+  assert(isSubmitControl({ tagName: 'BUTTON', form: {} }), 'button in form without type must be submit control');
+  assert(isSubmitControl({ tagName: 'INPUT', type: 'submit' }), 'input type=submit must be submit control');
+  assert(isSubmitControl({ tagName: 'INPUT', type: 'image', form: {} }), 'input type=image must be submit control');
+
+  // 2. Non-submit controls not identified as submit.
+  assert(!isSubmitControl({ tagName: 'BUTTON', type: 'button', form: {} }), 'button type=button must not be submit control');
+  assert(!isSubmitControl({ tagName: 'BUTTON' }), 'button without form and without type=submit must not be submit control');
+  assert(!isSubmitControl({ tagName: 'INPUT', type: 'text', form: {} }), 'input type=text must not be submit control');
+  assert(!isSubmitControl({ tagName: 'A', href: '/submit' }), 'anchor tag must not be submit control');
 }
 
 function run(command, args, opts = {}) {

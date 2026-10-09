@@ -240,6 +240,7 @@ function writeScopeFor(url, siteDir, scopeBefore, agentError) {
 const concurrency = Number(args.concurrency ?? 2);
 const maxTurns = Number(args['max-turns'] ?? 80);
 const verbose = Boolean(args.verbose);
+const allowMutations = Boolean(args['allow-mutations']);
 // --flow <path>: a user journey (web-uplift flow record output, a Chrome
 // DevTools Recorder export, or a hand-authored flow.json) is replayed into each
 // run before the agent audits, so the model judges the journey's per-step states.
@@ -600,7 +601,7 @@ async function replayFlowIntoRun(url, siteDir) {
   try {
     const session = await newSession(chrome.port, { log });
     try {
-      const res = await replayFlow(session.client, flow, { startUrl: url, outDir: flowDir, log });
+      const res = await replayFlow(session.client, flow, { startUrl: url, outDir: flowDir, log, allowMutations });
       writeFileSync(join(flowDir, 'flow-result.json'), JSON.stringify(res, null, 2) + '\n');
       return res;
     } finally {

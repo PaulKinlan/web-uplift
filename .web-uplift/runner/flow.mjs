@@ -2,7 +2,7 @@
 // not just a landing page, for MPA and SPA sites.
 //
 //   web-uplift flow record <url> [--out flow.json] [--capture-hidden]   capture a journey (we drive)
-//   web-uplift flow replay <flow.json> [--url <start>] [--out <dir>]   replay + shots
+//   web-uplift flow replay <flow.json> [--url <start>] [--out <dir>] [--allow-mutations]   replay + shots
 //
 // The flow format IS Chrome DevTools' Recorder JSON ({ title, steps: [...] }), so
 // three inputs feed one replayer: (1) our own `flow record` (we inject a tiny
@@ -91,9 +91,19 @@ async function screenshot(client, outDir, index, label, log) {
   }
 }
 
+export function isSubmitControl(el) {
+  if (!el) return false;
+  const type = (el.type || (typeof el.getAttribute === 'function' ? el.getAttribute('type') : '') || '').toLowerCase();
+  if (type === 'submit') return true;
+  const tag = (el.tagName || '').toUpperCase();
+  if (tag === 'BUTTON' && (!type || type === 'submit') && (el.form || el.hasForm)) return true;
+  if (tag === 'INPUT' && (type === 'image' || type === 'submit')) return true;
+  return false;
+}
+
 // --- replay -----------------------------------------------------------------
 
-export async function replayFlow(client, flow, { startUrl, outDir, log = () => {}, settleMs = 1200 } = {}) {
+export async function replayFlow(client, flow, { startUrl, outDir, log = () => {}, settleMs = 1200, allowMutations = false } = {}) {
   if (outDir && !existsSync(outDir)) mkdirSync(outDir, { recursive: true });
   const results = [];
   let index = 0;
@@ -114,7 +124,22 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
           break;
         case 'click':
         case 'doubleClick':
-          outcome = await pageAction(client, step.selectors, `el.scrollIntoView({block:'center'}); el.click(); return { ok:true, detail: (el.tagName+' '+(el.textContent||'').trim().slice(0,40)) };`);
+          outcome = await pageAction(client, step.selectors, `
+            const isSubmit = (el) => {
+              if (!el) return false;
+              const type = (el.type || el.getAttribute('type') || '').toLowerCase();
+              if (type === 'submit') return true;
+              if (el.tagName === 'BUTTON' && !type && el.form) return true;
+              if (el.tagName === 'INPUT' && (type === 'image' || type === 'submit')) return true;
+              return false;
+            };
+            if (!${allowMutations ? 'true' : 'false'} && isSubmit(el)) {
+              return { ok: true, detail: 'dry-run: submit button click prevented (use --allow-mutations)', mutationBlocked: true };
+            }
+            el.scrollIntoView({block:'center'});
+            el.click();
+            return { ok:true, detail: (el.tagName+' '+(el.textContent||'').trim().slice(0,40)) };
+          `);
           await sleep(settleMs);
           break;
         case 'change':
@@ -128,7 +153,22 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
           break;
         case 'keyDown':
           if ((step.key || '').toLowerCase() === 'enter') {
-            outcome = await evaluate(client, `(() => { const el=document.activeElement; const f=el&&el.form; if(f&&f.requestSubmit){f.requestSubmit();return {ok:true,detail:'submitted form'};} if(el){el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return {ok:true,detail:'Enter'};} return {ok:false,detail:'no active element'}; })()`);
+            outcome = await evaluate(client, `(() => {
+              const el = document.activeElement;
+              const f = el && el.form;
+              if (f && f.requestSubmit) {
+                if (!${allowMutations ? 'true' : 'false'}) {
+                  return { ok: true, detail: 'dry-run: form submission prevented (use --allow-mutations)', mutationBlocked: true };
+                }
+                f.requestSubmit();
+                return { ok: true, detail: 'submitted form' };
+              }
+              if (el) {
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                return { ok: true, detail: 'Enter' };
+              }
+              return { ok: false, detail: 'no active element' };
+            })()`);
             await sleep(settleMs);
           } else {
             outcome = { ok: true, detail: `keyDown ${step.key} (skipped)` };
@@ -153,7 +193,15 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
       outcome = { ok: false, detail: e.message };
     }
     const shot = outDir ? await screenshot(client, outDir, index, label, log) : null;
-    const rec = { index, type: step.type, ok: outcome.ok, detail: outcome.detail || '', screenshot: shot, url: await currentUrl(client) };
+    const rec = {
+      index,
+      type: step.type,
+      ok: outcome.ok,
+      detail: outcome.detail || '',
+      mutationBlocked: !!outcome.mutationBlocked,
+      screenshot: shot,
+      url: await currentUrl(client)
+    };
     results.push(rec);
     log(`[flow] step ${index} ${step.type}: ${outcome.ok ? 'ok' : 'FAILED'}${outcome.detail ? ' - ' + outcome.detail : ''}`);
   }
@@ -190,10 +238,11 @@ async function main() {
 
   if (sub === 'replay') {
     const flowPath = positional[0];
-    if (!flowPath) throw new Error('Usage: web-uplift flow replay <flow.json> [--url <startUrl>] [--out <dir>]');
+    if (!flowPath) throw new Error('Usage: web-uplift flow replay <flow.json> [--url <startUrl>] [--out <dir>] [--allow-mutations]');
     const flow = loadFlow(flowPath);
     const startUrl = opt('url');
     const outDir = opt('out') || `reports/flow-${Date.now()}/evidence`;
+    const allowMutations = rest.includes('--allow-mutations');
     const log = (m) => console.error(m);
     const chrome = await launchChrome({ log });
     // Operator-present launch, attributed like every agent-run primitive
@@ -202,11 +251,12 @@ async function main() {
     try {
       const session = await newSession(chrome.port, { log });
       try {
-        const res = await replayFlow(session.client, flow, { startUrl, outDir, log });
+        const res = await replayFlow(session.client, flow, { startUrl, outDir, log, allowMutations });
         const summaryPath = join(outDir, '..', 'flow-result.json');
         writeFileSync(summaryPath, JSON.stringify(res, null, 2) + '\n');
         const failed = res.steps.filter((s) => !s.ok).length;
-        console.error(`[flow] replayed ${res.steps.length} step(s), ${failed} failed; screenshots + flow-result.json in ${join(outDir, '..')}`);
+        const blocked = res.steps.filter((s) => s.mutationBlocked).length;
+        console.error(`[flow] replayed ${res.steps.length} step(s), ${failed} failed${blocked > 0 ? ', ' + blocked + ' mutating step(s) blocked (dry-run)' : ''}; screenshots + flow-result.json in ${join(outDir, '..')}`);
         process.stdout.write(JSON.stringify(res, null, 2) + '\n');
       } finally {
         await session.close();

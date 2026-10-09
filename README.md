@@ -361,7 +361,9 @@ the audit covers the pages a user actually reaches.
 web-uplift flow record https://example.com --out checkout.json
 
 # Replay it (or a Chrome DevTools Recorder export, or a hand-authored flow.json),
-# capturing a screenshot per step.
+# capturing a screenshot per step. Mutating actions (submitting forms on Enter,
+# clicking submit buttons) are dry-run protected by default. Pass --allow-mutations
+# to authorize real form submissions against live targets.
 web-uplift flow replay checkout.json --out reports/checkout/evidence
 ```
 
