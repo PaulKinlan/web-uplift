@@ -13,11 +13,21 @@
 // (gather('secrets') against a page whose script 404s with a credential in its query) is measured
 // on the bead, because it needs Chrome.
 //
-// Boundary stated rather than implied: the URL-in-text matcher rewrites absolute URLs,
-// protocol-relative URLs, and ROOTED relative paths ('/api/send?access_token=...', an ordinary
-// console message and a real leak until the review found it). What it still does not rewrite: a
-// relative path with no leading slash ('api/send?access_token=...'), and a credential that appears
-// with no URL around it at all (that is the secrets scanner's job, not this one's).
+// The in-text redactor is a SCANNER over URL starts rather than one regex over the whole string:
+// four review rounds found four adjacency shapes a single "match the URL, redact it" regex got
+// wrong (a second URL after a comma, after a semicolon, after a comma when the second URL was a
+// rooted path, and after a comma when its scheme was uppercase), each time because the outer match
+// swallowed both URLs so the first URL's parameters were the only ones examined. The scanner finds
+// every URL start at a boundary (start of text, whitespace, or a separator), takes each span to the
+// next start or a natural stop, and redacts it, so adjacency stops being a special case.
+//
+// Boundary stated rather than implied: it rewrites absolute URLs, protocol-relative URLs, and
+// ROOTED relative paths ('/api/send?access_token=...', an ordinary console message and a real leak
+// until the review found it). What it still does not rewrite: a relative path with no leading slash
+// ('api/send?access_token=...'), and a credential that appears with no URL around it at all (that is
+// the secrets scanner's job, not this one's). A URL it rewrites is re-emitted by URL.toString(), so
+// an uppercase scheme or host is lowercased as part of the redaction - shape only, and only when a
+// credential was actually removed.
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { attachConsoleCollector, attachConsoleEvidence } from '../evidence/cdp.mjs';
@@ -82,6 +92,33 @@ export async function testConsoleEvidenceRedaction() {
     redactUrlsInText(`https://one.test/?page=1,https://two.test/?token=${SECRET}`) === `https://one.test/?page=1,https://two.test/?token=${REDACTED}`,
     'a credential in a second URL after a comma must be redacted',
   );
+  // Review pass 3: the split was case-sensitive while the outer matcher was not, so an uppercase
+  // scheme on the second URL was not a split point at all. The scanner matches case-insensitively,
+  // and the assertion is on the credential (URL.toString() lowercases the scheme as part of the
+  // redaction, which is shape only).
+  const uppercaseSecond = redactUrlsInText(`https://one.test/?page=1,HTTPS://two.test/?token=${SECRET}`);
+  assert(
+    uppercaseSecond === `https://one.test/?page=1,https://two.test/?token=${REDACTED}`,
+    `an uppercase scheme must not hide the second URL's credential: ${uppercaseSecond}`,
+  );
+  // A "//" INSIDE a path is not a second URL: treating it as one made the relative branch re-emit
+  // the path as a protocol-relative URL and lose a segment. This case was found by writing the
+  // scanner, not by a review, and it is why a URL start has to sit at a boundary.
+  assert(
+    redactUrlsInText(`https://x.test/a//b?token=${SECRET}`) === `https://x.test/a//b?token=${REDACTED}`,
+    'a double slash inside a path must not split the URL',
+  );
+  // A URL glued to prose by punctuation is still a URL start.
+  assert(
+    redactUrlsInText(`fetch failed:https://x.test/a?token=${SECRET}`) === `fetch failed:https://x.test/a?token=${REDACTED}`,
+    'a URL after a colon must be redacted',
+  );
+  // ...and two innocent URLs glued the same way are left exactly as they were.
+  assert(
+    redactUrlsInText('https://a.test/x?p=1 and https://b.test/y?q=2') === 'https://a.test/x?p=1 and https://b.test/y?q=2',
+    'adjacent URLs with no credential parameter must be untouched',
+  );
+
   // ...and a ROOTED PATH as the second URL, which is the shape the first fix still missed
   // (review pass 2, P1): with only absolute/protocol-relative split points the whole string parsed
   // as the first URL's last parameter and the second URL's credential came back.

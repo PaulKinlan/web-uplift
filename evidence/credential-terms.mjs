@@ -212,43 +212,59 @@ export function redactUrlCredentialValues(raw) {
   }
 }
 
-// A URL that appears INSIDE a string of prose. Three shapes, because the artifact redacts what a
-// page wrote, not what a well-formed API returned: absolute ('https://x/a?token=..'),
-// protocol-relative ('//x/a?token=..'), and a rooted relative path ('/api/send?access_token=..'),
-// which is an ordinary console message. A path with no query is left alone; redaction is a no-op
-// for any URL whose query has no credential-named parameter, so widening the match costs nothing
-// but a parse.
-const URL_IN_TEXT = /(?:https?:)?\/\/[^\s"'`<>()\[\]{}|]+|\/[^\s"'`<>()\[\]{}|]*\?[^\s"'`<>()\[\]{}|]*/gi;
-
-// A credential in a SECOND URL that sits right after the first one is invisible to a whole-match
-// parse: everything after the separator becomes part of the first URL's last parameter value, so
-// the first URL has no credential parameter and the string comes back untouched (web-uplift-lsn3
-// review, twice - the first version of this only handled absolute and protocol-relative second
-// URLs, so "https://one/?page=1,/api/send?token=.." still leaked).
+// A URL that appears INSIDE a string of prose, redacted. This is a SCANNER, not one regex over the
+// whole string, and that is deliberate.
 //
-// The separator is captured OUT of the split so it is never handed to the redactor: a comma or
-// semicolon at the end of a URL's query would otherwise be parsed as part of the value being
-// redacted, and replacing that value would swallow the separator and concatenate the two URLs
-// (web-uplift-lsn3 review). Splitting with a capture group gives [before, separator, after, ...].
-function redactAdjacentUrls(body) {
-  return body
-    .split(/([,;]\s*)(?=(?:https?:)?\/\/|\/)/)
-    .map((part) => (/^[,;]\s*$/.test(part) || part === '' ? part : redactUrlCredentialValues(part)))
-    .join('');
-}
+// Three rounds of review found four shapes a single "match the URL, then redact it" regex got wrong
+// (web-uplift-lsn3): a credential in a second URL after a comma, after a semicolon, after a comma
+// when the second URL was a rooted path, and after a comma when its scheme was uppercase - because
+// the outer match swallowed both URLs and the first URL's parameters were the only ones examined,
+// and because every patch added another enumeration case rather than removing the enumeration.
+//
+// So: find every place a URL can START (one case-insensitive pattern), take each start's span up to
+// the next start or a natural boundary, and redact that span. Adjacency stops being a special case:
+// any separator, any scheme casing, any order.
+// A URL start must sit at a real boundary - the beginning of the text, whitespace, or a separator -
+// or a "//" inside a path ('https://x.test/a//b?token=..') would be treated as a second URL and the
+// path segment before it would be re-emitted as a protocol-relative URL by the relative branch,
+// which drops the host and mangles the path (found by the test below, not by a review).
+const URL_START = /(?<=^|[\s,;:([{|"'<=>])(?:https?:)?\/\/|(?<=^|[\s,;:([{|"'<=>])\/(?=[^\s"'`<>()\[\]{}|]*\?)/gi;
+// Where a URL span cannot continue: whitespace, or a delimiter that ends a token in prose.
+const URL_SPAN_STOP = /[\s"'`<>()\[\]{}|]/;
 
 export function redactUrlsInText(text) {
   if (typeof text !== 'string' || !text) return text;
-  return text.replace(URL_IN_TEXT, (match) => {
+  const starts = [];
+  URL_START.lastIndex = 0;
+  let found;
+  while ((found = URL_START.exec(text)) !== null) {
+    if (found[0] === '') {
+      URL_START.lastIndex += 1; // no zero-length progress, ever
+      continue;
+    }
+    if (starts[starts.length - 1] !== found.index) starts.push(found.index);
+  }
+  if (starts.length === 0) return text;
+
+  let out = '';
+  let cursor = 0;
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i];
+    const limit = i + 1 < starts.length ? starts[i + 1] : text.length;
+    const stop = URL_SPAN_STOP.exec(text.slice(start, limit));
+    const end = stop ? start + stop.index : limit;
+    const raw = text.slice(start, end);
     // Prose puts punctuation straight after a URL ("see https://x/a?token=SECRET, then"). That
     // punctuation is not part of the URL, and letting it into the parse would either mangle the
     // sentence or be swallowed by the redacted value, so hold it back and put it back untouched.
-    const trailing = /[.,;:!?]+$/.exec(match);
-    const tail = trailing ? trailing[0] : '';
-    const body = trailing ? match.slice(0, -trailing[0].length) : match;
-    if (!body) return match;
-    return redactAdjacentUrls(body) + tail;
-  });
+    const trailing = /[.,;:!?]+$/.exec(raw);
+    const body = trailing ? raw.slice(0, -trailing[0].length) : raw;
+    out += text.slice(cursor, start);
+    out += body ? redactUrlCredentialValues(body) : '';
+    out += trailing ? trailing[0] : '';
+    cursor = end;
+  }
+  return out + text.slice(cursor);
 }
 
 export const NAME_WORD_DATA = {
