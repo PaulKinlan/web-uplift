@@ -220,24 +220,21 @@ export function redactUrlCredentialValues(raw) {
 // but a parse.
 const URL_IN_TEXT = /(?:https?:)?\/\/[^\s"'`<>()\[\]{}|]+|\/[^\s"'`<>()\[\]{}|]*\?[^\s"'`<>()\[\]{}|]*/gi;
 
-// A credential in a SECOND URL that sits right after the first one, separated by a comma or a
-// semicolon, is invisible to a whole-match parse: everything after the comma becomes part of the
-// first URL's last parameter value, so the first URL has no credential parameter and the string
-// comes back untouched (web-uplift-lsn3 review). Splitting there and redacting each piece is the
-// fix; the separator stays with the piece before it, which is harmless because a trailing comma is
-// preserved either way.
-function splitAdjacentUrls(body) {
-  const starts = [0];
-  const separator = /[,;]\s*(?=(?:https?:)?\/\/)/g;
-  let match;
-  while ((match = separator.exec(body)) !== null) starts.push(match.index + match[0].length);
-  if (starts.length === 1) return [body];
-  const pieces = [];
-  for (let i = 0; i < starts.length; i++) {
-    const piece = body.slice(starts[i], i + 1 < starts.length ? starts[i + 1] : undefined);
-    if (piece) pieces.push(piece);
-  }
-  return pieces;
+// A credential in a SECOND URL that sits right after the first one is invisible to a whole-match
+// parse: everything after the separator becomes part of the first URL's last parameter value, so
+// the first URL has no credential parameter and the string comes back untouched (web-uplift-lsn3
+// review, twice - the first version of this only handled absolute and protocol-relative second
+// URLs, so "https://one/?page=1,/api/send?token=.." still leaked).
+//
+// The separator is captured OUT of the split so it is never handed to the redactor: a comma or
+// semicolon at the end of a URL's query would otherwise be parsed as part of the value being
+// redacted, and replacing that value would swallow the separator and concatenate the two URLs
+// (web-uplift-lsn3 review). Splitting with a capture group gives [before, separator, after, ...].
+function redactAdjacentUrls(body) {
+  return body
+    .split(/([,;]\s*)(?=(?:https?:)?\/\/|\/)/)
+    .map((part) => (/^[,;]\s*$/.test(part) || part === '' ? part : redactUrlCredentialValues(part)))
+    .join('');
 }
 
 export function redactUrlsInText(text) {
@@ -250,9 +247,7 @@ export function redactUrlsInText(text) {
     const tail = trailing ? trailing[0] : '';
     const body = trailing ? match.slice(0, -trailing[0].length) : match;
     if (!body) return match;
-    return splitAdjacentUrls(body)
-      .map((piece) => redactUrlCredentialValues(piece))
-      .join('') + tail;
+    return redactAdjacentUrls(body) + tail;
   });
 }
 

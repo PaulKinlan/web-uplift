@@ -82,6 +82,21 @@ export async function testConsoleEvidenceRedaction() {
     redactUrlsInText(`https://one.test/?page=1,https://two.test/?token=${SECRET}`) === `https://one.test/?page=1,https://two.test/?token=${REDACTED}`,
     'a credential in a second URL after a comma must be redacted',
   );
+  // ...and a ROOTED PATH as the second URL, which is the shape the first fix still missed
+  // (review pass 2, P1): with only absolute/protocol-relative split points the whole string parsed
+  // as the first URL's last parameter and the second URL's credential came back.
+  assert(
+    redactUrlsInText(`https://one.test/?page=1,/api/send?token=${SECRET}`) === `https://one.test/?page=1,/api/send?token=${REDACTED}`,
+    'a credential in a ROOTED PATH after a comma must be redacted',
+  );
+  // ...and when BOTH URLs carry a credential the separator must survive: putting it at the end of
+  // the first piece let the redaction of that piece's own value consume the comma and concatenate
+  // the two URLs (review pass 2, P2).
+  const bothRedacted = redactUrlsInText(`https://one.test/?token=${SECRET},https://two.test/?token=${SECRET}`);
+  assert(
+    bothRedacted === `https://one.test/?token=${REDACTED},https://two.test/?token=${REDACTED}`,
+    `two adjacent credential URLs must both be redacted with their separator intact: ${bothRedacted}`,
+  );
   const semicolonSeparated = redactUrlsInText(`see https://one.test/?page=1; //two.test/?token=${SECRET} now`);
   assert(semicolonSeparated.includes(REDACTED) && !semicolonSeparated.includes(SECRET),
     `a semicolon-separated second URL must be redacted too: ${semicolonSeparated}`);
