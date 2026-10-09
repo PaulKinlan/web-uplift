@@ -58,9 +58,9 @@ import { redactUrlCredentialValues } from '../evidence/cli.mjs';
 // log lands in CI artifacts and gets pasted into issues, and a target URL can carry a
 // credential in its query (?api_key=, ?token=). The URL keeps its shape, so a line is
 // still usable for finding the run, and the audit itself uses the URL as given.
-// This reuses the HAR redactor's one table rather than growing a third copy of the
-// word list - when evidence/credential-terms.mjs lands (web-uplift-glar) every
-// redactor shares that single table.
+// This reads evidence/credential-terms.mjs through the HAR redactor (web-uplift-glar
+// is that one table), so a log line follows exactly the same word set as the HAR
+// artifact and the flow recorder instead of growing a fourth copy of it.
 function shownUrl(raw) {
   return typeof raw === 'string' && raw ? redactUrlCredentialValues(raw) : raw;
 }

@@ -58,8 +58,9 @@ import { redactUrlCredentialValues } from '../evidence/cli.mjs';
 // the URL appears in the dry-run plan, in the baseline-audit line and inside the echoed
 // per-iteration command, and a fix log lands in CI artifacts. The URL keeps its shape, so
 // a line is still usable for finding the run, and the audit itself uses the URL as given.
-// This reuses the HAR redactor's one table rather than growing a third copy - when
-// evidence/credential-terms.mjs lands (web-uplift-glar) every redactor shares it.
+// This reads evidence/credential-terms.mjs through the HAR redactor (web-uplift-glar is
+// that one table), so a log line follows exactly the same word set as the HAR artifact
+// and the flow recorder instead of growing a fourth copy of it.
 const shownAuditUrl = () => (typeof auditUrl === 'string' && auditUrl ? redactUrlCredentialValues(auditUrl) : '<audit-url>');
 const shownCommand = (command) => (typeof auditUrl === 'string' && auditUrl ? command.split(auditUrl).join(shownAuditUrl()) : command);
 

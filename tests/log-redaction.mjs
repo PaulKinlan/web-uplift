@@ -4,6 +4,10 @@
 // target URL can carry a credential in its query (?api_key=, ?token=), so every printed
 // URL goes through the HAR redactor (redactUrlCredentialValues) instead of the raw value.
 //
+// The word set is not this file's business: evidence/credential-terms.mjs is the one
+// table (web-uplift-glar), and the HAR redactor imported here reads it, so the log
+// redaction follows exactly the same words as the HAR artifact and the flow recorder.
+//
 // Two halves, because the two failure modes are different:
 //   1. behaviour - the redactor keeps the URL useful while removing the credential VALUE
 //      (the parameter name still reads, and non-credential query values are untouched);
@@ -35,6 +39,12 @@ export async function testLogUrlRedaction() {
     ['https://t.example/a?password=hunter2', 'password', null],
     ['https://t.example/a?session=SESS123', 'session', null],
     ['https://t.example/a?apikey=KEY987', 'apikey', null],
+    // The values a batch/fix log is most likely to carry from a real target, and the
+    // ones master's table did not cover before web-uplift-glar landed.
+    ['https://t.example/a?csrf=CSRF123&lang=en', 'csrf', 'lang'],
+    ['https://t.example/a?pin=1234', 'pin', null],
+    ['https://t.example/a?cvv=999', 'cvv', null],
+    ['https://t.example/a?passcode=abcd', 'passcode', null],
   ];
   for (const [url, secretKey, keepKey] of cases) {
     const out = redacted(url);
@@ -44,16 +54,12 @@ export async function testLogUrlRedaction() {
     assert(out.includes(`${secretKey}=`), `the parameter name stays readable: ${out}`);
     if (keepKey) assert(new RegExp(`${keepKey}=(shoes|3|news|en)`).test(out), `${keepKey} is not a credential and must keep its value: ${out}`);
   }
-  // KNOWN GAP, stated rather than implied: the credential table this helper reuses from
-  // evidence/cli.mjs does not yet include csrf/pin/cvv/passcode, so THOSE values still
-  // print in a log line. They are covered by web-uplift-glar's single shared table
-  // (branch fleet/findings-redaction); when that lands this assertion fails on purpose,
-  // which is the signal to delete the list and the note.
-  const KNOWN_UNCOVERED = ['csrf', 'pin', 'cvv', 'passcode'];
-  for (const param of KNOWN_UNCOVERED) {
-    const probe = `https://t.example/a?${param}=VALUE123`;
-    assert(redacted(probe) === probe,
-      `the log redactor now covers ${param}: remove it from KNOWN_UNCOVERED and delete the gap note in tests/log-redaction.mjs`);
+  assert(!/CSRF123/.test(redacted('https://t.example/a?csrf=CSRF123')), 'the csrf VALUE must not survive a log line');
+  // The other direction, and the reason the shared table has two strengths: a name that
+  // merely CONTAINS a weak word is not a credential, so an ordinary target URL keeps
+  // its parameters legible in the log instead of being redacted into uselessness.
+  for (const url of ['https://t.example/a?postalCode=90210&sortKey=name', 'https://t.example/a?countryCode=GB&page=3']) {
+    assert(redacted(url) === url, `a non-credential parameter must stay legible in a log: ${url}`);
   }
   // A URL with nothing credential-shaped is returned untouched, so a log line is not
   // spoiled for no reason, and a non-URL is passed through (never "redacted" to nothing).
