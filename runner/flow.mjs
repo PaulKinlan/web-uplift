@@ -86,9 +86,25 @@ export function resolveSelectorCandidate(s, doc) {
     return null;
   }
   if (s.startsWith('pierce/')) {
-    // Recorder's pierce/ crosses shadow roots; querySelector is the no-shadow-DOM
-    // approximation we can offer page-side.
-    try { return doc.querySelector(s.slice(7)); } catch { return null; }
+    // Recorder's pierce/ selector crosses (open) shadow roots: match the inner
+    // selector in the light DOM first, then walk every open shadowRoot
+    // recursively until it resolves.
+    const inner = s.slice(7);
+    const walk = (root) => {
+      let found = null;
+      try { found = root.querySelector(inner); } catch { return null; }
+      if (found) return found;
+      let all = [];
+      try { all = root.querySelectorAll('*'); } catch { return null; }
+      for (const el of all) {
+        if (el.shadowRoot) {
+          const hit = walk(el.shadowRoot);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    };
+    return walk(doc);
   }
   try { return doc.querySelector(s); } catch { return null; }
 }
@@ -142,6 +158,12 @@ export function findMutatingControl(node) {
 
   if (type === 'submit' || type === 'image') return target;
   if (target.form || target.hasForm || (typeof target.closest === 'function' && target.closest('form')) || (typeof target.getAttribute === 'function' && target.getAttribute('form'))) {
+    return target;
+  }
+  // An anchor with an inline onclick handler is mutating by nature: its display
+  // label says nothing about what the handler runs, so gate a[onclick]
+  // regardless of the label (<a onclick="deleteItem()">More</a>).
+  if (tag === 'A' && typeof target.getAttribute === 'function' && target.getAttribute('onclick') != null) {
     return target;
   }
   // Anchors count too: <a onclick="...">Delete</a> fails a BUTTON-only check and

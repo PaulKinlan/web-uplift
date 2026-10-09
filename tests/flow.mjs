@@ -255,6 +255,17 @@ export async function testFlowRecordSensitiveRedaction() {
   const anchorFrag = sanitizeNavUrl('https://example.com/app#/dashboard');
   assert(anchorFrag === 'https://example.com/app#/dashboard', `innocent fragment must be preserved: ${anchorFrag}`);
 
+  // 10e. SPA ROUTER FRAGMENTS hide the value in the parameter KEY
+  // (#/user/alice@example.com?tab=2 parses as key "/user/alice@example.com?tab"),
+  // and a PATH segment right after a sensitive marker (/token/abc123) is a value
+  // even with no PII shape of its own. Both leaked verbatim before this fix.
+  const fragKeyNav = sanitizeNavUrl('https://example.com/app#/user/alice@example.com?tab=2');
+  assert(fragKeyNav === 'https://example.com/app' && !fragKeyNav.includes('alice@example.com'),
+    `a PII-bearing fragment KEY must be omitted: ${fragKeyNav}`);
+  const markerPath = sanitizeNavUrl('https://example.com/token/abc123');
+  assert(markerPath === 'https://example.com/token/[redacted]',
+    `a path segment after a sensitive marker must be redacted: ${markerPath}`);
+
   // 10d. Long digit sequences are cards ONLY with payment context: a
   // payment-named key or a Luhn-valid value. A bare 13-19 digit identifier
   // (?orderId=...) is innocent and must survive for replay; a bare digit string
@@ -290,6 +301,8 @@ export async function testFlowRecordSensitiveRedaction() {
 
   for (const fn of frameNavListeners) {
     fn({ frame: { parentId: null, url: 'https://example.com/checkout?step=2&token=sec123&postalCode=90210&user_email=alice@test.com' } });
+    fn({ frame: { parentId: null, url: 'https://example.com/app#/user/alice@example.com?tab=2' } });
+    fn({ frame: { parentId: null, url: 'https://example.com/token/abc123' } });
   }
   for (const fn of bindingListeners) {
     fn({ name: '__wuRecordStep', payload: JSON.stringify({ type: 'change', selectors: [['#email']], value: '', redacted: true }) });
@@ -298,15 +311,21 @@ export async function testFlowRecordSensitiveRedaction() {
   }
   const flow = await flowPromise;
   assert(flow.title === 'Recorded flow (example.com)', 'flow title matches host');
-  assert(flow.steps.length === 4, 'flow contains 4 steps (viewport, nav, 2 changes)');
+  assert(flow.steps.length === 6, 'flow contains 6 steps (viewport, 3 navs, 2 changes)');
   assert(flow.steps[1].type === 'navigate' && flow.steps[1].url.includes('token=%5Bredacted%5D'), 'flow nav step redacts token');
   assert(flow.steps[1].url.includes('postalCode=90210'), 'flow nav step preserves postalCode');
-  assert(flow.steps[2].redacted === true && flow.steps[2].value === '', 'flow email step is redacted');
-  assert(flow.steps[3].value === 'winter boots', 'flow search step preserves value');
+  assert(flow.steps[2].type === 'navigate' && flow.steps[2].url === 'https://example.com/app',
+    `flow nav step omits the PII-bearing fragment key: ${flow.steps[2].url}`);
+  assert(flow.steps[3].type === 'navigate' && flow.steps[3].url === 'https://example.com/token/[redacted]',
+    `flow nav step redacts the token path segment: ${flow.steps[3].url}`);
+  assert(flow.steps[4].redacted === true && flow.steps[4].value === '', 'flow email step is redacted');
+  assert(flow.steps[5].value === 'winter boots', 'flow search step preserves value');
 
   const serialized = JSON.stringify(flow);
   assert(!serialized.includes('sec123'), 'serialized flow must not leak token');
   assert(!serialized.includes('alice@test.com'), 'serialized flow must not leak email');
+  assert(!serialized.includes('alice@example.com'), 'serialized flow must not leak the fragment-key email');
+  assert(!serialized.includes('abc123'), 'serialized flow must not leak the token path value');
 
   // 12. End-to-end recordFlow execution with opt-in flags (captureHidden, captureSensitive).
   const bindingListenersOpt = [];
@@ -371,6 +390,11 @@ export async function testFlowReplayMutationGate() {
     closest: () => null,
     getAttribute: (k) => (k === 'onclick' ? 'deleteItem()' : null),
   };
+  const onclickMoreAnchor = {
+    tagName: 'A', nodeType: 1, textContent: 'More',
+    closest: () => null,
+    getAttribute: (k) => (k === 'onclick' ? 'deleteItem()' : null),
+  };
 
   assert(isSubmitControl(submitBtn), 'button type=submit must be submit control');
   assert(isSubmitControl(spanChild), 'span inside submit button must be submit control');
@@ -384,6 +408,11 @@ export async function testFlowReplayMutationGate() {
   // target in dry-run. The mutating-terms check now covers anchors.
   assert(findMutatingControl(onclickDeleteAnchor) === onclickDeleteAnchor,
     '<a onclick>Delete</a> must be recognised as a mutating control');
+  // An inline onclick handler is mutating by nature: the label ("More") says
+  // nothing about what the handler runs, so a[onclick] is gated REGARDLESS of
+  // its display text.
+  assert(findMutatingControl(onclickMoreAnchor) === onclickMoreAnchor,
+    '<a onclick="deleteItem()">More</a> must be gated despite its innocuous label');
   assert(findMutatingControl(innocentLink) === null, 'innocent anchor must stay clickable in dry-run');
 
   // 2b. Selector resolution: text/ and pierce/ (Chrome DevTools Recorder emits
@@ -403,6 +432,27 @@ export async function testFlowReplayMutationGate() {
   };
   assert(resolveSelectorCandidate('text/About Us', resolveDoc) === aboutLink, 'text/ selector must resolve by exact leaf text');
   assert(resolveSelectorCandidate('pierce/#about', resolveDoc) === aboutLink, 'pierce/ selector must resolve through querySelector');
+  // pierce/ crosses OPEN shadow roots (Recorder semantics): the target lives in
+  // a host's shadowRoot, invisible to a document-level querySelector. A
+  // light-DOM match still wins before the shadow walk.
+  const shadowTarget = { tagName: 'BUTTON', nodeType: 1, textContent: 'Shadow' };
+  const shadowRootStub = {
+    querySelector: (sel) => (sel === '#shadowBtn' ? shadowTarget : null),
+    querySelectorAll: () => [],
+  };
+  const shadowHost = { tagName: 'DIV', nodeType: 1, shadowRoot: shadowRootStub };
+  const shadowDoc = {
+    querySelector: () => null,
+    querySelectorAll: (sel) => (sel === '*' ? [shadowHost] : []),
+  };
+  assert(resolveSelectorCandidate('pierce/#shadowBtn', shadowDoc) === shadowTarget,
+    'pierce/ must resolve a target inside an open shadow root');
+  const lightFirstDoc = {
+    querySelector: (sel) => (sel === '#shadowBtn' ? aboutLink : null),
+    querySelectorAll: (sel) => (sel === '*' ? [shadowHost] : []),
+  };
+  assert(resolveSelectorCandidate('pierce/#shadowBtn', lightFirstDoc) === aboutLink,
+    'pierce/ must prefer a light-DOM match before walking shadow roots');
   assert(resolveSelectorCandidate('aria/Say "Hi"', resolveDoc) === quotedLabelBtn,
     'aria/ selector with a double-quote in the name must resolve (no CSS.escape in a quoted attribute selector)');
   assert(resolveSelectorCandidate('.stale-css', resolveDoc) === null, 'a stale CSS selector must resolve to null so the next alternative is tried');

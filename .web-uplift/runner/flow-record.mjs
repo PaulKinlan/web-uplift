@@ -26,7 +26,10 @@
 //    captured navigation steps, while innocent search queries and postal codes
 //    remain preserved. The same rules are applied to PATH segments (a user profile
 //    URL like /user/alice@example.com must not persist the email) and to the
-//    FRAGMENT (which may be query-like: #email=...&tab=2). Long digit sequences are
+//    FRAGMENT (which may be query-like: #email=...&tab=2, or an SPA route that
+//    hides the value in a parameter KEY: #/user/alice@example.com?tab=2). Path
+//    segments right after a sensitive marker (/token/abc123) are values too.
+//    Long digit sequences are
 //    only treated as payment cards with real payment context (a payment-named
 //    parameter or a Luhn-valid value), so innocent numeric ids survive replay.
 
@@ -123,6 +126,13 @@ export function isSensitiveField(desc, { captureHidden = false, captureSensitive
 // value - an innocent ?orderId=1234567890123 is corrupted, breaking replay.
 const PAYMENT_KEY_WORDS = new Set(['cc', 'pan', 'cvv', 'cvc', 'csc']);
 
+// Path segments that mark the FOLLOWING segment as a value (/token/abc123,
+// /session/<id>). Deliberately narrower than SENSITIVE_WORDS: a route word like
+// "security" in /settings/security must not turn the next route segment into a
+// redaction. Bare "key" is safe here - a path segment, unlike a form-field
+// name, is never sortKey/postalCode.
+const PATH_VALUE_MARKERS = new Set(['token', 'secret', 'key', 'session']);
+
 export function hasPaymentWord(str) {
   if (!str || typeof str !== 'string') return false;
   const words = str
@@ -178,15 +188,23 @@ export function sanitizeNavUrl(raw) {
       }
     }
     // Path segments carry values too: /user/alice@example.com/orders persists the
-    // email unless the segment is redacted. Value-shape only (no key heuristics) so
+    // email unless the segment is redacted, and /token/abc123 persists the token
+    // because a segment right after a sensitive marker IS a value even with no
+    // PII shape of its own. Otherwise value-shape only (no key heuristics) so
     // routes like /settings/security are left alone.
     if (u.pathname && u.pathname !== '/') {
       let pathModified = false;
-      const segs = u.pathname.split('/').map((seg) => {
+      const rawSegs = u.pathname.split('/');
+      const segs = rawSegs.map((seg, i) => {
         if (!seg) return seg;
         let decoded = seg;
         try { decoded = decodeURIComponent(seg); } catch { /* keep raw */ }
         if (isSensitiveNavValue(decoded)) { pathModified = true; return '[redacted]'; }
+        if (i > 0) {
+          let prev = rawSegs[i - 1];
+          try { prev = decodeURIComponent(prev); } catch { /* keep raw */ }
+          if (PATH_VALUE_MARKERS.has(prev.toLowerCase())) { pathModified = true; return '[redacted]'; }
+        }
         return seg;
       });
       if (pathModified) {
@@ -203,6 +221,15 @@ export function sanitizeNavUrl(raw) {
         const params = new URLSearchParams(decoded);
         let fragModified = false;
         for (const [k, v] of [...params.entries()]) {
+          // SPA router fragments hide the value in the parameter KEY:
+          // #/user/alice@example.com?tab=2 parses as key
+          // "/user/alice@example.com?tab". A key carrying a sensitive
+          // value-shape cannot be value-redacted, so the parameter is omitted.
+          if (isSensitiveNavValue(k)) {
+            params.delete(k);
+            fragModified = true;
+            continue;
+          }
           if (!v) continue;
           if (hasSensitiveWord(k) || isSensitiveNavValue(v, k)) {
             params.set(k, '[redacted]');
