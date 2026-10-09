@@ -170,6 +170,68 @@ export function looksLikeToken(value) {
 
 // The literal JSON the page-side capture script is built from, so the injected
 // classifier and the Node-side classifier can never hold different words.
+// The literal written into a credential-named query parameter or header. One constant, so the URL
+// redactor here and the HAR header redactor in evidence/cli.mjs cannot drift apart.
+export const REDACTED_VALUE = '[redacted]';
+
+// Redact the VALUES of credential-named query parameters in a URL; keep the names and
+// every other parameter exactly as they were.
+//
+// This lives in the SHARED module rather than in evidence/cli.mjs because the console-evidence
+// collector in evidence/cdp.mjs needs the same rule, and cdp.mjs is imported BY cli.mjs - the
+// alternative was a second copy of the rule, which is how a credential ends up in an artifact that
+// one caller redacts and another does not (web-uplift-lsn3).
+export function redactUrlCredentialValues(raw) {
+  if (typeof raw !== 'string' || !raw) return raw;
+  const apply = (u) => {
+    let hit = false;
+    for (const [k, v] of [...u.searchParams.entries()]) {
+      if (v && isCredentialName(k)) {
+        u.searchParams.set(k, REDACTED_VALUE);
+        hit = true;
+      }
+    }
+    return hit;
+  };
+  try {
+    const u = new URL(raw);
+    return apply(u) ? u.toString() : raw;
+  } catch {
+    /* not absolute: a redirect Location is very often a relative path */
+  }
+  try {
+    // Parse against a throwaway base and re-emit relative, so a relative redirect target
+    // ('/final?session=...') is redacted too - it used to pass through untouched because
+    // new URL() rejects a relative string. The path is normalised (a bare '?a=b' gains a
+    // leading '/'), which is the only shape change and is noted rather than silent.
+    const u = new URL(raw, 'http://relative.invalid');
+    if (!apply(u)) return raw;
+    return `${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    return raw; // genuinely unparseable: leave it alone rather than guess
+  }
+}
+
+// A URL that appears INSIDE a string of prose: absolute, or protocol-relative. A page can log
+// `location.href`, so a console entry's text is a leak path that no URL-shaped field redactor
+// reaches. Conservative by design - it only rewrites what is plainly a URL, and
+// redactUrlCredentialValues is a no-op for a URL with no credential parameter.
+const URL_IN_TEXT = /(?:https?:)?\/\/[^\s"'`<>()\[\]{}|]+/gi;
+
+export function redactUrlsInText(text) {
+  if (typeof text !== 'string' || !text) return text;
+  return text.replace(URL_IN_TEXT, (match) => {
+    // Prose puts punctuation straight after a URL ("see https://x/a?token=SECRET, then").
+    // That punctuation is not part of the URL, and letting it into the parse would either
+    // mangle the sentence or be swallowed by the redacted value, so hold it back and put it
+    // back untouched.
+    const trailing = /[.,;:!?]+$/.exec(match);
+    const body = trailing ? match.slice(0, -trailing[0].length) : match;
+    if (!body) return match;
+    return redactUrlCredentialValues(body) + (trailing ? trailing[0] : '');
+  });
+}
+
 export const NAME_WORD_DATA = {
   credential: [...CREDENTIAL_WORDS],
   weak: [...WEAK_CREDENTIAL_WORDS],

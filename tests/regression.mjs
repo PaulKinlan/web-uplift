@@ -19,6 +19,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, readSourceTree, redactHeaderList, safeFetch, scanTextForSecrets, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { testSourceTreeSkipsSymlinkFileEscape, testSourceTreeSkipsSymlinkDirEscape, testSourceTreeSkipsSymlinkCycle, testSourceTreeDepthGuard } from './source-tree-symlink.mjs';
+import { testConsoleEvidenceRedaction } from './console-evidence-redaction.mjs';
 import { testInstallSkipsSymlinksInVendoredSource, testInstallCopyDepthGuard, testInstallVendorsCompleteClosure } from './install-copy-symlink.mjs';
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath, sandboxDisableReason } from '../evidence/cdp.mjs';
@@ -117,6 +118,7 @@ const ALL_TESTS = [
   testDomSourceArtifactIsRedacted,
   testEvidenceTruncationReporting,
   testConsoleEvidence,
+  testConsoleEvidenceRedaction,
   testConsoleInteractDeadlineValidation,
   testFeaturesPrimitive,
   testBatchDryRunUsesRetainedDirs,

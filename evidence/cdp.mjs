@@ -18,6 +18,7 @@ import { homedir, networkInterfaces, tmpdir } from 'node:os';
 import { connect as netConnect } from 'node:net';
 import { join } from 'node:path';
 import CDP from 'chrome-remote-interface';
+import { redactUrlCredentialValues, redactUrlsInText } from './credential-terms.mjs';
 
 // Chrome binary discovery. Env overrides come first (CHROME_PATH is honoured as
 // an alias of CHROME_BIN because other Chrome tooling uses it), then the
@@ -1159,7 +1160,24 @@ export async function attachConsoleCollector(client, { log = () => {}, cdpDeadli
   let ignoredCount = 0; // info/log/debug/verbose, counted but not itemised
   let droppedCount = 0; // past the buffer cap
 
-  const record = (entry) => {
+  // Every page-derived string that reaches this artifact goes through the shared credential
+  // redaction HERE, at the one place all three entry paths converge (web-uplift-lsn3). A console
+  // entry's url is whatever the page requested - a failed <script src> with a credential in its
+  // query is the ordinary case - and its text can carry a URL too, because a page can log
+  // location.href. `console` is written to disk by every primitive, so an unredacted copy here
+  // lands in every artifact; the externalScriptFailures list was fixed for the same reason and
+  // this surface was missed. Redacting before the dedupe key keeps retries collapsed.
+  const redactEntry = (entry) => {
+    const url = entry.url === undefined ? undefined : redactUrlCredentialValues(entry.url);
+    return {
+      ...entry,
+      ...(url === undefined ? {} : { url }),
+      ...(typeof entry.text === 'string' ? { text: redactUrlsInText(entry.text) } : {}),
+    };
+  };
+
+  const record = (rawEntry) => {
+    const entry = redactEntry(rawEntry);
     // The url is part of the identity when there is one: two different failed
     // resources are different findings, while a retry loop hitting the same
     // resource collapses into a repeat count.
@@ -1183,10 +1201,16 @@ export async function attachConsoleCollector(client, { log = () => {}, cdpDeadli
     if (arg.value !== undefined) return typeof arg.value === 'string' ? arg.value : String(arg.value);
     return arg.description || arg.unserializableValue || arg.type || '';
   };
+  // The frame's url is redacted on its own, not by the prose sweep: a stack frame is
+  // "fn (url:line:column)" and a URL-shaped match in that string would swallow the line and
+  // column along with the credential (web-uplift-lsn3).
   const framesOf = (stackTrace) =>
     (stackTrace?.callFrames || [])
       .slice(0, 3)
-      .map((f) => `${f.functionName || '<anonymous>'} (${f.url || '?'}:${f.lineNumber + 1}:${f.columnNumber + 1})`);
+      .map((f) => {
+        const url = f.url ? redactUrlCredentialValues(f.url) : '?';
+        return `${f.functionName || '<anonymous>'} (${url}:${f.lineNumber + 1}:${f.columnNumber + 1})`;
+      });
 
   client.Runtime.consoleAPICalled(({ type, args, stackTrace }) => {
     const text = (args || []).map(textOfArg).join(' ').trim();
