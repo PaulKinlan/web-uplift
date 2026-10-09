@@ -7,7 +7,7 @@
 // signal was a JSON parse failure in whatever consumed it. These cases pin both halves of the
 // contract: a pipe gets every byte, and a consumer that goes away is reported.
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +47,20 @@ const concatBytes = (chunks) => {
 const sameBytes = (a, b) => a.length === b.length && a.every((byte, i) => byte === b[i]);
 
 const decoder = new TextDecoder();
+
+// The same run with stdout on a REAL FILE DESCRIPTOR: bytes that reach a file cannot be lost to
+// a pipe, so this is the baseline a piped run has to match. Comparing two piped runs would only
+// establish that they truncate alike.
+const runCliToFile = (args, file) => new Promise((resolveRun) => {
+  const fd = openSync(file, 'w');
+  const child = spawn(process.execPath, [CLI, ...args], { stdio: ['ignore', fd, 'pipe'] });
+  const err = [];
+  child.stderr.on('data', (c) => err.push(new Uint8Array(c)));
+  child.once('close', (code) => {
+    closeSync(fd);
+    resolveRun({ code, err: decoder.decode(concatBytes(err)), out: new Uint8Array(readFileSync(file)) });
+  });
+});
 
 const runCli = (args) => new Promise((resolveRun) => {
   const child = spawn(process.execPath, [CLI, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -112,7 +126,7 @@ export async function testMwgDriftExtractPipe() {
     child.stderr.on('data', (c) => err.push(new Uint8Array(c)));
     const result = await new Promise((resolveClose) => child.once('close', (code, signal) => resolveClose({ code, signal })));
     assert(result.code !== 0, `a closed consumer must not exit 0 (code=${result.code} signal=${result.signal})`);
-    const refused = /could not write the extracted corpus to stdout \((\d+) of (\d+) bytes written\)/.exec(decoder.decode(concatBytes(err)));
+    const refused = /could not write the output to stdout \((\d+) of (\d+) bytes written\)/.exec(decoder.decode(concatBytes(err)));
     assert(refused, `the failure must name how much was written: ${decoder.decode(concatBytes(err))}`);
     assert(Number(refused[1]) < Number(refused[2]),
       `the consumer must have gone away mid-write for this case to test anything (${refused[1]} of ${refused[2]} bytes written)`);
@@ -122,16 +136,56 @@ export async function testMwgDriftExtractPipe() {
     const { oldCorpus, newCorpus } = makeBigDelta(tmp, 6000);
     const basis = join(repoRoot, 'tests', 'fixtures', 'mwg-drift', 'basis-fixture.json');
     const classifyArgs = ['--old-corpus', oldCorpus, '--new-corpus', newCorpus, '--basis', basis, '--json'];
-    const toFileReport = await runCli(classifyArgs);
+    const toFileReport = await runCliToFile(classifyArgs, join(tmp, 'classification.txt'));
     assert(toFileReport.code === 2, `a delta must still exit 2: ${toFileReport.code} ${toFileReport.err}`);
     assert(toFileReport.out.length > 256 * 1024, `the fixture delta must exceed the pipe buffer: ${toFileReport.out.length} bytes`);
     const pipedReport = await runCli(classifyArgs);
     assert(pipedReport.code === 2, `the piped run must exit 2 as well: ${pipedReport.code}`);
     assert(pipedReport.out.length === toFileReport.out.length,
       `the piped report must be the whole report: ${pipedReport.out.length} bytes through a pipe vs ${toFileReport.out.length} to a file`);
-    assert(sameBytes(pipedReport.out, toFileReport.out), 'the piped report must be byte-identical to the file report');
+    assert(sameBytes(pipedReport.out, toFileReport.out), 'the piped report must be byte-identical to the report written to a file descriptor');
     const summary = JSON.parse(decoder.decode(pipedReport.out).trim().split('\n').slice(-1)[0]);
     assert(summary.new.length === 6000, `the JSON summary line must survive the pipe: ${summary.new?.length} new guides`);
+
+    // 4. A NON-BLOCKING STDOUT (EAGAIN), which the shell cannot produce: the write end of the
+    // pipe is set O_NONBLOCK and the reader drains it slowly, so the writer is told to come back
+    // later many times before it finishes. The corpus must still arrive whole. Python is used
+    // because Node cannot set O_NONBLOCK on a descriptor; if it is missing the case is SKIPPED
+    // loudly rather than passed quietly.
+    const launcher = join(tmp, 'nonblocking.py');
+    writeFileSync(launcher, [
+      'import os, subprocess, sys, time',
+      'r, w = os.pipe()',
+      'os.set_blocking(w, False)',
+      'p = subprocess.Popen(sys.argv[2:], stdout=w)',
+      'os.close(w)',
+      'out = bytearray()',
+      'while True:',
+      '    chunk = os.read(r, 16384)',
+      '    if not chunk:',
+      '        break',
+      '    out.extend(chunk)',
+      '    time.sleep(0.02)',
+      'p.wait()',
+      'sys.stdout.buffer.write(bytes(out))',
+      'sys.exit(p.returncode)',
+    ].join('\n') + '\n', 'utf8');
+    const nonBlocking = await new Promise((resolveRun) => {
+      const child = spawn('python3', [launcher, '--', process.execPath, CLI, '--extract', pkg, '--version', '1.0.0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const out = [];
+      const err = [];
+      child.stdout.on('data', (c) => out.push(new Uint8Array(c)));
+      child.stderr.on('data', (c) => err.push(new Uint8Array(c)));
+      child.once('error', (spawnErr) => resolveRun({ spawnErr }));
+      child.once('close', (code) => resolveRun({ code, out: concatBytes(out), err: decoder.decode(concatBytes(err)) }));
+    });
+    if (nonBlocking.spawnErr) {
+      console.log('  (python3 is unavailable: the non-blocking stdout case was SKIPPED)');
+    } else {
+      assert(nonBlocking.code === 0, `a slow but reading consumer must not fail the run: ${nonBlocking.code} ${nonBlocking.err}`);
+      assert(sameBytes(nonBlocking.out, fileBytes),
+        `a non-blocking stdout must still receive the whole corpus: ${nonBlocking.out.length} of ${fileBytes.length} bytes`);
+    }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

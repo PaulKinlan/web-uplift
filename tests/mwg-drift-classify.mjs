@@ -593,7 +593,9 @@ function writeStdout(text) {
   // Node Buffer, and writeSync takes any Uint8Array.
   const bytes = new TextEncoder().encode(text);
   let written = 0;
-  const deadline = Date.now() + WRITE_STALL_MS;
+  // The stall clock measures time WITHOUT PROGRESS, so it restarts after every byte the kernel
+  // accepts: a slow consumer that keeps reading is not a stalled one, however long it takes.
+  let lastProgress = Date.now();
   try {
     while (written < bytes.length) {
       let n;
@@ -603,21 +605,22 @@ function writeStdout(text) {
         // A non-blocking descriptor reports backpressure as EAGAIN, which is "write again
         // shortly" rather than a failure - but only for as long as a stalled consumer deserves.
         // Anything else (EPIPE because the consumer went away, EBADF) is a real failure.
-        if (err && err.code === 'EAGAIN' && Date.now() < deadline) {
+        if (err && err.code === 'EAGAIN') {
+          if (Date.now() - lastProgress >= WRITE_STALL_MS) {
+            throw new Error(`the consumer accepted no bytes for ${WRITE_STALL_MS}ms (${written} written so far)`);
+          }
           sleepSync(WRITE_STALL_RETRY_MS);
           continue;
-        }
-        if (err && err.code === 'EAGAIN') {
-          throw new Error(`the consumer stopped reading for ${WRITE_STALL_MS}ms`);
         }
         throw err;
       }
       if (n <= 0) throw new Error(`short write: ${written} of ${bytes.length} bytes accepted`);
       written += n;
+      lastProgress = Date.now();
     }
   } catch (err) {
     console.error(
-      `FAIL: could not write the extracted corpus to stdout (${written} of ${bytes.length} bytes written): ${err.message}`,
+      `FAIL: could not write the output to stdout (${written} of ${bytes.length} bytes written): ${err.message}`,
     );
     process.exit(1);
   }
