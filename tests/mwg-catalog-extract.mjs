@@ -141,6 +141,17 @@ export async function testMwgCatalogExtract() {
     }
     assert(refused instanceof CatalogRefusal && /does not declare/.test(refused.message),
       `a package with no USE_CASES table must be refused by name: ${refused && refused.message}`);
+    // ...and a package that yields NO guides at all is refused too, rather than written as a
+    // catalog whose 0-guide set would read to consumers as a total removal.
+    const emptyDir = pkgWith('empty', '[]');
+    let emptyRefused = null;
+    try {
+      buildCatalog({ packageDir: emptyDir, version: '9.9.9' });
+    } catch (err) {
+      emptyRefused = err;
+    }
+    assert(emptyRefused instanceof CatalogRefusal && /no guides at all/.test(emptyRefused.message),
+      `an empty catalog must be refused: ${emptyRefused && emptyRefused.message}`);
   } catch (err) {
     if (err instanceof CatalogRefusal) throw err;
     throw err;

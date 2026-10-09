@@ -332,6 +332,13 @@ export function buildCatalog({ packageDir, version, existing = null, now = () =>
     }
   }
 
+  // A catalog with no guides is never the right answer: it would look to every consumer like
+  // the whole taxonomy was removed, and the classifier's own extractor already fails when it
+  // sees nothing. Refuse by name instead of writing it (a mutation run found this unguarded).
+  if (guides.length === 0) {
+    throw new CatalogRefusal('the package yielded no guides at all: refusing to write an empty catalog');
+  }
+
   const guideIds = guides.map((g) => g.id).sort();
   const guideIdsSha256 = createHash('sha256').update(guideIds.join('\n')).digest('hex');
   const retrievedAt =
