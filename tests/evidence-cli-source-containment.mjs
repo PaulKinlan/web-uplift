@@ -8,19 +8,29 @@
 //
 // Verification shows:
 // 1. In evidence/cli.mjs, opts.source is populated solely from process.argv
-//    via the explicit --source command-line argument.
-// 2. The audited web page has no mechanism to set or influence CLI arguments:
-//    neither DOM elements (meta/link), page text, prompt injection attempts,
-//    HTTP headers, nor CDP messages can trigger a source read.
+//    via the explicit --source command-line argument; nothing in the page is
+//    parsed for it.
+// 2. The audited web page has no page-content channel to trigger a source read:
+//    DOM elements (meta/link tags) and page body text cannot set or influence
+//    CLI arguments.
 // 3. When --source is omitted by the operator, result.source is undefined and
 //    no local filesystem walk occurs.
-// 4. When --source is explicitly supplied by the trusted operator, readSourceTree
-//    already strictly confines its walk to that directory: symlinks pointing
+// 4. When --source is explicitly supplied by the operator, readSourceTree
+//    strictly confines its walk to that directory: symlinks pointing
 //    outside the tree are skipped (tested in source-tree-symlink.mjs), depth is
-//    capped at 64, high-risk credential files are dropped unread, and content
-//    is redacted on ingest.
+//    capped at 64, high-risk credential-named files and directories are dropped
+//    unread, and content is redacted on ingest.
 //
-// This test asserts these invariants end-to-end.
+// Out-of-scope residual:
+// Agent-mediated prompt injection (where adversarial page text induces an LLM
+// agent driving the CLI to supply --source with an unintended path) is an
+// external agent orchestrator threat outside the CLI's execution boundary. The
+// CLI's defense-in-depth mitigation is readSourceTree dropping credential-named
+// files/directories wholesale and redacting names-based credential values, but
+// an unlabelled opaque secret in an arbitrary user directory is explicitly not
+// covered (see readSourceTree comment in evidence/cli.mjs).
+//
+// This test asserts the CLI-level invariants end-to-end.
 
 import http from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -74,7 +84,7 @@ export async function testNoSourceArgumentOmitsSource() {
 }
 
 // Test 2: An adversarial page attempting to name a source directory via DOM,
-// meta, link, or prompt injection cannot cause the CLI to read that directory.
+// meta, link, or page text cannot cause the CLI to read that directory.
 export async function testAdversarialPageCannotInfluenceSource() {
   const secretDir = mkdtempSync(join(tmpdir(), 'web-uplift-adv-secret-'));
   const secretFile = join(secretDir, 'sensitive.txt');
