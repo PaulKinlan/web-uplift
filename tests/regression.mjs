@@ -37,6 +37,11 @@ import { testCredentialRedactorsAgree } from './credential-redaction.mjs';
 import { testSecretsCoverageClassification } from './secrets-coverage.mjs';
 import { testLogUrlRedaction } from './log-redaction.mjs';
 import { testMwgCatalogExtract } from './mwg-catalog-extract.mjs';
+import {
+  testNoSourceArgumentOmitsSource,
+  testAdversarialPageCannotInfluenceSource,
+  testExplicitSourceHonoursOperatorSpecifiedRoot,
+} from './evidence-cli-source-containment.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'reports', 'scratch']);
@@ -113,6 +118,9 @@ const ALL_TESTS = [
   testInstallCopyDepthGuard,
   testInstallVendorsCompleteClosure,
   testDomSourceArtifactIsRedacted,
+  testNoSourceArgumentOmitsSource,
+  testAdversarialPageCannotInfluenceSource,
+  testExplicitSourceHonoursOperatorSpecifiedRoot,
   testEvidenceTruncationReporting,
   testConsoleEvidence,
   testConsoleInteractDeadlineValidation,
