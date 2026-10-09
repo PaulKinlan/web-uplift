@@ -1,137 +1,266 @@
 #!/usr/bin/env node
-// Tests for the CDP endpoint exposure guard (web-uplift-4rv): the audit's Chrome exposes an
-// UNAUTHENTICATED DevTools endpoint for the life of the run, so the tool pins it to loopback
-// and then measures that the pin held.
+// Tests for CDP endpoint exposure (web-uplift-4rv): the audit's Chrome exposes an
+// UNAUTHENTICATED DevTools endpoint for the life of the run, so the launch pins it to loopback
+// and then MEASURES that the pin held.
 //
-// Two kinds of case: real sockets (bind a server the two ways and probe it), and injected
-// verdicts (so the decision table is pinned on a machine with no non-loopback interface).
-import { createServer } from 'node:net';
+// The verdict has two paths, and both are tested against real sockets rather than only against
+// stubs, because the failure this exists to catch is a kernel fact:
+//   1. the kernel binding of our own browser pid (IPv4 and IPv6, /proc/net/tcp{,6}),
+//   2. reachability, which also has to ask WHO is answering, or an unrelated daemon on the same
+//      address would refuse a healthy audit.
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cdpEndpointExposure, probeTcp } from '../evidence/cdp.mjs';
+import {
+  classifyBoundListeners,
+  cdpEndpointExposure,
+  decodeProcAddress,
+  isLoopbackAddress,
+  launchChrome,
+  probeDevtools,
+  readBoundListeners,
+} from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const here = fileURLToPath(import.meta.url);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+// Sockets are tracked so they can be destroyed at close: net.Server.close() waits for open
+// connections, a probe leaves one half-open, and closeAllConnections() does not exist on this
+// Node build (an optional call no-ops silently, which is how a test hangs for two minutes).
 const listen = (host) =>
   new Promise((resolveListen, reject) => {
-    const server = createServer();
+    const sockets = new Set();
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.trackedSockets = sockets;
     server.once('error', reject);
     server.listen(0, host, () => resolveListen(server));
   });
 
+const close = (server) =>
+  new Promise((r) => {
+    for (const socket of server.trackedSockets ?? []) socket.destroy();
+    server.close(r);
+  });
+
+// A child process holding a real 0.0.0.0 listener, so attribution can be tested across pids.
+const childWithWildcardListener = () =>
+  new Promise((resolveChild, reject) => {
+    const child = spawn(process.execPath, ['-e', "const s=require('net').createServer();s.listen(0,'0.0.0.0',()=>console.log(s.address().port));setTimeout(()=>{},60000)"], {
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    const onData = (chunk) => {
+      const port = Number(String(chunk).trim());
+      if (Number.isInteger(port) && port > 0) {
+        child.stdout.off('data', onData);
+        resolveChild({ child, port });
+      }
+    };
+    child.stdout.on('data', onData);
+    child.once('error', reject);
+    child.once('exit', () => reject(new Error('the helper child exited before listening')));
+  });
+
 export async function testCdpEndpointExposure() {
-  // 1. A loopback-bound server is NOT exposed: the probe connects to the host's non-loopback
-  // address and the kernel refuses. This is the real case the audit runs under.
-  const loopback = await listen('127.0.0.1');
-  // An all-interfaces server IS exposed: the same probe gets a connection, which is what a
-  // remote host would get. This is the case the guard exists to catch, driven with a real
-  // socket rather than a stub.
-  const anyAddress = await listen('0.0.0.0');
+  // 1. THE DECODER: /proc's own encodings, including the address forms where a wrong byte order
+  // still LOOKS like a plausible address (which is how ::1 came out as 0:1:0:0:0:0:0:0).
+  assert(decodeProcAddress('0100007F', false) === '127.0.0.1', '127.0.0.1 must decode');
+  assert(decodeProcAddress('00000000', false) === '0.0.0.0', 'the IPv4 wildcard must decode');
+  assert(decodeProcAddress('00000000000000000000000001000000', true) === '0:0:0:0:0:0:0:1', '::1 must decode, not 0:1:0:0:0:0:0:0');
+  assert(decodeProcAddress('00000000000000000000000000000000', true) === '0:0:0:0:0:0:0:0', 'the IPv6 wildcard must decode');
+  assert(decodeProcAddress('zz', false) === null && decodeProcAddress('0100', false) === null, 'undecodable input must be null, never a made-up address');
+  assert(isLoopbackAddress('127.0.0.1') && isLoopbackAddress('127.9.9.9'), 'the whole 127/8 is loopback');
+  assert(isLoopbackAddress('0:0:0:0:0:0:0:1') && !isLoopbackAddress('0:0:0:0:0:0:0:0'), '::1 is loopback and the IPv6 wildcard is not');
+  assert(!isLoopbackAddress('10.42.0.42') && !isLoopbackAddress('::ffff:10.42.0.42'), 'a routed address is not loopback');
+
+  // 2. REAL SOCKETS, REAL KERNEL, our own pid. Each case binds the way a browser could and asks
+  // the kernel; nothing here is a stub, so this is the check itself being tested.
+  const v4Loop = await listen('127.0.0.1');
+  const v4Wild = await listen('0.0.0.0');
+  const v6Loop = await listen('::1');
+  const v6Wild = await listen('::');
+  const helper = await childWithWildcardListener().catch(() => null);
   try {
-    const nonLoopback = Object.values((await import('node:os')).networkInterfaces())
-      .flat()
-      .filter((a) => a && a.family === 'IPv4' && !a.internal)
-      .map((a) => a.address);
-    assert(!(await cdpEndpointExposure(loopback.address().port)).exposed,
-      'a loopback-bound endpoint must not be reported as exposed');
-    if (nonLoopback.length > 0) {
-      const exposed = await cdpEndpointExposure(anyAddress.address().port);
-      assert(exposed.exposed === true, `an all-interfaces endpoint must be reported as exposed: ${JSON.stringify(exposed)}`);
-      assert(/not a loopback address/.test(exposed.reason) && exposed.reason.includes(nonLoopback[0]),
-        `the refusal must name the address and the reason: ${exposed.reason}`);
-      // ...and the same server reached only on loopback is not exposed, so the guard is
-      // measuring the ADDRESS rather than "is anything listening".
-      const viaLoopback = await probeTcp('127.0.0.1', anyAddress.address().port, 300);
-      assert(viaLoopback === 'connected', `the probe must connect on loopback: ${viaLoopback}`);
+    const mine = readBoundListeners(process.pid);
+    assert(Array.isArray(mine), 'our own listeners must be readable from /proc');
+    const find = (server) => mine.find((l) => l.port === server.address().port);
+
+    assert(find(v4Loop)?.address === '127.0.0.1', `a 127.0.0.1 listener must read back as loopback: ${JSON.stringify(find(v4Loop))}`);
+    assert(find(v4Wild)?.address === '0.0.0.0', `a 0.0.0.0 listener must read back as the wildcard: ${JSON.stringify(find(v4Wild))}`);
+    assert(find(v6Loop)?.address === '0:0:0:0:0:0:0:1', `an ::1 listener must read back as loopback: ${JSON.stringify(find(v6Loop))}`);
+    assert(find(v6Wild)?.address === '0:0:0:0:0:0:0:0', `an :: listener must read back as the IPv6 wildcard: ${JSON.stringify(find(v6Wild))}`);
+
+    for (const [server, expected, label] of [[v4Loop, false, 'IPv4 loopback'], [v4Wild, true, 'IPv4 wildcard'], [v6Loop, false, 'IPv6 loopback'], [v6Wild, true, 'IPv6 wildcard']]) {
+      const verdict = classifyBoundListeners(server.address().port, mine);
+      assert(verdict.exposed === expected, `${label}: expected exposed=${expected}, got ${JSON.stringify(verdict)}`);
+    }
+    assert(/0\.0\.0\.0/.test(classifyBoundListeners(v4Wild.address().port, mine).reason), 'the refusal must name the address it was bound to');
+    assert(classifyBoundListeners(v6Wild.address().port, mine).reason.includes('[0:0:0:0:0:0:0:0]'), 'an IPv6 refusal must name the bracketed address');
+    // No listener on that port is UNKNOWN, never "safe".
+    const unknown = classifyBoundListeners(1, mine);
+    assert(unknown.exposed === false && unknown.unknown === true, `a port with no listener must be unknown: ${JSON.stringify(unknown)}`);
+
+    // 3. ATTRIBUTION: a foreign process holding the same kind of listener must not decide our
+    // browser's fate - its pid's read has it, our pid's read does not.
+    if (helper) {
+      const theirs = readBoundListeners(helper.child.pid);
+      assert(Array.isArray(theirs) && theirs.some((l) => l.port === helper.port && l.address === '0.0.0.0'),
+        `the helper's own wildcard listener must be attributable to the helper: ${JSON.stringify(theirs)}`);
+      assert(!mine.some((l) => l.port === helper.port), 'the helper\'s listener must not appear against our pid');
+      assert(classifyBoundListeners(helper.port, mine).exposed === false, 'a foreign listener must not mark OUR browser as exposed');
     } else {
-      console.log('  (no non-loopback interface on this host: the real-socket exposure case was skipped)');
+      console.log('  (could not start the helper child: the cross-pid attribution case was skipped)');
     }
 
-    // 2. The decision table, with injected verdicts and injected interfaces, so every branch is
-    // pinned on any machine. `refused` is the only verdict that means loopback-only; a timeout
-    // or an unexpected error must NOT be reported as exposed OR as verified-safe.
-    const verdicts = (verdict) => async () => verdict;
-    const interfaces = { eth0: [{ address: '10.0.0.5', family: 'IPv4', internal: false }], lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true }] };
-    assert((await cdpEndpointExposure(9222, { interfaces, connect: verdicts('connected') })).exposed === true,
-      'a connected probe is exposure');
-    assert((await cdpEndpointExposure(9222, { interfaces, connect: verdicts('refused') })).exposed === false,
-      'a refused probe is loopback-only');
-    const timeout = await cdpEndpointExposure(9222, { interfaces, connect: verdicts('timeout') });
-    assert(timeout.exposed === false && /unconfirmed/.test(timeout.note),
-      `a probe that could not decide must be reported as unconfirmed, not as verified: ${JSON.stringify(timeout)}`);
-    const errored = await cdpEndpointExposure(9222, { interfaces, connect: verdicts('error') });
-    assert(errored.exposed === false && /unconfirmed/.test(errored.note),
-      `an erroring probe must be reported as unconfirmed: ${JSON.stringify(errored)}`);
-    // A IPv6-only host has no IPv4 address to probe: say so rather than claim verification.
-    const v6only = { eth0: [{ address: 'fe80::1', family: 'IPv6', internal: false }] };
-    const none = await cdpEndpointExposure(9222, { interfaces: v6only, connect: verdicts('connected') });
-    assert(none.exposed === false && /no non-loopback interface/.test(none.note),
-      `with no IPv4 interface there is nothing to reach the endpoint on: ${JSON.stringify(none)}`);
-    // A port that is not a port is not a probe target.
-    assert((await cdpEndpointExposure(0, { interfaces, connect: verdicts('connected') })).exposed === false,
-      'a launch with no endpoint yet must not be reported as exposed');
-    // The probe itself: refused vs connected, against real sockets.
-    const closed = await listen('127.0.0.1');
-    const closedPort = closed.address().port;
-    await new Promise((r) => closed.close(r));
-    assert((await probeTcp('127.0.0.1', closedPort, 500)) === 'refused',
-      'a closed loopback port must probe as refused');
-    assert((await probeTcp('127.0.0.1', loopback.address().port, 500)) === 'connected',
-      'an open loopback port must probe as connected');
-    // 3. THE FAIL-CLOSED PATH, end to end with a real browser (a stub verdict injected, since
-    // this Chrome correctly refuses non-loopback and the alternative is a fabricated exposure):
-    // launchChrome must REJECT with the exposure reason, attribute the refused launch to the run
-    // log, and leave no browser tree and no profile dir behind - a refused audit must not leak
-    // the very browser it refused to expose.
+    // 4. THE VERDICT THE LAUNCH ACTUALLY USES, with the browser pid: a loopback-bound browser is
+    // cleared BY THE KERNEL, and an all-interfaces one is refused by it.
+    const cleared = await cdpEndpointExposure(v4Loop.address().port, { pid: process.pid });
+    assert(cleared.exposed === false && cleared.verifiedBy === 'the kernel binding',
+      `a loopback-bound endpoint must be cleared by the binding check: ${JSON.stringify(cleared)}`);
+    const refusedByBinding = await cdpEndpointExposure(v4Wild.address().port, { pid: process.pid });
+    assert(refusedByBinding.exposed === true && refusedByBinding.verifiedBy === 'the kernel binding',
+      `an all-interfaces endpoint must be refused by the binding check: ${JSON.stringify(refusedByBinding)}`);
+    const refusedV6 = await cdpEndpointExposure(v6Wild.address().port, { pid: process.pid });
+    assert(refusedV6.exposed === true, `an IPv6 wildcard bind must be refused: ${JSON.stringify(refusedV6)}`);
+
+    // 5. THE DECISION TABLE, with injected interfaces and verdicts so every branch is pinned on
+    // any machine. IPv6 is part of the table on purpose: an IPv4-only sweep is the blind spot
+    // that would have missed the :: case above.
+    const interfaces = {
+      eth0: [{ address: '10.0.0.5', family: 'IPv4', internal: false }],
+      eth1: [{ address: '2001:db8::5', family: 'IPv6', internal: false }],
+      eth2: [{ address: 'fe80::5', family: 'IPv6', internal: false, scopeid: 2 }],
+      lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true }],
+      lo6: [{ address: '::1', family: 'IPv6', internal: true }],
+    };
+    const seen = [];
+    const respond = (verdict) => async (host, port) => {
+      seen.push(`${host}:${port}`);
+      return verdict;
+    };
+    const noPid = { interfaces, readListeners: () => null };
+    assert((await cdpEndpointExposure(9222, { ...noPid, connect: respond('devtools') })).exposed === true, 'a DevTools answer on a non-loopback address is exposure');
+    const nondvt = await cdpEndpointExposure(9222, { ...noPid, connect: respond('other') });
+    assert(nondvt.exposed === false && /not with DevTools/.test(nondvt.note), `a non-DevTools listener must NOT refuse a healthy audit: ${JSON.stringify(nondvt)}`);
+    const refused = await cdpEndpointExposure(9222, { ...noPid, connect: respond('refused') });
+    assert(refused.exposed === false && !refused.note, `refusals everywhere mean loopback-only: ${JSON.stringify(refused)}`);
+    const undecided = await cdpEndpointExposure(9222, { ...noPid, connect: respond('timeout') });
+    assert(undecided.exposed === false && /unconfirmed/.test(undecided.note) && /could not be decided/.test(undecided.note),
+      `an undecided probe must be reported as unconfirmed, never as verified: ${JSON.stringify(undecided)}`);
+    assert(seen.some((h) => h.startsWith('2001:db8::5:')) && seen.some((h) => h.startsWith('fe80::5%2:')),
+      `IPv6 must be probed, including a link-local address with its zone: ${JSON.stringify(seen)}`);
+    // The pid is what makes the binding check attributable: assert it is passed through.
+    let askedPid = null;
+    await cdpEndpointExposure(9222, { interfaces: {}, pid: 4242, readListeners: (pid) => { askedPid = pid; return null; } });
+    assert(askedPid === 4242, 'the exposure check must ask about the BROWSER pid it was given');
+    // A host with only loopback can only be reached on loopback.
+    const loopbackOnly = await cdpEndpointExposure(9222, { interfaces: { lo: interfaces.lo, lo6: interfaces.lo6 }, pid: null, connect: respond('devtools') });
+    assert(loopbackOnly.exposed === false && /no non-loopback address/.test(loopbackOnly.note), `a loopback-only host must say so: ${JSON.stringify(loopbackOnly)}`);
+    assert((await cdpEndpointExposure(0, { interfaces })).exposed === false, 'a launch with no port yet must not be reported as exposed');
+    assert(readBoundListeners(99999999) === null, 'an unreadable pid must be null, not an empty list that reads as safe');
+
+    // 6. THE PROBE ITSELF, against real servers: a plain listener is 'connecting but not
+    // DevTools', a DevTools-shaped answer is exposure, and a closed port is refused.
+    const plainHttp = await listen('0.0.0.0');
+    plainHttp.on('connection', (socket) => socket.end('HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html>hello, not devtools</html>'));
+    const fakeDevtools = await listen('0.0.0.0');
+    fakeDevtools.on('connection', (socket) =>
+      socket.end('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"Browser":"Chrome/154.0","webSocketDebuggerUrl":"ws://localhost/devtools/browser/x"}\n'));
+    const closedProbe = await listen('127.0.0.1');
+    const closedPort = closedProbe.address().port;
+    await close(closedProbe);
+    try {
+      assert((await probeDevtools('127.0.0.1', closedPort, 800)) === 'refused', 'a closed port must probe as refused');
+      assert((await probeDevtools('127.0.0.1', plainHttp.address().port, 800)) === 'other', 'a non-DevTools listener must probe as other');
+      assert((await probeDevtools('127.0.0.1', fakeDevtools.address().port, 800)) === 'devtools', 'a DevTools-shaped answer must probe as devtools');
+      // ...and the end-to-end refusal for a real DevTools listener on a non-loopback address.
+      const nonLoopback = Object.values((await import('node:os')).networkInterfaces()).flat()
+        .filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => a.address);
+      if (nonLoopback.length > 0) {
+        const throughProbe = await cdpEndpointExposure(fakeDevtools.address().port, { pid: null });
+        assert(throughProbe.exposed === true && throughProbe.verifiedBy === 'reachability',
+          `a DevTools listener on 0.0.0.0 must be refused through the reachability path: ${JSON.stringify(throughProbe)}`);
+        const plainThroughProbe = await cdpEndpointExposure(plainHttp.address().port, { pid: null });
+        assert(plainThroughProbe.exposed === false,
+          `a plain listener on 0.0.0.0 must not refuse an audit: ${JSON.stringify(plainThroughProbe)}`);
+      } else {
+        console.log('  (no non-loopback interface on this host: the reachability exposure cases were skipped)');
+      }
+    } finally {
+      await close(plainHttp);
+      await close(fakeDevtools);
+    }
+
+    // 7. THE LAUNCH PATH, both ways, with a real browser.
+    // (a) A healthy launch: the pin is measured from the kernel and the endpoint is cleared.
+    const log = [];
+    const chrome = await launchChrome({ log: (m) => log.push(m) });
+    try {
+      const verdict = await cdpEndpointExposure(chrome.port, { pid: chrome.proc.pid });
+      assert(verdict.exposed === false && verdict.verifiedBy === 'the kernel binding',
+        `a real launch must be cleared by its own kernel binding: ${JSON.stringify(verdict)}`);
+      assert(!log.some((m) => /unconfirmed|not with DevTools/.test(m)), `a healthy launch must not log an unresolved exposure note: ${JSON.stringify(log)}`);
+    } finally {
+      await chrome.close();
+    }
+    // (b) A refusal must REFUSE: reject with the reason, attribute the refusal, kill the browser,
+    // remove the profile - and NOT retry, because a retry loop can spawn another exposed listener
+    // and hand the exposed browser back when a later attempt cannot decide.
     const launchesFile = join(tmpdir(), `web-uplift-4rv-launches-${process.pid}.jsonl`);
     rmSync(launchesFile, { force: true });
-    // recordLaunchFailure only writes when the sink is configured, and the sink is how a
-    // refused launch is attributed to the run.
     const previousSink = process.env.WEB_UPLIFT_LAUNCH_LOG;
     process.env.WEB_UPLIFT_LAUNCH_LOG = launchesFile;
-    const { launchChrome } = await import('../evidence/cdp.mjs');
-    let refused = null;
+    let attempts = 0;
+    let refusal = null;
     try {
       await launchChrome({
         log: () => {},
-        exposureProbe: async (port) => ({ exposed: true, reason: `test-injected exposure on port ${port}` }),
+        exposureProbe: async (port) => {
+          attempts += 1;
+          return { exposed: true, verifiedBy: 'test', reason: `test-injected exposure on port ${port}` };
+        },
       });
     } catch (err) {
-      refused = err;
+      refusal = err;
     }
-    assert(refused instanceof Error && /test-injected exposure on port \d+/.test(refused.message),
-      `an exposed endpoint must fail the launch with the reason: ${refused && refused.message}`);
-    const records = readFileSync(launchesFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
-    const refusal = records.find((r) => /test-injected exposure/.test(r.reason ?? ''));
-    assert(refusal, `the refused launch must be attributed to the run log: ${JSON.stringify(records)}`);
-    assert(!existsSync(refusal.profileDir), `a refused launch must not leave its profile dir behind (${refusal.profileDir})`);
-    const alive = refusal.pid ? existsSync(`/proc/${refusal.pid}`) : false;
-    assert(!alive, `a refused launch must not leave the browser running (pid ${refusal.pid})`);
     if (previousSink === undefined) delete process.env.WEB_UPLIFT_LAUNCH_LOG;
     else process.env.WEB_UPLIFT_LAUNCH_LOG = previousSink;
+    assert(attempts === 1, `an exposure refusal must NOT be retried (probe ran ${attempts} times)`);
+    assert(refusal instanceof Error && /test-injected exposure on port \d+/.test(refusal.message),
+      `an exposed endpoint must fail the launch with the reason: ${refusal && refusal.message}`);
+    const records = readFileSync(launchesFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const recorded = records.find((r) => /test-injected exposure/.test(r.reason ?? ''));
+    assert(recorded, `the refused launch must be attributed to the run log: ${JSON.stringify(records)}`);
+    assert(!existsSync(recorded.profileDir), `a refused launch must not leave its profile dir behind (${recorded.profileDir})`);
+    assert(!(recorded.pid && existsSync(`/proc/${recorded.pid}`)), `a refused launch must not leave the browser running (pid ${recorded.pid})`);
     rmSync(launchesFile, { force: true });
 
-    // The launch path also passes the pin itself: asserted on the source, because the
-    // alternative is spawning a browser and reading its command line (which I did by hand, and
-    // which a live-launch check in this suite's browser tests cannot do portably).
-    const source = (await import('node:fs')).readFileSync(resolve(repoRoot, 'evidence', 'cdp.mjs'), 'utf8');
+    // 8. THE LAUNCH ARGUMENTS. The live check above proves the pin held for this Chrome; these
+    // assert the two things that make the check a check rather than a hope.
+    const source = readFileSync(join(repoRoot, 'evidence', 'cdp.mjs'), 'utf8');
     assert(source.includes("'--remote-debugging-address=127.0.0.1'"),
       'the launch must pin the debugging address to loopback, not rely on Chrome defaulting to it');
-    assert(source.includes('cdpEndpointExposure(port)'),
-      'the launch must verify the binding it asked for');
+    assert(source.includes('exposureProbe(port, proc.pid)'),
+      'the launch must run the exposure check against ITS OWN browser pid, not against the port alone');
   } finally {
-    await new Promise((r) => loopback.close(r));
-    await new Promise((r) => anyAddress.close(r));
+    await close(v4Loop);
+    await close(v4Wild);
+    await close(v6Loop);
+    await close(v6Wild);
+    if (helper) helper.child.kill('SIGKILL');
   }
-  console.log('tests/cdp-endpoint-exposure.mjs: tests OK');
+  console.log(`${here.split('/').slice(-2).join('/')}: tests OK`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === here) {
   await testCdpEndpointExposure();
 }

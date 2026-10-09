@@ -13,7 +13,7 @@
 // page. The intelligence lives in the model (following SKILL.md), not here.
 
 import { spawn } from 'node:child_process';
-import { appendFileSync, mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from 'node:fs';
 import { homedir, networkInterfaces, tmpdir } from 'node:os';
 import { connect as netConnect } from 'node:net';
 import { join } from 'node:path';
@@ -239,6 +239,11 @@ function removeDirNow(dir) {
 // line at all, which is a failed or wedged start (crash, unusable profile, lost
 // race), not a slow one; a larger number would only turn a fast failure into a
 // slow one. The fix for that is retrying the launch, not waiting longer.
+// How long a reachability probe waits for an answer before calling the outcome undecided. One
+// second, not a few hundred milliseconds: a verdict that flips to "unconfirmed" under load is a
+// verdict that fails open exactly when the machine is busy (web-uplift-4rv review).
+const PROBE_TIMEOUT_MS = 1000;
+
 const DEVTOOLS_ENDPOINT_TIMEOUT_MS = 20000;
 
 // Hard deadlines for the CDP waits. A starved host can leave a browser that
@@ -423,55 +428,212 @@ export function sandboxDisableReason({ env = process.env, uid = process.getuid?.
 }
 
 // One launch attempt: a fresh profile dir, a spawn, and a bounded wait for the
-// Is the CDP endpoint reachable from anywhere but this machine (web-uplift-4rv)?
+// ---- The CDP endpoint's EXPOSURE (web-uplift-4rv) -------------------------------------------
 //
-// Chrome's DevTools endpoint has no authentication, and this tool keeps it open for the life
-// of the audit, so the only thing standing between the browser and any other host that can
-// reach the port is the ADDRESS it bound to. This asks the question with a real connection to
-// the endpoint over every non-loopback address this host has: a connection that SUCCEEDS is
-// proof the endpoint is exposed, because the same connection from another host would succeed
-// too. `interfaces` and `connect` are injectable so the decision is testable without a
-// browser and without depending on this machine's network.
-export async function cdpEndpointExposure(port, { interfaces = networkInterfaces(), connect = probeTcp, timeoutMs = 300 } = {}) {
-  if (!Number.isInteger(port) || port <= 0) return { exposed: false, note: 'no CDP port to probe' };
+// Chrome's DevTools endpoint has no authentication at all, and this tool keeps it open for the
+// whole audit: anything that can reach its port can drive the browser as the operator, read
+// every page it holds open and run script in them. The launch is pinned to loopback, but a pin
+// is a claim about what another program did, so the launch MEASURES it. Two checks, because a
+// security verdict that is really a guess is worse than no verdict:
+//
+//   1. THE BINDING ITSELF, read from the kernel and attributed to our own browser pid (that
+//      pid's socket inodes from /proc/<pid>/fd, then the LISTEN rows for those inodes in
+//      /proc/net/tcp and /proc/net/tcp6). This is the decisive check: it answers for IPv6 as
+//      well as IPv4, it cannot be confused by an unrelated process that happens to hold the
+//      same port number on a different address, and it does not depend on reachability, on
+//      firewalls, or on a proxy's behaviour. Linux only.
+//   2. REACHABILITY, used when the binding cannot be read (macOS, Windows, no /proc) and as a
+//      second opinion when it can: connect to the endpoint over every non-loopback address
+//      this host has, including IPv6, and speak just enough HTTP to ask WHO is answering.
+//      Only a DevTools-shaped answer counts as exposure, so an unrelated daemon or a
+//      transparent proxy holding that address cannot turn a healthy audit into a refused one.
+//
+// What neither check can decide is reported as UNCONFIRMED, never as verified-safe, and the
+// README says which check ran and what remains unproven.
+const LOOPBACK_V6 = /^(?:::1$|::ffff:127\.)/i;
+
+// Is this a loopback address, in either family? 127.0.0.0/8 is all loopback, not just
+// 127.0.0.1, and ::1 is the IPv6 one.
+export function isLoopbackAddress(address) {
+  if (typeof address !== 'string') return false;
+  return address.startsWith('127.') || address === '0:0:0:0:0:0:0:1' || LOOPBACK_V6.test(address);
+}
+
+// The addresses our pid listens on, straight from the kernel. Returns null when this cannot be
+// read at all (no /proc, a pid we cannot inspect), which callers must treat as "unknown"
+// rather than as "nothing listening".
+export function readBoundListeners(pid, { fdDir = `/proc/${pid}/fd`, tcpFiles = ['/proc/net/tcp', '/proc/net/tcp6'] } = {}) {
+  let fds;
+  try {
+    fds = readdirSync(fdDir);
+  } catch {
+    return null;
+  }
+  const inodes = new Set();
+  for (const fd of fds) {
+    let target;
+    try {
+      target = readlinkSync(join(fdDir, fd));
+    } catch {
+      continue; // the fd closed between readdir and readlink, which is normal
+    }
+    const match = /^socket:\[(\d+)\]$/.exec(target);
+    if (match) inodes.add(match[1]);
+  }
+  if (inodes.size === 0) return null;
+  const listeners = [];
+  for (const file of tcpFiles) {
+    let text;
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch {
+      continue; // no IPv6 table on a v4-only kernel, or unreadable in some sandboxes
+    }
+    for (const line of text.split('\n').slice(1)) {
+      const field = line.trim().split(/\s+/);
+      if (field.length < 10) continue;
+      if (field[3] !== '0A') continue; // 0A is TCP_LISTEN
+      if (!inodes.has(field[9])) continue;
+      const [hexAddress, hexPort] = field[1].split(':');
+      const address = decodeProcAddress(hexAddress, file.endsWith('6'));
+      const port = parseInt(hexPort, 16);
+      if (address !== null && Number.isInteger(port)) listeners.push({ address, port, family: file.endsWith('6') ? 'IPv6' : 'IPv4' });
+    }
+  }
+  return listeners;
+}
+
+// /proc encodes addresses as hex, IPv4 little-endian as one word and IPv6 as four little-endian
+// 32-bit words. Anything that does not decode is null rather than a made-up address.
+export function decodeProcAddress(hex, v6) {
+  if (typeof hex !== 'string' || !/^[0-9A-Fa-f]+$/.test(hex)) return null;
+  if (!v6) {
+    const bytes = hex.match(/../g);
+    if (!bytes || bytes.length !== 4) return null;
+    return bytes.reverse().map((b) => parseInt(b, 16)).join('.');
+  }
+  if (hex.length !== 32) return null;
+  const words = hex.match(/......../g);
+  if (!words) return null;
+  // The WORDS are already in canonical order (word 0 first): /proc byte-swaps inside each
+  // 32-bit word, it does not reorder them. Reversing the word order as well turns ::1 into
+  // 0:1:0:0:0:0:0:0, which is a different address.
+  const bytes = words
+    .map((word) => (word.match(/../g) ?? []).reverse().join(''))
+    .join('');
+  const groups = bytes.match(/..../g);
+  if (!groups) return null;
+  return groups.map((g) => parseInt(g, 16).toString(16)).join(':');
+}
+
+// The verdict from the kernel's own view: every listener our browser has on its port must be a
+// loopback address. A wildcard bind (0.0.0.0 or ::) is exposure, and so is a single non-loopback
+// address. No listener for the port at all is NOT a safe verdict: the browser announced that
+// port, so not finding it means the read was incomplete.
+export function classifyBoundListeners(port, listeners) {
+  const onPort = (listeners ?? []).filter((l) => l.port === port);
+  if (onPort.length === 0) {
+    return { exposed: false, unknown: true, note: `no listening socket for port ${port} was found in /proc for this browser` };
+  }
+  const reachable = onPort.filter((l) => !isLoopbackAddress(l.address));
+  if (reachable.length === 0) return { exposed: false, verifiedBy: 'the kernel binding' };
+  const named = [...new Set(reachable.map((l) => (l.family === 'IPv6' ? `[${l.address}]:${l.port}` : `${l.address}:${l.port}`)))].join(', ');
+  return {
+    exposed: true,
+    verifiedBy: 'the kernel binding',
+    reason:
+      `the DevTools endpoint is bound to ${named}, which is not a loopback address: an unauthenticated ` +
+      'DevTools port is reachable from anywhere that can route to it, so this launch is refused',
+  };
+}
+
+// Every non-loopback address this host has, IPv4 and IPv6. Link-local IPv6 needs its zone
+// (scope) id to be connectable, which networkInterfaces() reports separately.
+export function nonLoopbackHosts(interfaces = networkInterfaces()) {
   const hosts = [];
   for (const addrs of Object.values(interfaces ?? {})) {
     for (const addr of addrs ?? []) {
-      if (addr && addr.family === 'IPv4' && !addr.internal) hosts.push(addr.address);
+      if (!addr || addr.internal) continue;
+      const family = addr.family === 'IPv4' || addr.family === 4 ? 'v4' : addr.family === 'IPv6' || addr.family === 6 ? 'v6' : null;
+      if (!family) continue;
+      if (family === 'v6' && /^fe80:/i.test(addr.address) && addr.scopeid) hosts.push(`${addr.address}%${addr.scopeid}`);
+      else hosts.push(addr.address);
     }
   }
-  if (hosts.length === 0) {
-    // Nothing but loopback on this host: there is no other address to reach it on, which is
-    // the property we want, and it is worth saying so rather than staying silent.
-    return { exposed: false, note: 'CDP endpoint: no non-loopback interface exists on this host, so it is loopback-only' };
-  }
-  let indeterminate = null;
-  for (const host of hosts) {
-    const verdict = await connect(host, port, timeoutMs);
-    if (verdict === 'connected') {
-      return {
-        exposed: true,
-        reason:
-          `the CDP endpoint answered on ${host}:${port}, which is not a loopback address: the audit's ` +
-          'authenticated-free DevTools port is reachable from other hosts, so this launch is refused',
-      };
-    }
-    if (verdict !== 'refused') indeterminate = host;
-  }
-  return indeterminate
-    ? {
-        exposed: false,
-        note: `CDP endpoint: could not probe ${indeterminate}:${port} (${indeterminate} did not refuse the connection), so loopback-only is unconfirmed`,
-      }
-    : { exposed: false };
+  return hosts;
 }
 
-// One real TCP probe of the endpoint. 'connected' means something is listening on that
-// address, which is the only outcome that proves exposure; 'refused' is the loopback-only
-// answer; anything else is indeterminate and must not be reported as either.
-export function probeTcp(host, port, timeoutMs) {
+// The exposure verdict for a browser that just announced `port`. `pid` is the browser's pid
+// when the caller knows it (the launch path does), which is what makes the kernel check
+// attributable; without it, only reachability can be checked. `readListeners` and `connect` are
+// injectable so the decision is testable without a browser and without this machine's network.
+export async function cdpEndpointExposure(port, {
+  pid = null,
+  interfaces = networkInterfaces(),
+  connect = probeDevtools,
+  timeoutMs = PROBE_TIMEOUT_MS,
+  readListeners = readBoundListeners,
+} = {}) {
+  if (!Number.isInteger(port) || port <= 0) return { exposed: false, note: 'no CDP port to probe' };
+  const notes = [];
+
+  if (Number.isInteger(pid) && typeof readListeners === 'function') {
+    let listeners = null;
+    try {
+      listeners = readListeners(pid);
+    } catch (err) {
+      notes.push(`the socket binding of pid ${pid} could not be read (${err && err.message})`);
+    }
+    if (Array.isArray(listeners)) {
+      const verdict = classifyBoundListeners(port, listeners);
+      if (verdict.exposed) return { ...verdict, note: notes.join('; ') || undefined };
+      if (!verdict.unknown) return { exposed: false, verifiedBy: 'the kernel binding', note: notes.join('; ') || undefined };
+      notes.push(verdict.note);
+    }
+  } else if (Number.isInteger(pid)) {
+    notes.push('the kernel binding could not be checked');
+  }
+
+  const hosts = nonLoopbackHosts(interfaces);
+  if (hosts.length === 0) {
+    notes.push('this host has no non-loopback address, so the endpoint can only be reached on loopback');
+    return { exposed: false, verifiedBy: 'reachability', note: notes.join('; ') };
+  }
+  let probed = 0;
+  for (const host of hosts) {
+    const verdict = await connect(host, port, timeoutMs);
+    if (verdict === 'refused') continue;
+    if (verdict === 'devtools') {
+      return {
+        exposed: true,
+        verifiedBy: 'reachability',
+        reason:
+          `the browser answered as Chrome DevTools on ${host}:${port}, which is not a loopback address: an ` +
+          'unauthenticated DevTools port is reachable from anywhere that can route to it, so this launch is refused',
+        note: notes.join('; ') || undefined,
+      };
+    }
+    if (verdict === 'other') notes.push(`${host}:${port} answers, but not with DevTools`);
+    else {
+      probed += 1;
+      notes.push(`${host}:${port} could not be probed (${verdict}), so its exposure is unconfirmed`);
+    }
+  }
+  return {
+    exposed: false,
+    verifiedBy: 'reachability',
+    note: [...notes, probed > 0 ? `${probed} of ${hosts.length} non-loopback addresses could not be decided` : ''].filter(Boolean).join('; ') || undefined,
+  };
+}
+
+// One reachability probe: connect, then ask Chrome's own HTTP endpoint who is there. Only a
+// DevTools-shaped answer is exposure - a plain 'connected' would also be true of an unrelated
+// daemon that happens to hold that port, or of a proxy that accepts and answers, and refusing
+// a healthy launch for either is a worse failure than the exposure check is worth.
+export function probeDevtools(host, port, timeoutMs) {
   return new Promise((resolve) => {
     let settled = false;
+    let text = '';
     const settle = (verdict) => {
       if (settled) return;
       settled = true;
@@ -484,10 +646,25 @@ export function probeTcp(host, port, timeoutMs) {
     };
     const socket = netConnect({ host, port });
     socket.setTimeout(timeoutMs);
-    socket.once('connect', () => settle('connected'));
-    socket.once('timeout', () => settle('timeout'));
+    socket.once('connect', () => {
+      const authority = host.includes(':') ? `[${host.split('%')[0]}]` : host;
+      socket.write(`GET /json/version HTTP/1.1\r\nHost: ${authority}\r\nConnection: close\r\n\r\n`);
+    });
+    socket.on('data', (chunk) => {
+      text += chunk.toString('utf8');
+      if (isDevtoolsBody(text)) settle('devtools');
+      else if (text.length > 64 * 1024) settle('other'); // a body this large is not /json/version
+    });
+    socket.once('end', () => settle(isDevtoolsBody(text) ? 'devtools' : text ? 'other' : 'error'));
+    socket.once('timeout', () => settle(isDevtoolsBody(text) ? 'devtools' : text ? 'other' : 'timeout'));
     socket.once('error', (err) => settle(err && err.code === 'ECONNREFUSED' ? 'refused' : 'error'));
   });
+}
+
+// What Chrome's /json/version answers, and nothing else, counts as DevTools: the 404 page of an
+// unrelated server and a proxy's own page must not be read as a MisDevTools endpoint.
+export function isDevtoolsBody(text) {
+  return /"webSocketDebuggerUrl"\s*:/.test(text) || /"Browser"\s*:\s*"Chrome/.test(text) || /"Chrome\//.test(text);
 }
 
 // "DevTools listening on ws://..." line Chrome prints to stderr
@@ -648,13 +825,16 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
   // operator, read the pages it has open and run script in them. So the claim is measured
   // rather than trusted, and a non-loopback bind fails the launch instead of exposing an
   // audit (web-uplift-4rv).
-  const exposure = await exposureProbe(port);
+  const exposure = await exposureProbe(port, proc.pid);
   if (exposure.exposed) {
     recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: exposure.reason });
     await close();
     return {
       ok: false,
-      detail: { reason: exposure.reason, spawned: true, alive: false, exitCode: null, signal: null, stderrText },
+      // `fatal` is what stops launchChrome from retrying: a bind that is not loopback is a
+      // verdict about this host, and a retry loop would spawn more exposed listeners and could
+      // then fail OPEN on a later attempt that could not decide (web-uplift-4rv review).
+      detail: { reason: exposure.reason, fatal: true, spawned: true, alive: false, exitCode: null, signal: null, stderrText },
     };
   }
   if (exposure.note) log(`[browser] ${exposure.note}`);
@@ -676,7 +856,7 @@ export async function launchChrome({
   // a test cannot provoke from a real browser here, because this Chrome correctly refuses
   // non-loopback, and "the launch fails closed when the endpoint IS exposed" is exactly the
   // behaviour worth telling from a source grep. Production always uses the real probe.
-  exposureProbe = (port) => cdpEndpointExposure(port),
+  exposureProbe = (port, pid) => cdpEndpointExposure(port, { pid }),
 } = {}) {
   const chromePath = resolveChromePath();
   const reasons = [];
@@ -689,6 +869,12 @@ export async function launchChrome({
     }
     lastDetail = result.detail;
     reasons.push(result.detail.reason);
+    if (result.detail.fatal) {
+      // A verdict is not a flake. Retrying would spawn another exposed listener, and if a
+      // later attempt could not decide, launchChrome would hand the exposed browser to the
+      // caller - a security check that can be retried away is not a check (web-uplift-4rv).
+      throw new Error(describeLaunchFailure({ attempts: attempt, reasons, detail: result.detail }));
+    }
     if (attempt < LAUNCH_ATTEMPTS) {
       const backoff = launchBackoffMs(attempt);
       log(
