@@ -53,9 +53,9 @@ export class CatalogRefusal extends Error {}
 // A literal reader, not a general JS parser and deliberately not an evaluator. It walks the
 // array text once, tracking string state so a brace inside a string cannot confuse it, and
 // throws CatalogRefusal the moment it meets something that is not a literal value.
-export function parseUseCasesTable(table) {
-  let i = 0;
-  const here = () => `${JSON.stringify(table.slice(Math.max(0, i - 24), i + 24))} at offset ${i}`;
+function readLiteralAt(text, start) {
+  let i = start;
+  const here = () => `${JSON.stringify(text.slice(Math.max(0, i - 24), i + 24))} at offset ${i}`;
   const fail = (why) => {
     throw new CatalogRefusal(
       `the USE_CASES table is not pure data: ${why} (${here()}). ` +
@@ -64,13 +64,13 @@ export function parseUseCasesTable(table) {
   };
   const skipTrivia = () => {
     for (;;) {
-      while (i < table.length && /\s/.test(table[i])) i++;
-      if (table.startsWith('//', i)) {
-        while (i < table.length && table[i] !== '\n') i++;
+      while (i < text.length && /\s/.test(text[i])) i++;
+      if (text.startsWith('//', i)) {
+        while (i < text.length && text[i] !== '\n') i++;
         continue;
       }
-      if (table.startsWith('/*', i)) {
-        const end = table.indexOf('*/', i + 2);
+      if (text.startsWith('/*', i)) {
+        const end = text.indexOf('*/', i + 2);
         if (end === -1) fail('an unterminated block comment');
         i = end + 2;
         continue;
@@ -79,22 +79,22 @@ export function parseUseCasesTable(table) {
     }
   };
   const readString = () => {
-    const quote = table[i];
+    const quote = text[i];
     const isTemplate = quote === '`';
     i++;
     let out = '';
-    while (i < table.length) {
-      const c = table[i];
+    while (i < text.length) {
+      const c = text[i];
       // A template literal is data as long as it does not interpolate: `${...}` is an
       // expression, which is code, so it is refused. (The published 0.0.193 table uses
       // backticks for some descriptions, with no interpolation anywhere in it.)
-      if (isTemplate && c === '$' && table[i + 1] === '{') {
+      if (isTemplate && c === '$' && text[i + 1] === '{') {
         fail('an interpolation in a template literal');
       }
       if (c === '\\') {
-        const next = table[i + 1];
+        const next = text[i + 1];
         if (next === 'u') {
-          const hex = table.slice(i + 2, i + 6);
+          const hex = text.slice(i + 2, i + 6);
           if (!/^[0-9a-fA-F]{4}$/.test(hex)) fail('a malformed \\u escape');
           out += String.fromCharCode(parseInt(hex, 16));
           i += 6;
@@ -117,7 +117,7 @@ export function parseUseCasesTable(table) {
     fail('an unterminated string literal');
   };
   const readNumber = () => {
-    const rest = table.slice(i);
+    const rest = text.slice(i);
     // Every pure-data numeric literal a package might legitimately contain: sign, decimal
     // with optional fraction and exponent, hex/octal/binary, and `_` separators. A number
     // cannot execute, so being liberal here costs nothing and a needless refusal would stop
@@ -131,16 +131,16 @@ export function parseUseCasesTable(table) {
   };
   const readValue = () => {
     skipTrivia();
-    const c = table[i];
+    const c = text[i];
     if (c === '"' || c === "'" || c === '`') return readString();
     if (c === '[') return readArray();
     if (c === '{') return readObject();
-    const digitNext = /[0-9]/.test(table[i + 1] ?? '');
-    if (c === '-' || (c >= '0' && c <= '9') || (c === '.' && digitNext) || (c === '+' && (digitNext || table[i + 1] === '.'))) {
+    const digitNext = /[0-9]/.test(text[i + 1] ?? '');
+    if (c === '-' || (c >= '0' && c <= '9') || (c === '.' && digitNext) || (c === '+' && (digitNext || text[i + 1] === '.'))) {
       return readNumber();
     }
     for (const [word, value] of [['true', true], ['false', false], ['null', null]]) {
-      if (table.startsWith(word, i) && !/[A-Za-z0-9_$]/.test(table[i + word.length] ?? '')) {
+      if (text.startsWith(word, i) && !/[A-Za-z0-9_$]/.test(table[i + word.length] ?? '')) {
         i += word.length;
         return value;
       }
@@ -151,84 +151,97 @@ export function parseUseCasesTable(table) {
     i++; // '['
     const out = [];
     skipTrivia();
-    if (table[i] === ']') {
+    if (text[i] === ']') {
       i++;
       return out;
     }
     for (;;) {
       out.push(readValue());
       skipTrivia();
-      if (table[i] === ',') {
+      if (text[i] === ',') {
         i++;
         skipTrivia();
-        if (table[i] === ']') {
+        if (text[i] === ']') {
           i++; // trailing comma
           return out;
         }
         continue;
       }
-      if (table[i] === ']') {
+      if (text[i] === ']') {
         i++;
         return out;
       }
-      return fail(`expected ',' or ']' in an array, found ${JSON.stringify(table[i] ?? '<end>')}`);
+      return fail(`expected ',' or ']' in an array, found ${JSON.stringify(text[i] ?? '<end>')}`);
     }
   };
   const readObject = () => {
     i++; // '{'
     const out = {};
     skipTrivia();
-    if (table[i] === '}') {
+    if (text[i] === '}') {
       i++;
       return out;
     }
     for (;;) {
       skipTrivia();
-      const key = table[i] === '"' || table[i] === "'" || table[i] === '`'
+      const key = text[i] === '"' || text[i] === "'" || text[i] === '`'
         ? readString()
-        : fail(`expected a quoted key, found ${JSON.stringify(table[i] ?? '<end>')}`);
+        : fail(`expected a quoted key, found ${JSON.stringify(text[i] ?? '<end>')}`);
       // A key that would land on Object.prototype is refused rather than assigned: the
       // value comes from a downloaded package, and `__proto__` is not a guide field.
       if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
         fail(`a key named ${JSON.stringify(key)}`);
       }
       skipTrivia();
-      if (table[i] !== ':') fail(`expected ':' after the key ${JSON.stringify(key)}`);
+      if (text[i] !== ':') fail(`expected ':' after the key ${JSON.stringify(key)}`);
       i++;
       out[key] = readValue();
       skipTrivia();
-      if (table[i] === ',') {
+      if (text[i] === ',') {
         i++;
         skipTrivia();
-        if (table[i] === '}') {
+        if (text[i] === '}') {
           i++; // trailing comma
           return out;
         }
         continue;
       }
-      if (table[i] === '}') {
+      if (text[i] === '}') {
         i++;
         return out;
       }
-      return fail(`expected ',' or '}' in an object, found ${JSON.stringify(table[i] ?? '<end>')}`);
+      return fail(`expected ',' or '}' in an object, found ${JSON.stringify(text[i] ?? '<end>')}`);
     }
   };
 
-  const parsed = readValue();
-  skipTrivia();
-  if (i !== table.length) fail('trailing content after the table');
-  if (!Array.isArray(parsed)) fail('the table is not an array');
-  return parsed;
+  const value = readValue();
+  skipTrivia(); // trailing whitespace and comments are not content
+  return { value, end: i };
 }
 
-// The array literal itself, including its brackets. The upstream file declares it as
-// `var USE_CASES = [...]` and the literal ends at the first line that closes it.
-export function extractUseCasesLiteral(source) {
-  const match = source.match(/var USE_CASES\s*=\s*(\[[\s\S]*?\n\];)/);
-  if (!match) {
+// Parse a table text that must be exactly one literal, nothing after it but whitespace and
+// comments. Returns the parsed array.
+export function parseUseCasesTable(table) {
+  const { value, end } = readLiteralAt(table, 0);
+  if (table.slice(end) !== '') {
+    throw new CatalogRefusal('the USE_CASES table has trailing content after the literal');
+  }
+  if (!Array.isArray(value)) throw new CatalogRefusal('the USE_CASES table is not an array');
+  return value;
+}
+
+// The table, located by OFFSET after `var USE_CASES =` and read as data. The old recipe
+// matched a regex ending in a newline plus `];`, which finds only a table whose closing
+// bracket sits on its own line; a minified or differently formatted upstream release would
+// have failed there, and this reader does not care about the formatting at all.
+export function readUseCases(source) {
+  const decl = /var\s+USE_CASES\s*=\s*/.exec(source);
+  if (!decl) {
     throw new CatalogRefusal('the package entry point does not declare a `var USE_CASES = [...]` table');
   }
-  return match[1].replace(/;\s*$/, '');
+  const { value, end } = readLiteralAt(source, decl.index + decl[0].length);
+  if (!Array.isArray(value)) throw new CatalogRefusal('the USE_CASES table is not an array');
+  return { value, text: source.slice(decl.index + decl[0].length, end) };
 }
 
 // The slug test for a guide id or category used as a PATH segment. Anything else - notably
@@ -247,7 +260,7 @@ export function buildCatalog({ packageDir, version, existing = null, now = () =>
   if (!existsSync(entryPath)) {
     throw new CatalogRefusal(`no package entry point at ${entryPath} (is --package-dir an unpacked modern-web-guidance tarball?)`);
   }
-  const useCases = parseUseCasesTable(extractUseCasesLiteral(readFileSync(entryPath, 'utf8')));
+  const useCases = readUseCases(readFileSync(entryPath, 'utf8')).value;
 
   const guidesDir = join(root, GUIDES_RELATIVE);
   if (!existsSync(guidesDir)) throw new CatalogRefusal(`no guides directory at ${guidesDir}`);

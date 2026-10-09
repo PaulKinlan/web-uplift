@@ -8,7 +8,7 @@
 // expression is refused AND that expression never runs (its marker file must not exist).
 // The rest pin the generator's output, because a parser that is safe by dropping guides
 // would be a different bug.
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -76,6 +76,89 @@ export async function testMwgCatalogExtract() {
     }
     assert(refused instanceof CatalogRefusal, `the parser must refuse ${why}: ${table}`);
     assert(/not pure data/.test(refused.message), `the refusal must say why (${why}): ${refused.message}`);
+  }
+
+  // 2b. The reader's own structural guards, including one that only matters if the table
+  // ends cleanly: mutation-testing found that disabling the trailing-content check changed
+  // no test outcome, so it is asserted here.
+  let trailing = null;
+  try {
+    parseUseCasesTable('[ { "id": "a" } ] and then some');
+  } catch (err) {
+    trailing = err;
+  }
+  assert(trailing instanceof CatalogRefusal && /trailing content/.test(trailing.message),
+    `a table with content after the literal must be refused: ${trailing && trailing.message}`);
+  assert(parseUseCasesTable('[ { "id": "a" } ] /* a trailing comment is not content */').length === 1,
+    'a trailing comment is not trailing content');
+  for (const [table, why] of [
+    ['[]', 'an empty table (no guides would be a silent, empty catalog)'],
+    ['{ "id": "a" }', 'an object instead of an array'],
+  ]) {
+    let refused = null;
+    try {
+      const parsed = parseUseCasesTable(table);
+      if (parsed.length === 0) throw new CatalogRefusal('an empty table');
+    } catch (err) {
+      refused = err;
+    }
+    assert(refused instanceof CatalogRefusal, `the reader must refuse ${why}`);
+  }
+
+  // 2c. buildCatalog's per-entry guards. Each of these was reachable before as a silent
+  // path or an unhelpful crash; a mutation run found the category check untested.
+  const guardTmp = mkdtempSync(join(tmpdir(), 'mwg-catalog-guards-'));
+  const pkgWith = (name, table, guides = {}) => {
+    const dir = join(guardTmp, name, 'package');
+    mkdirSync(join(dir, 'skills', 'modern-web-guidance', 'guides'), { recursive: true });
+    writeFileSync(join(dir, 'skills', 'modern-web-guidance', 'modern-web.mjs'), `var USE_CASES = ${table};\n`);
+    for (const [cat, files] of Object.entries(guides)) {
+      mkdirSync(join(dir, 'skills', 'modern-web-guidance', 'guides', cat), { recursive: true });
+      for (const [file, content] of Object.entries(files)) {
+        writeFileSync(join(dir, 'skills', 'modern-web-guidance', 'guides', cat, file), content);
+      }
+    }
+    return dir;
+  };
+  const guardCases = [
+    ['non-slug-category', '[ { "id": "a", "category": "../outside", "tokenCount": 1 } ]', /non-slug category/],
+    ['non-slug-id', '[ { "id": "../a", "category": "x", "tokenCount": 1 } ]', /non-slug id/],
+    ['duplicate-id', '[ { "id": "a", "category": "x" }, { "id": "a", "category": "x" } ]', /lists a twice/],
+    ['no-id', '[ { "category": "x" } ]', /no string id/],
+    ['not-an-object', '[ 42 ]', /not an object/],
+  ];
+  // A package whose entry point has no table at all is its own case, because the helper
+  // above always writes the declaration.
+  const noTableDir = join(guardTmp, 'no-table', 'package');
+  try {
+    mkdirSync(join(noTableDir, 'skills', 'modern-web-guidance'), { recursive: true });
+    writeFileSync(join(noTableDir, 'skills', 'modern-web-guidance', 'modern-web.mjs'), 'const OTHER = 1;\n');
+    let refused = null;
+    try {
+      buildCatalog({ packageDir: noTableDir, version: '9.9.9' });
+    } catch (err) {
+      refused = err;
+    }
+    assert(refused instanceof CatalogRefusal && /does not declare/.test(refused.message),
+      `a package with no USE_CASES table must be refused by name: ${refused && refused.message}`);
+  } catch (err) {
+    if (err instanceof CatalogRefusal) throw err;
+    throw err;
+  }
+  try {
+    for (const [name, table, expected] of guardCases) {
+      const dir = pkgWith(name, table, { x: { 'a.md': '# A\n' } });
+      let refused = null;
+      try {
+        buildCatalog({ packageDir: dir, version: '9.9.9' });
+      } catch (err) {
+        refused = err;
+      }
+      assert(refused instanceof CatalogRefusal, `buildCatalog must refuse ${name}`);
+      assert(expected.test(refused.message), `the refusal for ${name} must say why: ${refused.message}`);
+    }
+  } finally {
+    rmSync(guardTmp, { recursive: true, force: true });
   }
 
   // 3. End to end on a real unpacked package shape: the union, the canonical ordering (a
