@@ -79,6 +79,37 @@ edits inside the repo.
 `.opencode/command/web-audit.md` is the `/web-audit` command (it points here and
 at the skill). opencode also reads this `AGENTS.md` for project context.
 
+## Testing & fast gates (fleet-check --fast)
+
+The full test suite (`npm test`, running `node tests/regression.mjs`) exercises
+all 115 test functions across browser primitives, flow replays, and schema checks,
+taking 4 to 18 minutes. It runs once per landing on the merger's merged union.
+
+For iteration and implementer fast gates, two selective mechanisms are provided:
+
+1. **Filterable regression tests:** `node tests/regression.mjs --only <filter>`
+   runs only tests matching the given substring (e.g. `--only Flow`,
+   `--only SafeFetch`, `--only Symlink`), `--list` enumerates all available tests,
+   and multiple `--only` flags can be combined.
+2. **Automated fast test gate:** `npm run test:fast` (or `node scripts/test-fast.mjs`)
+   maps changed files (via `git diff origin/master` or explicit file paths) to
+   their corresponding standalone and regression test targets.
+
+### Fleet configuration (~/.fleet/check.conf)
+
+To enable `fleet-check --fast` for this project across fleet lanes, configure
+`~/.fleet/check.conf` with:
+
+```bash
+CHECK_CMD="npm test"
+CHECK_TIMEOUT=2400
+CHECK_FAST_CMD="npm run test:fast"
+CHECK_FAST_TIMEOUT=300
+```
+
+`fleet-check --fast` then runs the affected subsystem tests in seconds and
+records the cached verdict in `~/.fleet/checks/<tree>.fast.json`.
+
 ## Releases & versioning
 
 The single source of truth for the version is `package.json` (`version` field).

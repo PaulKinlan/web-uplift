@@ -39,134 +39,188 @@ import { testLogUrlRedaction } from './log-redaction.mjs';
 import { testMwgCatalogExtract } from './mwg-catalog-extract.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'reports', 'scratch']);
 
+const ALL_TESTS = [
+  testSyntaxChecks,
+  testPackageRootImportIsSideEffectFree,
+  testChromeCandidateDiscovery,
+  testIconSatisfiesMatrix,
+  testFirstPartyHostMatrix,
+  testPageDerivedFetchGuard,
+  testSafeFetchRedirectAndSizeGuard,
+  testSafeFetchDnsRebindingGuard,
+  testSafeFetchContentDecoding,
+  testLaunchRetryAndDiagnostics,
+  testChromeSandboxPolicy,
+  testCommittedProbeIsInert,
+  testSchemaValidation,
+  testAtomicCoverageValidator,
+  testGuidanceUsage,
+  testGuidanceVersionPinnedInDocs,
+  testMwgCatalogRegenerateAgreement,
+  testPrinciplesMwgCatalogSyncAndChangedGuidance,
+  testHeadlessAllowlistIsScoped,
+  testHeadlessAllowlistMatchesSkillContract,
+  testSkillWriteContractGuard,
+  testMwgDriftCheckGuard,
+  testMwgArtefactGuard,
+  testMwgDriftClassifierGuard,
+  testRedactHeaderList,
+  testInstalledEvidenceCli,
+  testNpxCacheDoesNotAccumulate,
+  testInstalledTreeRelativeImportsResolve,
+  testUpdateDryRunReadsInstallManifest,
+  testCachedUpdateWarning,
+  testUpdateCheckIsOptInAndUntrusted,
+  testPreNavigationEmulation,
+  testAxePrimitiveBypassesStrictCsp,
+  testThrottlingConditions,
+  testLocaleTimezoneConditions,
+  testHarRedirects,
+  testCredentialRedactionHelpers,
+  testHarCredentialRedaction,
+  testCdpDeadline,
+  testAwaitCensus,
+  testFetchDeadlineAndRawComparison,
+  testLaunchAttributionForHungPrimitive,
+  testOperatorLaunchAttribution,
+  testAgentChildEnvAllowlist,
+  testBatchIsolationGate,
+  testMcpSkillsServerStdio,
+  testSecretsScanHandlesQuotedScriptUrl,
+  testSecretsExternalScriptFetchIsCappedAndDeadlined,
+  testTrackersThirdPartySuffix,
+  testHarWaitsForPendingResponses,
+  testHarRedactsCredentialHeaders,
+  testAxeKeepsPagePolicyAndDisclosesInjectionBypass,
+  testHeadersPrimitiveFindsHeadersRegardlessOfNameCase,
+  testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase,
+  testScorecardRejectsEscapingComparisonRunIds,
+  testScorecardReservesImageBoxes,
+  testReservedImageBoxInBrowser,
+  testLatestPointerCannotEscapeTheRunRoot,
+  testInstallSurfaceMatchesWhatInstallVendors,
+  testSecretsArtifactDoesNotPersistMatches,
+  testCommittedSiblingProbesAreInert,
+  testSecretsScanDoesNotPersistMatchCharacters,
+  testSourceTreeRedactsBeforeInlining,
+  testSourceTreeSkipsSymlinkFileEscape,
+  testSourceTreeSkipsSymlinkDirEscape,
+  testSourceTreeSkipsSymlinkCycle,
+  testSourceTreeDepthGuard,
+  testInstallSkipsSymlinksInVendoredSource,
+  testInstallCopyDepthGuard,
+  testInstallVendorsCompleteClosure,
+  testDomSourceArtifactIsRedacted,
+  testEvidenceTruncationReporting,
+  testConsoleEvidence,
+  testConsoleInteractDeadlineValidation,
+  testFeaturesPrimitive,
+  testBatchDryRunUsesRetainedDirs,
+  testBatchFlowDryRun,
+  testFixSurvivesUnscoreableReports,
+  testFixRefusesPassOnIncompleteCoverage,
+  testFixRefusesContradictoryCoverageClaim,
+  testFixRejectsMalformedReports,
+  testFixWriteScopeDiffing,
+  testFixModeRefusesOutOfScopeWrites,
+  testFixModeScopeEdgeCases,
+  testFixIsolationAssertion,
+  testFixIsolatedRunPublishes,
+  testSnapshotRunStructure,
+  testSnapshotRunCopiesArtifacts,
+  testSnapshotRunMissingArtifactsBestEffort,
+  testSnapshotRunCopyErrorTolerance,
+  testBatchWriteScope,
+  testBatchResumeIsolation,
+  testWriteScopeCoversExecutedTrees,
+  testBatchIntegrityGateAbortsOnTamperedExecutedTree,
+  testCompareReportsUnconcludedChecks,
+  testScorecardScoringAndRender,
+  testScorecardArtifactContainment,
+  testCompareArtifactContainment,
+  testDiscoverabilityHelpers,
+  testDiscoverabilityH1InRaw,
+  testTargetsPrimitive,
+  testResiliencePrimitive,
+  testResilienceWaitsForLateServiceWorkerRegistration,
+  testA11yTreePrimitive,
+  testBaselineOracle,
+  testFlowNormalize,
+  testFlowRecordSensitiveRedaction,
+  testFlowReplayMutationGate,
+  testLogUrlRedaction,
+  testFlowPierceShadowRootBrowser,
+  testCredentialRedactorsAgree,
+  testMwgCatalogExtract,
+  testSecretsCoverageClassification,
+  testLaunchSessionLoop,
+  testNoOrphanBrowser,
+];
+
+function parseFilterArgs(argv) {
+  const filters = [];
+  let list = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--list' || arg === '-l') {
+      list = true;
+    } else if (arg === '--only' || arg === '-o' || arg === '--filter' || arg === '-f' || arg === '--grep' || arg === '-g') {
+      if (i + 1 < argv.length && !argv[i + 1].startsWith('-')) {
+        filters.push(argv[++i]);
+      } else {
+        console.error(`missing argument for filter flag: ${arg}`);
+        process.exit(1);
+      }
+    } else if (arg.startsWith('--only=')) {
+      const val = arg.slice('--only='.length);
+      if (!val) { console.error('missing value for --only='); process.exit(1); }
+      filters.push(val);
+    } else if (arg.startsWith('--filter=')) {
+      const val = arg.slice('--filter='.length);
+      if (!val) { console.error('missing value for --filter='); process.exit(1); }
+      filters.push(val);
+    } else if (arg.startsWith('--grep=')) {
+      const val = arg.slice('--grep='.length);
+      if (!val) { console.error('missing value for --grep='); process.exit(1); }
+      filters.push(val);
+    } else if (!arg.startsWith('-')) {
+      filters.push(arg);
+    }
+  }
+  return { filters, list };
+}
+
+const { filters: testFilters, list: listTests } = parseFilterArgs(process.argv.slice(2));
+
+if (listTests) {
+  for (const fn of ALL_TESTS) {
+    console.log(fn.name);
+  }
+  process.exit(0);
+}
+
+const selectedTests = testFilters.length === 0
+  ? ALL_TESTS
+  : ALL_TESTS.filter((fn) =>
+      testFilters.some((f) => fn.name.toLowerCase().includes(f.toLowerCase()))
+    );
+
+if (selectedTests.length === 0) {
+  console.error(`no tests matched filter: ${testFilters.join(', ')}`);
+  process.exit(1);
+}
+
+const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
+
 try {
-  testSyntaxChecks();
-  testPackageRootImportIsSideEffectFree();
-  testChromeCandidateDiscovery();
-  testIconSatisfiesMatrix();
-  testFirstPartyHostMatrix();
-  await testPageDerivedFetchGuard();
-  await testSafeFetchRedirectAndSizeGuard();
-  await testSafeFetchDnsRebindingGuard();
-  await testSafeFetchContentDecoding();
-  await testLaunchRetryAndDiagnostics();
-  await testChromeSandboxPolicy();
-  testCommittedProbeIsInert();
-  testSchemaValidation();
-  testAtomicCoverageValidator();
-  testGuidanceUsage();
-  testGuidanceVersionPinnedInDocs();
-  await testMwgCatalogRegenerateAgreement();
-  testPrinciplesMwgCatalogSyncAndChangedGuidance();
-  testHeadlessAllowlistIsScoped();
-  testHeadlessAllowlistMatchesSkillContract();
-  testSkillWriteContractGuard();
-  testMwgDriftCheckGuard();
-  testMwgArtefactGuard();
-  testMwgDriftClassifierGuard();
-  testRedactHeaderList();
-  testInstalledEvidenceCli();
-  testNpxCacheDoesNotAccumulate();
-  testInstalledTreeRelativeImportsResolve();
-  testUpdateDryRunReadsInstallManifest();
-  testCachedUpdateWarning();
-  testUpdateCheckIsOptInAndUntrusted();
-  await testPreNavigationEmulation();
-  await testAxePrimitiveBypassesStrictCsp();
-  await testThrottlingConditions();
-  await testLocaleTimezoneConditions();
-  await testHarRedirects();
-  await testCredentialRedactionHelpers();
-  await testHarCredentialRedaction();
-  await testCdpDeadline();
-  testAwaitCensus();
-  await testFetchDeadlineAndRawComparison();
-  await testLaunchAttributionForHungPrimitive();
-  await testOperatorLaunchAttribution();
-  await testAgentChildEnvAllowlist();
-  await testBatchIsolationGate();
-  await testMcpSkillsServerStdio();
-  await testSecretsScanHandlesQuotedScriptUrl();
-  await testSecretsExternalScriptFetchIsCappedAndDeadlined();
-  await testTrackersThirdPartySuffix();
-  await testHarWaitsForPendingResponses();
-  await testHarRedactsCredentialHeaders();
-  await testAxeKeepsPagePolicyAndDisclosesInjectionBypass();
-  await testHeadersPrimitiveFindsHeadersRegardlessOfNameCase();
-  await testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase();
-  await testScorecardRejectsEscapingComparisonRunIds();
-  await testScorecardReservesImageBoxes();
-  await testReservedImageBoxInBrowser();
-  await testLatestPointerCannotEscapeTheRunRoot();
-  await testInstallSurfaceMatchesWhatInstallVendors();
-  await testSecretsArtifactDoesNotPersistMatches();
-  testCommittedSiblingProbesAreInert();
-  testSecretsScanDoesNotPersistMatchCharacters();
-  testSourceTreeRedactsBeforeInlining();
-  testSourceTreeSkipsSymlinkFileEscape();
-  testSourceTreeSkipsSymlinkDirEscape();
-  testSourceTreeSkipsSymlinkCycle();
-  testSourceTreeDepthGuard();
-  testInstallSkipsSymlinksInVendoredSource();
-  testInstallCopyDepthGuard();
-  testInstallVendorsCompleteClosure();
-  await testDomSourceArtifactIsRedacted();
-  await testEvidenceTruncationReporting();
-  await testConsoleEvidence();
-  await testConsoleInteractDeadlineValidation();
-  await testFeaturesPrimitive();
-  testBatchDryRunUsesRetainedDirs();
-  testBatchFlowDryRun();
-  testFixSurvivesUnscoreableReports();
-  testFixRefusesPassOnIncompleteCoverage();
-  testFixRefusesContradictoryCoverageClaim();
-  testFixRejectsMalformedReports();
-  await testFixWriteScopeDiffing();
-  testFixModeRefusesOutOfScopeWrites();
-  testFixModeScopeEdgeCases();
-  testFixIsolationAssertion();
-  testFixIsolatedRunPublishes();
-  testSnapshotRunStructure();
-  testSnapshotRunCopiesArtifacts();
-  testSnapshotRunMissingArtifactsBestEffort();
-  testSnapshotRunCopyErrorTolerance();
-  testBatchWriteScope();
-  testBatchResumeIsolation();
-  testWriteScopeCoversExecutedTrees();
-  testBatchIntegrityGateAbortsOnTamperedExecutedTree();
-  await testCompareReportsUnconcludedChecks();
-  await testScorecardScoringAndRender();
-  await testScorecardArtifactContainment();
-  await testCompareArtifactContainment();
-  await testDiscoverabilityHelpers();
-  await testDiscoverabilityH1InRaw();
-  await testTargetsPrimitive();
-  await testResiliencePrimitive();
-  await testResilienceWaitsForLateServiceWorkerRegistration();
-  await testA11yTreePrimitive();
-  await testBaselineOracle();
-  await testFlowNormalize();
-  await testFlowRecordSensitiveRedaction();
-  await testFlowReplayMutationGate();
-  // b9p/s0x: a target URL printed by the batch runner or the fixer must not carry a
-  // credential query value into a log/CI artifact (behaviour + a census over the files).
-  await testLogUrlRedaction();
-  // pai: the pierce/ shadow walk against REAL open shadow roots in headless
-  // Chrome, because the stub above can only agree with itself.
-  await testFlowPierceShadowRootBrowser();
-  // glar/lw6: the HAR credential redactor and the flow recorder read ONE word
-  // table, so both are driven over the same credential/innocent case list.
-  await testCredentialRedactorsAgree();
-  // The catalog generator parses the downloaded USE_CASES table as data (web-uplift-w0y).
-  await testMwgCatalogExtract();
-  // 6fe: what "read" means for the secrets primitive's external scripts, driven
-  // against the exact function the page expression is built from.
-  await testSecretsCoverageClassification();
-  await testLaunchSessionLoop();
-  await testNoOrphanBrowser();
+  for (const testFn of selectedTests) {
+    await testFn();
+  }
+  if (selectedTests.length < ALL_TESTS.length) {
+    console.log(`ran ${selectedTests.length}/${ALL_TESTS.length} tests matching [${testFilters.join(', ')}]: OK`);
+  }
   console.log('tests OK');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
