@@ -458,6 +458,9 @@ async function maybeWarnForUpdate(cmd, args = []) {
 }
 
 function shouldCheckForUpdate(cmd, args = []) {
+  // Opt-in only (web-uplift-wgy): the check makes network egress to the npm
+  // registry, so it stays OFF unless the operator explicitly enables it.
+  if (!process.env.WEB_UPLIFT_UPDATE_CHECK) return false;
   if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help' || cmd === '--version' || cmd === '-v') return false;
   if (args.includes('--help') || args.includes('-h')) return false;
   if (process.env.WEB_UPLIFT_NO_UPDATE_CHECK || process.env.NO_UPDATE_NOTIFIER || process.env.CI) return false;
@@ -498,18 +501,27 @@ async function fetchLatestVersion(packageName) {
     if (!response.ok) throw new Error(`npm registry returned ${response.status}`);
     const data = await response.json();
     if (typeof data.version !== 'string') throw new Error('npm registry response had no version');
+    // The registry response is UNAUTHENTICATED input (web-uplift-wgy): only a
+    // strict version shape may flow into the printed advisory; anything else
+    // (terminal escapes, URLs, markup) is dropped.
+    if (!isSafeVersionString(data.version)) throw new Error('npm registry version had an unexpected shape');
     return data.version;
   } finally {
     clearTimeout(timer);
   }
 }
 
+function isSafeVersionString(version) {
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version);
+}
+
 function printUpdateWarning(current, latest) {
-  if (!latest || compareVersions(latest, current) <= 0) return;
+  if (!latest || !isSafeVersionString(latest)) return;
+  if (compareVersions(latest, current) <= 0) return;
   console.error(
     `web-uplift ${latest} is available. Current: ${current}.\n` +
       'Run: npx -y web-uplift@latest update --agent all\n' +
-      'Set WEB_UPLIFT_NO_UPDATE_CHECK=1 to disable this check.',
+      'This check is opt-in: unset WEB_UPLIFT_UPDATE_CHECK to disable it.',
   );
 }
 

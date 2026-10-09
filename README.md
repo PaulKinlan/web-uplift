@@ -171,9 +171,12 @@ principles, guidance notes, wrappers, and `.web-uplift/manifest.json`. If an
 older manifest is present, the CLI prints the installed version and the version
 it is updating to.
 
-The CLI also performs a lightweight npm registry update check at most once every
-24 hours and prints a warning to stderr when a newer package is available. Set
-`WEB_UPLIFT_NO_UPDATE_CHECK=1` to disable it. For serious broken releases,
+The CLI can perform a lightweight npm registry update check at most once every
+24 hours and print a warning to stderr when a newer package is available. The
+check makes network egress, so it is **opt-in**: set `WEB_UPLIFT_UPDATE_CHECK=1`
+to enable it (and `WEB_UPLIFT_NO_UPDATE_CHECK=1`, `NO_UPDATE_NOTIFIER=1`, or
+`CI` to keep it off). The registry response is treated as untrusted: only a
+strict version shape is ever printed. For serious broken releases,
 maintainers can additionally use `npm deprecate` on old versions so npm itself
 warns during install.
 

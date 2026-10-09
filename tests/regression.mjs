@@ -65,6 +65,7 @@ try {
   testInstalledTreeRelativeImportsResolve();
   testUpdateDryRunReadsInstallManifest();
   testCachedUpdateWarning();
+  testUpdateCheckIsOptInAndUntrusted();
   await testPreNavigationEmulation();
   await testAxePrimitiveBypassesStrictCsp();
   await testThrottlingConditions();
@@ -2842,11 +2843,69 @@ function testCachedUpdateWarning() {
       XDG_CACHE_HOME: cacheRoot,
       CI: '',
       WEB_UPLIFT_NO_UPDATE_CHECK: '',
+      // The check is opt-in (web-uplift-wgy): the cached warning only prints
+      // when the operator explicitly enabled it.
+      WEB_UPLIFT_UPDATE_CHECK: '1',
     },
   });
   assert(result.status === 0, `cached update warning command failed: ${result.stderr || result.stdout}`);
   assert(result.stderr.includes('web-uplift 999.0.0 is available'), `cached update warning was not printed:\n${result.stderr}`);
   assert(result.stderr.includes('npx -y web-uplift@latest update --agent all'), `cached update warning missed update command:\n${result.stderr}`);
+}
+
+// web-uplift-wgy: the update check makes network egress to the npm registry, so
+// it is OPT-IN (WEB_UPLIFT_UPDATE_CHECK) - by default NO fetch may happen at
+// all, proven with a preload shim that turns any fetch into a loud exit.
+// Opt-outs (CI / WEB_UPLIFT_NO_UPDATE_CHECK) still win over the opt-in, and a
+// registry version string that is not a strict version shape is dropped
+// (the response is unauthenticated input).
+function testUpdateCheckIsOptInAndUntrusted() {
+  const shim = join(tmp, 'poison-fetch.cjs');
+  writeFileSync(
+    shim,
+    'globalThis.fetch = (...a) => { console.error(\'FETCH-CALLED\', String(a[0])); process.exit(42); };\n',
+  );
+  const baseEnv = {
+    ...process.env,
+    XDG_CACHE_HOME: join(tmp, 'update-cache-optin'),
+    CI: '',
+    WEB_UPLIFT_NO_UPDATE_CHECK: '',
+    NODE_OPTIONS: `--require ${shim}`,
+  };
+  const dryRun = (env) => run(process.execPath, [
+    'bin/web-uplift.mjs',
+    'install',
+    '--agent',
+    'codex',
+    '--target',
+    join(tmp, 'update-optin-target'),
+    '--dry-run',
+  ], { env });
+
+  // Default: no opt-in env var, so no fetch may happen (the shim would exit 42).
+  const off = dryRun(baseEnv);
+  assert(off.status === 0, `default update check must not fetch (shim would exit 42): ${off.status}\n${off.stderr}`);
+  assert(!off.stderr.includes('FETCH-CALLED'), `default update check fetched: ${off.stderr}`);
+
+  // Opt-in present: the shim proves a fetch IS attempted (exit 42 with the marker).
+  const on = dryRun({ ...baseEnv, WEB_UPLIFT_UPDATE_CHECK: '1' });
+  assert(on.status === 42 && on.stderr.includes('FETCH-CALLED'), `opt-in update check must fetch: ${on.status}\n${on.stderr}`);
+
+  // Opt-out still wins over the opt-in.
+  const vetoed = dryRun({ ...baseEnv, WEB_UPLIFT_UPDATE_CHECK: '1', WEB_UPLIFT_NO_UPDATE_CHECK: '1' });
+  assert(vetoed.status === 0 && !vetoed.stderr.includes('FETCH-CALLED'), `opt-out must veto the opt-in: ${vetoed.status}\n${vetoed.stderr}`);
+
+  // A registry version string that is not a strict shape must never be printed
+  // (seeded cache with a malicious payload; the advisory shape-checks it).
+  const badCache = join(tmp, 'update-cache-bad');
+  mkdirSync(join(badCache, 'web-uplift'), { recursive: true });
+  writeFileSync(join(badCache, 'web-uplift/update-check.json'), JSON.stringify({
+    latest: '999.0.0\u001b[2J\u001b[H malicious',
+    checkedAt: Date.now(),
+  }, null, 2) + '\n');
+  const bad = dryRun({ ...baseEnv, XDG_CACHE_HOME: badCache, WEB_UPLIFT_UPDATE_CHECK: '1' });
+  assert(bad.status === 0, `malformed cached version must not break the run: ${bad.stderr}`);
+  assert(!bad.stderr.includes('malicious'), `malformed registry version string must never reach the terminal:\n${bad.stderr}`);
 }
 
 async function testPreNavigationEmulation() {
