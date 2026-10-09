@@ -153,5 +153,5 @@ The reanalysis lane maintains `knowledge/mwg-rule-basis.json` to keep reversal d
    ```sh
    node tests/mwg-drift-classify.mjs --verify-basis corpus-<version>.json --catalog knowledge/mwg-catalog.json
    ```
-   The registry is bound to one catalog version: classifying or verifying with a registry whose `catalogueVersion` differs from the baseline corpus version fails loud (exit 1), so a stale registry can never silently disable reversal detection. On a version bump, set `catalogueVersion` to the new catalog version as part of the reanalysis commit.
+   The registry is bound to one catalog version: classifying or verifying with a registry whose `catalogueVersion` differs from the baseline corpus version fails loud (exit 1), and so does a registry that declares no rules at all, so a stale or empty registry can never silently disable reversal detection. On a version bump, set `catalogueVersion` to the new catalog version as part of the reanalysis commit.
 

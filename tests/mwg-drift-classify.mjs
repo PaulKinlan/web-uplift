@@ -122,6 +122,17 @@ function validateBasis(basis, label) {
     console.error(`FAIL: ${label} rules field must be an array`);
     process.exit(1);
   }
+  // An empty registry is accepted by every downstream check and then quietly removes the tool's
+  // only reversal detector: verification reports success over zero rules, and every reversed
+  // guide is re-filed as an ordinary change (web-uplift-uxr). A registry that can detect nothing
+  // is not a registry, so this fails loud rather than describing itself as verified.
+  if (basis.rules.length === 0) {
+    console.error(
+      `FAIL: ${label} declares no rules: an empty registry verifies nothing and silently disables ` +
+        'REVERSED detection, so a reversal would be reported as an ordinary change instead',
+    );
+    process.exit(1);
+  }
   for (let i = 0; i < basis.rules.length; i++) {
     const r = basis.rules[i];
     if (!r || typeof r !== 'object' || Array.isArray(r)) {

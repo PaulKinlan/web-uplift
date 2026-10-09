@@ -23,6 +23,7 @@ import { testInstallSkipsSymlinksInVendoredSource, testInstallCopyDepthGuard, te
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath, sandboxDisableReason } from '../evidence/cdp.mjs';
 import { testMwgDriftExtractPipe } from './mwg-drift-extract-pipe.mjs';
+import { testMwgDriftBasisFloor } from './mwg-drift-basis-floor.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
 import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
@@ -49,6 +50,7 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', 'reports', 'scratch']);
 
 const ALL_TESTS = [
   testMwgDriftExtractPipe,
+  testMwgDriftBasisFloor,
   testSyntaxChecks,
   testPackageRootImportIsSideEffectFree,
   testChromeCandidateDiscovery,
@@ -5208,6 +5210,13 @@ function testMwgDriftClassifierGuard() {
     const basis = readJson('knowledge/mwg-rule-basis.json');
     const catalog = readJson('knowledge/mwg-catalog.json');
     const catalogIds = new Set(catalog.guideIds || catalog.guides.map((g) => g.id));
+    // A floor for the loop below: with no rules every assertion in it passes for the wrong
+    // reason, and an empty shipped registry is exactly how reversal detection disappears
+    // (web-uplift-uxr). The tool refuses one now; this asserts the committed one is not one.
+    assert(
+      Array.isArray(basis.rules) && basis.rules.length > 0,
+      `mwg-drift-classify: case 20 the registry must declare at least one rule (got ${JSON.stringify(basis.rules)})`
+    );
     for (const rule of basis.rules) {
       assert(
         catalogIds.has(rule.guide),
