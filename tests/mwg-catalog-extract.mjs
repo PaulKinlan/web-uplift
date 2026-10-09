@@ -76,6 +76,35 @@ export async function testMwgCatalogExtract() {
   assert(escapes[0].d === 'line  continued', `a line continuation contributes nothing: ${JSON.stringify(escapes[0].d)}`);
   assert(escapes[0].e === 'tab\there', `a tab escape decodes: ${JSON.stringify(escapes[0].e)}`);
   assert(escapes[0].f === 'q', `an undefined escape drops the backslash, as JavaScript does: ${JSON.stringify(escapes[0].f)}`);
+  // A malformed code point must be a NAMED refusal, not a RangeError out of
+  // String.fromCodePoint (mutation-testing found the upper-bound check untested).
+  for (const [table, why] of [
+    ['[ "\\u{110000}" ]', 'a code point above the Unicode maximum'],
+    ['[ "\\u{zz}" ]', 'a code point that is not hex'],
+    ['[ "\\u{1234567}" ]', 'a code point escape with too many digits'],
+    ['[ "\\x4" ]', 'a truncated hex escape'],
+    ['[ "\\u12" ]', 'a truncated unicode escape'],
+  ]) {
+    let refused = null;
+    try {
+      parseUseCasesTable(table);
+    } catch (err) {
+      refused = err;
+    }
+    assert(refused instanceof CatalogRefusal && /escape/.test(refused.message),
+      `the reader must refuse ${why} by name: ${refused && refused.message}`);
+  }
+  // The literal/identifier boundary is defence in depth rather than load-bearing: without it
+  // the parser still refuses `trueish`, just with a different message (it reads `true` and
+  // then fails to find a separator). Recorded here so nobody reads a passing mutation as a
+  // hole - the assertion is about the refusal, which both versions produce.
+  let identifier = null;
+  try {
+    parseUseCasesTable('[ trueish ]');
+  } catch (err) {
+    identifier = err;
+  }
+  assert(identifier instanceof CatalogRefusal, `a bare identifier must be refused: ${identifier && identifier.message}`);
 
   // 2. Anything that is not a literal is REFUSED, and the refusal names the reason.
   for (const [table, why] of [
