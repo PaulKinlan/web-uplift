@@ -230,15 +230,18 @@ function sweepUnparseableUserinfo(raw) {
     const match = authorityPair.exec(raw);
     return match ? match.index : -1;
   };
-  // The search is reused until the cursor passes it. Each search scans forward from the cursor and the
-  // cursor only ever advances, so the total work is linear even on a string that repeats delimiters;
-  // re-running both searches every iteration is what made an earlier version 16x per doubling on input
-  // a page controls. A -1 is cached too, which is sound because the string does not change: if no
-  // delimiter exists from here on, none can appear later.
+  // ONE search PER PASS, starting at the cursor, and the cursor never moves backwards: a search only
+  // scans as far as the next authority start that no previous pass consumed, so the total work stays
+  // linear even on a string that repeats delimiters. This is deliberately NOT a cache, and an earlier
+  // revision of this comment wrongly described it as one - review proved the reuse guard could never
+  // fire, because a pass always consumes at least the two delimiter characters it matched, which puts
+  // the cursor past every start a previous pass found and leaves nothing to remember. What actually
+  // keeps this linear is that each search begins where the last pass stopped. Running several searches
+  // per pass and re-scanning to the end each time was quadratic on input a page controls (measured 16x
+  // per doubling of the input).
   for (;;) {
-    if (next === -1 || next < cursor) next = findAuthority();
-    if (next === -1) return out + raw.slice(cursor);
-    const start = next;
+    const start = findAuthority();
+    if (start === -1) return out + raw.slice(cursor);
     let end = start + 2;
     while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
     const run = raw.slice(start + 2, end);
