@@ -1801,7 +1801,7 @@ export function testAwaitCensus() {
     // instead of quietly still 'bounded'), and `exposureProbe` is an injected probe whose
     // production default, cdpEndpointExposure, bounds its own sockets by PROBE_TIMEOUT_MS. Same
     // shape as `await launchChromeOnce`, which is bounded by the mechanism it contains.
-    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise|await connect\([^)]*timeoutMs\)|await exposureProbe\(|await waitForPipeReady\([^)]*deadlineMs/],
+    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise|await connect\([^)]*timeoutMs\)|await exposureProbe\(|await waitForPipeReady\([^)]*deadlineMs|await Promise\.all\(.*timeoutMs/],
     ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
     ['excluded:page-side-template', /await navigator\.|await fetch\(\$\{JSON\.stringify\(su\)\}, \{ signal: controller\.signal \}\)|const t = await res\.text\(\);/],
     ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],
@@ -1820,6 +1820,10 @@ export function testAwaitCensus() {
       // idempotent teardown, launchChromeOnce, withRetry's pass-through). The old count was never
       // wrong to the point of failing loudly: the unmatched-site assertion fires first and its
       // message hid this one behind it.
+      // web-uplift-690r replaced the serial per-host probe loop with one Promise.all: the same number of
+      // awaited sites in this file (the loop's await connect became the awaited Promise.all), so the
+      // total is unchanged. The aggregate is bounded by the deadline each probe carries, not by their
+      // sum - which is the point of the change.
       // web-uplift-py0e added four: the two liveness checks, each a bounded waitForProcExit settle plus
       // a teardown through the same `await close()` as every other launch failure - deliberately, so the
       // retry logic treats a browser that died during launch exactly like any other failed attempt.

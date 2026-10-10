@@ -646,8 +646,17 @@ export async function cdpEndpointExposure(port, {
     return { exposed: false, verifiedBy: 'reachability', note: notes.join('; ') };
   }
   let probed = 0;
-  for (const host of hosts) {
-    const verdict = await connect(host, port, timeoutMs);
+  // The probes are independent read-only reachability checks with no ordering dependency, so they run
+  // CONCURRENTLY and the verdict is then evaluated in the original hosts order. Ordered evaluation is
+  // what keeps the notes, the probed count and the host named in the refusal reason deterministic and
+  // identical to the serial version, host for host; serialising them only cost time. Measured on three
+  // interfaces that each take the full timeout: 602ms serially against ~200ms together, and the worst
+  // case grows with the interface count on hosts with Docker bridges, VPNs or link-local IPv6
+  // (web-uplift-690r).
+  const verdicts = await Promise.all(hosts.map((host) => connect(host, port, timeoutMs)));
+  for (let index = 0; index < hosts.length; index += 1) {
+    const host = hosts[index];
+    const verdict = verdicts[index];
     if (verdict === 'refused') continue;
     if (verdict === 'devtools') {
       return {

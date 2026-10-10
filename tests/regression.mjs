@@ -57,6 +57,7 @@ import {
 
 import {
   testCdpEndpointExposure,
+  testEndpointProbesRunConcurrently,
   testCdpPipeTransport,
   testSilentPipeReadinessIsBounded,
   testClosedPipeRejectsPendingSends,
@@ -204,6 +205,7 @@ export const ALL_TESTS = [
   testLogUrlRedaction,
   testCredentialRedactorsAgree,
   testCdpEndpointExposure,
+  testEndpointProbesRunConcurrently,
   testCdpPipeTransport,
   testSilentPipeReadinessIsBounded,
   testClosedPipeRejectsPendingSends,

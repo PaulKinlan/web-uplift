@@ -348,6 +348,44 @@ export async function testCdpEndpointExposure() {
   console.log(`${here.split('/').slice(-2).join('/')}: tests OK`);
 }
 
+// The non-loopback probes are independent read-only reachability checks, so they must run together
+// rather than one after another: serially, N interfaces that each wait the full deadline cost N times
+// the deadline before Chrome launch verification can finish, which is the whole of web-uplift-690r.
+// The claim asserted is the PEAK number of probes in flight, not the elapsed time: a peak of one is
+// what serialising produces, and it does not depend on how loaded the machine is.
+export async function testEndpointProbesRunConcurrently() {
+  const interfaces = {
+    lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true }],
+    eth0: [{ address: '10.0.0.5', family: 'IPv4', internal: false }],
+    docker0: [{ address: '172.17.0.1', family: 'IPv4', internal: false }],
+    tun0: [{ address: '10.8.0.2', family: 'IPv4', internal: false }],
+  };
+  const deadline = 200;
+  let inFlight = 0;
+  let peak = 0;
+  const connect = async (host, port, timeoutMs) => {
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    await new Promise((done) => setTimeout(done, timeoutMs));
+    inFlight -= 1;
+    return 'timeout';
+  };
+  const started = Date.now();
+  const verdict = await cdpEndpointExposure(9222, { interfaces, connect, timeoutMs: deadline });
+  const elapsed = Date.now() - started;
+  assert(peak === 3,
+    `all three non-loopback probes must be in flight together, peak was ${peak} (serialising gives 1)`);
+  assert(elapsed < 6 * deadline,
+    `three ${deadline}ms probes must not cost their sum: took ${elapsed}ms, which is serial`);
+  assert(verdict.exposed === false && verdict.unknown === true && !verdict.verifiedBy,
+    `probes that were never decided must stay undecided and name no verifier: ${JSON.stringify(verdict)}`);
+  console.log(`endpoint probes concurrent OK: peak ${peak} probes in flight, ${elapsed}ms elapsed for three ${deadline}ms probes`);
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === here) {
+  // Run EVERY test in this file: a direct invocation must not look green while silently skipping
+  // the ones added later. This ran only the first until web-uplift-690r added the concurrency
+  // test - the same trap the gemini review of e93a028 found in tests/cdp-pipe-transport.mjs.
   await testCdpEndpointExposure();
+  await testEndpointProbesRunConcurrently();
 }
