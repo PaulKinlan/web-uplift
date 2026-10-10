@@ -47,7 +47,7 @@ export const CREDENTIAL_WORDS = new Set([
 
 // Credential-shaped only when the ENTIRE name is the word. See the header: a
 // substring match here would take postalCode, countryCode and sortKey with it.
-export const WEAK_CREDENTIAL_WORDS = new Set(['code', 'key']);
+export const WEAK_CREDENTIAL_WORDS = new Set(['code', 'key', 'pass']);
 
 // Qualifiers that turn a weak word into a credential compound: auth+code,
 // verify+code, api+key, otp+code are credentials, while sort+key, postal+code,
@@ -251,7 +251,17 @@ export const REDACTED_VALUE = '[redacted]';
 // treating them as breaks left the tail of a credential in the output - 'https://us<TAB>er:pw@host'
 // kept 'pw'. Over-redacting across a tab or a newline is the safe side of that trade. Review measured
 // this as reachable through redactHeaderList, where an internal tab is legal in an HTTP field value.
-const SWEEP_RUN_BREAKS = new Set([' ', '\f', '\v', '?', '#']);
+//
+// '?' and '#' USED to be breaks and no longer are (web-uplift-nxsy). A password containing a raw '#'
+// or '?' ('https://user:pa#ss@proxy.example:8080') ended the run before the '@', so the run held no
+// '@' at all and the whole value came back VERBATIM - the credential was never even considered. The
+// parser rejects that value, so this sweep is the only thing that can clean it. The cost of removing
+// them is the same class the path case above already accepts: on a value the parser REJECTS, an '@'
+// inside a query or fragment is now read as userinfo and redacted, e.g.
+// 'https://x.test:99999/?email=me@example.com' comes back with a redacted authority instead of an
+// untouched query. That is over-redaction of a string no client can use, which is the safe side of
+// the trade this file already documents, and it is pinned by a test so it stays a decision.
+const SWEEP_RUN_BREAKS = new Set([' ', '\f', '\v']);
 function sweepUnparseableUserinfo(raw) {
   let out = '';
   let cursor = 0;
@@ -294,6 +304,27 @@ function sweepUnparseableUserinfo(raw) {
   }
 }
 
+// Redact the VALUES of credential-named parameters in a FRAGMENT ('#token=...'), keeping the names
+// and every other part of the fragment exactly as they were (web-uplift-nxsy case 2: the query
+// redactor ran on searchParams only, so a credential-named fragment parameter was passed through).
+//
+// ONE implementation, called by both the parseable path and the unparseable fallback below: a second
+// copy is how the two paths come to disagree about what a credential is (web-uplift-lsn3). A
+// fragment is not always a parameter string - '#section-2' and '#/route' contain no '=' and are
+// returned untouched, so this cannot rewrite an ordinary anchor.
+function redactFragmentCredentialParams(fragment) {
+  if (!fragment.includes('=')) return { fragment, hit: false };
+  const params = new URLSearchParams(fragment);
+  let hit = false;
+  for (const [k, v] of [...params.entries()]) {
+    if (v && isCredentialName(k)) {
+      params.set(k, REDACTED_VALUE);
+      hit = true;
+    }
+  }
+  return hit ? { fragment: params.toString(), hit: true } : { fragment, hit: false };
+}
+
 // Redact the VALUES of credential-named query parameters in a URL; keep the names and
 // every other parameter exactly as they were.
 //
@@ -310,6 +341,11 @@ export function redactUrlCredentialValues(raw) {
         u.searchParams.set(k, REDACTED_VALUE);
         hit = true;
       }
+    }
+    const hash = redactFragmentCredentialParams(u.hash.slice(1));
+    if (hash.hit) {
+      u.hash = `#${hash.fragment}`;
+      hit = true;
     }
     return hit;
   };
@@ -405,6 +441,13 @@ export function redactUrlCredentialValues(raw) {
     } catch {
       /* ignore query parse errors on unparseable URLs */
     }
+  }
+  // 3. Credential-named FRAGMENT parameters, which the query splice above cannot reach: it stops at
+  //    '#' and puts the tail back as-is (web-uplift-nxsy case 2).
+  const h = swept.indexOf('#');
+  if (h !== -1) {
+    const frag = redactFragmentCredentialParams(swept.slice(h + 1));
+    if (frag.hit) swept = `${swept.slice(0, h + 1)}${frag.fragment}`;
   }
   return swept;
 }

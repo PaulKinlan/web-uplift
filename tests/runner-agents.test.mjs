@@ -1691,6 +1691,58 @@ export async function testAgentChildEnvProxyCredentials() {
   });
   assert(validBuilt.HTTPS_PROXY === pathAtValidPort, 'a path-@ URL on a valid port must pass untouched');
   assert(validWarnings.length === 0, `and must not warn: ${JSON.stringify(validWarnings)}`);
+  // 8. The three boundary shapes review found this sanitiser INHERITING from the shared rule
+  // (web-uplift-nxsy). Every one of them came back VERBATIM before the fix - measured, not inferred -
+  // which is precisely the disclosure this guard exists to prevent. The fix went into the shared rule,
+  // so this section is also a check that the sanitiser really does inherit it rather than merely
+  // appearing to. All four spellings again: one spelling standing in for the class is how the original
+  // defect was shaped.
+  const nxsySecret = 'sec' + 'ret' + 'value';
+  const boundaryShapes = [
+    [`http://user:pw${'#'}x@proxy.invalid:8080`, 'withheld',
+      'a password truncated by # cannot be classified, so the value must be withheld, never passed through'],
+    [`http://user:pw${'?'}x@proxy.invalid:8080`, 'withheld',
+      'a password truncated by ? is the same shape and gets the same answer'],
+    [`http://proxy.invalid:8080/#token=${nxsySecret}`, 'rewritten',
+      'a credential-named FRAGMENT parameter must be stripped, not passed through'],
+    [`http://proxy.invalid:8080/?pass=${nxsySecret}`, 'rewritten',
+      'the ?pass= spelling must be stripped'],
+  ];
+  for (const [value, kind, why] of boundaryShapes) {
+    for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) {
+      const warnings = [];
+      const built = buildAgentEnv({ env: { HOME: '/tmp/home', [name]: value }, warn: (m) => warnings.push(m) });
+      const got = built[name];
+      if (kind === 'withheld') {
+        assert(got === undefined, `${why} (${name}): got ${JSON.stringify(got)}`);
+        assert(warnings.length === 1, `the withholding must be reported exactly once (${name}): ${JSON.stringify(warnings)}`);
+        assert(warnings[0].includes(name), `the warning must name the variable (${name}): ${warnings[0]}`);
+        assert(!warnings[0].includes(nxsySecret) && !warnings[0].includes('pw'),
+          'and must never carry the value it withheld');
+      } else {
+        assert(typeof got === 'string', `${why} (${name}): expected a value, got ${JSON.stringify(got)}`);
+        assert(!got.includes(nxsySecret), `${why} (${name}): got ${JSON.stringify(got)}`);
+        assert(redactUrlCredentialValues(got) === got,
+          'whatever is passed must be a value the shared rule would not redact again');
+      }
+    }
+  }
+  // The controls. Each of these was byte-identical before the fix and must stay that way, because a
+  // rule that withholds everything is as useless as one that withholds nothing: a comma list does not
+  // parse yet carries no userinfo, an '@' in a path or in the query of a PARSEABLE value is not
+  // userinfo, and a plain anchor is not a parameter string.
+  for (const control of [
+    'http://a.invalid:1,http://b.invalid:2',
+    'http://proxy.invalid:8080/a/b@2x.png',
+    'http://proxy.invalid:8080/?next=a@b',
+    'http://proxy.invalid:8080#section-2',
+  ]) {
+    const controlWarnings = [];
+    const built = buildAgentEnv({ env: { HOME: '/tmp/home', HTTPS_PROXY: control }, warn: (m) => controlWarnings.push(m) });
+    assert(built.HTTPS_PROXY === control,
+      `a credential-free value must still arrive byte-identically: ${control} -> ${JSON.stringify(built.HTTPS_PROXY)}`);
+    assert(controlWarnings.length === 0, `and must not warn: ${JSON.stringify(controlWarnings)}`);
+  }
 }
 
 export const runnerAgentsTests = [

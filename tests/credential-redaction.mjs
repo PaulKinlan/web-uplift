@@ -456,6 +456,55 @@ export async function testCredentialRedactorsAgree() {
     assert(manyRatio < 8,
       `the sweep must stay linear with MANY authority starts, not just one: 4x the input took ${manyRatio.toFixed(1)}x (160 kB ${manySmall}ms, 640 kB ${manyLarge}ms)`);
   }
+  // 10. Two blind spots in the VALUE-level rule, both of which the proxy env sanitiser inherits
+  // rather than re-implements (web-uplift-nxsy). Measured on the committed tree before the fix: each
+  // value came back VERBATIM, so the sanitiser handed the child the operator's secret text and the
+  // artifact redactor left the same text in reports and logs.
+  for (const redactor of [terms.redactUrlCredentialValues, cli.redactUrlCredentialValues]) {
+    // (a) A userinfo password containing a raw '#' or '?'. The sweep's run used to END at those
+    // characters, so with the '@' on the far side the run held no '@' at all and nothing was
+    // classified. The URL parser refuses both values, so the sweep is the only thing that can clean
+    // them - there is no parseable form to fall back on.
+    for (const delim of ['#', '?']) {
+      const v = `https://user:${USERINFO_PASS}${delim}x@x.test:99999/p`;
+      assert(!redactor(v).includes(USERINFO_PASS),
+        `a userinfo password truncated by ${delim} must not survive: ${redactor(v)}`);
+    }
+    // (b) A credential-named parameter in the FRAGMENT. Only searchParams was examined, so
+    // '?token=..' was redacted while '#token=..' was passed through.
+    const frag = redactor(`https://x.test/p#token=${SECRET_USERINFO}`);
+    assert(!frag.includes(SECRET_USERINFO), `a credential-named FRAGMENT parameter must be redacted: ${frag}`);
+    assert(frag.includes('token='), `and the parameter NAME must survive: ${frag}`);
+    // The SAME shape on the UNPARSEABLE path, which has its own splice rather than the parse path: an
+    // out-of-range port makes the parser refuse the value, so this exercises the fallback, and the
+    // fallback used to put the fragment tail back untouched even when the query splice had run.
+    const fragUnparseable = redactor(`https://x.test:99999/p#token=${SECRET_USERINFO}`);
+    assert(!fragUnparseable.includes(SECRET_USERINFO),
+      `a fragment credential must be redacted on the UNPARSEABLE path too: ${fragUnparseable}`);
+    // (c) The boundary that makes (b) safe: a fragment is not always a parameter string.
+    assert(redactor('https://x.test/p#section-2') === 'https://x.test/p#section-2',
+      'an ordinary fragment anchor must survive untouched, or every deep link in an artifact is rewritten');
+    assert(redactor('https://x.test/p#a=b&c=d') === 'https://x.test/p#a=b&c=d',
+      'fragment parameters with no credential name must survive byte-for-byte');
+    // (d) 'pass' as a WEAK word: the filed spelling is caught, and the words it would otherwise drag
+    // in are pinned as ordinary so the boundary cannot drift by accident.
+    assert(!redactor(`https://x.test/p?pass=${SECRET_USERINFO}`).includes(SECRET_USERINFO), '?pass= is a credential name');
+    assert(!redactor(`https://x.test/p#pass=${SECRET_USERINFO}`).includes(SECRET_USERINFO), 'so is a FRAGMENT #pass=');
+    for (const ordinary of ['passenger=1', 'bypass=1', 'compass=1', 'passphrase=1', 'passkey=1', 'pass_count=2']) {
+      assert(redactor(`https://x.test/p?${ordinary}`) === `https://x.test/p?${ordinary}`,
+        `?${ordinary} is an ordinary name and must keep its value`);
+    }
+  }
+  // (e) The ACCEPTED COST of removing '?' and '#' from the sweep's run breaks, pinned so it stays a
+  // decision rather than becoming an accident later: on a value the parser REJECTS, an '@' inside the
+  // query is now read as userinfo and the authority is redacted. The alternative - leaving such a run
+  // unclassified - is exactly the leak shape in (a). This is the same over-redaction this file already
+  // accepts for a path on an unparseable value, and it only ever applies to a string no client can use.
+  const unparseableQueryAt = 'https://x.test:99999/?email=me@example.com';
+  assert(terms.redactUrlCredentialValues(unparseableQueryAt) !== unparseableQueryAt,
+    'the declared cost of the wider run must be visible: an @ in the query of an UNPARSEABLE value is read as userinfo');
+  assert(!terms.redactUrlCredentialValues(unparseableQueryAt).includes('me@example.com'),
+    'and the over-redaction must actually remove the text, not merely rewrite around it');
 }
 
 // Run directly (node tests/credential-redaction.mjs), not when imported by the
