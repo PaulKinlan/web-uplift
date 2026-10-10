@@ -633,3 +633,50 @@ export function testCdpCopySyncRefusesToOverwriteTrackedEdits() {
     'a clean destination must pick up the source edit, or the sync no longer serves its purpose',
   );
 }
+
+// web-uplift-xym1. generateVendoredSurface copies TRACKED_COPY_FILES - destinations git tracks, unlike
+// the gitignored .web-uplift/ tree - and it used to do so unconditionally. In a worktree that has no
+// .web-uplift/ yet, tests/cdp-copy-sync.mjs auto-invokes it, so an edit to .pi/skills/web-audit/SKILL.md
+// was overwritten by the GENERATOR before the sync's own refusal could ever be reached. The generator
+// now skips a destination with uncommitted edits and reports it, and its caller decides if that is fatal.
+export async function testGenerateVendoredSurfaceLeavesTrackedEditsAlone() {
+  const { generateVendoredSurface } = await import('../install-surface.mjs');
+  const fixture = mkdtempSync(join(tmp, 'vendored-tracked-'));
+  const srcRel = '.claude/skills/web-audit/SKILL.md';
+  const dstRel = '.pi/skills/web-audit/SKILL.md';
+  mkdirSync(dirname(join(fixture, srcRel)), { recursive: true });
+  mkdirSync(dirname(join(fixture, dstRel)), { recursive: true });
+  writeFileSync(join(fixture, srcRel), '# skill\noriginal content\n');
+  writeFileSync(join(fixture, dstRel), '# skill\noriginal content\n');
+
+  const git = (...args) => spawnSync('git', args, { cwd: fixture, encoding: 'utf8' });
+  git('init', '-q');
+  git('add', '-A');
+  git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '-q', '-m', 'fixture');
+
+  // (a) the tracked destination carries work that exists nowhere else: the generator must leave it.
+  appendFileSync(join(fixture, dstRel), 'LOCAL WORK THAT MUST SURVIVE\n');
+  const generated = generateVendoredSurface({ targetRoot: fixture });
+  assert(
+    readFileSync(join(fixture, dstRel), 'utf8').includes('LOCAL WORK THAT MUST SURVIVE'),
+    'generateVendoredSurface must not overwrite a tracked destination that has uncommitted edits',
+  );
+  assert(
+    (generated.skippedTrackedCopies || []).includes(dstRel),
+    `the generator must report what it left alone, got ${JSON.stringify(generated && generated.skippedTrackedCopies)}`,
+  );
+
+  // (b) CONTROL: a destination that is merely stale, because the SOURCE moved, must still be refreshed.
+  // Without this, "skip the copy" could be implemented as "never copy", which would break installation.
+  git('checkout', '--', dstRel);
+  appendFileSync(join(fixture, srcRel), 'SOURCE MOVED\n');
+  const second = generateVendoredSurface({ targetRoot: fixture });
+  assert(
+    readFileSync(join(fixture, dstRel), 'utf8').includes('SOURCE MOVED'),
+    'a clean tracked destination must still be refreshed from its source, or the generator no longer installs',
+  );
+  assert(
+    (second.skippedTrackedCopies || []).length === 0,
+    'a clean destination must not be reported as skipped',
+  );
+}

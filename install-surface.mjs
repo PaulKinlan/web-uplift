@@ -11,6 +11,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, lstatSync, existsSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -73,6 +74,22 @@ function copyDir(from, to, depth = 1) {
   }
 }
 
+// A tracked copy is one whose destination git actually tracks - the .pi skill copy, unlike the
+// gitignored .web-uplift/ tree. Replacing one that carries its own uncommitted edits destroys work
+// while reporting success, so both the generator and the sync ask this first (web-uplift-xym1).
+//
+// The predicate is `git diff --quiet HEAD --`, NOT `git status --porcelain`: porcelain reports an
+// untracked path as "?? path", indistinguishable from a modification without parsing status codes,
+// and an untracked destination is not someone's uncommitted work. Exit 1 means "differs from HEAD"
+// ONLY when git could answer - outside a repository git also exits 1, with "Could not access 'HEAD'"
+// on stderr, which must read as unknown rather than edited or every non-repository fixture breaks.
+export function trackedCopyHasLocalEdits(targetRepoAbs, targetRel) {
+  const res = spawnSync('git', ['diff', '--quiet', 'HEAD', '--', targetRel], { cwd: targetRepoAbs, encoding: 'utf8' });
+  if (res.status !== 0 && res.status !== 1) return { state: 'unknown', detail: (res.stderr || '').trim() };
+  if (res.status === 1 && (res.stderr || '').trim()) return { state: 'unknown', detail: (res.stderr || '').trim() };
+  return { state: res.status === 1 ? 'edited' : 'clean' };
+}
+
 export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   const vendorRoot = join(targetRoot, '.web-uplift');
   mkdirSync(vendorRoot, { recursive: true });
@@ -93,10 +110,19 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     }
   }
 
+  // These destinations are TRACKED, so unlike the vendored tree above they can hold work that exists
+  // nowhere else. Generating over one that has uncommitted edits would destroy it while the run
+  // reported success - the hazard web-uplift-xym1 records, found by the 0zcd review. The copy is
+  // skipped and reported instead; callers decide whether that is fatal.
+  const skippedTrackedCopies = [];
   for (const file of TRACKED_COPY_FILES) {
     const src = join(targetRoot, file.source);
     const dst = join(targetRoot, file.dest);
     if (existsSync(src)) {
+      if (trackedCopyHasLocalEdits(targetRoot, file.dest).state === 'edited') {
+        skippedTrackedCopies.push(file.dest);
+        continue;
+      }
       mkdirSync(dirname(dst), { recursive: true });
       copyFileSync(src, dst);
     }
@@ -147,6 +173,8 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     updateCommand: 'npx -y web-uplift@latest update --agent all',
   };
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+
+  return { skippedTrackedCopies };
 }
 
 const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

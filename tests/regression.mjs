@@ -121,6 +121,7 @@ import {
   testInstallNormalDestinationWrites,
   testMcpSkillsServerStdio,
   testCdpCopySyncRefusesToOverwriteTrackedEdits,
+  testGenerateVendoredSurfaceLeavesTrackedEditsAlone,
 } from "./install-package.test.mjs";
 
 import {
@@ -182,6 +183,7 @@ import {
 
 
 export const ALL_TESTS = [
+  testGenerateVendoredSurfaceLeavesTrackedEditsAlone,
   testTrackedBeadsExportHasNoSecretShapes,
   testBeadsExportRedactionRuleCanFire,
   testCdpCopySyncRefusesToOverwriteTrackedEdits,

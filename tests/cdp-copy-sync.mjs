@@ -20,10 +20,9 @@
 // Node builtins only: no npm install is needed to run it.
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface } from '../install-surface.mjs';
+import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface, trackedCopyHasLocalEdits } from '../install-surface.mjs';
 
 // Paths resolve from this file, never from cwd, so the guard gives the same
 // answer whether CI or a human runs it from anywhere in the tree.
@@ -97,32 +96,19 @@ const COPY_FILES = [
   ...TRACKED_COPY_FILES.map((file) => [file.source, file.dest]),
 ];
 
-// A tracked copy is one whose destination git actually tracks - the .pi skill copy, unlike the
-// gitignored .web-uplift/ tree. Syncing those is legitimate when the SOURCE moved, but overwriting
-// one that has its own uncommitted edits destroys work while reporting green (web-uplift-0zcd).
-//
-// The predicate is `git diff --quiet HEAD --`, NOT `git status --porcelain`. Porcelain reports an
-// untracked file as "?? path", which cannot be told from a modification without parsing the status
-// codes, and an untracked destination is not someone's uncommitted work - refusing it would block a
-// legitimate sync. Diffing against HEAD asks exactly the question that matters: does this path
-// differ from the commit, i.e. would syncing discard edits nobody has saved anywhere else.
-function trackedCopyHasLocalEdits(targetRepoAbs, targetRel) {
-  const res = spawnSync('git', ['diff', '--quiet', 'HEAD', '--', targetRel], { cwd: targetRepoAbs, encoding: 'utf8' });
-  // Exit 1 means "differs from HEAD" ONLY when git could actually answer. Outside a repository git
-  // ALSO exits 1, with "error: Could not access 'HEAD'" on stderr - and reading that as "has local
-  // edits" made the sync refuse every file in a fixture with no repository, breaking the guard's own
-  // mutation test. So: 0 clean, 1-without-stderr edited, anything else unknown (no refusal).
-  // Verified both ways rather than reasoned: a non-repository directory and a repository whose HEAD
-  // cannot be read both report unknown here, and a real modification still reports edited.
-  if (res.status !== 0 && res.status !== 1) return { state: 'unknown', detail: (res.stderr || '').trim() };
-  if (res.status === 1 && (res.stderr || '').trim()) return { state: 'unknown', detail: (res.stderr || '').trim() };
-  return { state: res.status === 1 ? 'edited' : 'clean' };
-}
 
 // Auto-generate .web-uplift/ if absent so fresh worktrees without prior npm install
 // do not false-fail on missing vendored directories (web-uplift-diaq).
 if (targetRepo === repoRoot && !existsSync(join(targetRepo, '.web-uplift'))) {
-  generateVendoredSurface({ targetRoot: targetRepo });
+  const generated = generateVendoredSurface({ targetRoot: targetRepo }) || {};
+  const skipped = generated.skippedTrackedCopies || [];
+  if (skipped.length > 0) {
+    for (const rel of skipped) {
+      console.error(`REFUSING to overwrite ${rel}: it is a tracked file with uncommitted local changes, so generating the vendored surface left it alone. Commit, stash or discard that change first.`);
+    }
+    console.error(`FAILED: ${skipped.length} tracked file(s) were left alone while generating .web-uplift/. Their contents are intact. The vendored tree itself was generated.`);
+    process.exit(1);
+  }
 }
 
 // Only these destinations are tracked by contract; the gitignored .web-uplift/ tree and
