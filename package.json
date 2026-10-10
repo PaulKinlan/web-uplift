@@ -65,9 +65,9 @@
   "scripts": {
     "prepare": "node -e \"if (require('fs').existsSync('install-surface.mjs')) import('./install-surface.mjs').then(m => m.generateVendoredSurface())\"",
     "playground": "npx -y serve playground -l 8080",
-    "test": "node tests/regression.mjs",
+    "test": "npm run sync:vendored && node tests/regression.mjs",
     "test:node": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "test:fast": "node scripts/test-fast.mjs",
+    "test:fast": "npm run sync:vendored && node scripts/test-fast.mjs",
     "sync:vendored": "node tests/cdp-copy-sync.mjs --sync",
     "evidence": "node evidence/cli.mjs",
     "audit": "node runner/run-batch.mjs",
