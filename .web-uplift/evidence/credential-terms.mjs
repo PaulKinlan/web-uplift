@@ -201,23 +201,23 @@ export function redactUrlCredentialValues(raw) {
   // redactor exists to make safe to share, and the same class it already redacts as the
   // Authorization header (web-uplift-73y3).
   //
-  // The USERNAME is kept, because a username is an identifier the artifact needs to stay readable.
-  // It is redacted only when it is itself credential-shaped: credential-NAMED ('token', 'apikey',
-  // measured through the shared table) or token-SHAPED (a long random string, through
-  // looksLikeToken). When both parts qualify, both go, which is the whole userinfo - that is the
-  // deliberate in-doubt case rather than a guess about which half was the secret.
+  // The WHOLE userinfo is redacted, username included, and that is deliberately the broader of the
+  // two policies: an earlier version kept the username unless it looked credential-shaped, and
+  // review found it leaking real credentials. 'https://ghp_<PAT>@github.com/' and
+  // 'https://<PAT>:x-oauth-basic@github.com/' are both standard ways to carry a GitHub token, and
+  // the shape tests answer false for the ghp_, sk_live_, AKIA and glpat_ prefixes (measured, not
+  // assumed) - a heuristic that has to be extended per token vendor is a leak per vendor. The
+  // artifact keeps no promise that a username is meaningful, and it does promise not to carry
+  // credentials. This also makes the policy identical to the flow recorder's sanitizeNavUrl, which
+  // redacts userinfo unconditionally because it is often the secret itself (web-uplift-73y3 review,
+  // findings 1 and 4).
   const redactUserinfo = (u) => {
     if (!u.username && !u.password) return false;
-    let hit = false;
-    if (u.password) {
-      u.password = REDACTED_VALUE;
-      hit = true;
-    }
-    if (u.username && (isCredentialName(u.username) || looksLikeToken(u.username))) {
-      u.username = REDACTED_VALUE;
-      hit = true;
-    }
-    return hit;
+    // Each half is replaced only if it was there: inventing a username for '//:pass@host' would
+    // fabricate a part of the URL the caller never had, and that shape is pinned by web-uplift-5m9f.
+    if (u.username) u.username = REDACTED_VALUE;
+    if (u.password) u.password = REDACTED_VALUE;
+    return true;
   };
   try {
     const u = new URL(raw);
@@ -245,8 +245,8 @@ export function redactUrlCredentialValues(raw) {
     // Leading whitespace counts: an HTTP field value may carry it, the URL parser strips it, and
     // testing only for '//' at index 0 left the same host-loss (found by sweeping edge cases after
     // the fix, not by the review). Userinfo is re-emitted too, so this branch rebuilds the same URL
-    // shape the absolute branch does. Userinfo passwords are redacted in both branches now
-    // (web-uplift-73y3), so this rebuild re-emits the username with the password marker.
+    // shape the absolute branch does. Userinfo is redacted in both branches now (web-uplift-73y3),
+    // so this rebuild re-emits the marker rather than the credentials.
     const lead = /^\s*/.exec(raw)[0];
     // '@' belongs to any userinfo at all, not only to a username: '//:s3cr3t@x.test/a' is a valid
     // URL with a password and an EMPTY username, and gating the '@' on the username re-emitted it as
@@ -260,7 +260,13 @@ export function redactUrlCredentialValues(raw) {
     // job is to redact one value, not to tidy a header value into a different string.
     return `${lead}${authority}${u.pathname}${u.search}${u.hash}`;
   } catch {
-    return raw; // genuinely unparseable: leave it alone rather than guess
+    // Genuinely unparseable: leave it alone rather than guess - EXCEPT for userinfo, because the
+    // parser rejecting a URL is not a reason to write its credential into an artifact. Chrome and
+    // Node reject 'file://user:pass@/path' outright, and an authority whose ':' is read as an
+    // invalid port throws too, so the whole string came back verbatim with the credential intact
+    // (web-uplift-73y3 review, P1). Only the userinfo is rewritten; every other character is left
+    // exactly as it was, which keeps this function's promise never to tidy a value.
+    return raw.replace(/(\/\/)([^\s?#@]*@)/g, `$1${REDACTED_VALUE}@`);
   }
 }
 

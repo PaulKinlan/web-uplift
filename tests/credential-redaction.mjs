@@ -152,10 +152,10 @@ export async function testCredentialRedactorsAgree() {
     assert(redactor(` //x.test/a?token=${SECRET_53O1}`) === ` //x.test/a?token=${'%5Bredacted%5D'}`, 'leading whitespace must not hide the host');
     assert(redactor(`//[::1]:8443/a?token=${SECRET_53O1}`) === `//[::1]:8443/a?token=${'%5Bredacted%5D'}`, 'a bracketed IPv6 host must survive');
     assert(redactor(`//x.test/a?token=${SECRET_53O1}#frag`) === `//x.test/a?token=${'%5Bredacted%5D'}#frag`, 'a fragment must survive');
-    // web-uplift-73y3 changed what the re-emitted userinfo CONTAINS: the username is still there
-    // (53o1's point - the branch must not silently delete part of the URL), and the password is now
-    // the marker instead of the value that was passed in.
-    assert(redactor(`//user:pass@x.test/a?token=${SECRET_53O1}`) === `//user:${'%5Bredacted%5D'}@x.test/a?token=${'%5Bredacted%5D'}`, 'userinfo is re-emitted with its password redacted');
+    // 53o1's point is that the branch must re-emit the userinfo rather than silently delete part of
+    // the URL. It still does: the shape 'userinfo@host' is rebuilt. What CHANGE went into it is the
+    // marker for both halves now (web-uplift-73y3 and its review), rather than the credentials.
+    assert(redactor(`//user:pass@x.test/a?token=${SECRET_53O1}`) === `//${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/a?token=${'%5Bredacted%5D'}`, 'userinfo is re-emitted, redacted');
   }
 
   // 7. A password in URL USERINFO is a credential on a surface this redactor already covers
@@ -169,24 +169,47 @@ export async function testCredentialRedactorsAgree() {
     // The case that must not be missed: NO credential parameter anywhere. A redactor that only
     // rewrites when a query parameter matched would take the "nothing to do" path and leak here.
     const plain = redactor(`https://user:${USERINFO_PASS}@x.test/plain`);
-    assert(plain === `https://user:${'%5Bredacted%5D'}@x.test/plain`,
+    assert(plain === `https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain`,
       `a userinfo password must be redacted even with no credential parameter: ${plain}`);
     assert(!plain.includes(USERINFO_PASS), `the password must be gone from the value: ${plain}`);
     // Both halves at once, and the same through the protocol-relative branch.
-    assert(redactor(`https://user:${USERINFO_PASS}@x.test/a?token=${SECRET_USERINFO}`) === `https://user:${'%5Bredacted%5D'}@x.test/a?token=${'%5Bredacted%5D'}`,
+    assert(redactor(`https://user:${USERINFO_PASS}@x.test/a?token=${SECRET_USERINFO}`) === `https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/a?token=${'%5Bredacted%5D'}`,
       'userinfo and query credentials are redacted together');
-    assert(redactor(`//user:${USERINFO_PASS}@x.test/plain`) === `//user:${'%5Bredacted%5D'}@x.test/plain`,
+    assert(redactor(`//user:${USERINFO_PASS}@x.test/plain`) === `//${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain`,
       'the protocol-relative branch redacts a userinfo password too');
-    // A username is an identifier the artifact needs, and is kept unless it is credential-shaped.
-    assert(redactor(`https://paul@x.test/a?token=${SECRET_USERINFO}`) === `https://paul@x.test/a?token=${'%5Bredacted%5D'}`,
-      'a plain username is kept');
+    // The WHOLE userinfo goes, username included. An earlier version of this fix kept the username
+    // unless it looked credential-shaped, and review showed that heuristic leaking real credentials:
+    // a token used AS the username is a standard shape ('https://ghp_<PAT>@github.com/'), and the
+    // shape tests answer false for every real prefix (below). A heuristic that needs extending per
+    // token vendor is a leak per vendor, so the artifact redacts what it cannot vouch for - which is
+    // also exactly what the flow recorder's sanitizeNavUrl already did.
+    assert(redactor(`https://paul@x.test/a?token=${SECRET_USERINFO}`) === `https://${'%5Bredacted%5D'}@x.test/a?token=${'%5Bredacted%5D'}`,
+      'even a plain-looking username is redacted: the artifact cannot vouch for it');
     assert(redactor(`https://token:${USERINFO_PASS}@x.test/plain`) === `https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain`,
       'a credential-NAMED username goes with the password: the whole userinfo');
     assert(redactor(`https://9f8b1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f607182:${USERINFO_PASS}@x.test/plain`) === `https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain`,
       'a token-SHAPED username goes too');
+    // Real token shapes, as the username AND as a username-only userinfo. These are the assertions
+    // whose absence let the heuristic ship: the 40-hex case above is a string looksLikeToken was
+    // built to accept, so it proved the heuristic worked on itself and nothing else.
+    // Vendor prefixes are here to keep the point concrete, NOT to embed live-shaped fixtures: a
+    // fabricated 'sk_live_' string made GitHub push protection reject the push for a secret that does
+    // not exist, and the fix for that is to use the vendor's TEST-mode prefix rather than to allowlist
+    // a fake. Stripe test keys are not secrets; the live-mode prefix is deliberately absent.
+    for (const token of [
+      'ghp_1234567890abcdefghijklmnopqrstuvwx',  // GitHub PAT shape
+      'sk_test_51H8xYzAbCdEfGhIjKlMnOpQrSt',    // Stripe TEST key shape (never sk_live_ in a fixture)
+      'AKIAIOSFODNN7EXAMPLE',                    // AWS's own documented example key id
+      'glpat-xxxxxxxxxxxxxxxxxxxx',              // GitLab PAT shape
+    ]) {
+      assert(!redactor(`https://${token}@x.test/plain`).includes(token),
+        `a token used as the username must not reach the artifact: ${redactor(`https://${token}@x.test/plain`)}`);
+      assert(!redactor(`https://${token}:x-oauth-basic@x.test/plain`).includes(token),
+        `a token used as the username with a password must not reach the artifact: ${redactor(`https://${token}:x-oauth-basic@x.test/plain`)}`);
+    }
     // Controls: no userinfo keeps the old behaviour, and an unrelated parameter survives.
     assert(redactor(`https://x.test/a?token=${SECRET_USERINFO}`) === `https://x.test/a?token=${'%5Bredacted%5D'}`, 'control: no userinfo, unchanged');
-    assert(redactor(`https://user:${USERINFO_PASS}@x.test/plain?page=2`) === `https://user:${'%5Bredacted%5D'}@x.test/plain?page=2`,
+    assert(redactor(`https://user:${USERINFO_PASS}@x.test/plain?page=2`) === `https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain?page=2`,
       'an unrelated query parameter is preserved');
   }
   // The prose path reaches the same redactor through a scanner that skips spans with nothing to
@@ -194,7 +217,22 @@ export async function testCredentialRedactorsAgree() {
   const prose = `see https://user:${USERINFO_PASS}@x.test/plain then move on`;
   const redactedProse = terms.redactUrlsInText(prose);
   assert(!redactedProse.includes(USERINFO_PASS), `a userinfo password in prose must be redacted: ${redactedProse}`);
-  assert(redactedProse.includes(`https://user:${'%5Bredacted%5D'}@x.test/plain`), `the rest of the URL must survive: ${redactedProse}`);
+  assert(redactedProse.includes(`https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain`), `the rest of the URL must survive: ${redactedProse}`);
+  // A URL that the parser REJECTS must not come back verbatim either. Chrome and Node reject
+  // 'file://user:pass@/path' outright, and an authority whose ':' is read as an invalid port throws,
+  // so both used to return the whole string with the credential intact - the same leak through the
+  // other door (web-uplift-73y3 review, P1). Only the userinfo is rewritten, so the rest of the
+  // string and the documented leave-an-unparseable-string-alone boundary both survive.
+  for (const redactor of [terms.redactUrlCredentialValues, cli.redactUrlCredentialValues]) {
+    assert(!redactor(`file://user:${USERINFO_PASS}@/path`).includes(USERINFO_PASS),
+      `file: userinfo must not survive an unparseable string: ${redactor(`file://user:${USERINFO_PASS}@/path`)}`);
+    assert(!redactor(`https://AKIAIOSFODNN7EXAMPLE:wJalrXUtnFEMI/K7@x.test/`).includes('AKIA'),
+      'an authority the parser reads as an invalid port must not leak its credential');
+    assert(redactor('not a url at all ?') === 'not a url at all ?',
+      'an unparseable string with no userinfo is still left exactly alone');
+    assert(redactor('see //cdn.test/lib.js and email a@b.test') === 'see //cdn.test/lib.js and email a@b.test',
+      'prose that merely contains // and @ is not rewritten');
+  }
   // The call site that makes this a P2 rather than a nit: the redirect Location header, driven
   // through the artifact helper itself and not only through the unit.
   const headered = cli.redactHeaderList([{ name: 'location', value: `https://user:${USERINFO_PASS}@x.test/next?token=${SECRET_USERINFO}` }]);
