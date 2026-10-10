@@ -917,9 +917,14 @@ export async function testPreSpawnLogThrowDoesNotStrandTheProfileDir() {
     assert(stranded().length === 1, `the launched browser must own exactly one profile dir, saw ${stranded().length}`);
   } finally {
     if (handle) { try { await handle.close(); } catch { /* already gone */ } }
-    process.env.CHROME_BIN = saved.CHROME_BIN;
-    process.env.TMPDIR = saved.TMPDIR;
-    process.env.FAKE_PID_FILE = saved.FAKE_PID_FILE;
+    // Restoring with `process.env[k] = saved[k]` is wrong when the saved value was UNSET: Node stores the
+    // string "undefined", so TMPDIR became the literal path "undefined" and the NEXT launch in this same
+    // process died with ENOENT on mkdtemp("undefined/web-uplift-cdp-XXXXXX"). Every later test that
+    // launches then failed, which only stays hidden because each filter also passes when run alone
+    // (web-uplift-9dqr review, P0). Delete rather than assign, as this file already does elsewhere.
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
     for (const d of [dir, profileRoot]) { try { rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } }
   }
   console.log('pre-spawn log OK: the error propagated and the profile dir did not outlive it');
@@ -941,10 +946,26 @@ export async function testThrowingHandlerLogDoesNotTakeTheProcessDown() {
   let escaped = null;
   const onUncaught = (err) => { escaped = err; };
   process.on('uncaughtException', onUncaught);
+  // The transport's handlers run synchronously for these emit/write calls, so a throw escapes straight into
+  // this function rather than reaching the uncaughtException listener - which means an escape must be
+  // caught here and reported AS this assertion, or the test would be distinguishing fixed from broken by a
+  // mechanism its comment does not describe (web-uplift-9dqr review, finding 4). The listener stays as the
+  // check for any path that is delivered asynchronously instead.
+  const drive = (label, fn) => {
+    try { fn(); } catch (err) {
+      throw new Error(`a throwing handler log escaped the ${label} path: ${err && err.message}`);
+    }
+  };
+  const NUL = '\u0000';
   try {
-    fromChrome.emit('error', new Error('read failed'));
-    toChrome.emit('error', new Error('write failed'));
-    fromChrome.write('not-json-at-all');
+    // Each of these is a handler that logs, and each must contain the throw. The NUL separator is what
+    // makes a frame get PARSED: without it the two frame paths never run at all, which is how the first
+    // version of this test left half of the guard unexercised (findings P1).
+    drive('read error', () => fromChrome.emit('error', new Error('read failed')));
+    drive('write error', () => toChrome.emit('error', new Error('write failed')));
+    drive('unparseable frame', () => fromChrome.write(`not-json${NUL}`));
+    transport.on('probe', () => { throw new Error('listener boom'); });
+    drive('listener throw', () => fromChrome.write(`${JSON.stringify({ method: 'probe' })}${NUL}`));
     await new Promise((r) => setTimeout(r, 50));
     assert(escaped === null,
       `a throwing handler log must not escape as an uncaughtException, but it did: ${escaped && escaped.message}`);
