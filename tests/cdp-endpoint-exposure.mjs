@@ -382,10 +382,63 @@ export async function testEndpointProbesRunConcurrently() {
   console.log(`endpoint probes concurrent OK: peak ${peak} probes in flight, ${elapsed}ms elapsed for three ${deadline}ms probes`);
 }
 
+// The ordered rethrow inside cdpEndpointExposure, and the fail-open shape it prevents, are NOT covered
+// by the await census: the census guards the allSettled line but not the loop body. Changing
+// `throw outcome.reason` to `continue` turns a rejecting probe into a clean
+// {exposed:false, verifiedBy:'reachability'} - fail-open - and every other focused suite still passes,
+// so these assertions are the only thing between that edit and a silent regression
+// (web-uplift-690r, second review round).
+export async function testEndpointProbeRejectionStaysFailClosed() {
+  const interfaces = {
+    lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true }],
+    eth0: [{ address: '10.0.0.5', family: 'IPv4', internal: false }],
+    docker0: [{ address: '172.17.0.1', family: 'IPv4', internal: false }],
+    tun0: [{ address: '10.8.0.2', family: 'IPv4', internal: false }],
+  };
+  const run = async (connect) => {
+    try {
+      return { verdict: await cdpEndpointExposure(9222, { interfaces, connect, timeoutMs: 50 }) };
+    } catch (err) {
+      return { error: err };
+    }
+  };
+  // (a) An earlier host answers as DevTools and a LATER probe rejects. The refusal must win, because
+  //     the caller closes the browser only on the refusal path.
+  const later = await run(async (host) => {
+    if (host === '10.0.0.5') return 'devtools';
+    if (host === '10.8.0.2') throw new Error('boom-later');
+    return 'refused';
+  });
+  assert(!later.error,
+    `a later rejection must not displace an earlier refusal, but it threw ${later.error && later.error.message}`);
+  assert(later.verdict.exposed === true && /10\.0\.0\.5/.test(later.verdict.reason || ''),
+    `the refusal must survive and name the host that answered as DevTools: ${JSON.stringify(later.verdict)}`);
+  // (b) The rejection is FIRST in host order, so its own error is the one that must be thrown - the
+  //     first in order, not the first in time.
+  const first = await run(async (host) => {
+    if (host === '10.0.0.5') throw new Error('boom-first');
+    if (host === '172.17.0.1') return 'devtools';
+    return 'refused';
+  });
+  assert(first.error && first.error.message === 'boom-first',
+    `the first rejection in host order must be the one thrown, got ${first.error ? first.error.message : JSON.stringify(first.verdict)}`);
+  // (c) A LONE rejection with every other host refused must still throw. This is the assertion that
+  //     fails if the rethrow becomes `continue`, which would resolve with exposed:false and a
+  //     reachability verifier - a clean-looking answer for a probe that never answered.
+  const only = await run(async (host) => {
+    if (host === '10.0.0.5') throw new Error('boom-only');
+    return 'refused';
+  });
+  assert(only.error && only.error.message === 'boom-only',
+    `a rejected probe must never resolve as a clean answer: got ${only.error ? only.error.message : JSON.stringify(only.verdict)}`);
+  console.log('endpoint probe rejection OK: a later rejection cannot displace a refusal, host order decides which error is thrown, and a lone rejection stays fail-closed');
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === here) {
   // Run EVERY test in this file: a direct invocation must not look green while silently skipping
   // the ones added later. This ran only the first until web-uplift-690r added the concurrency
   // test - the same trap the gemini review of e93a028 found in tests/cdp-pipe-transport.mjs.
   await testCdpEndpointExposure();
   await testEndpointProbesRunConcurrently();
+  await testEndpointProbeRejectionStaysFailClosed();
 }
