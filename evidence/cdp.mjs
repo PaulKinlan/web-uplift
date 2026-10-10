@@ -794,6 +794,14 @@ const PIPE_FRAME_SEPARATOR = '\0';
 const PIPE_READY_RETRY_MS = 25;
 
 export function createPipeTransport({ toChrome, fromChrome, log = () => {} }) {
+  // Every log() call below runs from an event handler rather than from a caller, so there is no frame to
+  // throw into: a throwing log becomes an uncaughtException that takes the process down mid-CDP-exchange.
+  // The launcher's own path has the opposite property on purpose (web-uplift-l93f) - a throw there
+  // propagates and the finally reaps - but this side has nowhere to propagate to, so the failure is
+  // contained and the handler keeps its real job (web-uplift-9dqr).
+  const handlerLog = (msg) => {
+    try { log(msg); } catch { /* a throwing log must not become an uncaught exception (web-uplift-9dqr) */ }
+  };
   let nextId = 1;
   let buffer = '';
   let closed = false;
@@ -816,7 +824,7 @@ export function createPipeTransport({ toChrome, fromChrome, log = () => {} }) {
       } catch (err) {
         // A frame we cannot parse is not a reason to kill the session: log it and keep reading, or
         // one stray message would take the whole browser away from the caller.
-        log(`[browser] unparseable CDP pipe frame dropped: ${err && err.message}`);
+        handlerLog(`[browser] unparseable CDP pipe frame dropped: ${err && err.message}`);
         continue;
       }
       if (message.id !== undefined && pending.has(message.id)) {
@@ -837,13 +845,13 @@ export function createPipeTransport({ toChrome, fromChrome, log = () => {} }) {
           try {
             entry.callback(message.params, message.sessionId);
           } catch (err) {
-            log(`[browser] a CDP pipe listener threw: ${err && err.message}`);
+            handlerLog(`[browser] a CDP pipe listener threw: ${err && err.message}`);
           }
         }
       }
     }
   });
-  fromChrome.on('error', (err) => log(`[browser] CDP pipe read error: ${err && err.message}`));
+  fromChrome.on('error', (err) => handlerLog(`[browser] CDP pipe read error: ${err && err.message}`));
   // A closed pipe takes every in-flight command with it (web-uplift-h6yn). Without this, a Chrome that
   // dies mid-audit leaves its answers pending FOREVER for any caller that passed no deadline, which is a
   // hang rather than a failure - the same class as web-uplift-xnte, whose readiness instance is bounded
@@ -857,7 +865,7 @@ export function createPipeTransport({ toChrome, fromChrome, log = () => {} }) {
       entry.reject(new Error('the CDP pipe closed before every pending command was answered'));
     }
   });
-  toChrome.on('error', (err) => log(`[browser] CDP pipe write error: ${err && err.message}`));
+  toChrome.on('error', (err) => handlerLog(`[browser] CDP pipe write error: ${err && err.message}`));
 
   return {
     send(method, params, sessionId) {
@@ -1017,11 +1025,25 @@ async function waitForPipeReady(pipe, { proc, deadlineMs, log = () => {} }) {
 // attempt and report every reason it failed.
 async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, transport = 'pipe', exposureProbe = (port) => cdpEndpointExposure(port) }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'web-uplift-cdp-'));
-  const sandboxReason = sandboxDisableReason();
-  log(
-    `[browser] launching ${chromePath} (${headless ? 'headless' : 'headed'}, profile ${userDataDir})` +
-      (sandboxReason ? ` [OS sandbox DISABLED: ${sandboxReason}]` : ''),
-  );
+  // Everything between the profile directory and the spawn runs OUTSIDE the try/finally below, so a throw
+  // here has no reaper: the caller-supplied log is the one call in this region that is not ours, and a
+  // throwing one stranded the directory the line above had just created (web-uplift-9dqr). Reaping here
+  // rather than hoisting the block into the try is deliberate: the finally calls close(), which
+  // dereferences proc, so moving this above the spawn would make the finally throw on an unspawned
+  // browser and replace the caller's error with a TypeError from inside cleanup.
+  let sandboxReason;
+  try {
+    sandboxReason = sandboxDisableReason();
+    log(
+      `[browser] launching ${chromePath} (${headless ? 'headless' : 'headed'}, profile ${userDataDir})` +
+        (sandboxReason ? ` [OS sandbox DISABLED: ${sandboxReason}]` : ''),
+    );
+  } catch (err) {
+    // Nothing is live yet - no process, no pipe - so the profile directory is the whole cleanup, and the
+    // error still propagates so the caller sees its own throw rather than a cleanup artifact.
+    removeDirNow(userDataDir);
+    throw err;
+  }
 
   let proc;
   try {
