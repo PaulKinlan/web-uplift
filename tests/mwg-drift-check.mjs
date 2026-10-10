@@ -209,9 +209,11 @@ if (freshnessOnly) {
   // Two distinct conditions, deliberately kept separate because they are different repairs:
   //   - the state CLAIMS in-sync while the two versions cannot be shown to agree. That is a corrupt
   //     or hand-edited claim, so it is REJECTED OUTRIGHT below, whatever analysedAt says.
-  //   - the versions disagree, OR a delta is recorded with no usable upstream version at all. That
-  //     is an unactioned upstream change, so it is AGED from analysedAt - inside the window it stays
-  //     fresh with a note, and past it the age rule above reports it stale.
+  //   - the versions disagree, OR a delta is recorded with no usable upstream version at all. That is
+  //     an unactioned upstream change, so it is AGED from analysedAt - except when the flag says
+  //     in-sync, which is REJECTED by the branch below instead, because the rejection is checked
+  //     first and an in-sync claim can satisfy both bullets at once. Inside the window a delta stays
+  //     fresh with a note; past it the age rule reports it stale.
   const unsubstantiatedInSync = state.lastCheckResult === 'in-sync' && !versionsAgree;
   const analysisBehind = !versionsAgree && (hasUpstream || state.lastCheckResult === 'delta');
   const versionsDisagree = hasUpstream && !versionsAgree;
