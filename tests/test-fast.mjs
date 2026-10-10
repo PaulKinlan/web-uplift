@@ -41,6 +41,7 @@ function testSubsystemMappings() {
   assert(flowPlan.matchedSubsystems.includes('flow'), 'flow.mjs must map to flow subsystem');
   assert(flowPlan.targets.some((t) => t.path === 'tests/flow.mjs'), 'flow plan must include tests/flow.mjs');
   assert(flowPlan.targets.some((t) => t.filter === 'Flow'), 'flow plan must include Flow regression filter');
+  assert(flowPlan.targets.some((t) => t.path === 'tests/cdp-copy-sync.mjs'), 'flow plan must include cdp-copy-sync.mjs');
 
   // 2. Safe-fetch
   const fetchPlan = mapFilesToTests(['tests/safe-fetch.mjs']);
@@ -90,6 +91,12 @@ function testSubsystemMappings() {
   const runnerPlan = mapFilesToTests(['runner/run-batch.mjs']);
   assert(runnerPlan.matchedSubsystems.includes('runner'), 'runner/run-batch.mjs must map to runner subsystem');
   assert(runnerPlan.targets.some((t) => t.path === 'tests/batch-resume-isolation.mjs'), 'must include batch isolation');
+  assert(runnerPlan.targets.some((t) => t.path === 'tests/cdp-copy-sync.mjs'), 'runner plan must include cdp-copy-sync.mjs');
+
+  const runnerDocPlan = mapFilesToTests(['runner/README.md']);
+  assert(runnerDocPlan.matchedSubsystems.includes('runner'), 'runner/README.md must map to runner subsystem');
+  assert(!runnerDocPlan.isBaseline, 'runner/README.md must not fall back to baseline');
+  assert(runnerDocPlan.targets.some((t) => t.path === 'tests/cdp-copy-sync.mjs'), 'runner doc plan must include cdp-copy-sync.mjs');
 
   // 11. Skills
   const skillPlan = mapFilesToTests(['.claude/skills/web-audit/SKILL.md']);

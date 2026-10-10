@@ -72,6 +72,7 @@ export const SUBSYSTEMS = [
     description: 'User flow recording, normalization, and browser replay',
     match: (f) => /^runner\/flow(-record)?\.mjs$/.test(f) || /^tests\/flow(-shadow-browser)?\.mjs$/.test(f),
     targets: [
+      { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
       { type: 'node', path: 'tests/flow.mjs', label: 'Flow unit test suite' },
       { type: 'node', path: 'tests/flow-shadow-browser.mjs', label: 'Flow shadow DOM browser test' },
       { type: 'regression', filter: 'Flow', label: 'Regression: Flow tests' },
@@ -181,12 +182,10 @@ export const SUBSYSTEMS = [
     id: 'runner',
     description: 'Batch runner, agent dispatch, and execution history',
     match: (f) =>
-      f === 'runner/run-batch.mjs' ||
-      f === 'runner/agents.mjs' ||
-      f === 'runner/remaining-work.mjs' ||
-      f === 'runner/run-history.mjs' ||
+      (f.startsWith('runner/') && !/^runner\/flow(-record)?\.mjs$/.test(f)) ||
       f === 'tests/batch-resume-isolation.mjs',
     targets: [
+      { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
       { type: 'node', path: 'tests/batch-resume-isolation.mjs', label: 'Batch resume isolation tests' },
       { type: 'node', path: 'tests/skill-write-contract.mjs', label: 'Skill write contract tests' },
       { type: 'regression', filter: 'Batch', label: 'Regression: Batch isolation and scope tests' },
