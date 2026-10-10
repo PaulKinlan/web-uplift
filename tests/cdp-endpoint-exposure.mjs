@@ -809,9 +809,12 @@ export async function testThrowingLogDoesNotLeakTheSpawnedBrowser() {
 // verifiedBy:'reachability'. Leading whitespace is legal JSON, so a peer that padded past the cap
 // before a real DevTools payload earned a clean "not exposed, verified by reachability" verdict
 // (web-uplift-6h9o) - the same fail-open class the total-deadline rule exists to avoid. The cap now
-// settles 'timeout', leaving that host undecided and naming no verifier. Measured before and after:
+// settles 'oversized', which leaves that host undecided and naming no verifier exactly as 'timeout' did,
+// while letting the caller's note name the real cause instead of reporting a timeout (web-uplift-g9zr).
+// Measured before and after:
 //   before: probe=other   unknown=false  verifiedBy=reachability
-//   after:  probe=timeout unknown=true   verifiedBy=(none)
+//   after:  probe=oversized unknown=true verifiedBy=(none)  (the cap settles 'oversized' since web-uplift-g9zr,
+//            so the caller's note names the size cap instead of reporting a timeout)
 // The two controls matter as much as the fix: a small non-DevTools body must STILL read 'other' (so the
 // change is narrow to oversized bodies rather than making everything undecided), and a real DevTools
 // body must still be detected and still refuse.
@@ -838,8 +841,11 @@ export async function testOversizedBodyDoesNotEarnACleanVerdict() {
     // 'oversized' rather than 'timeout' (web-uplift-g9zr): both leave the host undecided and unverified
     // because cdpEndpointExposure treats every verdict except 'other' the same way, but the value is what
     // the note names, and calling a size cap a timeout sends an operator after a slow endpoint.
-    assert(await probeDevtools('127.0.0.1', paddingPort, 3000) === 'oversized',
-      'an oversized unproven body must leave the host undecided, not read as "answers, but not DevTools"');
+    const paddedVerdict = await probeDevtools('127.0.0.1', paddingPort, 3000);
+    // The message has to describe the property that FAILED. 'timeout' also leaves the host undecided, so
+    // the previous wording described the web-uplift-6h9o property rather than this one (review P2).
+    assert(paddedVerdict === 'oversized',
+      `an oversized unproven body must settle 'oversized' (got ${paddedVerdict}), not 'other' or 'timeout'`);
     assert(await probeDevtools('127.0.0.1', smallPort, 3000) === 'other',
       'a small non-DevTools body must still read as other: the change must stay narrow to oversized bodies');
     assert(await probeDevtools('127.0.0.1', devtoolsPort, 3000) === 'devtools',
@@ -857,6 +863,7 @@ export async function testOversizedBodyDoesNotEarnACleanVerdict() {
     assert(laundered.unknown === true, `an oversized unproven body must reach the caller as unknown, got ${JSON.stringify(laundered)}`);
     assert(laundered.verifiedBy === undefined, `and must name no verifier, got verifiedBy=${laundered.verifiedBy}`);
     assert(laundered.exposed === false, 'and must not be reported exposed on the strength of a size cap');
+
     // The verdict alone is half the claim: the NOTE the caller writes has to name the real cause, or an
     // operator reads "could not be probed (timeout)" while the cause was a size cap (web-uplift-g9zr).
     assert(/could not be probed \(oversized\)/.test(laundered.note || ''),

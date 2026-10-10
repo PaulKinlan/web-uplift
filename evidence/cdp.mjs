@@ -751,8 +751,9 @@ export function probeDevtools(host, port, timeoutMs) {
       // DevTools" and earns verifiedBy:'reachability', and leading whitespace is legal JSON, so a peer
       // that pads past the cap before a real DevTools payload was laundered into a clean verdict - the
       // same fail-open class the total-deadline rule above exists to avoid (web-uplift-6h9o). 'oversized'
-      // leaves the host undecided and with no verifier, exactly as 'timeout' did: cdpEndpointExposure
-      // treats every verdict except 'other' the same way, so the caller's decision does not change. The
+      // leaves the host undecided and with no verifier, exactly as 'timeout' did: cdpEndpointExposure gives
+      // each of 'refused', 'devtools' and 'other' its own branch and treats everything else alike, and
+      // 'oversized' matches none of those three, so the caller's decision does not change. The
       // value exists so the note it writes names the real cause. It read "could not be probed (timeout)"
       // while the cause was a size cap, which sends an operator looking for a slow endpoint instead of a
       // talkative one (web-uplift-g9zr). This does widen what reads as undecided: a genuinely
