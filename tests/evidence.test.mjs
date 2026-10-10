@@ -2045,4 +2045,4 @@ export {
   testExplicitSourceHonoursOperatorSpecifiedRoot,
 };
 
-await runSuite(evidenceTests, import.meta.url);
+await runSuite(evidenceTests, import.meta.url, { timeoutMs: 120000, concurrency: 1 });

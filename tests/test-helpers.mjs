@@ -9,6 +9,9 @@
 // argument-validation tests are the exception: they exit before any browser launches, so a
 // child run with an in-process server is safe there.
 import { createHash } from 'node:crypto';
+import test, { after } from 'node:test';
+import assert from 'node:assert/strict';
+export { assert, test, after };
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -22,10 +25,6 @@ export const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
 process.on('exit', () => {
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 });
-
-export function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 export function run(command, args, opts = {}) {
   return spawnSync(command, args, {
@@ -253,34 +252,56 @@ export function parseFilterArgs(argv) {
   return { filters, list };
 }
 
-export async function runSuite(tests, metaUrl) {
-  if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(metaUrl)) {
-    const { filters: testFilters, list: listTests } = parseFilterArgs(process.argv.slice(2));
+export async function runSuite(tests, metaUrl, options = {}) {
+  const isDirect = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(metaUrl);
+  if (!isDirect) return;
 
-    if (listTests) {
-      for (const fn of tests) {
-        console.log(fn.name);
-      }
-      process.exit(0);
-    }
+  const { filters: testFilters, list: listTests } = parseFilterArgs(process.argv.slice(2));
 
-    const selectedTests = testFilters.length === 0
-      ? tests
-      : tests.filter((fn) =>
-          testFilters.some((f) => fn.name.toLowerCase().includes(f.toLowerCase()))
-        );
-
-    if (selectedTests.length === 0) {
-      console.error(`no tests matched filter: ${testFilters.join(', ')}`);
-      process.exit(1);
+  if (listTests) {
+    for (const fn of tests) {
+      console.log(fn.name);
     }
-
-    for (const testFn of selectedTests) {
-      await testFn();
-    }
-    if (selectedTests.length < tests.length) {
-      console.log(`ran ${selectedTests.length}/${tests.length} tests matching [${testFilters.join(', ')}]: OK`);
-    }
-    console.log('tests OK');
+    process.exit(0);
   }
+
+  const selectedTests = testFilters.length === 0
+    ? tests
+    : tests.filter((fn) =>
+        testFilters.some((f) => fn.name.toLowerCase().includes(f.toLowerCase()))
+      );
+
+  if (selectedTests.length === 0) {
+    console.error(`no tests matched filter: ${testFilters.join(', ')}`);
+    process.exit(1);
+  }
+
+  let failed = false;
+  const timeoutMs = options.timeoutMs || 120000;
+  const concurrency = options.concurrency !== undefined ? options.concurrency : 1;
+
+  for (const fn of selectedTests) {
+    test(fn.name, { timeout: timeoutMs, concurrency }, async (t) => {
+      let completed = false;
+      t.signal?.addEventListener('abort', () => {
+        if (!completed) failed = true;
+      });
+      try {
+        await fn(t);
+        completed = true;
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
+    });
+  }
+
+  after(() => {
+    if (!failed && process.exitCode !== 1) {
+      if (selectedTests.length < tests.length) {
+        console.log(`ran ${selectedTests.length}/${tests.length} tests matching [${testFilters.join(', ')}]: OK`);
+      }
+      console.log('tests OK');
+    }
+  });
 }

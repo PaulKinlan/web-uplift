@@ -1623,4 +1623,4 @@ export {
   testFlowPierceShadowRootBrowser,
 };
 
-await runSuite(runnerAgentsTests, import.meta.url);
+await runSuite(runnerAgentsTests, import.meta.url, { timeoutMs: 120000, concurrency: 1 });

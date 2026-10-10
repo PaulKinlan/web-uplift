@@ -47,16 +47,16 @@ To eliminate these bottlenecks while strictly preserving all CLI surfaces, publi
 - Enforce the fleet operational rule: implementers run `fleet-check --fast` (completing in 10 to 30 seconds for typical changes), while the full regression suite runs once per landing on the merger's integrated tree.
 
 ### 3. Native Test Runner Adoption (`web-uplift-hhft` & `web-uplift-d2xu`)
-*Status: Planned / queued*
+*Status: Completed (`web-uplift-d2xu`, `web-uplift-hhft`, `web-uplift-n93i`)*
 - Migrate test suites from hand-rolled `assert(cond, msg)` loops to Node.js native test runner (`node:test` and `node:assert/strict`).
 - Enforce strict concurrency controls:
-  - Heavy browser and CDP tests (which launch Chromium instances or connect to loopback debug ports) execute with `concurrency: 1` to prevent port collisions and RAM starvation on 2-vCPU VMs.
-  - Pure unit tests (schema validation, redaction logic, URL parsing, syntax checks) execute concurrently.
-- Replace custom argument parsing with native `node --test --test-name-pattern=<pattern>` filtering and leverage per-test timeout options.
+  - Wire `--test-concurrency=1` in `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`) to ensure test files execute sequentially on 2-vCPU VMs, preventing port collisions and RAM starvation.
+  - Per-suite `timeoutMs` and execution options configured in `runSuite()`.
+- Native filtering supported via `node --test --test-name-pattern=<pattern>`, while preserving backward-compatible CLI flags (`--only`, `--filter`, `--list`) on `tests/regression.mjs` and individual suites.
 
 ### 4. Modular Suite Partitioning (`web-uplift-e49w`)
-*Status: Planned / queued*
-- Decompose the 115 tests in `tests/regression.mjs` into 7 thematic suite files under `tests/*.test.mjs`:
+*Status: Completed (`web-uplift-e49w`)*
+- Decompose the 128 tests in `tests/regression.mjs` into 7 thematic suite files under `tests/*.test.mjs`:
   1. `tests/evidence.test.mjs` (CDP evidence primitives, conditions, await census)
   2. `tests/redaction.test.mjs` (HAR redaction, credential terms, inlined source tree scrubbing)
   3. `tests/chrome-cdp.test.mjs` (Chrome candidate discovery, sandbox policy, launch retry, endpoint exposure)
@@ -64,10 +64,10 @@ To eliminate these bottlenecks while strictly preserving all CLI surfaces, publi
   5. `tests/install-package.test.mjs` (Install surfaces, relative import resolution, update checks, sync guards)
   6. `tests/runner-agents.test.mjs` (Batch runner, agent allowlists, skill contracts, write-scope boundaries)
   7. `tests/syntax-core.test.mjs` (Repository-wide syntax checks, schema conformance, side-effect checks)
-- Maintain `tests/regression.mjs` as an aggregator that executes all suites during the transition, ensuring `npm test` remains fully functional at every intermediate commit.
+- Maintain `tests/regression.mjs` as an aggregator that executes all suites during the transition, ensuring `npm test` remains fully functional at every commit.
 
 ### 5. Vendored Surface Lifecycle and Generation (`web-uplift-zeu4` & `web-uplift-diaq`)
-*Status: Planned / queued (sequenced behind ypds)*
+*Status: Completed (`web-uplift-diaq`)*
 - Remove `.web-uplift/` from git tracking and add `/.web-uplift/` to `.gitignore`.
 - Add `"prepare": "node install-surface.mjs"` to `package.json` scripts so that `.web-uplift/` is generated automatically upon `npm install` or `npm pack`.
 - Update `AGENTS.md` and `RELEASING.md` checklists as part of `web-uplift-diaq` to replace manual file mirroring instructions with the automated `prepare` lifecycle.

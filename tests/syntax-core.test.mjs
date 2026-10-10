@@ -1462,4 +1462,4 @@ export {
   testSourceTreeDepthGuard,
 };
 
-await runSuite(syntaxCoreTests, import.meta.url);
+await runSuite(syntaxCoreTests, import.meta.url, { timeoutMs: 120000, concurrency: 1 });

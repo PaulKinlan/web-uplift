@@ -578,4 +578,4 @@ export {
   testInstallNormalDestinationWrites,
 };
 
-await runSuite(installPackageTests, import.meta.url);
+await runSuite(installPackageTests, import.meta.url, { timeoutMs: 60000, concurrency: 1 });

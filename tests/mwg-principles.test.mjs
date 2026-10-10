@@ -1341,4 +1341,4 @@ export {
   testMwgCatalogExtract,
 };
 
-await runSuite(mwgPrinciplesTests, import.meta.url);
+await runSuite(mwgPrinciplesTests, import.meta.url, { timeoutMs: 60000, concurrency: 1 });

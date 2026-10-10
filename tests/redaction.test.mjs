@@ -844,4 +844,4 @@ export {
   testCredentialRedactorsAgree,
 };
 
-await runSuite(redactionTests, import.meta.url);
+await runSuite(redactionTests, import.meta.url, { timeoutMs: 30000, concurrency: 1 });

@@ -8,9 +8,7 @@
 // so a harness built that way cannot observe the behaviour it exists to check. The --out
 // argument-validation tests are the exception: they exit before any browser launches, so a
 // child run with an in-process server is safe there.
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { parseFilterArgs, repoRoot, tmp } from "./test-helpers.mjs";
+import { runSuite } from "./test-helpers.mjs";
 
 import {
   testPreNavigationEmulation,
@@ -299,34 +297,4 @@ export const ALL_TESTS = [
   testCompareArtifactContainment,
 ];
 
-const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-
-if (invokedDirectly) {
-  const { filters: testFilters, list: listTests } = parseFilterArgs(process.argv.slice(2));
-
-  if (listTests) {
-    for (const fn of ALL_TESTS) {
-      console.log(fn.name);
-    }
-    process.exit(0);
-  }
-
-  const selectedTests = testFilters.length === 0
-    ? ALL_TESTS
-    : ALL_TESTS.filter((fn) =>
-        testFilters.some((f) => fn.name.toLowerCase().includes(f.toLowerCase()))
-      );
-
-  if (selectedTests.length === 0) {
-    console.error(`no tests matched filter: ${testFilters.join(", ")}`);
-    process.exit(1);
-  }
-
-  for (const testFn of selectedTests) {
-    await testFn();
-  }
-  if (selectedTests.length < ALL_TESTS.length) {
-    console.log(`ran ${selectedTests.length}/${ALL_TESTS.length} tests matching [${testFilters.join(", ")}]: OK`);
-  }
-  console.log("tests OK");
-}
+await runSuite(ALL_TESTS, import.meta.url, { timeoutMs: 120000, concurrency: 1 });

@@ -94,14 +94,19 @@ taking 4 to 18 minutes. It runs once per landing on the merger's merged union.
 
 For iteration and implementer fast gates, several selective mechanisms are provided:
 
-1. **Direct suite execution:** Each `tests/*.test.mjs` suite can be run directly
+1. **Native node:test runner:** All 7 suites use native `node:test` and `node:assert/strict`.
+   Run `node --test tests/evidence.test.mjs` or filter natively by pattern via
+   `node --test --test-name-pattern="<regex>" tests/evidence.test.mjs`. Multi-suite sequential
+   execution is enforced via `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`)
+   to prevent port collisions and RAM starvation on 2-vCPU VMs.
+2. **Direct suite execution:** Each `tests/*.test.mjs` suite can be run directly
    (e.g. `node tests/evidence.test.mjs`, `node tests/redaction.test.mjs`), with
    support for `--only <filter>`, `--filter`, `--grep`, and `--list`.
-2. **Filterable regression tests:** `node tests/regression.mjs --only <filter>`
+3. **Filterable regression tests:** `node tests/regression.mjs --only <filter>`
    runs only tests matching the given substring across all suites (e.g. `--only Flow`,
    `--only SafeFetch`, `--only Symlink`), `--list` enumerates all available tests,
    and multiple `--only` flags can be combined.
-3. **Automated fast test gate:** `npm run test:fast` (or `node scripts/test-fast.mjs`)
+4. **Automated fast test gate:** `npm run test:fast` (or `node scripts/test-fast.mjs`)
    maps changed files (via `git diff origin/master` or explicit file paths) to
    their corresponding standalone and regression test targets.
 

@@ -993,4 +993,4 @@ export {
   testPipeReadinessThenExitFailsTheLaunch,
 };
 
-await runSuite(chromeCdpTests, import.meta.url);
+await runSuite(chromeCdpTests, import.meta.url, { timeoutMs: 120000, concurrency: 1 });
