@@ -279,6 +279,23 @@ export async function testCredentialRedactorsAgree() {
       'the invalid-port shape must lose the secret itself, not only the key id');
     assert(redactor('\\\\user:pw@x.test/a').includes('x.test'),
       'a backslash authority keeps its host instead of being reduced to a path');
+    // An UNPARSEABLE backslash authority, which the previous assertion did not cover because that
+    // string parses and never reaches the sweep. It was the gap that let a real leak through: the
+    // sweep searched for ONE backslash rather than two, so the delimiter ate the first character of
+    // the userinfo and printed it in the artifact. Four backslashes in the source, i.e. two in the
+    // string, is the spelling that is correct here, and this assertion is what pins it.
+    const TWO_BACKSLASHES = '\\\\';
+    assert(
+      redactor(`${TWO_BACKSLASHES}user:${USERINFO_PASS}@x.test:99999/a`) ===
+        `${TWO_BACKSLASHES}[redacted]:[redacted]@x.test:99999/a`,
+      `an unparseable backslash authority must redact both halves without eating the first character: ${redactor(`${TWO_BACKSLASHES}user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    // The other side of that fix: ONE backslash is not a two-character authority boundary, and it
+    // must not be mistaken for one. A lone backslash is a path separator in ordinary prose, so
+    // treating it as an authority would redact innocent text to cover a shape that is filed as a
+    // boundary (web-uplift-k99c) rather than quietly widened here.
+    assert(redactor('https:\\admin@x.test:99999/p') === 'https:\\admin@x.test:99999/p',
+      `one backslash is a boundary, not a delimiter: ${redactor('https:\\admin@x.test:99999/p')}`);
     // The anti-regression for the quadratic defect, and it measures SCALING rather than a wall
     // clock. An absolute bound was tried first and was a placebo: a shape-identical quadratic still
     // passed it, because V8 vectorises the character search and 8e8 byte-scans finish inside a
@@ -305,6 +322,26 @@ export async function testCredentialRedactorsAgree() {
       `the sweep must scale linearly: 4x the input took ${ratio.toFixed(1)}x the time (40 kB ${small}ms, 160 kB ${large}ms)`);
     // A backstop against a hang, set far above the measured 12 ms so it cannot flake.
     assert(large < 5000, `the sweep must not hang: 160 kB took ${large}ms`);
+    // The fixture above is a single run with ONE authority start, so the loop executes once and it
+    // cannot see a quadratic that comes from re-searching for the spelling that does NOT occur. This
+    // fixture repeats the start instead, and it is the one that actually caught that defect: with the
+    // searches re-run each iteration it measured 9.1x at 160 kB and 16.5x at 640 kB, and the fix
+    // brings it back to ~3x. Both fixtures are kept because each is blind to the other's failure.
+    const measureStarts = (length) => {
+      const input = '// '.repeat(Math.floor(length / 3));
+      let best = Infinity;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const started = Date.now();
+        redactor(input);
+        best = Math.min(best, Date.now() - started);
+      }
+      return best;
+    };
+    const manySmall = measureStarts(40000);
+    const manyLarge = measureStarts(160000);
+    const manyRatio = manyLarge / Math.max(manySmall, 2);
+    assert(manyRatio < 8,
+      `the sweep must stay linear with MANY authority starts, not just one: 4x the input took ${manyRatio.toFixed(1)}x (40 kB ${manySmall}ms, 160 kB ${manyLarge}ms)`);
   }
 }
 
