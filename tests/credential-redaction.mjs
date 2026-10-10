@@ -494,6 +494,15 @@ export async function testCredentialRedactorsAgree() {
       assert(redactor(`https://x.test/p?${ordinary}`) === `https://x.test/p?${ordinary}`,
         `?${ordinary} is an ordinary name and must keep its value`);
     }
+    // (f) Why the run is NOT narrowed to "extend past '?'/'#' only when no '/' precedes the delimiter",
+    // which is the obvious next refinement and was raised in review as an over-redaction P2. A password
+    // containing BOTH a '/' and a '?' HAS a slash before the delimiter, so that refinement declines to
+    // extend the run and the credential survives - measured on a mutant that implements it, not reasoned.
+    // The over-redaction in (e) is the price of not leaking this shape, and the bias toward redacting is
+    // the one this file already states for the '/' case above.
+    const bothDelims = `https://user:p/x${'?'}y@x.test`;
+    assert(!redactor(bothDelims).includes('p/x?y'),
+      `a password containing both / and ? must not survive, which is why the run is not narrowed: ${redactor(bothDelims)}`);
   }
   // (e) The ACCEPTED COST of removing '?' and '#' from the sweep's run breaks, pinned so it stays a
   // decision rather than becoming an accident later: on a value the parser REJECTS, an '@' inside the
