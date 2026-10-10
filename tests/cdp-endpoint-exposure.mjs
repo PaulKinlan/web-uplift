@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -801,6 +801,67 @@ export async function testThrowingLogDoesNotLeakTheSpawnedBrowser() {
   }
 }
 
+// probeDevtools capped the response at 64KB and settled 'other', on the reasoning that a body that
+// large is not /json/version. That reasoning is a heuristic, not a proof: cdpEndpointExposure reads
+// 'other' as "answers, but not with DevTools" and, when every host was decided, awards
+// verifiedBy:'reachability'. Leading whitespace is legal JSON, so a peer that padded past the cap
+// before a real DevTools payload earned a clean "not exposed, verified by reachability" verdict
+// (web-uplift-6h9o) - the same fail-open class the total-deadline rule exists to avoid. The cap now
+// settles 'timeout', leaving that host undecided and naming no verifier. Measured before and after:
+//   before: probe=other   unknown=false  verifiedBy=reachability
+//   after:  probe=timeout unknown=true   verifiedBy=(none)
+// The two controls matter as much as the fix: a small non-DevTools body must STILL read 'other' (so the
+// change is narrow to oversized bodies rather than making everything undecided), and a real DevTools
+// body must still be detected and still refuse.
+export async function testOversizedBodyDoesNotEarnACleanVerdict() {
+  const servers = [];
+  const start = async (write) => {
+    const server = createServer((socket) => { socket.on('error', () => {}); write(socket); });
+    servers.push(server);
+    // 0.0.0.0 so the peer is reachable from a non-loopback address: a loopback-only peer is refused
+    // from there, and the caller's "not exposed" verdict for it would be correct rather than laundered.
+    await new Promise((r) => server.listen(0, '0.0.0.0', r));
+    return server.address().port;
+  };
+  try {
+    const paddingPort = await start((socket) => {
+      // Flush the padding BEFORE the payload so the cap is what decides. Written back-to-back these
+      // coalesce into one chunk, the data handler sees the marker, and the cap never runs.
+      socket.write(' '.repeat(70 * 1024));
+      setTimeout(() => socket.write('{"webSocketDebuggerUrl":"ws://127.0.0.1:1/devtools/browser/x"}'), 30);
+    });
+    const smallPort = await start((socket) => socket.end('hello, not devtools'));
+    const devtoolsPort = await start((socket) => socket.end('HTTP/1.1 200 OK\r\n\r\n{"webSocketDebuggerUrl":"ws://127.0.0.1:1/devtools/browser/x"}'));
+
+    assert(await probeDevtools('127.0.0.1', paddingPort, 3000) === 'timeout',
+      'an oversized unproven body must leave the host undecided, not read as "answers, but not DevTools"');
+    assert(await probeDevtools('127.0.0.1', smallPort, 3000) === 'other',
+      'a small non-DevTools body must still read as other: the change must stay narrow to oversized bodies');
+    assert(await probeDevtools('127.0.0.1', devtoolsPort, 3000) === 'devtools',
+      'a real DevTools body must still be detected');
+
+    // The caller-level claim, which is where a laundering becomes a clean verdict. Only meaningful when
+    // this host has a non-loopback address - without one the caller correctly decides loopback-only
+    // before probing, and that early branch is not what this test is about.
+    const hasNonLoopback = Object.values(networkInterfaces()).some((addrs) => (addrs || []).some((a) => a.family === 'IPv4' && !a.internal));
+    if (!hasNonLoopback) {
+      console.log('oversized body OK: probe verdicts hold; skipped the caller-level check, this host has no non-loopback address');
+      return;
+    }
+    const laundered = await cdpEndpointExposure(paddingPort, { timeoutMs: 3000 });
+    assert(laundered.unknown === true, `an oversized unproven body must reach the caller as unknown, got ${JSON.stringify(laundered)}`);
+    assert(laundered.verifiedBy === undefined, `and must name no verifier, got verifiedBy=${laundered.verifiedBy}`);
+    assert(laundered.exposed === false, 'and must not be reported exposed on the strength of a timeout');
+    const narrow = await cdpEndpointExposure(smallPort, { timeoutMs: 3000 });
+    assert(narrow.unknown !== true, 'a small non-DevTools peer must still be settled, not left unknown');
+    const detected = await cdpEndpointExposure(devtoolsPort, { timeoutMs: 3000 });
+    assert(detected.exposed === true, 'a reachable DevTools endpoint must still be refused');
+    console.log('oversized body OK: no clean verdict for an unproven large body, while the small and DevTools peers are unchanged');
+  } finally {
+    for (const server of servers) { try { server.close(); } catch {} }
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === here) {
   // Run EVERY test in this file: a direct invocation must not look green while silently skipping
   // the ones added later. This ran only the first until web-uplift-690r added the concurrency
@@ -813,4 +874,5 @@ if (process.argv[1] && resolve(process.argv[1]) === here) {
   await testUnprintableProbeNoteDoesNotFailTheLaunch();
   await testTricklingPeerIsBoundedByTheTotalDeadline();
   await testThrowingLogDoesNotLeakTheSpawnedBrowser();
+  await testOversizedBodyDoesNotEarnACleanVerdict();
 }

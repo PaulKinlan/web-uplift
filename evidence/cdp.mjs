@@ -746,10 +746,24 @@ export function probeDevtools(host, port, timeoutMs) {
     socket.on('data', (chunk) => {
       text += chunk.toString('utf8');
       if (isDevtoolsBody(text)) settle('devtools');
-      else if (text.length > 64 * 1024) settle('other'); // a body this large is not /json/version
+      // A body this large is not /json/version - but that is a heuristic, not a proof, so the verdict is
+      // 'timeout' rather than 'other'. 'other' is read by cdpEndpointExposure as "answers, but not with
+      // DevTools" and earns verifiedBy:'reachability', and leading whitespace is legal JSON, so a peer
+      // that pads past the cap before a real DevTools payload was laundered into a clean verdict - the
+      // same fail-open class the total-deadline rule above exists to avoid (web-uplift-6h9o). 'timeout'
+      // leaves the host undecided and with no verifier. This does widen what reads as undecided: a
+      // genuinely non-DevTools peer that sends more than 64KB now reads undecided instead of 'other',
+      // which is the safer label but is a change, hence the separate artifact and its own review.
+      else if (text.length > 64 * 1024) settle('timeout');
     });
     socket.once('end', () => settle(isDevtoolsBody(text) ? 'devtools' : text ? 'other' : 'error'));
-    socket.once('timeout', () => settle(isDevtoolsBody(text) ? 'devtools' : text ? 'other' : 'timeout'));
+    // The idle timeout settles the SAME rule as the total deadline above: 'other' only applies to a
+    // body that PROVED itself non-DevTools by answering in full, never to one that merely sent some
+    // text and stalled. Today the deadline is armed first with the same duration and every byte pushes
+    // the idle timer later, so this branch cannot win - which is exactly why the rule has to be the
+    // same in both places: nothing in the code should depend on that ordering holding forever
+    // (web-uplift-6h9o review).
+    socket.once('timeout', () => settle(isDevtoolsBody(text) ? 'devtools' : 'timeout'));
     socket.once('error', (err) => settle(err && err.code === 'ECONNREFUSED' ? 'refused' : 'error'));
   });
 }
