@@ -109,13 +109,15 @@ export async function testLogUrlRedaction() {
       match: 'Could not read --urls file',
       why: 'a filesystem read error for --urls: no target URL is in scope here, so the message cannot carry one (and wrapping it would have nothing to substitute)',
     },
-    {
-      file: '.web-uplift/runner/run-batch.mjs',
-      match: 'Could not read --urls file',
-      why: 'the vendored copy of the same line: it is byte-identical by cdp-copy-sync, so the same reason applies',
-    },
   ];
-  const targets = ['runner/run-batch.mjs', '.web-uplift/runner/run-batch.mjs', 'fixer/fix.mjs'];
+  // The tracked sources only. The vendored .web-uplift/ tree is GENERATED (gitignored since web-uplift-diaq),
+  // so it is absent on a clean checkout or in any archive, and reading it here made the census fail on a
+  // tree that was perfectly correct (web-uplift-v062). Its byte-identity with these sources is owned by
+  // tests/cdp-copy-sync.mjs, which fails on any byte difference or one-sided file and backs
+  // npm run sync:vendored - so scanning the copy here added no coverage, and scanning it when PRESENT
+  // added a worse failure: a stale copy (one predating a change to the source) reports output lines that
+  // do not exist in the source at all. The coverage is therefore MOVED to cdp-copy-sync, not lost.
+  const targets = ['runner/run-batch.mjs', 'fixer/fix.mjs'];
   const findings = [];
   const used = new Set();
   for (const file of targets) {
