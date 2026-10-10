@@ -287,9 +287,12 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // collector the Runtime/Log enables; in trace the two direct navigations, the load wait,
 // applyConditions, Tracing.start, Tracing.end, tracingComplete and the interact evaluate;
 // in resilience the ServiceWorker.enable, the offline switch, the offline-reload navigate
-// and the online restore; in safeFetch the response-body reads. Bounded transitively:
+// and the online restore; in safeFetch the response-body reads; and (web-uplift-j3re) the five
+// pipe calls in the launch and session paths, the readiness retry sleep and the grace-bounded close
+// on the readiness failure path. Bounded transitively:
 // applyConditions' six internals and sw.enable's internal enable (every caller wraps the
-// call). Bounded by their own deadlines: the fetch and pinnedFetch exchanges (AbortSignal), the capped body
+// call), and (web-uplift-j3re) the Browser.getVersion probe inside waitForPipeReady's loop, which
+// deadlineMs bounds. Bounded by their own deadlines: the fetch and pinnedFetch exchanges (AbortSignal), the capped body
 // reader, har's network-idle wait, --interact's poll, the headers docPromise timeout,
 // resilience's offline load race, and (web-uplift-4rv) the exposure probe's own connect, which is
 // handed its timeoutMs explicitly, plus the injected exposureProbe, whose production default

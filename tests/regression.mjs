@@ -7725,7 +7725,11 @@ function testAwaitCensus() {
   const rules = [
     ['bounded:withDeadline', /await withDeadline\(|await withRetry\(/],
     ['bounded:navigate-helper', /await navigate\(/],
-    ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable/],
+    // web-uplift-j3re: the pipe readiness probe is a command inside a loop that the enclosing
+    // waitForPipeReady() bounds by deadlineMs, so like applyConditions' internals its bound is its
+    // caller's. It is listed by its exact shape rather than as "anything on a pipe", so a new
+    // unbounded pipe call cannot inherit the classification.
+    ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable|await pipe\.send\('Browser\.getVersion'\)/],
     ['bounded:sleep', /await sleep\(|await new Promise\(\(r\) => setTimeout/],
     ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|return await fn\(\)/],
     // web-uplift-4rv added two sites whose bound belongs to the CALLEE, which is why they are
@@ -7734,27 +7738,35 @@ function testAwaitCensus() {
     // instead of quietly still 'bounded'), and `exposureProbe` is an injected probe whose
     // production default, cdpEndpointExposure, bounds its own sockets by PROBE_TIMEOUT_MS. Same
     // shape as `await launchChromeOnce`, which is bounded by the mechanism it contains.
-    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise|await connect\([^)]*timeoutMs\)|await exposureProbe\(/],
+    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise|await connect\([^)]*timeoutMs\)|await exposureProbe\(|await waitForPipeReady\([^)]*deadlineMs/],
     ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
     ['excluded:page-side-template', /await navigator\.|await fetch\(\$\{JSON\.stringify\(su\)\}, \{ signal: controller\.signal \}\)|const t = await res\.text\(\);/],
     ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],
   ];
   const expected = {
     'evidence/cdp.mjs': {
-      'bounded:withDeadline': 12,
-      // 8, not 7: the exposure verdict added a SECOND grace-bounded `await close()` on the path that
+      // lsn3 and j3re moved these: the console redaction work, and then the pipe transport, which
+      // adds five withDeadline-wrapped pipe calls, one bounded retry sleep, one grace-bounded
+      // `await close()` on the pipe-readiness failure path, the readiness wait itself and the
+      // Browser.getVersion probe inside its bounded loop. Every one is classified by the mechanism
+      // that bounds it; none is a catch-all.
+      'bounded:withDeadline': 17,
+      // 9, not 7: the exposure verdict added a SECOND grace-bounded `await close()` on the path that
       // refuses an exposed launch (web-uplift-4rv), and every site in this bucket is the same
       // mechanism (waitForProcExit, waitForGroupDrain, the deadline-bounded endpoint wait, the
       // idempotent teardown, launchChromeOnce, withRetry's pass-through). The old count was never
       // wrong to the point of failing loudly: the unmatched-site assertion fires first and its
       // message hid this one behind it.
-      'bounded:pre-existing-mechanism': 8,
-      'bounded:sleep': 4,
+      'bounded:pre-existing-mechanism': 9,
+      'bounded:sleep': 5,
       'bounded:gather-spine': 4,
       'excluded:primitive-probe': 2,
       // web-uplift-4rv: the exposure probe's own connect (handed timeoutMs) and the injected
       // exposureProbe, both bounded by the callee rather than by a wrapper at the call site.
-      'bounded:own-deadline': 2,
+      // web-uplift-j3re added a third: the pipe readiness wait, which takes deadlineMs.
+      'bounded:own-deadline': 3,
+      // web-uplift-j3re: the Browser.getVersion probe inside waitForPipeReady's bounded loop.
+      'bounded:transitive-caller-wraps': 1,
     },
     'evidence/cli.mjs': {
       'bounded:gather-spine': 6,
