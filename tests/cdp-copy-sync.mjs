@@ -108,8 +108,14 @@ const COPY_FILES = [
 // differ from the commit, i.e. would syncing discard edits nobody has saved anywhere else.
 function trackedCopyHasLocalEdits(targetRepoAbs, targetRel) {
   const res = spawnSync('git', ['diff', '--quiet', 'HEAD', '--', targetRel], { cwd: targetRepoAbs, encoding: 'utf8' });
-  // 0 = matches HEAD, 1 = differs from HEAD, anything else = git could not answer (not a checkout).
+  // Exit 1 means "differs from HEAD" ONLY when git could actually answer. Outside a repository git
+  // ALSO exits 1, with "error: Could not access 'HEAD'" on stderr - and reading that as "has local
+  // edits" made the sync refuse every file in a fixture with no repository, breaking the guard's own
+  // mutation test. So: 0 clean, 1-without-stderr edited, anything else unknown (no refusal).
+  // Verified both ways rather than reasoned: a non-repository directory and a repository whose HEAD
+  // cannot be read both report unknown here, and a real modification still reports edited.
   if (res.status !== 0 && res.status !== 1) return { state: 'unknown', detail: (res.stderr || '').trim() };
+  if (res.status === 1 && (res.stderr || '').trim()) return { state: 'unknown', detail: (res.stderr || '').trim() };
   return { state: res.status === 1 ? 'edited' : 'clean' };
 }
 
@@ -118,6 +124,10 @@ function trackedCopyHasLocalEdits(targetRepoAbs, targetRel) {
 if (targetRepo === repoRoot && !existsSync(join(targetRepo, '.web-uplift'))) {
   generateVendoredSurface({ targetRoot: targetRepo });
 }
+
+// Only these destinations are tracked by contract; the gitignored .web-uplift/ tree and
+// non-repo fixtures are never candidates for this protection.
+const TRACKED_DESTS = new Set(TRACKED_COPY_FILES.map((file) => file.dest));
 
 const pairs = buildPairs(targetRepo);
 if (targetRepo !== repoRoot && pairs.length === 0) {
@@ -195,7 +205,9 @@ if (syncMode) {
     // report success while destroying the only copy of that work (web-uplift-0zcd). A tracked
     // copy whose destination is clean is normally stale because the SOURCE moved, which is
     // exactly what this sync is for, so that case still syncs.
-    const protection = trackedCopyHasLocalEdits(targetRepo, targetRel);
+    const protection = TRACKED_DESTS.has(targetRel)
+      ? trackedCopyHasLocalEdits(targetRepo, targetRel)
+      : { state: 'clean' };
     if (protection.state === 'edited') {
       refusals.push(targetRel);
       console.error(`REFUSING to sync ${sourceRel} -> ${targetRel}: it is a tracked file with uncommitted local changes, and overwriting it would destroy work. Commit, stash or discard that change first, or run with --dry-run to see what would move.`);
