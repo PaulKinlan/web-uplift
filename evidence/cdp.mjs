@@ -1229,8 +1229,10 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
   // not answer has not established that the endpoint is loopback-only. A retry runs its own probe, but
   // that does not remove the risk, because a probe CAN come back undecided - cdpEndpointExposure returns
   // {exposed:false, unknown:true} for that, and this function only refuses `exposed` - so a retry can
-  // hand the caller a browser whose exposure was never decided. A throw also means the probe broke, not
-  // that the launch was flaky, so a retry could not change the outcome.
+  // hand the caller a browser whose exposure was never decided. Note the asymmetry this creates: a
+  // probe that THROWS is treated more strictly than one that comes back undecided, which the first
+  // attempt accepts too. That is deliberate - a throw is a probe that did not run, while an undecided
+  // verdict is a probe that ran and could not tell.
   let exposure = null;
   try {
     exposure = await exposureProbe(port, proc.pid);
@@ -1239,7 +1241,15 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
       throw new Error(`returned no verdict (${shown})`);
     }
   } catch (err) {
-    const reason = `the endpoint exposure probe failed: ${err instanceof Error ? err.message : String(err)}`;
+    // Coercing the throw must itself be total: String(err) on Object.create(null) throws, and an
+    // Error whose message getter throws would too, and both would escape before close() (uuod review).
+    let shown = 'unprintable throw';
+    try {
+      shown = err instanceof Error ? err.message : String(err);
+    } catch {
+      shown = Object.prototype.toString.call(err);
+    }
+    const reason = `the endpoint exposure probe failed: ${shown}`;
     // Snapshot the real state BEFORE teardown, the way the readiness and exit paths do: close() reaps
     // the tree, and hard-coding these lost the real exit code of a browser that died during the probe.
     const detail = {
