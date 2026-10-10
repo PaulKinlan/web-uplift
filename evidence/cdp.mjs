@@ -906,16 +906,44 @@ async function waitForPipeReady(pipe, { proc, deadlineMs, log = () => {} }) {
     if (proc.exitCode !== null || proc.signalCode) {
       return { ok: false, reason: `the browser exited during startup (code ${proc.exitCode}, signal ${proc.signalCode})` };
     }
-    try {
-      const version = await pipe.send('Browser.getVersion');
-      return { ok: true, version };
-    } catch (err) {
-      lastError = err;
-      if (Date.now() >= deadline) {
-        return { ok: false, reason: `the CDP pipe did not answer Browser.getVersion within ${deadlineMs}ms: ${err && err.message}` };
-      }
-      await sleep(PIPE_READY_RETRY_MS);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      return { ok: false, reason: `the CDP pipe did not answer Browser.getVersion within ${deadlineMs}ms${lastError ? `: ${lastError.message}` : ''}` };
     }
+    // THE SEND ITSELF MUST BE BOUNDED (web-uplift-xnte). Awaiting it bare was a hang, not a slow path:
+    // the deadline was only consulted in the catch, so a promise that never settled never reached it,
+    // and the exit check at the top of the loop was unreachable for the same reason. A browser that is
+    // alive but silent on fd 4 - which is exactly what a sandboxed or wedged Chrome looks like - left
+    // the audit suspended forever instead of failing. Race three things: the answer, the remaining
+    // budget, and the process exiting. The losing promise is caught so it cannot surface later as an
+    // unhandled rejection, and both the timer and the exit listener are removed before returning.
+    let timer = null;
+    let onExit = null;
+    const answer = pipe.send('Browser.getVersion');
+    answer.catch(() => {});
+    const settled = await Promise.race([
+      answer.then((value) => ({ kind: 'ok', value }), (err) => ({ kind: 'err', err })),
+      new Promise((resolve) => { timer = setTimeout(() => resolve({ kind: 'timeout' }), remaining); }),
+      new Promise((resolve) => {
+        if (proc.exitCode !== null || proc.signalCode) { resolve({ kind: 'exited' }); return; }
+        onExit = () => resolve({ kind: 'exited' });
+        proc.once('exit', onExit);
+      }),
+    ]);
+    if (timer !== null) clearTimeout(timer);
+    if (onExit !== null) proc.off('exit', onExit);
+    if (settled.kind === 'ok') return { ok: true, version: settled.value };
+    if (settled.kind === 'exited') {
+      return { ok: false, reason: `the browser exited during startup (code ${proc.exitCode}, signal ${proc.signalCode})` };
+    }
+    if (settled.kind === 'timeout') {
+      return { ok: false, reason: `the CDP pipe did not answer Browser.getVersion within ${deadlineMs}ms` };
+    }
+    lastError = settled.err;
+    if (Date.now() >= deadline) {
+      return { ok: false, reason: `the CDP pipe did not answer Browser.getVersion within ${deadlineMs}ms: ${settled.err && settled.err.message}` };
+    }
+    await sleep(PIPE_READY_RETRY_MS);
   }
 }
 
@@ -1042,21 +1070,28 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
 
   if (transport === 'pipe') {
     pipe = createPipeTransport({ toChrome: proc.stdio[3], fromChrome: proc.stdio[4], log });
+    // Capture the diagnosis BEFORE the readiness wait and before ANY teardown, for the same reason the
+    // port path does (web-uplift-ik04): close() signals the browser and waits for it to exit, so a
+    // snapshot taken afterwards always reports alive=false and signal=SIGTERM, which erases the
+    // alive-but-silent vs exited-early distinction this failure message exists to make. The pipe path
+    // previously read those fields after close() and hardcoded stderrText to '', so a wedged browser was
+    // reported as a dead one with no stderr. Reading proc.stderr here also drains a stream that would
+    // otherwise buffer with nothing consuming it.
+    let pipeStderrText = '';
+    proc.stderr.on('data', (chunk) => { pipeStderrText += chunk.toString(); });
     const ready = await waitForPipeReady(pipe, { proc, deadlineMs: devtoolsTimeoutMs, log });
     if (!ready.ok) {
+      const failureDetail = {
+        reason: ready.reason,
+        spawned: true,
+        alive: !procExited(proc),
+        exitCode: proc.exitCode,
+        signal: proc.signalCode,
+        stderrText: pipeStderrText,
+      };
       recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: ready.reason });
       await close();
-      return {
-        ok: false,
-        detail: {
-          reason: ready.reason,
-          spawned: true,
-          alive: !procExited(proc),
-          exitCode: proc.exitCode,
-          signal: proc.signalCode,
-          stderrText: '',
-        },
-      };
+      return { ok: false, detail: failureDetail };
     }
     // No port exists, so there is nothing to expose and no verdict to make: the pipe is the
     // endpoint, and it is reachable only by a process that already holds this process's file

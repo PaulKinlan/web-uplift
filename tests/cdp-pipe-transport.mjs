@@ -12,7 +12,9 @@
 // failed to start a browser at all, so every zero here is paired with a positive: the same browser
 // evaluates script over the pipe, the same kernel read sees the listener that the PORT transport
 // really does publish, and a separate process really can reach that one.
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
@@ -93,6 +95,42 @@ export async function testCdpPipeTransport() {
   } finally {
     await portChrome.close();
   }
+}
+
+// A browser that is ALIVE but SILENT on fd 4 must fail the readiness wait within its budget instead of
+// suspending the audit forever (web-uplift-xnte). This is the exact shape that hung: because the process
+// was still up, the exit check at the top of the loop never fired, and because the pipe send never
+// settled, the deadline that was only consulted inside the catch was never reached either. A fake Chrome
+// that starts and then never writes a frame reproduces it deterministically, with no real browser.
+export async function testSilentPipeReadinessIsBounded() {
+  const dir = mkdtempSync(join(tmpdir(), 'web-uplift-xnte-'));
+  const silent = join(dir, 'silent-chrome');
+  writeFileSync(silent, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+  const savedBin = process.env.CHROME_BIN;
+  process.env.CHROME_BIN = silent;
+  const budgetMs = 400;
+  const started = Date.now();
+  let error = null;
+  let chrome = null;
+  try {
+    chrome = await launchChrome({ log: () => {}, devtoolsTimeoutMs: budgetMs });
+  } catch (err) {
+    error = err;
+  } finally {
+    if (savedBin === undefined) delete process.env.CHROME_BIN;
+    else process.env.CHROME_BIN = savedBin;
+    if (chrome) await chrome.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+  const elapsed = Date.now() - started;
+  assert(error !== null,
+    `a silent browser must fail the launch instead of hanging (waited ${elapsed}ms for a ${budgetMs}ms budget)`);
+  assert(/did not answer Browser\.getVersion|exited during startup/.test(error.message),
+    `the failure must name the readiness wait rather than a generic spawn error: ${error.message}`);
+  // Far below the 30s the fake sleeps and below any unbounded wait, so this is what proves the deadline
+  // is ENFORCED rather than merely written down: without the bound the wait ends only when the child
+  // exits, which is what the mutation that removes it demonstrates.
+  assert(elapsed < 15000, `the readiness wait must be bounded by its budget, took ${elapsed}ms`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

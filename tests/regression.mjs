@@ -26,7 +26,7 @@ import { launchChrome, resolveChromePath, sandboxDisableReason } from '../eviden
 import { testMwgDriftExtractPipe } from './mwg-drift-extract-pipe.mjs';
 import { testMwgDriftBasisFloor } from './mwg-drift-basis-floor.mjs';
 import { testCdpEndpointExposure } from './cdp-endpoint-exposure.mjs';
-import { testCdpPipeTransport } from './cdp-pipe-transport.mjs';
+import { testCdpPipeTransport, testSilentPipeReadinessIsBounded } from './cdp-pipe-transport.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
 import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
@@ -56,6 +56,7 @@ const ALL_TESTS = [
   testMwgDriftBasisFloor,
   testCdpEndpointExposure,
   testCdpPipeTransport,
+  testSilentPipeReadinessIsBounded,
   testSyntaxChecks,
   testPackageRootImportIsSideEffectFree,
   testChromeCandidateDiscovery,
@@ -7764,9 +7765,17 @@ function testAwaitCensus() {
       // web-uplift-4rv: the exposure probe's own connect (handed timeoutMs) and the injected
       // exposureProbe, both bounded by the callee rather than by a wrapper at the call site.
       // web-uplift-j3re added a third: the pipe readiness wait, which takes deadlineMs.
-      'bounded:own-deadline': 3,
+      // web-uplift-xnte added a fourth: that wait now RACES its Browser.getVersion send against the
+      // remaining budget and against process exit, so the send itself is bounded rather than only the
+      // loop around it. The rule catches it because it matches await Promise.race.
+      'bounded:own-deadline': 4,
       // web-uplift-j3re: the Browser.getVersion probe inside waitForPipeReady's bounded loop.
-      'bounded:transitive-caller-wraps': 1,
+      // web-uplift-xnte moved that probe OUT of an awaited line and into the race that owns its bound, so
+      // the rule matches nothing on this tree now. It is kept rather than deleted: a bare
+      // `await pipe.send('Browser.getVersion')` reappearing is still a transitive-caller-wraps site, and
+      // deleting the rule would make that line unclassified and therefore loud, which is not the same
+      // claim as this one. The site did not disappear, it moved: see bounded:own-deadline above.
+      'bounded:transitive-caller-wraps': 0,
     },
     'evidence/cli.mjs': {
       'bounded:gather-spine': 6,
@@ -8349,7 +8358,10 @@ async function testOperatorLaunchAttribution() {
     process.env.WEB_UPLIFT_LAUNCH_LOG = launchesFile;
     let launchErr = null;
     try {
-      await launchChrome({ log: () => {}, devtoolsTimeoutMs: 50 });
+      // The devtools budget is a PORT-transport deadline; on the pipe the readiness probe answers in
+      // well under 50ms and the launch legitimately succeeds, so the budget must be exercised on the
+      // transport that has it (web-uplift-ik04).
+      await launchChrome({ log: () => {}, devtoolsTimeoutMs: 50, transport: 'port' });
     } catch (e) {
       launchErr = e;
     } finally {
