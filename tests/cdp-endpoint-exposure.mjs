@@ -465,30 +465,48 @@ export async function testEndpointProbeRejectionStaysFailClosed() {
 // DevTools line and writing the pid, the launch finished first, the pid was empty, the liveness loop was
 // skipped, and a LEAKING tree PASSED.
 export async function testExposureProbeFailuresDoNotLeakTheBrowser() {
+  const revoked = Proxy.revocable({}, {});
+  const revokedProxy = revoked.proxy;
+  revoked.revoke();
   const shapes = [
     ['throws', () => { throw new Error('probe-boom'); }],
     ['returns undefined', () => undefined],
     ['resolves to null', async () => null],
     ['returns no verdict object', () => ({})],
+    // A throw that cannot be turned into a message: the coercion itself has to be total, or the
+    // failure reason is built by a statement that throws and escapes before close().
+    ['throws an unprintable value', () => { throw Object.create(null); }],
+    ['throws a revoked Proxy', () => { throw revokedProxy; }],
   ];
   for (const [label, probe] of shapes) {
     const dir = mkdtempSync(join(tmpdir(), 'web-uplift-uuod-'));
     const launchesFile = join(dir, 'launches.jsonl');
     const fake = join(dir, 'leaky-chrome');
     // Announces a port, then stays alive, so a leak is a live process at check time.
-    writeFileSync(fake, '#!/bin/sh\necho "DevTools listening on ws://127.0.0.1:1/" >&2\nexec sleep 30\n', { mode: 0o755 });
+    const fakePidFile = join(dir, 'fake-pid');
+    // The fake reports its own pid and TMPDIR points at dir, so the finally can clean up even in the
+    // shapes where the launch dies before recording anything - a mutant that removes the validation
+    // escapes before recordLaunchFailure, so pid and profileDir stay empty and the fake would survive
+    // into later tests in a full ALL_TESTS run (web-uplift-uuod review 3).
+    writeFileSync(fake, `#!/bin/sh\necho $$ > ${fakePidFile}\necho "DevTools listening on ws://127.0.0.1:1/" >&2\nexec sleep 30\n`, { mode: 0o755 });
     const savedBin = process.env.CHROME_BIN;
     const savedSink = process.env.WEB_UPLIFT_LAUNCH_LOG;
+    const savedTmp = process.env.TMPDIR;
     process.env.CHROME_BIN = fake;
     process.env.WEB_UPLIFT_LAUNCH_LOG = launchesFile;
+    process.env.TMPDIR = dir;
     let pid = '';
     let profileDir = null;
+    let handle = null;
     try {
       let error = null;
       try {
-        await launchChrome({ transport: 'port', devtoolsTimeoutMs: 2000, log: () => {}, exposureProbe: probe });
+        handle = await launchChrome({ transport: 'port', devtoolsTimeoutMs: 2000, log: () => {}, exposureProbe: probe });
       } catch (err) {
         error = err;
+      } finally {
+        // A shape that returns a handle owns a browser; close it here so it cannot outlive the test.
+        if (handle && handle.close) { try { await handle.close(); } catch {} }
       }
       // Read the record BEFORE the message assertions: the finally needs the pid to kill the fake, and a
       // failing message assertion used to run before the pid was known, so the fake was never killed.
@@ -503,7 +521,7 @@ export async function testExposureProbeFailuresDoNotLeakTheBrowser() {
         `${label}: the failure must name the probe so an operator can tell it apart from a bind verdict: ${error.message}`);
       assert(/after 1 attempt/.test(error.message),
         `${label}: a probe that gave no verdict must not be retried: ${error.message}`);
-      assert(failed.length === 1, `${label}: the failed attempt must be recorded exactly once, saw ${records.length} record(s)`);
+      assert(failed.length === 1, `${label}: the failed attempt must be recorded exactly once, saw ${failed.length} failed of ${records.length} record(s)`);
       assert(failed[0].pid, `${label}: the record must carry the spawned pid: ${JSON.stringify(failed[0])}`);
       assert(profileDir, `${label}: the record must carry the profile directory`);
       // Bounded on the REPEATS, not just the outcome: close() reaps asynchronously.
@@ -517,14 +535,56 @@ export async function testExposureProbeFailuresDoNotLeakTheBrowser() {
       assert(!existsSync(profileDir), `${label}: the profile directory must not be left behind: ${profileDir}`);
       console.log(`${label} OK: fails fatally after one attempt, records the attempt, and leaves neither browser nor profile behind`);
     } finally {
+      // When no record was written, fall back to the pid the fake reported, and TMPDIR means the
+      // profile directory is inside dir, which is removed below.
+      if (!pid && existsSync(fakePidFile)) pid = readFileSync(fakePidFile, 'utf8').trim();
       if (pid) { try { process.kill(Number(pid), 'SIGKILL'); } catch {} }
       if (profileDir) rmSync(profileDir, { recursive: true, force: true });
       if (savedBin === undefined) delete process.env.CHROME_BIN;
       else process.env.CHROME_BIN = savedBin;
       if (savedSink === undefined) delete process.env.WEB_UPLIFT_LAUNCH_LOG;
       else process.env.WEB_UPLIFT_LAUNCH_LOG = savedSink;
+      if (savedTmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = savedTmp;
       rmSync(dir, { recursive: true, force: true });
     }
+  }
+}
+
+// The verdict must be read exactly once, inside the try. A probe whose `exposed` getter answers a
+// boolean to the validation and throws on a second read used to escape at the use site with the browser
+// spawned and no close() on that path (web-uplift-uuod review 3).
+export async function testExposureVerdictIsReadOnceInsideTheTry() {
+  const dir = mkdtempSync(join(tmpdir(), 'web-uplift-uuod-'));
+  const fake = join(dir, 'readonce-chrome');
+  writeFileSync(fake, '#!/bin/sh\necho "DevTools listening on ws://127.0.0.1:1/" >&2\nexec sleep 30\n', { mode: 0o755 });
+  const savedBin = process.env.CHROME_BIN;
+  process.env.CHROME_BIN = fake;
+  let reads = 0;
+  let handle = null;
+  try {
+    handle = await launchChrome({
+      transport: 'port',
+      devtoolsTimeoutMs: 2000,
+      log: () => {},
+      exposureProbe: () => ({
+        get exposed() {
+          reads += 1;
+          if (reads > 1) throw new Error('exposed read twice');
+          return false;
+        },
+      }),
+    });
+    // A valid verdict of not-exposed is a SUCCESS, so the launch must return a handle and the getter
+    // must have been consulted exactly once.
+    assert(handle, 'a valid not-exposed verdict must still yield a handle');
+    assert(reads === 1, `the verdict must be read exactly once, read ${reads} time(s)`);
+    console.log('verdict read once OK: the getter was consulted once and the launch succeeded');
+  } finally {
+    if (handle && handle.close) { try { await handle.close(); } catch {} }
+    if (savedBin === undefined) delete process.env.CHROME_BIN;
+    else process.env.CHROME_BIN = savedBin;
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

@@ -39,7 +39,7 @@ import {
 } from './test-helpers.mjs';
 import { gather } from '../evidence/cli.mjs';
 import { launchChrome, resolveChromePath, sandboxDisableReason } from '../evidence/cdp.mjs';
-import { testCdpEndpointExposure, testEndpointProbesRunConcurrently, testEndpointProbeRejectionStaysFailClosed, testExposureProbeFailuresDoNotLeakTheBrowser } from './cdp-endpoint-exposure.mjs';
+import { testCdpEndpointExposure, testEndpointProbesRunConcurrently, testEndpointProbeRejectionStaysFailClosed, testExposureProbeFailuresDoNotLeakTheBrowser, testExposureVerdictIsReadOnceInsideTheTry } from './cdp-endpoint-exposure.mjs';
 import { testCdpPipeTransport, testSilentPipeReadinessIsBounded, testClosedPipeRejectsPendingSends, testPipeReadinessThenExitFailsTheLaunch } from './cdp-pipe-transport.mjs';
 
 // resolveChromePath must find a Chrome for Testing / Puppeteer cache binary when
@@ -972,6 +972,7 @@ export const chromeCdpTests = [
   testEndpointProbesRunConcurrently,
   testEndpointProbeRejectionStaysFailClosed,
   testExposureProbeFailuresDoNotLeakTheBrowser,
+  testExposureVerdictIsReadOnceInsideTheTry,
   testCdpPipeTransport,
   testSilentPipeReadinessIsBounded,
   testClosedPipeRejectsPendingSends,
@@ -993,6 +994,7 @@ export {
   testEndpointProbesRunConcurrently,
   testEndpointProbeRejectionStaysFailClosed,
   testExposureProbeFailuresDoNotLeakTheBrowser,
+  testExposureVerdictIsReadOnceInsideTheTry,
   testCdpPipeTransport,
   testSilentPipeReadinessIsBounded,
   testClosedPipeRejectsPendingSends,

@@ -1233,11 +1233,29 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
   // probe that THROWS is treated more strictly than one that comes back undecided, which the first
   // attempt accepts too. That is deliberate - a throw is a probe that did not run, while an undecided
   // verdict is a probe that ran and could not tell.
-  let exposure = null;
+  // Deliberately NOT initialised to false: a probe that returns nothing leaves this at undefined, and
+  // a boolean default would let a missing verdict pass validation as "not exposed", which is the
+  // fail-open this whole check exists to prevent. My own six-shape test caught exactly that.
+  let exposed;
+  let probeReason = null;
+  let probeNote = null;
   try {
-    exposure = await exposureProbe(port, proc.pid);
-    if (!exposure || typeof exposure.exposed !== 'boolean') {
-      const shown = exposure === undefined ? 'undefined' : exposure === null ? 'null' : JSON.stringify(exposure);
+    const exposure = await exposureProbe(port, proc.pid);
+    // Read each field exactly ONCE, here, and validate the LOCAL. Reading `exposure.exposed` for the
+    // check and again for the copy would consult the getter twice, and a probe whose getter answers a
+    // boolean once and then throws would escape at the use site with the browser spawned and no
+    // close() on that path (web-uplift-uuod review 3). Wrapping this in one destructure is what makes
+    // "read once" true rather than merely intended.
+    if (exposure !== null && typeof exposure === 'object') {
+      ({ exposed, reason: probeReason, note: probeNote } = exposure);
+    }
+    if (typeof exposed !== 'boolean') {
+      let shown = String(exposed);
+      try {
+        shown = exposure === undefined ? 'undefined' : exposure === null ? 'null' : JSON.stringify(exposure);
+      } catch {
+        shown = 'an object that could not be described';
+      }
       throw new Error(`returned no verdict (${shown})`);
     }
   } catch (err) {
@@ -1247,7 +1265,13 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
     try {
       shown = err instanceof Error ? err.message : String(err);
     } catch {
-      shown = Object.prototype.toString.call(err);
+      try {
+        shown = Object.prototype.toString.call(err);
+      } catch {
+        // Still not printable: a revoked Proxy, or an object whose Symbol.toStringTag getter throws.
+        // The default has to survive this, because the message is built in a catch that has no
+        // enclosing try and would otherwise escape before close() (web-uplift-uuod review 3).
+      }
     }
     const reason = `the endpoint exposure probe failed: ${shown}`;
     // Snapshot the real state BEFORE teardown, the way the readiness and exit paths do: close() reaps
@@ -1265,18 +1289,18 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
     await close();
     return { ok: false, detail };
   }
-  if (exposure.exposed) {
-    recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: exposure.reason });
+  if (exposed) {
+    recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: probeReason });
     await close();
     return {
       ok: false,
       // `fatal` is what stops launchChrome from retrying: a bind that is not loopback is a
       // verdict about this host, and a retry loop would spawn more exposed listeners and could
       // then fail OPEN on a later attempt that could not decide (web-uplift-4rv review).
-      detail: { reason: exposure.reason, fatal: true, spawned: true, alive: false, exitCode: null, signal: null, stderrText },
+      detail: { reason: probeReason, fatal: true, spawned: true, alive: false, exitCode: null, signal: null, stderrText },
     };
   }
-  if (exposure.note) log(`[browser] ${exposure.note}`);
+  if (probeNote) log(`[browser] ${probeNote}`);
 
   // The endpoint promise resolved the moment Chrome printed its listening line, so a browser that
   // died during the exposure probe still arrives here: the 'exit' listener's reject is a no-op on a
