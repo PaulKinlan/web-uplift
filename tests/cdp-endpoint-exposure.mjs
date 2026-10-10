@@ -451,51 +451,76 @@ export async function testEndpointProbeRejectionStaysFailClosed() {
   console.log('endpoint probe rejection OK: a later rejection cannot displace a refusal, host order decides which error is thrown even when a later host fails first in time, and a lone rejection stays fail-closed');
 }
 
-// A probe that THROWS must not leave the spawned browser behind. Before this, an escaping exception
-// skipped both recordLaunchFailure and close(), so the browser and its profile outlived the failed
-// launch with no handle left to close them (web-uplift-uuod). The fake writes its OWN pid and then
-// execs the sleep, so the liveness check is an exact /proc lookup: a pgrep pattern would also match
-// the shell running pgrep, which is how an earlier version of this check reported a leak on a tree
-// where the browser had in fact been torn down.
+// A probe that THROWS, or that returns something that is not a verdict, must not leave the spawned
+// browser behind OR be accepted. Before this, an escaping exception skipped both recordLaunchFailure
+// and close(), so the browser and its profile outlived the failed launch with no handle to close them,
+// and a probe returning `{}` was accepted as "not exposed", which is fail-open (web-uplift-uuod).
+//
+// The pid comes from the launch log rather than from a file the fake writes. An earlier version had the
+// fake report its pid, which raced the launch: if the shell paused between printing the DevTools line
+// and writing the pid, the launch finished first, the pid was empty, the liveness loop was skipped, and
+// a LEAKING tree PASSED. Reading the pid out of the failure record removes the ordering dependency
+// entirely and covers the record step at the same time.
 export async function testThrowingExposureProbeDoesNotLeakTheBrowser() {
   const dir = mkdtempSync(join(tmpdir(), 'web-uplift-uuod-'));
-  const pidFile = join(dir, 'pid');
+  const launchesFile = join(dir, 'launches.jsonl');
   const fake = join(dir, 'leaky-chrome');
-  writeFileSync(fake, `#!/bin/sh\necho "DevTools listening on ws://127.0.0.1:1/" >&2\necho $$ > ${pidFile}\nexec sleep 30\n`, { mode: 0o755 });
+  // Announces a port, then stays alive, so a leak is a live process at check time.
+  writeFileSync(fake, '#!/bin/sh\necho "DevTools listening on ws://127.0.0.1:1/" >&2\nexec sleep 30\n', { mode: 0o755 });
   const savedBin = process.env.CHROME_BIN;
+  const savedSink = process.env.WEB_UPLIFT_LAUNCH_LOG;
   process.env.CHROME_BIN = fake;
-  let error = null;
+  process.env.WEB_UPLIFT_LAUNCH_LOG = launchesFile;
+  let pid = '';
+  let profileDir = null;
   try {
-    await launchChrome({
-      transport: 'port',
-      devtoolsTimeoutMs: 2000,
-      log: () => {},
-      exposureProbe: () => { throw new Error('probe-boom'); },
-    });
-  } catch (err) {
-    error = err;
+    let error = null;
+    try {
+      await launchChrome({
+        transport: 'port',
+        devtoolsTimeoutMs: 2000,
+        log: () => {},
+        exposureProbe: () => { throw new Error('probe-boom'); },
+      });
+    } catch (err) {
+      error = err;
+    }
+    assert(error instanceof Error, `a throwing exposure probe must fail the launch, not return a handle: ${error}`);
+    assert(/endpoint exposure probe failed: probe-boom/.test(error.message),
+      `the failure must name the probe so an operator can tell it apart from a bind verdict: ${error.message}`);
+    assert(/after 1 attempt/.test(error.message),
+      `a probe that cannot answer must not be retried into more possibly-exposed listeners: ${error.message}`);
+    // The attempt must be attributable, which is what recordLaunchFailure is for.
+    const records = existsSync(launchesFile)
+      ? readFileSync(launchesFile, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+      : [];
+    const failed = records.filter((record) => record.outcome === 'failed');
+    assert(failed.length === 1, `the failed attempt must be recorded exactly once, saw ${records.length} record(s)`);
+    assert(/endpoint exposure probe failed: probe-boom/.test(failed[0].reason || ''),
+      `the record must carry the reason: ${JSON.stringify(failed[0])}`);
+    assert(failed[0].pid, `the record must carry the spawned pid: ${JSON.stringify(failed[0])}`);
+    pid = String(failed[0].pid);
+    profileDir = failed[0].profileDir || null;
+    // Bounded on the REPEATS, not just the outcome: close() reaps asynchronously, so allow a short
+    // settle before deciding the browser is still there.
+    let alive = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (!existsSync(`/proc/${pid}`)) { alive = false; break; }
+      alive = true;
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    assert(!alive, `the spawned browser must not outlive the failed launch (pid ${pid} is still in /proc)`);
+    assert(profileDir, 'the record must carry the profile directory');
+    assert(!existsSync(profileDir), `the profile directory must not be left behind: ${profileDir}`);
+    console.log('throwing exposure probe OK: fails fatally after one attempt, names the probe, records the attempt, and leaves neither browser nor profile behind');
   } finally {
+    if (pid) { try { process.kill(Number(pid), 'SIGKILL'); } catch {} }
     if (savedBin === undefined) delete process.env.CHROME_BIN;
     else process.env.CHROME_BIN = savedBin;
+    if (savedSink === undefined) delete process.env.WEB_UPLIFT_LAUNCH_LOG;
+    else process.env.WEB_UPLIFT_LAUNCH_LOG = savedSink;
+    rmSync(dir, { recursive: true, force: true });
   }
-  assert(error instanceof Error, `a throwing exposure probe must fail the launch, not return a handle: ${error}`);
-  assert(/endpoint exposure probe failed: probe-boom/.test(error.message),
-    `the failure must name the probe so an operator can tell it apart from a bind verdict: ${error.message}`);
-  assert(/after 1 attempt/.test(error.message),
-    `a probe that cannot answer must not be retried into more possibly-exposed listeners: ${error.message}`);
-  // Bounded on the REPEATS, not just the outcome: close() reaps asynchronously, so allow a short
-  // settle before deciding the browser is still there.
-  const pid = existsSync(pidFile) ? readFileSync(pidFile, 'utf8').trim() : '';
-  let alive = false;
-  for (let attempt = 0; attempt < 20 && pid; attempt += 1) {
-    if (!existsSync(`/proc/${pid}`)) { alive = false; break; }
-    alive = true;
-    await new Promise((done) => setTimeout(done, 50));
-  }
-  if (alive && pid) { try { process.kill(Number(pid), 'SIGKILL'); } catch {} }
-  rmSync(dir, { recursive: true, force: true });
-  assert(!alive, `the spawned browser must not outlive the failed launch (pid ${pid} is still in /proc)`);
-  console.log('throwing exposure probe OK: the launch fails fatally after one attempt, names the probe, and leaves no browser behind');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === here) {

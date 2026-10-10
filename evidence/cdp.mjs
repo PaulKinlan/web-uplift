@@ -1217,29 +1217,43 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
   // operator, read the pages it has open and run script in them. So the claim is measured
   // rather than trusted, and a non-loopback bind fails the launch instead of exposing an
   // audit (web-uplift-4rv).
-  // A probe that THROWS must not escape this function. Every other failure path here attributes the
-  // attempt and then tears the browser down; an escaping exception did neither, so the spawned Chrome
-  // and its profile were left behind with no handle to close them (web-uplift-uuod). The failure is
-  // reported as FATAL, like a non-loopback bind, because a probe that could not answer has not
-  // established that the endpoint is loopback-only - and a retry would spawn another listener whose
-  // exposure nobody has measured, which is the fail-open shape the fatal flag exists to prevent.
-  // A probe that THROWS must not escape this function. Every other failure path here attributes the
-  // attempt and then tears the browser down; an escaping exception did neither, so the spawned Chrome
-  // and its profile were left behind with no handle to close them (web-uplift-uuod). The failure is
-  // reported as FATAL, like a non-loopback bind, because a probe that could not answer has not
-  // established that the endpoint is loopback-only - and a retry would spawn another listener whose
-  // exposure nobody has measured, which is the fail-open shape the fatal flag exists to prevent.
+  // A probe that THROWS, or that returns something that is not a verdict, must not escape this
+  // function. Every other failure path here attributes the attempt and then tears the browser down; an
+  // escaping exception did neither, so the spawned Chrome and its profile were left behind with no
+  // handle left to close them (web-uplift-uuod). A verdict that is not a boolean is rejected rather
+  // than read, because `exposure.exposed` on undefined is a TypeError that escapes the same way, and a
+  // probe returning `{}` would otherwise be accepted as "not exposed" - fail-open for the one check
+  // whose whole purpose is to refuse (web-uplift-uuod review).
+  //
+  // The failure is FATAL rather than retried, for the reason the fatal flag exists: a probe that could
+  // not answer has not established that the endpoint is loopback-only. A retry runs its own probe, but
+  // that does not remove the risk, because a probe CAN come back undecided - cdpEndpointExposure returns
+  // {exposed:false, unknown:true} for that, and this function only refuses `exposed` - so a retry can
+  // hand the caller a browser whose exposure was never decided. A throw also means the probe broke, not
+  // that the launch was flaky, so a retry could not change the outcome.
   let exposure = null;
   try {
     exposure = await exposureProbe(port, proc.pid);
+    if (!exposure || typeof exposure.exposed !== 'boolean') {
+      const shown = exposure === undefined ? 'undefined' : exposure === null ? 'null' : JSON.stringify(exposure);
+      throw new Error(`returned no verdict (${shown})`);
+    }
   } catch (err) {
-    const reason = `the endpoint exposure probe failed: ${err && err.message}`;
+    const reason = `the endpoint exposure probe failed: ${err instanceof Error ? err.message : String(err)}`;
+    // Snapshot the real state BEFORE teardown, the way the readiness and exit paths do: close() reaps
+    // the tree, and hard-coding these lost the real exit code of a browser that died during the probe.
+    const detail = {
+      reason,
+      fatal: true,
+      spawned: true,
+      alive: !procExited(proc),
+      exitCode: proc.exitCode,
+      signal: proc.signalCode,
+      stderrText,
+    };
     recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason });
     await close();
-    return {
-      ok: false,
-      detail: { reason, fatal: true, spawned: true, alive: false, exitCode: null, signal: null, stderrText },
-    };
+    return { ok: false, detail };
   }
   if (exposure.exposed) {
     recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: exposure.reason });
