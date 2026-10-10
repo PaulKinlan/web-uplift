@@ -839,8 +839,9 @@ export async function testOversizedBodyDoesNotEarnACleanVerdict() {
     const devtoolsPort = await start((socket) => socket.end('HTTP/1.1 200 OK\r\n\r\n{"webSocketDebuggerUrl":"ws://127.0.0.1:1/devtools/browser/x"}'));
 
     // 'oversized' rather than 'timeout' (web-uplift-g9zr): both leave the host undecided and unverified
-    // because cdpEndpointExposure treats every verdict except 'other' the same way, but the value is what
-    // the note names, and calling a size cap a timeout sends an operator after a slow endpoint.
+    // because cdpEndpointExposure gives each of 'refused', 'devtools' and 'other' its own branch and
+    // treats everything else alike, but the value is what the note names, and calling a size cap a timeout
+    // sends an operator after a slow endpoint.
     const paddedVerdict = await probeDevtools('127.0.0.1', paddingPort, 3000);
     // The message has to describe the property that FAILED. 'timeout' also leaves the host undecided, so
     // the previous wording described the web-uplift-6h9o property rather than this one (review P2).
