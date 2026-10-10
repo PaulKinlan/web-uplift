@@ -13,6 +13,7 @@ function queryString(url) {
   }
 }
 
+// 4 base64 chars -> 3 bytes, minus padding. No Node Buffer.
 function approxBase64DecodedSize(b64) {
   const len = b64.length;
   const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;

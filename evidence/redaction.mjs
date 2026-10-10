@@ -43,6 +43,10 @@ const REDACTED_HEADER_VALUE = REDACTED_VALUE;
 // The module also keeps the flow recorder's PII words (email, phone, names, address)
 // SEPARATE from this credential vocabulary: this artifact is a credential redactor, so
 // it does not start rewriting fields the review never asked it to touch.
+//
+// The URL redactor itself now lives in evidence/credential-terms.mjs, because the console-evidence
+// collector in evidence/cdp.mjs needs the same rule and cli.mjs imports cdp.mjs (web-uplift-lsn3).
+// Re-exported here so every existing importer keeps working.
 export { isCredentialName, redactUrlCredentialValues };
 
 export function redactQueryList(list) {
