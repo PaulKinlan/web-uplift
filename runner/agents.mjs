@@ -216,7 +216,12 @@ export function buildAgentEnv({ agentName, extra = {}, env = process.env, warn =
       continue;
     }
     out[name] = safe.value;
-    if (safe.value !== env[name]) {
+    // Compare in the STRING form, which is the form the sanitiser decided on. Comparing against the
+    // raw value made an injected non-string credential-free value warn that a credential had been
+    // removed from it - a claim that was simply untrue (review finding). Working from one canonical
+    // string form is also what keeps a value with a stateful toString() from being judged as one
+    // thing and then stringified as another when the child is spawned.
+    if (safe.value !== String(env[name])) {
       proxyWarnings.push(
         `[agent-env] removed a credential from ${name} before handing it to the agent child (the ` +
           `credential was not passed; the proxy host still was, so egress still traverses it). Pass the ` +

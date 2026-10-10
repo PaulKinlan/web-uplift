@@ -1645,6 +1645,21 @@ export async function testAgentChildEnvProxyCredentials() {
   const benign = 'http://proxy.invalid:8080/?pool=corp';
   const benignBuilt = buildAgentEnv({ env: { HOME: '/tmp/home', HTTPS_PROXY: benign }, warn: () => {} });
   assert(benignBuilt.HTTPS_PROXY === benign, 'a non-credential query parameter must survive untouched');
+
+  // 6. An injected NON-STRING value that carries no credential must not be reported as having had one
+  // removed. The sanitiser decides on the STRING form of the value, so the caller has to compare in
+  // that same form; comparing the stringified result against the raw value made the warning untrue for
+  // exactly this input (found in review of this commit, and it was a real false claim, not a style nit).
+  const boxedWarnings = [];
+  const boxedBuilt = buildAgentEnv({
+    env: { HOME: '/tmp/home', HTTPS_PROXY: new String(plain) },
+    warn: (m) => boxedWarnings.push(m),
+  });
+  assert(boxedBuilt.HTTPS_PROXY === plain, 'a credential-free value must still arrive as that same value');
+  assert(
+    boxedWarnings.length === 0,
+    `a credential-free value must not be reported as having had a credential removed: ${JSON.stringify(boxedWarnings)}`,
+  );
 }
 
 export const runnerAgentsTests = [
