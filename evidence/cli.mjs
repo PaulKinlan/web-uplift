@@ -2009,7 +2009,9 @@ export function redactHeaderList(headers) {
     // the same root cause one call site further out; found by the integration test, not
     // by inspection. No name list is needed here: redactUrlCredentialValues only rewrites
     // a value that actually carries a credential-named parameter, so every other value
-    // (content types, sizes, plain words) passes through unchanged.
+    // (content types, sizes, plain words) passes through unchanged. Since web-uplift-73y3 it also
+    // rewrites a userinfo password, so a Location carrying basic-auth credentials is covered here
+    // too - which matters because this is the redirect path the artifact records.
     const value = typeof header?.value === 'string' ? redactUrlCredentialValues(header.value) : header?.value;
     return value === header?.value ? header : { ...header, value };
   });

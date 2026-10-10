@@ -193,9 +193,40 @@ export function redactUrlCredentialValues(raw) {
     }
     return hit;
   };
+
+  // A password in URL userinfo ('https://user:pass@host/...') is a credential on a surface this
+  // function already redacts: evidence/cli.mjs applies it to redirect Location headers and to HAR
+  // entry URLs, and the console-evidence prose path uses it too. A URL with basic-auth userinfo
+  // therefore wrote that password into reports/, evidence-out/ and the run log - the artifacts this
+  // redactor exists to make safe to share, and the same class it already redacts as the
+  // Authorization header (web-uplift-73y3).
+  //
+  // The USERNAME is kept, because a username is an identifier the artifact needs to stay readable.
+  // It is redacted only when it is itself credential-shaped: credential-NAMED ('token', 'apikey',
+  // measured through the shared table) or token-SHAPED (a long random string, through
+  // looksLikeToken). When both parts qualify, both go, which is the whole userinfo - that is the
+  // deliberate in-doubt case rather than a guess about which half was the secret.
+  const redactUserinfo = (u) => {
+    if (!u.username && !u.password) return false;
+    let hit = false;
+    if (u.password) {
+      u.password = REDACTED_VALUE;
+      hit = true;
+    }
+    if (u.username && (isCredentialName(u.username) || looksLikeToken(u.username))) {
+      u.username = REDACTED_VALUE;
+      hit = true;
+    }
+    return hit;
+  };
   try {
     const u = new URL(raw);
-    return apply(u) ? u.toString() : raw;
+    // Both halves run: a userinfo password must be redacted even when no query parameter matched,
+    // or the 'https://user:pass@host/' case would take the "nothing to do" path and leak the
+    // password through this very function (web-uplift-73y3).
+    const paramHit = apply(u);
+    const infoHit = redactUserinfo(u);
+    return paramHit || infoHit ? u.toString() : raw;
   } catch {
     /* not absolute: a redirect Location is very often a relative path */
   }
@@ -205,17 +236,17 @@ export function redactUrlCredentialValues(raw) {
     // new URL() rejects a relative string. The path is normalised (a bare '?a=b' gains a
     // leading '/'), which is the only shape change and is noted rather than silent.
     const u = new URL(raw, 'http://relative.invalid');
-    if (!apply(u)) return raw;
+    const paramHit = apply(u);
+    const infoHit = redactUserinfo(u);
+    if (!paramHit && !infoHit) return raw;
     // A PROTOCOL-RELATIVE input ('//host/path?token=..') is not a relative path: new URL() resolves
     // it against the base, so it HAS a host, and re-emitting only the path invented a URL that was
     // never requested - the host silently vanished from the artifact or HAR entry (web-uplift-53o1).
     // Leading whitespace counts: an HTTP field value may carry it, the URL parser strips it, and
     // testing only for '//' at index 0 left the same host-loss (found by sweeping edge cases after
     // the fix, not by the review). Userinfo is re-emitted too, so this branch rebuilds the same URL
-    // shape the absolute branch does - the absolute branch keeps 'user:pass@' via URL.toString(),
-    // and dropping it here would have been an inconsistent, silent deletion. Neither branch
-    // REDACTES userinfo: this redactor is scoped to credential-named query parameters, and a
-    // credential in userinfo is a separate finding.
+    // shape the absolute branch does. Userinfo passwords are redacted in both branches now
+    // (web-uplift-73y3), so this rebuild re-emits the username with the password marker.
     const lead = /^\s*/.exec(raw)[0];
     const userinfo = `${u.username}${u.password ? `:${u.password}` : ''}${u.username ? '@' : ''}`;
     const authority = /^\s*\/\//.test(raw) ? `//${userinfo}${u.host}` : '';
@@ -285,10 +316,13 @@ export function redactUrlsInText(text) {
     const trailing = /[.,;:!?=|"'<([{+]+$/.exec(raw);
     const body = trailing ? raw.slice(0, -trailing[0].length) : raw;
     out += text.slice(cursor, start);
-    // Only a span that carries a query can hold a credential parameter, and checking here keeps the
-    // work proportional to the text: the no-query case (the quadratic stress input above) never
-    // reaches the URL parser at all.
-    out += body && body.includes('?') ? redactUrlCredentialValues(body) : body;
+    // A span can only hold a credential if it carries a query ('?token=') or userinfo ('user:pass@'),
+    // and checking here keeps the work proportional to the text: the stress input that made this
+    // scanner quadratic (',/' repeated) has neither, so it never reaches the URL parser at all.
+    // The '@' half was missing at first and is why a userinfo-only URL in prose leaked after
+    // web-uplift-73y3 made userinfo passwords redactable - the span was skipped before the redactor
+    // that knows how to redact it was ever called.
+    out += body && (body.includes('?') || body.includes('@')) ? redactUrlCredentialValues(body) : body;
     out += trailing ? trailing[0] : '';
     cursor = end;
   }

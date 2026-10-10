@@ -152,8 +152,54 @@ export async function testCredentialRedactorsAgree() {
     assert(redactor(` //x.test/a?token=${SECRET_53O1}`) === ` //x.test/a?token=${'%5Bredacted%5D'}`, 'leading whitespace must not hide the host');
     assert(redactor(`//[::1]:8443/a?token=${SECRET_53O1}`) === `//[::1]:8443/a?token=${'%5Bredacted%5D'}`, 'a bracketed IPv6 host must survive');
     assert(redactor(`//x.test/a?token=${SECRET_53O1}#frag`) === `//x.test/a?token=${'%5Bredacted%5D'}#frag`, 'a fragment must survive');
-    assert(redactor(`//user:pass@x.test/a?token=${SECRET_53O1}`) === `//user:pass@x.test/a?token=${'%5Bredacted%5D'}`, 'userinfo must be re-emitted, as the absolute branch does');
+    // web-uplift-73y3 changed what the re-emitted userinfo CONTAINS: the username is still there
+    // (53o1's point - the branch must not silently delete part of the URL), and the password is now
+    // the marker instead of the value that was passed in.
+    assert(redactor(`//user:pass@x.test/a?token=${SECRET_53O1}`) === `//user:${'%5Bredacted%5D'}@x.test/a?token=${'%5Bredacted%5D'}`, 'userinfo is re-emitted with its password redacted');
   }
+
+  // 7. A password in URL USERINFO is a credential on a surface this redactor already covers
+  // (web-uplift-73y3). The artifacts are the secret-bearing output: evidence/cli.mjs applies this
+  // function to redirect Location headers and to HAR entry URLs, so 'https://user:pass@host/' wrote
+  // the password into reports/, evidence-out/ and the run log while the query-parameter pass looked
+  // clean - the same class the tool already redacts as the Authorization header.
+  const SECRET_USERINFO = 'NOTAREALKEY_FIXTURE_73Y3';
+  const USERINFO_PASS = 's3cr3t-73y3';
+  for (const redactor of [terms.redactUrlCredentialValues, cli.redactUrlCredentialValues]) {
+    // The case that must not be missed: NO credential parameter anywhere. A redactor that only
+    // rewrites when a query parameter matched would take the "nothing to do" path and leak here.
+    const plain = redactor(`https://user:${USERINFO_PASS}@x.test/plain`);
+    assert(plain === `https://user:${'%5Bredacted%5D'}@x.test/plain`,
+      `a userinfo password must be redacted even with no credential parameter: ${plain}`);
+    assert(!plain.includes(USERINFO_PASS), `the password must be gone from the value: ${plain}`);
+    // Both halves at once, and the same through the protocol-relative branch.
+    assert(redactor(`https://user:${USERINFO_PASS}@x.test/a?token=${SECRET_USERINFO}`) === `https://user:${'%5Bredacted%5D'}@x.test/a?token=${'%5Bredacted%5D'}`,
+      'userinfo and query credentials are redacted together');
+    assert(redactor(`//user:${USERINFO_PASS}@x.test/plain`) === `//user:${'%5Bredacted%5D'}@x.test/plain`,
+      'the protocol-relative branch redacts a userinfo password too');
+    // A username is an identifier the artifact needs, and is kept unless it is credential-shaped.
+    assert(redactor(`https://paul@x.test/a?token=${SECRET_USERINFO}`) === `https://paul@x.test/a?token=${'%5Bredacted%5D'}`,
+      'a plain username is kept');
+    assert(redactor(`https://token:${USERINFO_PASS}@x.test/plain`) === `https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain`,
+      'a credential-NAMED username goes with the password: the whole userinfo');
+    assert(redactor(`https://9f8b1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f607182:${USERINFO_PASS}@x.test/plain`) === `https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain`,
+      'a token-SHAPED username goes too');
+    // Controls: no userinfo keeps the old behaviour, and an unrelated parameter survives.
+    assert(redactor(`https://x.test/a?token=${SECRET_USERINFO}`) === `https://x.test/a?token=${'%5Bredacted%5D'}`, 'control: no userinfo, unchanged');
+    assert(redactor(`https://user:${USERINFO_PASS}@x.test/plain?page=2`) === `https://user:${'%5Bredacted%5D'}@x.test/plain?page=2`,
+      'an unrelated query parameter is preserved');
+  }
+  // The prose path reaches the same redactor through a scanner that skips spans with nothing to
+  // redact, so a userinfo-only URL in console text (web-uplift-lsn3's path) must trigger it too.
+  const prose = `see https://user:${USERINFO_PASS}@x.test/plain then move on`;
+  const redactedProse = terms.redactUrlsInText(prose);
+  assert(!redactedProse.includes(USERINFO_PASS), `a userinfo password in prose must be redacted: ${redactedProse}`);
+  assert(redactedProse.includes(`https://user:${'%5Bredacted%5D'}@x.test/plain`), `the rest of the URL must survive: ${redactedProse}`);
+  // The call site that makes this a P2 rather than a nit: the redirect Location header, driven
+  // through the artifact helper itself and not only through the unit.
+  const headered = cli.redactHeaderList([{ name: 'location', value: `https://user:${USERINFO_PASS}@x.test/next?token=${SECRET_USERINFO}` }]);
+  assert(!JSON.stringify(headered).includes(USERINFO_PASS),
+    `a redirect Location must not carry the userinfo password into the artifact: ${JSON.stringify(headered)}`);
 }
 
 // Run directly (node tests/credential-redaction.mjs), not when imported by the
