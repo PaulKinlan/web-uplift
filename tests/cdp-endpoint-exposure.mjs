@@ -9,7 +9,8 @@
 //   2. reachability, which also has to ask WHO is answering, or an unrelated daemon on the same
 //      address would refuse a healthy audit.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { PassThrough } from 'node:stream';
 import { createServer } from 'node:net';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -22,6 +23,7 @@ import {
   launchChrome,
   probeDevtools,
   readBoundListeners,
+  createPipeTransport,
 } from '../evidence/cdp.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -862,6 +864,97 @@ export async function testOversizedBodyDoesNotEarnACleanVerdict() {
   }
 }
 
+// web-uplift-9dqr: the profile directory is created (mkdtempSync) and the "[browser] launching" line is
+// logged BEFORE the wrapper's try begins, so a throwing caller log in that window had no reaper and
+// stranded the directory. Measured before the fix: the error propagated and the directory stayed behind.
+// Same class as the post-spawn leak (web-uplift-l93f), different recovery: there the throw propagates and
+// the finally reaps a live browser, here nothing is live yet, so the directory is the entire cleanup.
+export async function testPreSpawnLogThrowDoesNotStrandTheProfileDir() {
+  const dir = mkdtempSync(join(tmpdir(), '9dqr-prespawn-'));
+  const fakeImpl = join(dir, 'fake-chrome.mjs');
+  const fake = join(dir, 'fake-chrome');
+  const pidFile = join(dir, 'fake.pid');
+  writeFileSync(fakeImpl, [
+    "import { writeFileSync } from 'node:fs';",
+    "process.stderr.write('DevTools listening on ws://127.0.0.1:9001/devtools/browser/fake\\n');",
+    "writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));",
+    "setTimeout(() => {}, 120000);",
+    '',
+  ].join('\n'));
+  writeFileSync(fake, `#!/bin/sh\nexec ${process.execPath} ${fakeImpl}\n`, { mode: 0o755 });
+  // Profile dirs land under TMPDIR, so point TMPDIR at a directory the test owns and count them there.
+  const profileRoot = mkdtempSync(join(tmpdir(), '9dqr-profiles-'));
+  const saved = {
+    CHROME_BIN: process.env.CHROME_BIN,
+    TMPDIR: process.env.TMPDIR,
+    FAKE_PID_FILE: process.env.FAKE_PID_FILE,
+  };
+  process.env.CHROME_BIN = fake;
+  process.env.TMPDIR = profileRoot;
+  process.env.FAKE_PID_FILE = pidFile;
+  const exposureProbe = async () => ({ exposed: false, verifiedBy: 'reachability' });
+  const stranded = () => readdirSync(profileRoot).filter((n) => n.startsWith('web-uplift-cdp-'));
+  let handle = null;
+  try {
+    // (a) The defect: the sink throws on the PRE-spawn message, before the wrapper's try exists.
+    let threw = null;
+    try {
+      await launchChrome({
+        log: (m) => { if (String(m).startsWith('[browser] launching')) throw new Error('launching log boom'); },
+        transport: 'port',
+        exposureProbe,
+      });
+    } catch (err) { threw = err; }
+    assert(threw !== null && /launching log boom/.test(threw.message),
+      'the caller must still see its own error, not a cleanup artifact substituted for it');
+    const left = stranded();
+    assert(left.length === 0, `a throwing pre-spawn log must not strand the profile dir, left=${JSON.stringify(left)}`);
+
+    // (b) The control: a healthy log on the same path must still launch and hand back a live browser, so
+    // the reaper above cannot be passing merely by never creating a profile directory at all.
+    handle = await launchChrome({ log: () => {}, transport: 'port', exposureProbe });
+    assert(handle && typeof handle.close === 'function', 'a healthy log must still return a handle');
+    assert(stranded().length === 1, `the launched browser must own exactly one profile dir, saw ${stranded().length}`);
+  } finally {
+    if (handle) { try { await handle.close(); } catch { /* already gone */ } }
+    process.env.CHROME_BIN = saved.CHROME_BIN;
+    process.env.TMPDIR = saved.TMPDIR;
+    process.env.FAKE_PID_FILE = saved.FAKE_PID_FILE;
+    for (const d of [dir, profileRoot]) { try { rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } }
+  }
+  console.log('pre-spawn log OK: the error propagated and the profile dir did not outlive it');
+}
+
+// web-uplift-9dqr: createPipeTransport's log calls run from event handlers, not from a caller, so a throw
+// there is an uncaughtException that takes the process down mid-CDP-exchange rather than an error anyone
+// can catch. This drives the logging handler paths with a log that always throws and asserts none escapes.
+export async function testThrowingHandlerLogDoesNotTakeTheProcessDown() {
+  // createPipeTransport returns { send, close } rather than the streams, so the test holds its own
+  // references to the two ends it handed in: those are the objects whose handlers the transport registers.
+  const toChrome = new PassThrough();
+  const fromChrome = new PassThrough();
+  const transport = createPipeTransport({
+    toChrome,
+    fromChrome,
+    log: () => { throw new Error('handler log boom'); },
+  });
+  let escaped = null;
+  const onUncaught = (err) => { escaped = err; };
+  process.on('uncaughtException', onUncaught);
+  try {
+    fromChrome.emit('error', new Error('read failed'));
+    toChrome.emit('error', new Error('write failed'));
+    fromChrome.write('not-json-at-all');
+    await new Promise((r) => setTimeout(r, 50));
+    assert(escaped === null,
+      `a throwing handler log must not escape as an uncaughtException, but it did: ${escaped && escaped.message}`);
+  } finally {
+    process.removeListener('uncaughtException', onUncaught);
+    try { transport.close(); } catch { /* already closed */ }
+  }
+  console.log('handler log OK: a throwing log in a pipe event handler did not take the process down');
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === here) {
   // Run EVERY test in this file: a direct invocation must not look green while silently skipping
   // the ones added later. This ran only the first until web-uplift-690r added the concurrency
@@ -875,4 +968,6 @@ if (process.argv[1] && resolve(process.argv[1]) === here) {
   await testTricklingPeerIsBoundedByTheTotalDeadline();
   await testThrowingLogDoesNotLeakTheSpawnedBrowser();
   await testOversizedBodyDoesNotEarnACleanVerdict();
+  await testPreSpawnLogThrowDoesNotStrandTheProfileDir();
+  await testThrowingHandlerLogDoesNotTakeTheProcessDown();
 }
