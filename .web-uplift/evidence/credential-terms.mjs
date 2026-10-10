@@ -208,11 +208,16 @@ export const REDACTED_VALUE = '[redacted]';
 // inside the run or an AWS-style secret key with an unencoded slash in it would be redacted only up
 // to the slash and leak the rest, so the over-redaction is the safe side of the trade, and it only
 // happens on a string that failed to parse - a parseable URL has its path handled by the parser.
-const SWEEP_RUN_BREAKS = new Set([' ', '\t', '\n', '\r', '\f', '\v', '?', '#']);
+// Run break characters. Tab, LF and CR are deliberately absent even though they end a line in most
+// text: the URL parser STRIPS them anywhere in the input, so an authority continues across them, and
+// treating them as breaks left the tail of a credential in the output - 'https://us<TAB>er:pw@host'
+// kept 'pw'. Over-redacting across a tab or a newline is the safe side of that trade. Review measured
+// this as reachable through redactHeaderList, where an internal tab is legal in an HTTP field value.
+// This was filed as a boundary (web-uplift-k99c); it is fixed here because the fix is the break set.
+const SWEEP_RUN_BREAKS = new Set([' ', '\f', '\v', '?', '#']);
 function sweepUnparseableUserinfo(raw) {
   let out = '';
   let cursor = 0;
-  let next = -1;
   // ONE search for any two characters from the slash-or-backslash class, because a URL parser treats
   // every mix of them the same way after a special scheme: '//', two backslashes, '\' followed by '/'
   // and '/' followed by '\' all begin an authority. Searching for two spellings SEPARATELY was not
@@ -225,15 +230,18 @@ function sweepUnparseableUserinfo(raw) {
     const match = authorityPair.exec(raw);
     return match ? match.index : -1;
   };
-  // The search is reused until the cursor passes it. Each search scans forward from the cursor and the
-  // cursor only ever advances, so the total work is linear even on a string that repeats delimiters;
-  // re-running both searches every iteration is what made an earlier version 16x per doubling on input
-  // a page controls. A -1 is cached too, which is sound because the string does not change: if no
-  // delimiter exists from here on, none can appear later.
+  // ONE search PER PASS, starting at the cursor, and the cursor never moves backwards: a search only
+  // scans as far as the next authority start that no previous pass consumed, so the total work stays
+  // linear even on a string that repeats delimiters. This is deliberately NOT a cache, and an earlier
+  // revision of this comment wrongly described it as one - review proved the reuse guard could never
+  // fire, because a pass always consumes at least the two delimiter characters it matched, which puts
+  // the cursor past every start a previous pass found and leaves nothing to remember. What actually
+  // keeps this linear is that each search begins where the last pass stopped. Running several searches
+  // per pass and re-scanning to the end each time was quadratic on input a page controls (measured 16x
+  // per doubling of the input).
   for (;;) {
-    if (next === -1 || next < cursor) next = findAuthority();
-    if (next === -1) return out + raw.slice(cursor);
-    const start = next;
+    const start = findAuthority();
+    if (start === -1) return out + raw.slice(cursor);
     let end = start + 2;
     while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
     const run = raw.slice(start + 2, end);
