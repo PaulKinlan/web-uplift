@@ -109,6 +109,7 @@ const ALL_TESTS = [
   testHarRedactsCredentialHeaders,
   testAxeKeepsPagePolicyAndDisclosesInjectionBypass,
   testHeadersPrimitiveFindsHeadersRegardlessOfNameCase,
+  testHeadersPrimitiveSurvivesSlowResponseUnderLoad,
   testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase,
   testScorecardRejectsEscapingComparisonRunIds,
   testScorecardReservesImageBoxes,
@@ -2147,6 +2148,52 @@ async function testHeadersPrimitiveFindsHeadersRegardlessOfNameCase() {
       controlHsts.present === true && controlHsts.empty === false && controlHsts.issues.length === 0,
       `a header sent with a value must read as neither absent nor empty: ${JSON.stringify(controlHsts)}`,
     );
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+// headers() used to have a timeout of (opts.wait || 5000) + 3000ms. When tests or callers
+// specified wait: 400ms, the budget was only 3400ms. Under CPU load (or a slow TTFB),
+// navigate() plus the HTTP response exceeded 3400ms, docPromise resolved null, and all
+// security headers were reported as missing (false audit findings and flaky full gates).
+// This test delays the response beyond that 3400ms window with wait: 400 and asserts
+// that the scaled budget in docPromise captures the headers (web-uplift-met0).
+async function testHeadersPrimitiveSurvivesSlowResponseUnderLoad() {
+  const page = (title) =>
+    `<!doctype html><html lang="en"><head><title>${title}</title></head><body><main><h1>${title}</h1></main></body></html>`;
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/slow-headers') {
+      // Delay response headers by 3600ms, which exceeds the old (400 + 3000) = 3400ms ceiling.
+      setTimeout(() => {
+        res.writeHead(200, {
+          'Content-Type': 'text/html',
+          'Content-Security-Policy': "default-src 'self'",
+          'Strict-Transport-Security': 'max-age=63072000',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        res.end(page('slow'));
+      }, 3600);
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(page('ok'));
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    // Passing wait: 400 gives opts.wait = 400. In the old implementation, docPromise
+    // timed out at 3400ms and resolved null, causing all security headers to be missing.
+    const result = await gather('headers', `${base}/slow-headers`, { quiet: true, wait: 400 });
+    const csp = result.securityHeaders['content-security-policy'];
+    const hsts = result.securityHeaders['strict-transport-security'];
+    const xcto = result.securityHeaders['x-content-type-options'];
+    assert(csp.present === true, `slow CSP must be captured despite wait: 400: ${JSON.stringify(csp)}`);
+    assert(csp.value === "default-src 'self'", `slow CSP value must match: ${JSON.stringify(csp)}`);
+    assert(hsts.present === true, `slow HSTS must be captured despite wait: 400: ${JSON.stringify(hsts)}`);
+    assert(xcto.present === true && xcto.issues.length === 0, `slow X-Content-Type-Options must be valid: ${JSON.stringify(xcto)}`);
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }

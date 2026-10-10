@@ -1,4 +1,4 @@
-import { navigate } from '../cdp.mjs';
+import { navigate, getNavigationDeadlineMs } from '../cdp.mjs';
 import { resolve } from 'node:path';
 import { applyConditions, emit, headerMap, headerArray } from '../common.mjs';
 
@@ -17,14 +17,64 @@ function headerReport(value, valueIssues = [], missingIssue = 'missing') {
 export async function headers(client, url, opts, log) {
   log('[headers] inspecting ' + url);
   const respHeaders = {};
-  const docPromise = new Promise((resolve) => {
-    client.Network.responseReceived(({response}) => {
-      try { if (response.mimeType && response.mimeType.includes('html')) { resolve(response); } } catch {}
-    });
-    setTimeout(() => resolve(null), (opts.wait || 5000) + 3000);
+  let docResp = null;
+  let resolveDoc = null;
+  let budgetTimer = null;
+  let drainTimer = null;
+  const responses = [];
+
+  const settleFallback = () => {
+    if (!resolveDoc) return;
+    const clean = url.replace(/\/$/, '');
+    const match =
+      responses.find((r) => r.url && (r.url === url || r.url.replace(/\/$/, '') === clean)) ||
+      responses[responses.length - 1] ||
+      null;
+    resolveDoc(match);
+    resolveDoc = null;
+  };
+
+  client.Network.responseReceived(({ response, type }) => {
+    try {
+      if (!response) return;
+      responses.push(response);
+      const mime = (response.mimeType || '').toLowerCase();
+      if (type === 'Document' || mime.includes('html')) {
+        docResp = response;
+        if (resolveDoc) {
+          resolveDoc(response);
+          resolveDoc = null;
+        }
+      }
+    } catch {}
   });
-  await navigate(client, url, { settleMs: opts.wait || 3000, log });
-  const resp = await docPromise;
+
+  const docPromise = new Promise((resolve) => {
+    resolveDoc = resolve;
+    // Scale the wait budget with getNavigationDeadlineMs() so heavy CPU load,
+    // slow networks, or extended navigations never cause the response wait to
+    // expire while navigation is still active (web-uplift-met0).
+    const navDeadline = getNavigationDeadlineMs();
+    const waitBudget = Math.max(navDeadline + (opts.wait || 3000) + 5000, 15000);
+    budgetTimer = setTimeout(settleFallback, waitBudget);
+  });
+
+  let resp;
+  try {
+    await navigate(client, url, { settleMs: opts.wait || 3000, log });
+
+    // If navigation completed but no document response has been delivered yet
+    // (e.g. event queue lag under extreme load), allow a short post-navigate
+    // drain window before falling back, rather than waiting the entire nav deadline.
+    if (!docResp && resolveDoc) {
+      drainTimer = setTimeout(settleFallback, 1500);
+    }
+
+    resp = await docPromise;
+  } finally {
+    if (budgetTimer) clearTimeout(budgetTimer);
+    if (drainTimer) clearTimeout(drainTimer);
+  }
   // Header names are case-insensitive (RFC 9110), and Chrome hands them over as the
   // server sent them: capitalised on an HTTP/1.1 response, lowercased on HTTP/2. The
   // lookups below used to be lowercase-only, so a capitalised response reported
