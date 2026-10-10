@@ -115,6 +115,7 @@ import {
   testInstallRefusesDestinationSymlinks,
   testInstallNormalDestinationWrites,
   testMcpSkillsServerStdio,
+  testCdpCopySyncRefusesToOverwriteTrackedEdits,
 } from "./install-package.test.mjs";
 
 import {
@@ -176,6 +177,7 @@ import {
 
 
 export const ALL_TESTS = [
+  testCdpCopySyncRefusesToOverwriteTrackedEdits,
   testCensusTargetsAreTracked,
   testPreNavigationEmulation,
   testAxePrimitiveBypassesStrictCsp,

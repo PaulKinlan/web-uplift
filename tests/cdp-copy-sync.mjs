@@ -20,6 +20,7 @@
 // Node builtins only: no npm install is needed to run it.
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface } from '../install-surface.mjs';
@@ -96,6 +97,22 @@ const COPY_FILES = [
   ...TRACKED_COPY_FILES.map((file) => [file.source, file.dest]),
 ];
 
+// A tracked copy is one whose destination git actually tracks - the .pi skill copy, unlike the
+// gitignored .web-uplift/ tree. Syncing those is legitimate when the SOURCE moved, but overwriting
+// one that has its own uncommitted edits destroys work while reporting green (web-uplift-0zcd).
+//
+// The predicate is `git diff --quiet HEAD --`, NOT `git status --porcelain`. Porcelain reports an
+// untracked file as "?? path", which cannot be told from a modification without parsing the status
+// codes, and an untracked destination is not someone's uncommitted work - refusing it would block a
+// legitimate sync. Diffing against HEAD asks exactly the question that matters: does this path
+// differ from the commit, i.e. would syncing discard edits nobody has saved anywhere else.
+function trackedCopyHasLocalEdits(targetRepoAbs, targetRel) {
+  const res = spawnSync('git', ['diff', '--quiet', 'HEAD', '--', targetRel], { cwd: targetRepoAbs, encoding: 'utf8' });
+  // 0 = matches HEAD, 1 = differs from HEAD, anything else = git could not answer (not a checkout).
+  if (res.status !== 0 && res.status !== 1) return { state: 'unknown', detail: (res.stderr || '').trim() };
+  return { state: res.status === 1 ? 'edited' : 'clean' };
+}
+
 // Auto-generate .web-uplift/ if absent so fresh worktrees without prior npm install
 // do not false-fail on missing vendored directories (web-uplift-diaq).
 if (targetRepo === repoRoot && !existsSync(join(targetRepo, '.web-uplift'))) {
@@ -167,12 +184,23 @@ if (syncMode) {
   }
   let syncedCount = 0;
   let errorCount = 0;
+  const refusals = [];
   for (const pair of failures) {
     const targetRel = fromVendored ? pair.srcRel : pair.dstRel;
     const targetAbs = join(targetRepo, targetRel);
     const sourceObj = fromVendored ? readCopy(pair.dstAbs) : readCopy(pair.srcAbs);
     const sourceRel = fromVendored ? pair.dstRel : pair.srcRel;
 
+    // Never overwrite a TRACKED copy that carries its own uncommitted edits: the gate would
+    // report success while destroying the only copy of that work (web-uplift-0zcd). A tracked
+    // copy whose destination is clean is normally stale because the SOURCE moved, which is
+    // exactly what this sync is for, so that case still syncs.
+    const protection = trackedCopyHasLocalEdits(targetRepo, targetRel);
+    if (protection.state === 'edited') {
+      refusals.push(targetRel);
+      console.error(`REFUSING to sync ${sourceRel} -> ${targetRel}: it is a tracked file with uncommitted local changes, and overwriting it would destroy work. Commit, stash or discard that change first, or run with --dry-run to see what would move.`);
+      continue;
+    }
     if (sourceObj.state === 'ok') {
       mkdirSync(dirname(targetAbs), { recursive: true });
       writeFileSync(targetAbs, sourceObj.bytes);
@@ -193,6 +221,10 @@ if (syncMode) {
   }
   if (errorCount > 0) {
     console.error(`FAILED to sync ${errorCount} file(s) (source was missing or unreadable)`);
+    process.exit(1);
+  }
+  if (refusals.length > 0) {
+    console.error(`FAILED: refused to overwrite ${refusals.length} tracked file(s) with uncommitted local changes: ${refusals.join(', ')}. Nothing was written for those. Your edits are intact.`);
     process.exit(1);
   }
   console.log(`successfully synced ${syncedCount} drifted copy/copies`);

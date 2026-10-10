@@ -2,6 +2,7 @@
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -579,3 +580,56 @@ export {
 };
 
 await runSuite(installPackageTests, import.meta.url, { timeoutMs: 60000, concurrency: 1 });
+
+// web-uplift-0zcd. cdp-copy-sync --sync rewrites TRACKED_COPY_FILES as well as the gitignored
+// .web-uplift/ tree, and the gates now run that sync before testing. If a tracked destination
+// carries its own uncommitted edits, syncing overwrites the only copy of that work while the gate
+// reports green. The sync must refuse instead, and the legitimate case - the SOURCE moved, so the
+// destination is stale - must still sync, or the guard would break the DX fix it was added for.
+//
+// Built in a throwaway git repository: the behaviour depends on git status, and a test that
+// reproduced it against this checkout would have to dirty a real tracked file to do so.
+export function testCdpCopySyncRefusesToOverwriteTrackedEdits() {
+  const fixture = mkdtempSync(join(tmp, 'cdp-sync-tracked-'));
+  const srcRel = '.claude/skills/web-audit/SKILL.md';
+  const dstRel = '.pi/skills/web-audit/SKILL.md';
+  mkdirSync(dirname(join(fixture, srcRel)), { recursive: true });
+  mkdirSync(dirname(join(fixture, dstRel)), { recursive: true });
+  writeFileSync(join(fixture, srcRel), '# skill\noriginal content\n');
+  writeFileSync(join(fixture, dstRel), '# skill\noriginal content\n');
+
+  const git = (...args) => spawnSync('git', args, { cwd: fixture, encoding: 'utf8' });
+  git('init', '-q');
+  git('add', '-A');
+  git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '-q', '-m', 'fixture');
+
+  const guard = (...args) => spawnSync(process.execPath, [join(repoRoot, 'tests', 'cdp-copy-sync.mjs'), '--repo', fixture, ...args], { encoding: 'utf8' });
+
+  // (a) a tracked destination with its own uncommitted edit must be refused, and must survive
+  appendFileSync(join(fixture, dstRel), 'LOCAL WORK THAT MUST SURVIVE\n');
+  const refused = guard('--sync');
+  assert(refused.status !== 0, `sync must fail rather than overwrite a tracked file with local edits:\n${refused.stdout}\n${refused.stderr}`);
+  assert(refused.stderr.includes('REFUSING to sync'), `refusal must name the reason: ${refused.stderr}`);
+  assert(refused.stderr.includes(dstRel), `refusal must name the path it refused: ${refused.stderr}`);
+  assert(
+    readFileSync(join(fixture, dstRel), 'utf8').includes('LOCAL WORK THAT MUST SURVIVE'),
+    'the local edit must still be there after the refusal - that is the whole point',
+  );
+
+  // (b) the CONTROL, which is the reason the refusal keys on local edits rather than on drift:
+  // a destination that is clean but stale because the SOURCE moved is exactly what sync is for.
+  git('checkout', '--', dstRel);
+  appendFileSync(join(fixture, srcRel), 'SOURCE MOVED\n');
+  const synced = guard('--sync');
+  // Assert on the refusal and the content, not on the exit code: this fixture holds only the two
+  // files this behaviour needs, while the pair list is the repository's whole list, so unrelated
+  // pairs report "source is missing" and make the code non-zero for reasons this test is not about.
+  assert(
+    !synced.stderr.includes('REFUSING'),
+    `a destination that is merely stale must not be refused:\n${synced.stderr}`,
+  );
+  assert(
+    readFileSync(join(fixture, dstRel), 'utf8').includes('SOURCE MOVED'),
+    'a clean destination must pick up the source edit, or the sync no longer serves its purpose',
+  );
+}
