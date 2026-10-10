@@ -10,6 +10,8 @@
 // child run with an in-process server is safe there.
 import { runSuite } from "./test-helpers.mjs";
 
+import { testCensusTargetsAreTracked } from "./census-targets.mjs";
+
 import {
   testPreNavigationEmulation,
   testAxePrimitiveBypassesStrictCsp,
@@ -174,6 +176,7 @@ import {
 
 
 export const ALL_TESTS = [
+  testCensusTargetsAreTracked,
   testPreNavigationEmulation,
   testAxePrimitiveBypassesStrictCsp,
   testAxeKeepsPagePolicyAndDisclosesInjectionBypass,
