@@ -600,6 +600,48 @@ export async function testExposureVerdictIsReadOnceInsideTheTry() {
   }
 }
 
+// A probe note that cannot be turned into a string must not fail the launch, and must not be logged
+// raw. The coercion is wrapped and only a real string reaches log(), because a Symbol note or one whose
+// toString throws used to escape with no "launch failed" wrapper and the browser left running
+// (web-uplift-uuod review 4). This is the guard for that fix: reverting the coercion must fail here.
+export async function testUnprintableProbeNoteDoesNotFailTheLaunch() {
+  const dir = mkdtempSync(join(tmpdir(), 'web-uplift-uuod-'));
+  const fake = join(dir, 'note-chrome');
+  const fakePidFile = join(dir, 'fake-pid');
+  writeFileSync(fake, `#!/bin/sh\necho $$ > ${fakePidFile}\necho "DevTools listening on ws://127.0.0.1:1/" >&2\nexec sleep 30\n`, { mode: 0o755 });
+  const savedBin = process.env.CHROME_BIN;
+  const savedTmp = process.env.TMPDIR;
+  process.env.CHROME_BIN = fake;
+  process.env.TMPDIR = dir;
+  const logged = [];
+  let handle = null;
+  try {
+    handle = await launchChrome({
+      transport: 'port',
+      devtoolsTimeoutMs: 2000,
+      log: (line) => logged.push(line),
+      exposureProbe: () => ({ exposed: false, note: { toString() { throw new Error('note boom'); } } }),
+    });
+    assert(handle, 'a note that cannot be printed must not fail a launch with a valid verdict');
+    assert(logged.every((line) => typeof line === 'string'),
+      `only real strings may reach log(): ${JSON.stringify(logged)}`);
+    assert(!logged.some((line) => /note boom/.test(line)),
+      `an unprintable note must be dropped, not escaped: ${JSON.stringify(logged)}`);
+    console.log('unprintable note OK: the launch succeeded, only strings were logged, and nothing raw escaped');
+  } finally {
+    if (handle && handle.close) { try { await handle.close(); } catch {} }
+    if (existsSync(fakePidFile)) {
+      const pid = readFileSync(fakePidFile, 'utf8').trim();
+      if (pid) { try { process.kill(Number(pid), 'SIGKILL'); } catch {} }
+    }
+    if (savedBin === undefined) delete process.env.CHROME_BIN;
+    else process.env.CHROME_BIN = savedBin;
+    if (savedTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = savedTmp;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === here) {
   // Run EVERY test in this file: a direct invocation must not look green while silently skipping
   // the ones added later. This ran only the first until web-uplift-690r added the concurrency
@@ -609,4 +651,5 @@ if (process.argv[1] && resolve(process.argv[1]) === here) {
   await testEndpointProbeRejectionStaysFailClosed();
   await testExposureProbeFailuresDoNotLeakTheBrowser();
   await testExposureVerdictIsReadOnceInsideTheTry();
+  await testUnprintableProbeNoteDoesNotFailTheLaunch();
 }
