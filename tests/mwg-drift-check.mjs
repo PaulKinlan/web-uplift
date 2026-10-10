@@ -196,11 +196,18 @@ if (freshnessOnly) {
   // clears itself as soon as the catalog is re-analysed, even if a stale result flag was left behind:
   // versions that agree mean the analysis agrees with what the last check saw.
   const checkedUpstream = state.lastCheckUpstreamVersion;
+  const analysedVersion = state.analysedVersion;
+  const hasUpstream = typeof checkedUpstream === 'string' && checkedUpstream.length > 0;
+  const versionsAgree =
+    hasUpstream && typeof analysedVersion === 'string' && checkedUpstream === analysedVersion;
+  // A delta counts as recorded unless the two versions are SHOWN to agree. That phrasing is
+  // deliberate, and it is the fail-closed direction: an upstream version with no analysedVersion
+  // to compare against, or a state that says delta without recording which version it saw, are both
+  // cases where the analysis cannot be shown to match what the last check found. Reading either as
+  // fresh is the quiet failure this guard exists to prevent, and both were MEASURED as FRESH
+  // against the first version of this check before it was written this way.
   const analysisBehind =
-    typeof checkedUpstream === 'string' &&
-    checkedUpstream.length > 0 &&
-    typeof state.analysedVersion === 'string' &&
-    checkedUpstream !== state.analysedVersion;
+    !versionsAgree && (hasUpstream || state.lastCheckResult === 'delta');
   if (analysisBehind) {
     const analysedTime = typeof state.analysedAt === 'string' ? Date.parse(state.analysedAt) : NaN;
     if (Number.isNaN(analysedTime)) {
@@ -208,7 +215,7 @@ if (freshnessOnly) {
       // window, and answering FRESH here would be precisely the quiet failure this guard exists to
       // prevent, so an unreadable analysedAt is reported stale rather than assumed young.
       console.error(
-        `STALE: the last check found upstream version ${checkedUpstream} while the analysed version is ${JSON.stringify(state.analysedVersion ?? null)}, and analysedAt (${JSON.stringify(state.analysedAt ?? null)}) cannot be read as a timestamp, so the age of that detected delta is unknown (threshold: ${formatDuration(maxAgeMs)})`
+        `STALE: the state records a detected delta (last check found upstream version ${JSON.stringify(checkedUpstream ?? null)}, analysed version ${JSON.stringify(analysedVersion ?? null)}) but analysedAt (${JSON.stringify(state.analysedAt ?? null)}) cannot be read as a timestamp, so the age of that delta is unknown (threshold: ${formatDuration(maxAgeMs)})`
       );
       process.exit(3);
     }
@@ -217,13 +224,13 @@ if (freshnessOnly) {
     // as a young analysis and quietly buy the delta unlimited grace.
     if (deltaAgeMs < -5 * 60 * 1000) {
       console.error(
-        `STALE: the last check found upstream version ${checkedUpstream} while the analysed version is ${state.analysedVersion}, and analysedAt is ${formatDuration(-deltaAgeMs)} in the FUTURE (hand-edit or clock skew); refusing to treat a detected delta as fresh`
+        `STALE: the state records a detected delta (last check found upstream version ${JSON.stringify(checkedUpstream ?? null)}, analysed version ${JSON.stringify(analysedVersion ?? null)}) and analysedAt is ${formatDuration(-deltaAgeMs)} in the FUTURE (hand-edit or clock skew); refusing to treat a detected delta as fresh`
       );
       process.exit(3);
     }
     if (deltaAgeMs > maxAgeMs) {
       console.error(
-        `STALE: the last check found upstream version ${checkedUpstream} but the analysed version is ${state.analysedVersion}, and that analysis is ${formatDuration(deltaAgeMs)} old, exceeding max-age threshold of ${formatDuration(maxAgeMs)}; a detected delta has not been actioned`
+        `STALE: the state records a detected delta (last check found upstream version ${JSON.stringify(checkedUpstream ?? null)}, analysed version ${JSON.stringify(analysedVersion ?? null)}), and that analysis is ${formatDuration(deltaAgeMs)} old, exceeding max-age threshold of ${formatDuration(maxAgeMs)}; a detected delta has not been actioned`
       );
       process.exit(3);
     }
@@ -263,7 +270,7 @@ if (freshnessOnly) {
   console.log(
     `FRESH: last check was ${formatDuration(ageMs)} ago (within max-age threshold of ${formatDuration(maxAgeMs)})` +
     (analysisBehind
-      ? ` [NOTE: the last check found upstream version ${checkedUpstream} while the analysed version is ${state.analysedVersion}; that detected delta is inside the grace period, which is measured from analysedAt (${state.analysedAt}), not from this heartbeat]`
+      ? ` [NOTE: the state records a detected delta (last check found upstream version ${JSON.stringify(checkedUpstream ?? null)}, analysed version ${JSON.stringify(analysedVersion ?? null)}); it is inside the grace period, which is measured from analysedAt (${state.analysedAt}), not from this heartbeat]`
       : '')
   );
   process.exit(0);

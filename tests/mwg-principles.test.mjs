@@ -537,6 +537,27 @@ export function testMwgDriftCheckGuard() {
     const future = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
     assert(future.status === 3, `mwg-drift: case 15 (future-dated analysedAt) must exit 3, got ${future.status}:\n${future.stderr || future.stdout}`);
 
+    // (g) FAIL CLOSED: an upstream version with NO analysedVersion to compare against cannot be shown
+        // to be in sync. The flag here deliberately says in-sync, so this exercises the VERSION route on
+        // its own - and the first version of this check read exactly this state as FRESH (measured).
+        deltaState.lastCheckUpstreamVersion = '0.0.200';
+        deltaState.lastCheckResult = 'in-sync';
+        delete deltaState.analysedVersion;
+        deltaState.analysedAt = '2020-01-01T00:00:00.000Z';
+        writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+        const noAnalysed = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+        assert(noAnalysed.status === 3, `mwg-drift: case 15 (upstream recorded, analysedVersion missing) must exit 3, got ${noAnalysed.status}:\n${noAnalysed.stderr || noAnalysed.stdout}`);
+
+        // (h) FAIL CLOSED: the state SAYS delta but records no upstream version, so the delta can be named
+        // by neither version - it must not read as fresh on a fresh heartbeat alone. Also measured as FRESH
+        // before this was written, so the assertion is pinned to behaviour that really occurred.
+        deltaState.analysedVersion = '0.0.193';
+        deltaState.lastCheckUpstreamVersion = null;
+        deltaState.lastCheckResult = 'delta';
+        writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+        const unnamed = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+        assert(unnamed.status === 3, `mwg-drift: case 15 (delta flag with no recorded upstream version) must exit 3, got ${unnamed.status}:\n${unnamed.stderr || unnamed.stdout}`);
+
     // (d) CONTROL, the other direction: an in-sync state keeps the OLD heartbeat semantics even with an
     // ancient analysedAt, so this change cannot have quietly re-pointed the heartbeat at analysedAt.
     const syncState = JSON.parse(readFileSync(stateFixture, 'utf8'));
