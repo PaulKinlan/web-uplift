@@ -3677,7 +3677,10 @@ async function testLaunchRetryAndDiagnostics() {
       error = err;
     }
     assert(error instanceof Error, 'launchChrome must reject when every attempt fails');
-    assert(/exited early/.test(error.message), `launch failure must name the early exit: ${error.message}`);
+    // Both transports must NAME the early exit; they word it differently because the port path reads
+    // Chrome's own stderr while the pipe path only sees the process state (web-uplift-ik04).
+    assert(/exited (early|during startup)/.test(error.message),
+      `launch failure must name the early exit: ${error.message}`);
     assert(/code 7/.test(error.message), `launch failure must report the exit code: ${error.message}`);
     assert(/freshProfile=true/.test(error.message), `launch failure must report a fresh profile: ${error.message}`);
     assert(/alive=false/.test(error.message), `launch failure must report liveness: ${error.message}`);
@@ -3732,7 +3735,9 @@ async function testLaunchRetryAndDiagnostics() {
       { mode: 0o755 },
     );
     process.env.CHROME_BIN = flaky;
-    const handle = await launchChrome({ log: () => {} });
+    // The fake writes a DevTools listening line on stderr, which only the PORT transport parses, so this
+    // recovery test asks for it (web-uplift-ik04).
+    const handle = await launchChrome({ log: () => {}, transport: 'port' });
     assert(handle.port === 9222, `a recovered launch must parse the DevTools port, got ${handle.port}`);
     assert(readFileSync(counter, 'utf8').trim() === '2', 'the flaky launch must recover on its second attempt');
     await handle.close();
@@ -3774,7 +3779,9 @@ async function testChromeSandboxPolicy() {
     process.env.CHROME_BIN = fake;
 
     delete process.env.WEB_UPLIFT_NO_SANDBOX;
-    const byDefault = await launchChrome({ log: () => {} });
+    // transport: 'port' because this fake announces a DevTools listening line, which only the port
+    // transport reads; the pipe default would wait for a protocol the fake does not speak (web-uplift-ik04).
+    const byDefault = await launchChrome({ log: () => {}, transport: 'port' });
     await byDefault.close();
     const defaultArgs = readFileSync(argvFile, 'utf8').split('\n').filter(Boolean);
     // The policy verdict for THIS process (a suite run as root is the one case
@@ -3787,7 +3794,7 @@ async function testChromeSandboxPolicy() {
     );
 
     process.env.WEB_UPLIFT_NO_SANDBOX = '1';
-    const optedOut = await launchChrome({ log: () => {} });
+    const optedOut = await launchChrome({ log: () => {}, transport: 'port' });
     await optedOut.close();
     const optedOutArgs = readFileSync(argvFile, 'utf8').split('\n').filter(Boolean);
     assert(

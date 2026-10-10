@@ -283,7 +283,11 @@ export async function testCdpEndpointExposure() {
     // 7. THE LAUNCH PATH, both ways, with a real browser.
     // (a) A healthy launch: the pin is measured from the kernel and the endpoint is cleared.
     const log = [];
-    const chrome = await launchChrome({ log: (m) => log.push(m) });
+    // The PORT transport must be requested explicitly (web-uplift-ndud). The default is now the pipe,
+    // which publishes no endpoint at all, so launching without this made the assertion below compare a
+    // verdict about "no CDP port to probe" with a clearance - the test still ran, still failed, and in
+    // between stopped proving anything about 4rv's exposure guard. This is the path that has a listener.
+    const chrome = await launchChrome({ log: (m) => log.push(m), transport: 'port' });
     try {
       const verdict = await cdpEndpointExposure(chrome.port, { pid: chrome.proc.pid });
       assert(verdict.exposed === false && verdict.verifiedBy === 'the kernel binding' && verdict.unknown === undefined,
@@ -302,8 +306,11 @@ export async function testCdpEndpointExposure() {
     let attempts = 0;
     let refusal = null;
     try {
+      // Explicit port transport for the same reason as 7(a): on the pipe there is no port, so the
+      // probe is never invoked and the REFUSAL path this case exists to prove is bypassed entirely.
       await launchChrome({
         log: () => {},
+        transport: 'port',
         exposureProbe: async (port) => {
           attempts += 1;
           return { exposed: true, verifiedBy: 'test', reason: `test-injected exposure on port ${port}` };
