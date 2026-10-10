@@ -208,11 +208,16 @@ export const REDACTED_VALUE = '[redacted]';
 // inside the run or an AWS-style secret key with an unencoded slash in it would be redacted only up
 // to the slash and leak the rest, so the over-redaction is the safe side of the trade, and it only
 // happens on a string that failed to parse - a parseable URL has its path handled by the parser.
-const SWEEP_RUN_BREAKS = new Set([' ', '\t', '\n', '\r', '\f', '\v', '?', '#']);
+// Run break characters. Tab, LF and CR are deliberately absent even though they end a line in most
+// text: the URL parser STRIPS them anywhere in the input, so an authority continues across them, and
+// treating them as breaks left the tail of a credential in the output - 'https://us<TAB>er:pw@host'
+// kept 'pw'. Over-redacting across a tab or a newline is the safe side of that trade. Review measured
+// this as reachable through redactHeaderList, where an internal tab is legal in an HTTP field value.
+// This was filed as a boundary (web-uplift-k99c); it is fixed here because the fix is the break set.
+const SWEEP_RUN_BREAKS = new Set([' ', '\f', '\v', '?', '#']);
 function sweepUnparseableUserinfo(raw) {
   let out = '';
   let cursor = 0;
-  let next = -1;
   // ONE search for any two characters from the slash-or-backslash class, because a URL parser treats
   // every mix of them the same way after a special scheme: '//', two backslashes, '\' followed by '/'
   // and '/' followed by '\' all begin an authority. Searching for two spellings SEPARATELY was not

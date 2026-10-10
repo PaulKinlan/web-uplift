@@ -297,6 +297,18 @@ export async function testCredentialRedactorsAgree() {
     // boundary (web-uplift-k99c) rather than quietly widened here.
     assert(redactor('https:\\admin@x.test:99999/p') === 'https:\\admin@x.test:99999/p',
       `one backslash is a boundary, not a delimiter: ${redactor('https:\\admin@x.test:99999/p')}`);
+    // Tab, LF and CR are NOT run breaks. The URL parser strips them anywhere in the input, so an
+    // authority continues across them; treating them as breaks left the tail of the credential in the
+    // output, which review measured as reachable through redactHeaderList because an internal tab is
+    // legal in an HTTP field value. Over-redacting across one is the safe side of that trade.
+    assert(!redactor(`https://us\ter:${USERINFO_PASS}@x.test:99999/a`).includes(USERINFO_PASS),
+      `a tab inside the userinfo must not split the run: ${redactor(`https://us\ter:${USERINFO_PASS}@x.test:99999/a`)}`);
+    assert(!redactor(`https://user:\t${USERINFO_PASS}@x.test:99999/a`).includes(USERINFO_PASS),
+      `a tab before the password must not split the run: ${redactor(`https://user:\t${USERINFO_PASS}@x.test:99999/a`)}`);
+    assert(!redactor(`https://user:${USERINFO_PASS}@x.test:99999/a\nmore`).includes(USERINFO_PASS),
+      `a newline after the URL must not leave the credential behind: ${redactor(`https://user:${USERINFO_PASS}@x.test:99999/a\nmore`)}`);
+    assert(redactor('see https://x.test:99999/a\tb') === 'see https://x.test:99999/a\tb',
+      'control: a tab in an unparseable string with no credential changes nothing');
     // MIXED SPELLINGS, the regression a later review found in this fix. A URL parser for the special
     // schemes reads ANY pair from the slash-or-backslash class as the start of an authority, so these
     // are authorities, they fail on the port, and they reach this sweep. An intermediate version
