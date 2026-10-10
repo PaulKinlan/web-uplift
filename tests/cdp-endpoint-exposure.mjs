@@ -696,6 +696,79 @@ export async function testTricklingPeerIsBoundedByTheTotalDeadline() {
   }
 }
 
+// A caller-supplied log is the one call in the post-spawn region that is not ours, so it can throw
+// anywhere. Before this test, a throw on the success message ("[browser] DevTools port ...") escaped
+// launchChromeOnce with no handle returned and left the browser it had just spawned running
+// (web-uplift-l93f) - a resource leak, not a security hole, but unbounded in time for a long-lived
+// process. The fix is a try/finally with a handedOff flag, and this test has to pin BOTH sides: with a
+// healthy log a handle comes back and the browser is the caller's to close, and with a throwing log
+// nothing is left running. Without the healthy case, a launcher that closed unconditionally would pass.
+export async function testThrowingLogDoesNotLeakTheSpawnedBrowser() {
+  const dir = mkdtempSync(join(tmpdir(), 'l93f-log-'));
+  const fakeImpl = join(dir, 'fake-chrome.mjs');
+  const fake = join(dir, 'fake-chrome');
+  const pidFile = join(dir, 'fake.pid');
+  // A fake Chrome: ignore the arguments Chrome would receive, announce a listening line on stderr so
+  // the launch proceeds, record our pid so the test can check liveness, and stay alive long enough for
+  // a leak to be observable rather than a race.
+  writeFileSync(fakeImpl, [
+    "import { writeFileSync } from 'node:fs';",
+    "process.stderr.write('DevTools listening on ws://127.0.0.1:9001/devtools/browser/fake\\n');",
+    "writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));",
+    "setTimeout(() => {}, 120000);",
+    '',
+  ].join('\n'));
+  writeFileSync(fake, `#!/bin/sh\nexec ${process.execPath} ${fakeImpl}\n`, { mode: 0o755 });
+  // Injected so the test needs no real CDP endpoint: this test is about the log throwing, not about
+  // the probe's verdict.
+  const exposureProbe = async () => ({ exposed: false, verifiedBy: 'reachability' });
+  // Save every variable we touch. An earlier version of a sibling test mutated CHROME_BIN and never
+  // restored it, which leaked a dangling path into every later test AND every child they spawned.
+  const saved = { CHROME_BIN: process.env.CHROME_BIN, TMPDIR: process.env.TMPDIR, FAKE_PID_FILE: process.env.FAKE_PID_FILE };
+  process.env.CHROME_BIN = fake;
+  process.env.TMPDIR = dir;
+  process.env.FAKE_PID_FILE = pidFile;
+  const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const readPid = () => (existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : null);
+  let handle = null;
+  try {
+    // (a) The healthy path: a handle is returned, and the browser it names is ALIVE because it now
+    // belongs to the caller. This is the control against a launcher that closes too eagerly.
+    handle = await launchChrome({ log: () => {}, transport: 'port', exposureProbe });
+    const ownedPid = readPid();
+    assert(handle && typeof handle.close === 'function', 'a healthy log must still return a handle');
+    assert(ownedPid !== null && pidAlive(ownedPid), `the returned handle must name a live browser, pid=${ownedPid}`);
+    await handle.close();
+    handle = null;
+
+    // (b) The defect: the sink throws on the success message, after the spawn.
+    if (existsSync(pidFile)) rmSync(pidFile);
+    let threw = null;
+    try {
+      await launchChrome({
+        log: (...args) => { if (args.join(' ').includes('DevTools port')) throw new Error('log boom'); },
+        transport: 'port',
+        exposureProbe,
+      });
+    } catch (err) { threw = err; }
+    assert(threw !== null, 'a throwing log must propagate rather than be swallowed');
+    assert(/log boom/.test(String(threw && threw.message)), `the caller's own error must be the one raised, got ${threw}`);
+    const leakedPid = readPid();
+    assert(leakedPid !== null, 'the fake should still have recorded its pid before the log threw');
+    assert(!pidAlive(leakedPid), `the browser must not outlive the failed handoff, but pid ${leakedPid} is still running`);
+    console.log('throwing log OK: the error propagated and the spawned browser did not survive it');
+  } finally {
+    // Restore the environment first, so a failure below cannot leak CHROME_BIN to later tests.
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    if (handle) { try { await handle.close(); } catch {} }
+    const leftover = readPid();
+    if (leftover !== null && pidAlive(leftover)) { try { process.kill(-leftover, 'SIGKILL'); } catch {} try { process.kill(leftover, 'SIGKILL'); } catch {} }
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === here) {
   // Run EVERY test in this file: a direct invocation must not look green while silently skipping
   // the ones added later. This ran only the first until web-uplift-690r added the concurrency
@@ -707,4 +780,5 @@ if (process.argv[1] && resolve(process.argv[1]) === here) {
   await testExposureVerdictIsReadOnceInsideTheTry();
   await testUnprintableProbeNoteDoesNotFailTheLaunch();
   await testTricklingPeerIsBoundedByTheTotalDeadline();
+  await testThrowingLogDoesNotLeakTheSpawnedBrowser();
 }

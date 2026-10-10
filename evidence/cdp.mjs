@@ -298,7 +298,7 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // reader, har's network-idle wait, --interact's poll, the headers docPromise timeout,
 // resilience's offline load race, and (web-uplift-4rv) the exposure probe's own connect, which is
 // handed its timeoutMs explicitly, plus the injected exposureProbe, whose production default
-// cdpEndpointExposure bounds its own sockets by PROBE_TIMEOUT_MS. Bounded by pre-existing mechanisms: the launch endpoint
+// cdpEndpointExposure bounds its own sockets by PROBE_TIMEOUT_MS. Bounded by pre-existing mechanisms: the launch endpoint, the launcher's own close() - including the reap a failed handoff performs in its finally (web-uplift-l93f), and the same call made on a recovered handle in launchChrome when a caller's log throws after a successful attempt - the launch endpoint
 // poll and its grace-bounded teardown, sleeps, withRetry around bounded calls, the gather
 // spine. EXCLUDED WITH REASON: the per-primitive content probes after or outside the shared
 // spine (evaluate() probes, screenshots, getResponseBody, screencast, heap, axe, a11y and
@@ -1071,6 +1071,7 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
   liveBrowsers.add(browser);
 
   let closed = false;
+  let handedOff = false;
   let pipe = null;
   async function close() {
     if (closed) return; // idempotent: an explicit close plus a caller's finally
@@ -1118,6 +1119,8 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
       liveBrowsers.delete(browser);
     }
   }
+
+  try {
 
   if (transport === 'pipe') {
     pipe = createPipeTransport({ toChrome: proc.stdio[3], fromChrome: proc.stdio[4], log });
@@ -1170,6 +1173,7 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
         detail: { reason, spawned: true, alive: false, exitCode: proc.exitCode, signal: proc.signalCode, stderrText: pipeStderrText },
       };
     }
+    handedOff = true;
     return { ok: true, handle: { proc, pipe, userDataDir, close } };
   }
 
@@ -1356,7 +1360,15 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
   }
 
   log(`[browser] DevTools port ${port}`);
+    handedOff = true;
   return { ok: true, handle: { proc, port, userDataDir, close } };
+  } finally {
+    // The handle is only the caller's once it has been RETURNED. If anything after the spawn throws
+    // before that - in practice a caller-supplied log, the one call in this region that is not ours -
+    // the browser is still the launcher's to reap (web-uplift-l93f). close() is idempotent, so the
+    // failure paths that already closed explicitly are unaffected.
+    if (!handedOff) await close();
+  }
 }
 
 // Launch headless Chrome, retrying the WHOLE attempt (fresh profile dir) a
@@ -1384,7 +1396,16 @@ export async function launchChrome({
   for (let attempt = 1; attempt <= LAUNCH_ATTEMPTS; attempt++) {
     const result = await launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, transport, exposureProbe });
     if (result.ok) {
-      if (attempt > 1) log(`[browser] launch recovered on attempt ${attempt}/${LAUNCH_ATTEMPTS}`);
+      if (attempt > 1) {
+        try {
+          log(`[browser] launch recovered on attempt ${attempt}/${LAUNCH_ATTEMPTS}`);
+        } catch (err) {
+          // The handle is not the caller's until it is returned, so a throwing log here must not leak
+          // the browser this attempt just recovered (web-uplift-l93f). Same rule as launchChromeOnce.
+          await result.handle.close();
+          throw err;
+        }
+      }
       return result.handle;
     }
     lastDetail = result.detail;

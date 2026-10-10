@@ -1794,7 +1794,7 @@ export function testAwaitCensus() {
     // and loud, which is the truthful disposition, because no caller bounds it.
     ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable/],
     ['bounded:sleep', /await sleep\(|await new Promise\(\(r\) => setTimeout/],
-    ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|return await fn\(\)/],
+    ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await result\.handle\.close\(\)|await launchChromeOnce|return await fn\(\)/],
     // web-uplift-4rv added two sites whose bound belongs to the CALLEE, which is why they are
     // classified here rather than wrapped: `connect(host, port, timeoutMs)` is handed its deadline
     // explicitly (the regex requires that argument, so removing it leaves the site UNCLASSIFIED
@@ -1829,7 +1829,7 @@ export function testAwaitCensus() {
       // retry logic treats a browser that died during launch exactly like any other failed attempt.
       // web-uplift-uuod added one: the throwing-probe path now attributes the attempt and tears the
       // browser down exactly like every other launch failure, so it gained one `await close()`.
-      'bounded:pre-existing-mechanism': 14,
+      'bounded:pre-existing-mechanism': 16,
       'bounded:sleep': 5,
       'bounded:gather-spine': 4,
       'excluded:primitive-probe': 2,
