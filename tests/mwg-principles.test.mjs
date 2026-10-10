@@ -585,6 +585,26 @@ export function testMwgDriftCheckGuard() {
         const validSync = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
         assert(validSync.status === 0, `mwg-drift: case 15 (valid in-sync control) must still exit 0, got ${validSync.status}:\n${validSync.stderr || validSync.stdout}`);
 
+    // (l) A never-run (or unrecognised) flag does NOT escape the age rule when it carries a usable
+        // upstream version that DISAGREES: the flag says no check ran, the versions say otherwise, and the
+        // versions are what the age rule reads. An earlier version of the docs claimed such a state was
+        // "judged on lastCheckAt alone whatever its versions say", which is false for exactly this shape
+        // (review finding); this case pins the measured behaviour so the prose cannot drift from it again.
+        deltaState.lastCheckResult = 'never-run';
+        deltaState.lastCheckUpstreamVersion = '0.0.200';
+        deltaState.analysedVersion = '0.0.193';
+        deltaState.analysedAt = '2020-01-01T00:00:00.000Z';
+        writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+        const neverRunDisagreeing = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+        assert(neverRunDisagreeing.status === 3, `mwg-drift: case 15 (never-run flag with a disagreeing upstream version) must be age-gated and exit 3, got ${neverRunDisagreeing.status}:\n${neverRunDisagreeing.stderr || neverRunDisagreeing.stdout}`);
+
+        // and the shape that really IS heartbeat-only: the same flag with no usable upstream version, which
+        // is the shape the existing freshness case uses.
+        deltaState.lastCheckUpstreamVersion = null;
+        writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+        const neverRunNoUpstream = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+        assert(neverRunNoUpstream.status === 0, `mwg-drift: case 15 (never-run with no usable upstream version) must be judged on the heartbeat and exit 0, got ${neverRunNoUpstream.status}:\n${neverRunNoUpstream.stderr || neverRunNoUpstream.stdout}`);
+
     // (d) CONTROL, the other direction: an in-sync state keeps the OLD heartbeat semantics even with an
     // ancient analysedAt, so this change cannot have quietly re-pointed the heartbeat at analysedAt.
     const syncState = JSON.parse(readFileSync(stateFixture, 'utf8'));
