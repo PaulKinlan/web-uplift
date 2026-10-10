@@ -115,7 +115,19 @@ export async function testCredentialRedactorsAgree() {
   ]) {
     assert(terms.looksLikeToken(token), `"${token}" must be recognised as a token shape`);
   }
-  // 9. Protocol-relative URLs keep their host (web-uplift-53o1). new URL() cannot parse a
+  for (const word of [
+    'about-us', 'my-first-post', 'settings', 'v2-Release-Notes-2024', 'dashboard', 'abc123', 'tab2', '4f3a9b2c.js',
+    // The review's false positives: multi-dot filenames, version strings and long
+    // camelCase route words are not tokens.
+    'bundle.min.js', 'styles.min.css', 'archive.tar.gz', 'release-1.0.0', 'v1.2.3456789', 'en-US.messages.json',
+    'OrderConfirmation123', 'UserProfileStep2Page', 'SummerSalePromo2024',
+    // A resource UUID is an identifier, not a credential: redacting it breaks replay.
+    '550e8400-e29b-41d4-a716-446655440000',
+  ]) {
+    assert(!terms.looksLikeToken(word), `"${word}" is a route/filename, not a token, and must not be redacted`);
+  }
+
+  // 6. Protocol-relative URLs keep their host (web-uplift-53o1). new URL() cannot parse a
   // protocol-relative string without a base, so this path was reached through the relative-path
   // fallback, which re-emitted only pathname+search+hash: the host silently vanished from the
   // artifact or HAR entry, inventing a URL that was never requested. The credential was redacted
@@ -141,18 +153,6 @@ export async function testCredentialRedactorsAgree() {
     assert(redactor(`//[::1]:8443/a?token=${SECRET_53O1}`) === `//[::1]:8443/a?token=${'%5Bredacted%5D'}`, 'a bracketed IPv6 host must survive');
     assert(redactor(`//x.test/a?token=${SECRET_53O1}#frag`) === `//x.test/a?token=${'%5Bredacted%5D'}#frag`, 'a fragment must survive');
     assert(redactor(`//user:pass@x.test/a?token=${SECRET_53O1}`) === `//user:pass@x.test/a?token=${'%5Bredacted%5D'}`, 'userinfo must be re-emitted, as the absolute branch does');
-  }
-
-  for (const word of [
-    'about-us', 'my-first-post', 'settings', 'v2-Release-Notes-2024', 'dashboard', 'abc123', 'tab2', '4f3a9b2c.js',
-    // The review's false positives: multi-dot filenames, version strings and long
-    // camelCase route words are not tokens.
-    'bundle.min.js', 'styles.min.css', 'archive.tar.gz', 'release-1.0.0', 'v1.2.3456789', 'en-US.messages.json',
-    'OrderConfirmation123', 'UserProfileStep2Page', 'SummerSalePromo2024',
-    // A resource UUID is an identifier, not a credential: redacting it breaks replay.
-    '550e8400-e29b-41d4-a716-446655440000',
-  ]) {
-    assert(!terms.looksLikeToken(word), `"${word}" is a route/filename, not a token, and must not be redacted`);
   }
 }
 
