@@ -10,6 +10,11 @@
 // child run with an in-process server is safe there.
 import { runSuite } from "./test-helpers.mjs";
 
+import {
+  testTrackedBeadsExportHasNoSecretShapes,
+  testBeadsExportRedactionRuleCanFire,
+} from "./beads-export-redaction.mjs";
+
 import { testCensusTargetsAreTracked } from "./census-targets.mjs";
 
 import {
@@ -177,6 +182,8 @@ import {
 
 
 export const ALL_TESTS = [
+  testTrackedBeadsExportHasNoSecretShapes,
+  testBeadsExportRedactionRuleCanFire,
   testCdpCopySyncRefusesToOverwriteTrackedEdits,
   testCensusTargetsAreTracked,
   testPreNavigationEmulation,

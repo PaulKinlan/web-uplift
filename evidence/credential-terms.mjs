@@ -155,9 +155,31 @@ export function isSensitiveName(name) {
 // base64url of JSON, so the header and payload start 'eyJ'), a short
 // digits-dot-opaque token (Google's ya29.* access tokens), and a long
 // separator-free-or-base64url opaque string with no word in it.
+// A provider-prefixed credential, with the separator treated as a CLASS rather than a spelling
+// (web-uplift-ffum). The value that blocked a bd push was written with an UNDERSCORE and the two in
+// the tracked export were the HYPHEN form, so a rule keyed on one spelling is blind to the other -
+// the same "one search over the whole class" defect as web-uplift-73y3, one layer up.
+//
+// This rule exists because the generic opaque-token rule below cannot see these: it rejects any
+// value containing a run of four lowercase letters, which is deliberate - it is what keeps
+// bundle.min.js and en-US.messages.json out - but every provider prefix with a human-readable word
+// after it (sk-live-, sk-test-, sk-ant-) contains exactly such a run. A prefix is the signal the
+// generic rule throws away, so it has to be matched explicitly.
+export const PROVIDER_TOKEN_BODY = '[A-Za-z0-9_-]{16,}';
+// The separator is REQUIRED after the short generic prefixes and optional after the distinctive
+// ones, and that asymmetry is not cosmetic. With the separator optional for `sk`, the word
+// `skill-write-contract.mjs` matches as `sk` + `ill-write-contract.mjs` - measured, nine times in
+// the tracked export, every one of them a real filename. A two-letter prefix carries no signal on
+// its own, so it must be followed by a separator; `AKIA`/`AIza`/`ya29` and the rest are long and
+// specific enough to stand alone.
+export const PROVIDER_TOKEN_SOURCE =
+  `(?:(?:sk|pk|rk)[-_]|(?:gh[pousr]|glpat|npm|xox[abpsr]|AIza|AKIA|ASIA|ya29)[-_]?)${PROVIDER_TOKEN_BODY}`;
+export const PROVIDER_TOKEN_TEXT_RE = new RegExp(`(?<![A-Za-z0-9_-])${PROVIDER_TOKEN_SOURCE}(?![A-Za-z0-9_-])`, 'g');
+
 export function looksLikeToken(value) {
   if (!value || typeof value !== 'string') return false;
   if (value.length < 10) return false;
+  if (new RegExp(`^${PROVIDER_TOKEN_SOURCE}$`).test(value)) return true;
   if (/^[0-9a-f]{10,}$/i.test(value) && /\d/.test(value) && /[a-f]/i.test(value)) return true;
   // A JWT, in 2- or 3-part form. 'eyJ' is the base64url of '{"': requiring it is
   // what keeps bundle.min.js and en-US.messages.json out of this rule.
@@ -172,6 +194,20 @@ export function looksLikeToken(value) {
 // classifier and the Node-side classifier can never hold different words.
 // The literal written into a credential-named query parameter or header. One constant, so the URL
 // redactor here and the HAR header redactor in evidence/cli.mjs cannot drift apart.
+// The same shape, found inside prose rather than matched against a whole value. Kept beside the rule
+// above and built from the same source so the two cannot disagree about what a token looks like.
+export function redactTokenShapesInText(text) {
+  // Reset lastIndex: the pattern is shared and /g carries state, so a caller reusing it after a
+  // partial scan would silently start mid-string. One implementation, one place to be careful.
+  PROVIDER_TOKEN_TEXT_RE.lastIndex = 0;
+  return String(text).replace(PROVIDER_TOKEN_TEXT_RE, REDACTED_VALUE);
+}
+
+export function findTokenShapesInText(text) {
+  PROVIDER_TOKEN_TEXT_RE.lastIndex = 0;
+  return String(text).match(PROVIDER_TOKEN_TEXT_RE) || [];
+}
+
 export const REDACTED_VALUE = '[redacted]';
 
 // ---- The last-resort userinfo sweep for a string the URL parser refused (web-uplift-73y3) -------
