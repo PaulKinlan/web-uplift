@@ -1138,6 +1138,8 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
   }
 
   let stderrText = '';
+  // Named so the port path can detach it once the endpoint is found (web-uplift-xnte P3).
+  let portStderrOnData = null;
   let port;
   try {
     port = await new Promise((resolve, reject) => {
@@ -1146,14 +1148,22 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
           reject(new Error(`timed out waiting for the DevTools endpoint after ${devtoolsTimeoutMs}ms`)),
         devtoolsTimeoutMs,
       );
-      proc.stderr.on('data', (chunk) => {
+      portStderrOnData = (chunk) => {
         stderrText += chunk.toString();
         const match = stderrText.match(/DevTools listening on ws:\/\/[^:]+:(\d+)\//);
         if (match) {
           clearTimeout(timeout);
+          // The port is the whole reason this listener exists, so stop accumulating the browser's stderr
+          // now: otherwise a successful audit holds its entire log for its lifetime. On the FAILURE paths
+          // above and below the listener deliberately stays attached, because stderrText is the diagnosis
+          // (web-uplift-xnte P3; the gemini review of e93a028 caught that this path was left unfixed while
+          // the commit claimed both transports were done).
+          proc.stderr.off('data', portStderrOnData);
+          proc.stderr.resume();
           resolve(Number(match[1]));
         }
-      });
+      };
+      proc.stderr.on('data', portStderrOnData);
       proc.on('exit', (code, signal) => {
         clearTimeout(timeout);
         reject(new Error(`Chrome exited early (code ${code}, signal ${signal}) before listening`));

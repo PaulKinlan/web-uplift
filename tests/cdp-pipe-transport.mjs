@@ -86,6 +86,11 @@ export async function testCdpPipeTransport() {
   const portChrome = await launchChrome({ transport: 'port', log: () => {} });
   try {
     assert(Number.isInteger(portChrome.port), 'the port transport must publish a port');
+    // The port path must stop holding the browser's stderr once the endpoint is found, exactly as the
+    // pipe path does on success. Without an assertion the claim is untestable, which is exactly how the
+    // port half of this fix came to be missed the first time (web-uplift-xnte P3).
+    assert(portChrome.proc.stderr.listenerCount('data') === 0,
+      `a launched port transport must not keep a stderr listener attached, saw ${portChrome.proc.stderr.listenerCount('data')}`);
     const status = await probeFromSeparateProcess(portChrome.port);
     assert(status === '200',
       `a separate process must be able to reach the port transport, got ${status} (unreachable here would make the pipe assertion meaningless)`);
@@ -159,12 +164,16 @@ export async function testClosedPipeRejectsPendingSends() {
   const transport = createPipeTransport({ toChrome, fromChrome, log: () => {} });
   const inFlight = transport.send('Browser.getVersion');
   fromChrome.destroy();
+  let watchdog = null;
   const outcome = await Promise.race([
     inFlight.then(() => 'resolved', () => 'rejected'),
     // Bounded on purpose: removing the close handler must FAIL this test rather than hang the suite,
-    // which is the same trap web-uplift-xnte was about.
-    new Promise((resolve) => setTimeout(() => resolve('still pending'), 3000)),
+    // which is the same trap web-uplift-xnte was about. The timer is cleared right after, because
+    // leaving it dangling keeps the event loop alive for its full 3s AFTER the test has passed - this
+    // run measured 3412ms before the fix, for a test that asserts in milliseconds.
+    new Promise((resolve) => { watchdog = setTimeout(() => resolve('still pending'), 3000); }),
   ]);
+  clearTimeout(watchdog);
   assert(outcome === 'rejected', `a send in flight when the pipe closes must reject, got ${outcome}`);
   let later = null;
   await transport.send('Browser.getVersion').then(() => {}, (err) => { later = err; });

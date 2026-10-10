@@ -136,8 +136,9 @@ export async function testLaunchRetryAndDiagnostics() {
     assert(error instanceof Error, 'launchChrome must reject when every attempt fails');
     // Both transports must NAME the early exit. They word it differently because the port path parses
     // Chrome's DevTools line out of stderr while the pipe path reads the process state; BOTH now attach
-    // that stderr to the failure detail (web-uplift-ik04), and the pipe capture is asserted by a fake
-    // that writes a marker in tests/cdp-pipe-transport.mjs.
+    // that stderr to the failure detail (web-uplift-ik04). The pipe half of that capture is asserted
+    // HERE, by the wedge fake in testLaunchRetryAndDiagnostics that echoes a marker to fd 2; an earlier
+    // version of this comment pointed at the pipe test file, which has no marker fake at all.
     assert(/exited (early|during startup)/.test(error.message),
       `launch failure must name the early exit: ${error.message}`);
     assert(/code 7/.test(error.message), `launch failure must report the exit code: ${error.message}`);
