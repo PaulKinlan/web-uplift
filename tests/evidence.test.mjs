@@ -1801,7 +1801,7 @@ export function testAwaitCensus() {
     // instead of quietly still 'bounded'), and `exposureProbe` is an injected probe whose
     // production default, cdpEndpointExposure, bounds its own sockets by PROBE_TIMEOUT_MS. Same
     // shape as `await launchChromeOnce`, which is bounded by the mechanism it contains.
-    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise|await connect\([^)]*timeoutMs\)|await exposureProbe\(|await waitForPipeReady\([^)]*deadlineMs|await Promise\.all\(.*timeoutMs/],
+    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise|await exposureProbe\(|await waitForPipeReady\([^)]*deadlineMs|await Promise\.allSettled\(hosts\.map\(async \(host\) => connect\([^)]*timeoutMs\)\)\)/],
     ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
     ['excluded:page-side-template', /await navigator\.|await fetch\(\$\{JSON\.stringify\(su\)\}, \{ signal: controller\.signal \}\)|const t = await res\.text\(\);/],
     ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],

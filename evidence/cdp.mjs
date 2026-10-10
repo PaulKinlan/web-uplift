@@ -653,10 +653,18 @@ export async function cdpEndpointExposure(port, {
   // interfaces that each take the full timeout: 602ms serially against ~200ms together, and the worst
   // case grows with the interface count on hosts with Docker bridges, VPNs or link-local IPv6
   // (web-uplift-690r).
-  const verdicts = await Promise.all(hosts.map((host) => connect(host, port, timeoutMs)));
+  // allSettled, not all: Promise.all rejects at the first failure IN TIME, which would let a later
+  // rejection replace the refusal an earlier host already produced - and the caller closes the browser
+  // only on the refusal path, so a host that answered as DevTools could be left running. Rethrowing
+  // inside the ordered loop keeps that path exactly as the serial version had it, including which
+  // error is thrown. The async wrapper also keeps a synchronously throwing connect from leaving the
+  // probes it already started without a handler (web-uplift-690r review, P2 and P3).
+  const settled = await Promise.allSettled(hosts.map(async (host) => connect(host, port, timeoutMs)));
   for (let index = 0; index < hosts.length; index += 1) {
     const host = hosts[index];
-    const verdict = verdicts[index];
+    const outcome = settled[index];
+    if (outcome.status === 'rejected') throw outcome.reason;
+    const verdict = outcome.value;
     if (verdict === 'refused') continue;
     if (verdict === 'devtools') {
       return {
