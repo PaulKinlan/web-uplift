@@ -3,12 +3,10 @@
 // CLIs, the scorecard/compare/aggregate scripts, the flow runner, the canonical
 // skill, the knowledge files and the schemas into a consumer project's
 // .web-uplift/ tree (the copy-dir / copy-file steps in bin/web-uplift.mjs), and
-// this repo keeps that installed tree in-repo so an in-session agent can call
-// .web-uplift/evidence/cli.mjs directly. Nothing regenerates it automatically,
-// so an edit to a source file that forgets the vendored copy (or vice versa)
-// silently ships a stale launcher, schema, knowledge file or skill. This guard
-// fails on any byte difference, or a file present on only one side, between
-// each source and its vendored copy.
+// this repo generates that installed tree via `node install-surface.mjs` (the npm
+// prepare script) so an in-session agent can call .web-uplift/evidence/cli.mjs directly.
+// The .web-uplift/ tree is gitignored (web-uplift-diaq). This guard fails on any byte
+// difference, or a file present on only one side, between each source and its vendored copy.
 //
 // The filename is historical: it started as a single evidence/cdp.mjs sync
 // check and now covers every in-tree vendored path that `web-uplift install`
@@ -24,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES } from '../install-surface.mjs';
+import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface } from '../install-surface.mjs';
 
 // Paths resolve from this file, never from cwd, so the guard gives the same
 // answer whether CI or a human runs it from anywhere in the tree.
@@ -97,6 +95,12 @@ const COPY_FILES = [
   ...VENDORED_FILES.map((file) => [file.source, `.web-uplift/${file.dest}`]),
   ...TRACKED_COPY_FILES.map((file) => [file.source, file.dest]),
 ];
+
+// Auto-generate .web-uplift/ if absent so fresh worktrees without prior npm install
+// do not false-fail on missing vendored directories (web-uplift-diaq).
+if (targetRepo === repoRoot && !existsSync(join(targetRepo, '.web-uplift'))) {
+  generateVendoredSurface({ targetRoot: targetRepo });
+}
 
 const pairs = buildPairs(targetRepo);
 if (targetRepo !== repoRoot && pairs.length === 0) {

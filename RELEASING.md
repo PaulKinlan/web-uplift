@@ -15,7 +15,7 @@ Bump all of these in the release commit, or the tree is inconsistent.
 | File | What changes |
 | --- | --- |
 | `package.json` | `version`. Canonical; every other literal must match it. |
-| `.web-uplift/manifest.json` | `version`, plus `installedAt`, which `install` rewrites to the current timestamp, and `vendoredDependencies`, the name and version of every package `install` vendors into `.web-uplift/node_modules`. Those packages are in no consumer lockfile, so the manifest is the only record of them. This file is tracked, so keep it in sync in-repo. |
+| `.web-uplift/manifest.json` | Generated automatically by `npm run prepare` (or `node install-surface.mjs`) from `package.json`. It is gitignored, not tracked. |
 | `package-lock.json` | Two places: the top-level `version` and `packages[""].version`. `npm install` syncs both. |
 | `AGENTS.md` | The `### Current release: vX.Y.Z` prose, including what shipped. |
 | The per-agent `SKILL.md` copies | Only if they carry a version literal. They currently do not. `.claude/skills/web-audit/SKILL.md` is canonical; `.pi/skills/web-audit/SKILL.md` and `.web-uplift/skill/SKILL.md` are copies of it (`.codex/skills/web-audit` is a symlink); none of the three embeds the package version. The "catalog version" they mention is `guidanceCatalogVersion` from `knowledge/principles.json`, a different number. They change at release time only when the skill itself changed, through the regeneration step. |
@@ -23,7 +23,7 @@ Bump all of these in the release commit, or the tree is inconsistent.
 Grep the outgoing version literal before declaring the bump done:
 
 ```sh
-grep -rn "0\.4\.1" package.json package-lock.json .web-uplift/manifest.json AGENTS.md
+grep -rn "0\.4\.1" package.json package-lock.json AGENTS.md
 ```
 
 `package-lock.json` is the one that gets missed. It was already stale at the
@@ -53,8 +53,8 @@ this repo's history:
 
 - Version churn reverts independently. Reverting a feature commit must not unwind
   the version, and abandoning a release must not lose the work under it.
-- The release commit carries the regenerated vendored trees, which are large and
-  mechanical. Keeping them out of the change commits keeps those reviewable.
+- The release commit carries the regenerated per-agent wrappers, keeping change
+  commits clean. `.web-uplift/` is generated via `prepare` and gitignored.
 
 The release commit message records what was regenerated and what was
 deliberately not done.

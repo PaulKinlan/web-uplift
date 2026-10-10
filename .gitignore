@@ -31,3 +31,7 @@ Thumbs.db
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Generated vendored surface (web-uplift-diaq)
+/.web-uplift/
+

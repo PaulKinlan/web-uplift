@@ -1,13 +1,14 @@
 name: cdp-copy-sync
 
-# The repo vendors the installed .web-uplift/ tree (evidence CLIs, aggregate,
+# The repo generates the vendored .web-uplift/ tree (evidence CLIs, aggregate,
 # runner, knowledge, schema and skill - the paths `web-uplift install` copies
-# into a consumer project). Nothing regenerates it automatically, so this job
-# fails when any vendored copy stops being byte-identical to its source.
+# into a consumer project). The tree is generated via `node install-surface.mjs`
+# (the npm prepare script), so this job generates the surface and verifies that every
+# vendored copy is 100% byte-identical to its source.
 #
-# Deliberately unfiltered and dependency-free: tests/cdp-copy-sync.mjs is pure
-# Node builtins over file pairs, so it needs no npm install, no Chrome and no
-# served fixture, and it runs in about a second on every push and PR.
+# Deliberately unfiltered and dependency-free: install-surface.mjs and
+# tests/cdp-copy-sync.mjs are pure Node builtins over file pairs, so they need
+# no npm install, no Chrome and no served fixture, running in ~1s on every push/PR.
 
 on:
   push:
@@ -26,5 +27,8 @@ jobs:
 
       # checkout leaves us at the repo root; the script also resolves its own
       # paths from its location, so this is stable regardless of cwd.
+      - name: Generate the vendored surface
+        run: node install-surface.mjs
+
       - name: Vendored copies match their sources
         run: node tests/cdp-copy-sync.mjs
