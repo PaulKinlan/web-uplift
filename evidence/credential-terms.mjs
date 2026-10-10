@@ -199,9 +199,10 @@ export const REDACTED_VALUE = '[redacted]';
 // A boundary resolved in web-uplift-k99c: special-scheme URLs written with zero or one
 // slash-or-backslash after the colon ('https:user:pw@x.test:99999/a', 'https:/...', 'https:\...')
 // are treated by WHATWG URL parsers as leading into the authority. They are swept using a
-// scheme-aware anchor (matching the special schemes https?, ftp, file, wss? followed by ':' and
+// scheme-aware anchor (matching the special schemes https?, ftp, wss? followed by ':' and
 // zero or more slashes/backslashes, or any pair of slashes/backslashes). Non-special schemes like
-// mailto: are left alone.
+// mailto: are left alone. file: requires two slashes (file://) to have an authority, which is
+// covered by the pair branch.
 //
 // A remaining boundary, kept because it is the price of the first one working: on an unparseable URL
 // whose PATH contains an '@', the run up to that '@' is read as userinfo and redacted
@@ -313,9 +314,7 @@ export function redactUrlCredentialValues(raw) {
   } catch {
     /* not absolute: a redirect Location is very often a relative path */
   }
-  // A string that already carries a scheme is an absolute URL that failed to parse; resolving it
-  // against http://relative.invalid would mistake http: for a matching scheme-relative path and
-  // miss the unparseable userinfo sweep.
+  // If raw is not a scheme-prefixed string, it may be a relative path (e.g. /final?session=... or //host/path)
   if (!/^[a-z][a-z0-9+.-]*:/i.test(raw)) {
     try {
       // Parse against a throwaway base and re-emit relative, so a relative redirect target
@@ -325,32 +324,53 @@ export function redactUrlCredentialValues(raw) {
       const u = new URL(raw, 'http://relative.invalid');
       const paramHit = apply(u);
       const infoHit = redactUserinfo(u);
-      if (!paramHit && !infoHit) return raw;
-      // A PROTOCOL-RELATIVE input ('//host/path?token=..') is not a relative path: new URL() resolves
-      // it against the base, so it HAS a host, and re-emitting only the path invented a URL that was
-      // never requested - the host silently vanished from the artifact or HAR entry (web-uplift-53o1).
-      // Leading whitespace counts: an HTTP field value may carry it, the URL parser strips it, and
-      // testing only for '//' at index 0 left the same host-loss (found by sweeping edge cases after
-      // the fix, not by the review). Userinfo is re-emitted too, so this branch rebuilds the same URL
-      // shape the absolute branch does. Userinfo is redacted in both branches now (web-uplift-73y3),
-      // so this rebuild re-emits the marker rather than the credentials.
-      const lead = /^\s*/.exec(raw)[0];
-      // '@' belongs to any userinfo at all, not only to a username: '//:s3cr3t@x.test/a' is a valid
-      // URL with a password and an EMPTY username, and gating the '@' on the username re-emitted it as
-      // '//:s3cr3t' followed by the host, so the userinfo ran into the host and the authority was
-      // mangled (web-uplift-5m9f). The absolute branch never had this, because URL.toString()
-      // serialises userinfo itself.
-      const hasUserinfo = Boolean(u.username || u.password);
-      const userinfo = `${u.username}${u.password ? `:${u.password}` : ''}${hasUserinfo ? '@' : ''}`;
-      const authority = /^\s*[\/\\]{2}/.test(raw) ? `//${userinfo}${u.host}` : '';
-      // The whitespace the parser stripped is put back rather than normalised away: this function's
-      // job is to redact one value, not to tidy a header value into a different string.
-      return `${lead}${authority}${u.pathname}${u.search}${u.hash}`;
+      if (paramHit || infoHit) {
+        // A PROTOCOL-RELATIVE input ('//host/path?token=..') is not a relative path: new URL() resolves
+        // it against the base, so it HAS a host, and re-emitting only the path invented a URL that was
+        // never requested - the host silently vanished from the artifact or HAR entry (web-uplift-53o1).
+        // Leading whitespace counts: an HTTP field value may carry it, the URL parser strips it, and
+        // testing only for '//' at index 0 left the same host-loss (found by sweeping edge cases after
+        // the fix, not by the review). Userinfo is re-emitted too, so this branch rebuilds the same URL
+        // shape the absolute branch does. Userinfo is redacted in both branches now (web-uplift-73y3),
+        // so this rebuild re-emits the marker rather than the credentials.
+        const lead = /^\s*/.exec(raw)[0];
+        // '@' belongs to any userinfo at all, not only to a username: '//:s3cr3t@x.test/a' is a valid
+        // URL with a password and an EMPTY username, and gating the '@' on the username re-emitted it as
+        // '//:s3cr3t' followed by the host, so the userinfo ran into the host and the authority was
+        // mangled (web-uplift-5m9f). The absolute branch never had this, because URL.toString()
+        // serialises userinfo itself.
+        const hasUserinfo = Boolean(u.username || u.password);
+        const userinfo = `${u.username}${u.password ? `:${u.password}` : ''}${hasUserinfo ? '@' : ''}`;
+        const authority = /^\s*[\/\\]{2}/.test(raw) ? `//${userinfo}${u.host}` : '';
+        // The whitespace the parser stripped is put back rather than normalised away: this function's
+        // job is to redact one value, not to tidy a header value into a different string.
+        return `${lead}${authority}${u.pathname}${u.search}${u.hash}`;
+      }
+      return raw;
     } catch {
-      // Genuinely unparseable: leave it alone rather than guess - EXCEPT for userinfo
+      // Genuinely unparseable: fall through to sweep
     }
   }
-  return sweepUnparseableUserinfo(raw);
+
+  // For unparseable absolute URLs or inputs that failed relative parsing:
+  // 1. Sweep unparseable userinfo
+  let swept = sweepUnparseableUserinfo(raw);
+  // 2. Redact query parameters if a query string is present (splice u.search back into the swept string)
+  const q = swept.indexOf('?');
+  if (q !== -1) {
+    const hashIdx = swept.indexOf('#', q);
+    const querySpan = hashIdx === -1 ? swept.slice(q) : swept.slice(q, hashIdx);
+    try {
+      const u = new URL(querySpan, 'http://relative.invalid');
+      if (apply(u)) {
+        const tail = hashIdx === -1 ? '' : swept.slice(hashIdx);
+        swept = swept.slice(0, q) + u.search + tail;
+      }
+    } catch {
+      /* ignore query parse errors on unparseable URLs */
+    }
+  }
+  return swept;
 }
 
 // A URL that appears INSIDE a string of prose, redacted. This is a SCANNER, not one regex over the

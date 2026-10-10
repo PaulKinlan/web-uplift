@@ -293,8 +293,8 @@ export async function testCredentialRedactorsAgree() {
     );
     // Special-scheme anchor forms resolved in web-uplift-k99c: zero or one slash-or-backslash
     // after the scheme colon ('https:', 'https:/', 'https:\') are recognised as authority starts for
-    // the special schemes (https?, ftp, file, wss?), while a lone backslash in ordinary prose or an
-    // opaque-path non-special scheme (mailto:) is left untouched.
+    // the special schemes (https?, ftp, wss?), while a lone backslash in ordinary prose or an
+    // opaque-path non-special scheme (mailto:) is left untouched. file: requires two slashes (file://).
     assert(
       redactor('https:\\admin@x.test:99999/p') === 'https:\\[redacted]@x.test:99999/p',
       `one backslash in a special scheme must redact: ${redactor('https:\\admin@x.test:99999/p')}`,
@@ -326,6 +326,24 @@ export async function testCredentialRedactorsAgree() {
     assert(
       redactor(`wss:user:${USERINFO_PASS}@x.test:99999/a`) === `wss:[redacted]:[redacted]@x.test:99999/a`,
       `wss with zero slashes must redact: ${redactor(`wss:user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    // Unparseable URLs with credential query parameters must also redact query values without leaking secrets:
+    assert(
+      !redactor(`http:/x.test:99999/a?token=${USERINFO_PASS}`).includes(USERINFO_PASS),
+      `unparseable http: URL must redact query parameter token: ${redactor(`http:/x.test:99999/a?token=${USERINFO_PASS}`)}`,
+    );
+    assert(
+      !redactor(`https:/x.test:99999/a?token=${USERINFO_PASS}`).includes(USERINFO_PASS),
+      `unparseable https: URL must redact query parameter token: ${redactor(`https:/x.test:99999/a?token=${USERINFO_PASS}`)}`,
+    );
+    assert(
+      !redactor(`https://x.test:99999/a?token=${USERINFO_PASS}`).includes(USERINFO_PASS),
+      `unparseable https:// URL must redact query parameter token: ${redactor(`https://x.test:99999/a?token=${USERINFO_PASS}`)}`,
+    );
+    assert(
+      redactor(`http:user:${USERINFO_PASS}@x.test:99999/a?token=${USERINFO_PASS}`) ===
+        `http:[redacted]:[redacted]@x.test:99999/a?token=%5Bredacted%5D`,
+      `both userinfo and query parameters must be redacted in unparseable URLs: ${redactor(`http:user:${USERINFO_PASS}@x.test:99999/a?token=${USERINFO_PASS}`)}`,
     );
     // Negative controls: non-special schemes and ordinary prose with lone backslashes stay untouched.
     assert(
