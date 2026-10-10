@@ -1829,6 +1829,8 @@ export function testAwaitCensus() {
       // retry logic treats a browser that died during launch exactly like any other failed attempt.
       // web-uplift-uuod added one: the throwing-probe path now attributes the attempt and tears the
       // browser down exactly like every other launch failure, so it gained one `await close()`.
+      // web-uplift-l93f added two: the finally's reap of an unhanded-off browser, and the
+      // recovered-handle close in launchChrome when a caller's log throws after a successful attempt.
       'bounded:pre-existing-mechanism': 16,
       'bounded:sleep': 5,
       'bounded:gather-spine': 4,

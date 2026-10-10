@@ -298,7 +298,7 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // reader, har's network-idle wait, --interact's poll, the headers docPromise timeout,
 // resilience's offline load race, and (web-uplift-4rv) the exposure probe's own connect, which is
 // handed its timeoutMs explicitly, plus the injected exposureProbe, whose production default
-// cdpEndpointExposure bounds its own sockets by PROBE_TIMEOUT_MS. Bounded by pre-existing mechanisms: the launch endpoint, the launcher's own close() - including the reap a failed handoff performs in its finally (web-uplift-l93f), and the same call made on a recovered handle in launchChrome when a caller's log throws after a successful attempt - the launch endpoint
+// cdpEndpointExposure bounds its own sockets by PROBE_TIMEOUT_MS. Bounded by pre-existing mechanisms: the launcher's own close() - including the reap a failed handoff performs in its finally (web-uplift-l93f), and the same call made on a recovered handle in launchChrome when a caller's log throws after a successful attempt - the launch endpoint
 // poll and its grace-bounded teardown, sleeps, withRetry around bounded calls, the gather
 // spine. EXCLUDED WITH REASON: the per-primitive content probes after or outside the shared
 // spine (evaluate() probes, screenshots, getResponseBody, screencast, heap, axe, a11y and

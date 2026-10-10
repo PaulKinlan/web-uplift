@@ -712,7 +712,12 @@ export async function testThrowingLogDoesNotLeakTheSpawnedBrowser() {
   // the launch proceeds, record our pid so the test can check liveness, and stay alive long enough for
   // a leak to be observable rather than a race.
   writeFileSync(fakeImpl, [
-    "import { writeFileSync } from 'node:fs';",
+    "import { existsSync, writeFileSync } from 'node:fs';",
+    // FAKE_FAIL_ONCE, when set, names a marker file: the first run creates it and dies with code 3 (a
+    // retryable startup failure), later runs behave normally. That is what makes launchChrome's retry
+    // path - and therefore its "launch recovered on attempt N" log - reachable in a test.
+    "const marker = process.env.FAKE_FAIL_ONCE;",
+    "if (marker && !existsSync(marker)) { writeFileSync(marker, 'attempt 1'); process.exit(3); }",
     "process.stderr.write('DevTools listening on ws://127.0.0.1:9001/devtools/browser/fake\\n');",
     "writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));",
     "setTimeout(() => {}, 120000);",
@@ -724,7 +729,12 @@ export async function testThrowingLogDoesNotLeakTheSpawnedBrowser() {
   const exposureProbe = async () => ({ exposed: false, verifiedBy: 'reachability' });
   // Save every variable we touch. An earlier version of a sibling test mutated CHROME_BIN and never
   // restored it, which leaked a dangling path into every later test AND every child they spawned.
-  const saved = { CHROME_BIN: process.env.CHROME_BIN, TMPDIR: process.env.TMPDIR, FAKE_PID_FILE: process.env.FAKE_PID_FILE };
+  const saved = {
+    CHROME_BIN: process.env.CHROME_BIN,
+    TMPDIR: process.env.TMPDIR,
+    FAKE_PID_FILE: process.env.FAKE_PID_FILE,
+    FAKE_FAIL_ONCE: process.env.FAKE_FAIL_ONCE,
+  };
   process.env.CHROME_BIN = fake;
   process.env.TMPDIR = dir;
   process.env.FAKE_PID_FILE = pidFile;
@@ -757,6 +767,28 @@ export async function testThrowingLogDoesNotLeakTheSpawnedBrowser() {
     assert(leakedPid !== null, 'the fake should still have recorded its pid before the log threw');
     assert(!pidAlive(leakedPid), `the browser must not outlive the failed handoff, but pid ${leakedPid} is still running`);
     console.log('throwing log OK: the error propagated and the spawned browser did not survive it');
+
+    // (c) The site OUTSIDE launchChromeOnce: "launch recovered on attempt N" runs after a SUCCESSFUL
+    // attempt, so a throwing log there leaked the recovered handle. The fake is told to die once, which
+    // makes the retry path reachable for real (exit 3 is a retryable startup failure, and the backoff
+    // is a quarter second). Without this case that site has no behavioural guard at all: reverting it to
+    // a bare log() passes every other test, and only the census notices the await count dropping.
+    if (existsSync(pidFile)) rmSync(pidFile);
+    process.env.FAKE_FAIL_ONCE = join(dir, 'failed-once');
+    let recoveredThrew = null;
+    try {
+      await launchChrome({
+        log: (...args) => { if (args.join(' ').includes('recovered')) throw new Error('recovered boom'); },
+        transport: 'port',
+        exposureProbe,
+      });
+    } catch (err) { recoveredThrew = err; }
+    const recoveredPid = readPid();
+    assert(recoveredThrew !== null, 'a throwing log on the recovered message must propagate');
+    assert(/recovered boom/.test(String(recoveredThrew && recoveredThrew.message)), `the caller's own error must be raised, got ${recoveredThrew}`);
+    assert(recoveredPid !== null, 'the second attempt should have recorded its pid');
+    assert(!pidAlive(recoveredPid), `the recovered browser must not outlive the failed handoff, but pid ${recoveredPid} is still running`);
+    console.log('recovered log OK: a throw after a successful retry also left nothing running');
   } finally {
     // Restore the environment first, so a failure below cannot leak CHROME_BIN to later tests.
     for (const [key, value] of Object.entries(saved)) {
