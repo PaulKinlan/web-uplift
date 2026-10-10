@@ -422,10 +422,12 @@ export async function testEndpointProbeRejectionStaysFailClosed() {
   });
   assert(first.error && first.error.message === 'boom-first',
     `the first rejection in host order must be the one thrown, got ${first.error ? first.error.message : JSON.stringify(first.verdict)}`);
-  // (c) A LONE rejection with every other host refused must still throw. Treating a rejected probe as
-  //     merely undecided instead of rethrowing would resolve with exposed:false and a reachability
-  //     verifier - a clean-looking answer for a probe that never answered. (With `continue` the (b)
-  //     assertion fires first, so this one is the guard for a different rewrite of the same mistake.)
+  // (c) A LONE rejection with every other host refused must still throw. This case states the fail-open
+  //     property directly: with `continue` it resolves {exposed:false, verifiedBy:'reachability'}, a clean
+  //     answer for a probe that never answered, while treating the rejection as merely undecided resolves
+  //     unknown:true with no verifier instead. (b) fires first for BOTH of those rewrites; (c) is kept so
+  //     the fail-open shape is asserted by name, not only as a side effect of (b)
+  //     (web-uplift-690r, fourth review round: my earlier version of this comment named the wrong mutant).
   const only = await run(async (host) => {
     if (host === '10.0.0.5') throw new Error('boom-only');
     return 'refused';
