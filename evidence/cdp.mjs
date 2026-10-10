@@ -1300,7 +1300,18 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
       detail: { reason: probeReason, fatal: true, spawned: true, alive: false, exitCode: null, signal: null, stderrText },
     };
   }
-  if (probeNote) log(`[browser] ${probeNote}`);
+  // The note is caller-visible text, and coercing it can throw: a Symbol, or an object whose toString
+  // throws, escaped raw here with the browser running and no "launch failed" wrapper (uuod review 4).
+  // Coerce defensively and only log a real string, so a note can never be the thing that fails a launch.
+  if (probeNote) {
+    let printableNote = null;
+    try {
+      printableNote = typeof probeNote === 'string' ? probeNote : String(probeNote);
+    } catch {
+      printableNote = null;
+    }
+    if (printableNote) log(`[browser] ${printableNote}`);
+  }
 
   // The endpoint promise resolved the moment Chrome printed its listening line, so a browser that
   // died during the exposure probe still arrives here: the 'exit' listener's reject is a no-op on a

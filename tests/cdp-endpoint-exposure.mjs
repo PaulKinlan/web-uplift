@@ -557,9 +557,15 @@ export async function testExposureProbeFailuresDoNotLeakTheBrowser() {
 export async function testExposureVerdictIsReadOnceInsideTheTry() {
   const dir = mkdtempSync(join(tmpdir(), 'web-uplift-uuod-'));
   const fake = join(dir, 'readonce-chrome');
-  writeFileSync(fake, '#!/bin/sh\necho "DevTools listening on ws://127.0.0.1:1/" >&2\nexec sleep 30\n', { mode: 0o755 });
+  const fakePidFile = join(dir, 'fake-pid');
+  // The fake reports its own pid and TMPDIR points at dir, for the same reason the crash test does it: a
+  // mutant makes the exception escape before any handle exists, so without this the fake outlives the
+  // test and in a full ALL_TESTS run survives into later tests (uuod review 4).
+  writeFileSync(fake, `#!/bin/sh\necho $$ > ${fakePidFile}\necho "DevTools listening on ws://127.0.0.1:1/" >&2\nexec sleep 30\n`, { mode: 0o755 });
   const savedBin = process.env.CHROME_BIN;
+  const savedTmp = process.env.TMPDIR;
   process.env.CHROME_BIN = fake;
+  process.env.TMPDIR = dir;
   let reads = 0;
   let handle = null;
   try {
@@ -582,8 +588,14 @@ export async function testExposureVerdictIsReadOnceInsideTheTry() {
     console.log('verdict read once OK: the getter was consulted once and the launch succeeded');
   } finally {
     if (handle && handle.close) { try { await handle.close(); } catch {} }
+    if (existsSync(fakePidFile)) {
+      const pid = readFileSync(fakePidFile, 'utf8').trim();
+      if (pid) { try { process.kill(Number(pid), 'SIGKILL'); } catch {} }
+    }
     if (savedBin === undefined) delete process.env.CHROME_BIN;
     else process.env.CHROME_BIN = savedBin;
+    if (savedTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = savedTmp;
     rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -596,4 +608,5 @@ if (process.argv[1] && resolve(process.argv[1]) === here) {
   await testEndpointProbesRunConcurrently();
   await testEndpointProbeRejectionStaysFailClosed();
   await testExposureProbeFailuresDoNotLeakTheBrowser();
+  await testExposureVerdictIsReadOnceInsideTheTry();
 }
