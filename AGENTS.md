@@ -89,16 +89,19 @@ at the skill). opencode also reads this `AGENTS.md` for project context.
 ## Testing & fast gates (fleet-check --fast)
 
 The full test suite (`npm test`, running `node tests/regression.mjs`) exercises
-all 115 test functions across browser primitives, flow replays, and schema checks,
+all test functions across 7 modular test suites (`tests/*.test.mjs`),
 taking 4 to 18 minutes. It runs once per landing on the merger's merged union.
 
-For iteration and implementer fast gates, two selective mechanisms are provided:
+For iteration and implementer fast gates, several selective mechanisms are provided:
 
-1. **Filterable regression tests:** `node tests/regression.mjs --only <filter>`
-   runs only tests matching the given substring (e.g. `--only Flow`,
+1. **Direct suite execution:** Each `tests/*.test.mjs` suite can be run directly
+   (e.g. `node tests/evidence.test.mjs`, `node tests/redaction.test.mjs`), with
+   support for `--only <filter>`, `--filter`, `--grep`, and `--list`.
+2. **Filterable regression tests:** `node tests/regression.mjs --only <filter>`
+   runs only tests matching the given substring across all suites (e.g. `--only Flow`,
    `--only SafeFetch`, `--only Symlink`), `--list` enumerates all available tests,
    and multiple `--only` flags can be combined.
-2. **Automated fast test gate:** `npm run test:fast` (or `node scripts/test-fast.mjs`)
+3. **Automated fast test gate:** `npm run test:fast` (or `node scripts/test-fast.mjs`)
    maps changed files (via `git diff origin/master` or explicit file paths) to
    their corresponding standalone and regression test targets.
 

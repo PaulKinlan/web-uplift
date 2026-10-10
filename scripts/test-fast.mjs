@@ -57,7 +57,7 @@ export const KNOWN_STANDALONE_TESTS = new Set([
  */
 export function isDirectRunnableTest(relPath) {
   if (relPath.startsWith('tests/fixtures/')) return false;
-  if (relPath === 'tests/regression.mjs' || relPath === 'scripts/test-fast.mjs') return false;
+  if (relPath === 'tests/regression.mjs' || relPath === 'scripts/test-fast.mjs' || relPath === 'tests/test-helpers.mjs') return false;
   if (KNOWN_STANDALONE_TESTS.has(relPath)) return true;
   if (relPath.endsWith('.test.mjs') || /^tests\/test-[^/]+\.mjs$/.test(relPath)) return true;
   return false;
@@ -228,8 +228,12 @@ export const SUBSYSTEMS = [
   },
   {
     id: 'fast-gate-self',
-    description: 'Fast test gate script and its own verification test suite',
-    match: (f) => f === 'scripts/test-fast.mjs' || f === 'tests/test-fast.mjs',
+    description: 'Fast test gate script, test helpers, and self-verification test suite',
+    match: (f) =>
+      f === 'scripts/test-fast.mjs' ||
+      f === 'tests/test-fast.mjs' ||
+      f === 'tests/test-helpers.mjs' ||
+      f === 'tests/regression.mjs',
     targets: [
       { type: 'node', path: 'tests/test-fast.mjs', label: 'Fast gate unit and integration tests' },
       { type: 'regression', filter: 'testSyntaxChecks', label: 'Regression: Syntax checks' },
@@ -337,7 +341,8 @@ export function mapFilesToTests(filePaths, options = {}) {
     if (isDirectRunnableTest(normalized)) {
       const absPath = rawPath.startsWith('/') ? rawPath : join(repoRoot, normalized);
       if (existsSync(absPath)) {
-        const target = { type: 'node', path: rawPath, label: `Direct test: ${normalized}` };
+        const timeoutMs = normalized.endsWith('.test.mjs') ? 240000 : 120000;
+        const target = { type: 'node', path: rawPath, label: `Direct test: ${normalized}`, timeoutMs };
         targetsByKey.set(targetKey(target), target);
         matched = true;
       }
