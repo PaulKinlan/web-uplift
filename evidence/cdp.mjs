@@ -1118,6 +1118,22 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
     // descriptors. That is the whole point of the transport (web-uplift-j3re), and it is why the
     // exposure probe below is skipped rather than faked.
     log(`[browser] CDP pipe ready (${(ready.version && ready.version.product) || 'unknown Chrome'})`);
+    // The pipe is the transport every production caller uses, and it is the one that matters most here:
+    // without the settle below the LAUNCHER rejected nothing at all in review (0 of 10): it returned a
+    // dead handle every run, which is what makes the pipe test fail every run. On this path the browser
+    // was still RUNNING (R/S in /proc) and exited 2-7ms later, so any instant check passes
+    // (web-uplift-py0e). Readiness proved the browser alive DURING the wait; it can die between that and
+    // this return, and the handle would then describe a corpse.
+    await waitForProcExit(proc, 250);
+    if (procExited(proc)) {
+      const reason = `the browser exited (code ${proc.exitCode}, signal ${proc.signalCode}) before the launch completed`;
+      recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason });
+      await close();
+      return {
+        ok: false,
+        detail: { reason, spawned: true, alive: false, exitCode: proc.exitCode, signal: proc.signalCode, stderrText: pipeStderrText },
+      };
+    }
     return { ok: true, handle: { proc, pipe, userDataDir, close } };
   }
 
@@ -1187,6 +1203,32 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
     };
   }
   if (exposure.note) log(`[browser] ${exposure.note}`);
+
+  // The endpoint promise resolved the moment Chrome printed its listening line, so a browser that
+  // died during the exposure probe still arrives here: the 'exit' listener's reject is a no-op on a
+  // promise that has already settled. Without this check launchChrome returns a SUCCESS handle for a
+  // browser that is already gone - and because the attempt is never seen as failed it is never
+  // retried, so the caller gets a dead handle instead of a second attempt (web-uplift-py0e).
+  // The failure uses the same detail shape as every other launch failure.
+  // This is a short TRIAL WINDOW, not a settling of something already known: it covers both an exit
+  // Node has not observed yet and an exit still in progress, which on the pipe path is the common case
+  // (web-uplift-py0e review). An earlier version of this comment claimed a CDP-level liveness round trip
+  // "would be exact and free" - that was wrong, because a browser that is still running passes ANY
+  // instant check, and "no session yet" is untrue on the pipe path. The cost is FIXED, not a ceiling:
+  // waitForProcExit only returns early once the process has exited, so every SUCCESSFUL launch pays the
+  // full window (measured ~267ms port, ~335ms pipe, against ~35ms and ~119ms without). A browser that
+  // dies after the window is still possible, but its first CDP call then fails loudly rather than
+  // silently, which is the property that matters.
+  await waitForProcExit(proc, 250);
+  if (procExited(proc)) {
+    const reason = `the browser exited (code ${proc.exitCode}, signal ${proc.signalCode}) before the launch completed`;
+    recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason });
+    await close();
+    return {
+      ok: false,
+      detail: { reason, spawned: true, alive: false, exitCode: proc.exitCode, signal: proc.signalCode, stderrText },
+    };
+  }
 
   log(`[browser] DevTools port ${port}`);
   return { ok: true, handle: { proc, port, userDataDir, close } };

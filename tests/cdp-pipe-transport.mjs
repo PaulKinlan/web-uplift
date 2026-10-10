@@ -139,8 +139,14 @@ export async function testSilentPipeReadinessIsBounded() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // Run EVERY test in this file. Only the first ran here until web-uplift-py0e: the fix for that rode a
+  // branch that was withdrawn, so a direct invocation could still look green while skipping the later
+  // tests entirely.
   await testCdpPipeTransport();
-  console.log('cdp-pipe-transport OK: the default transport publishes no endpoint, and the control shows the check can see one');
+  await testSilentPipeReadinessIsBounded();
+  await testClosedPipeRejectsPendingSends();
+  await testPipeReadinessThenExitFailsTheLaunch();
+  console.log('cdp-pipe-transport OK: no endpoint published, the control sees one, a silent browser fails bounded, a closed pipe rejects its pending sends, and a browser that dies right after answering is rejected and retried');
 }
 
 // A pipe that closes must reject the commands still in flight (web-uplift-h6yn). Without it, a Chrome
@@ -165,4 +171,57 @@ export async function testClosedPipeRejectsPendingSends() {
   assert(later instanceof Error, 'a send after the pipe closed must reject immediately, not queue forever');
   toChrome.destroy();
   console.log('closed-pipe rejection OK: an in-flight send and a later send both reject');
+}
+
+// A browser that ANSWERS the readiness probe over the pipe and then exits must fail the launch. This is
+// the production transport - every caller uses it by default - and it is the path where the liveness
+// check catches nothing without its trial window: on master it returned a dead handle every run, and
+// with the settle removed this test fails every run, where the PORT case in tests/regression.mjs
+// detected the same removal RARELY before it was given its own stub (measured between 1 run in 4 and
+// 1 run in 10 depending on load) - they are separate code paths, so each needs its own guard
+// (web-uplift-py0e reviews: first, second and third opinion).
+//
+// The fake speaks the --remote-debugging-pipe contract directly: commands arrive on fd 3, the readiness
+// probe is answered on fd 4, and then it dies. No Buffer, per AGENTS.md - an encoded stream instead.
+export async function testPipeReadinessThenExitFailsTheLaunch() {
+  const dir = mkdtempSync(join(tmpdir(), 'pipe-then-die-'));
+  const fake = join(dir, 'pipe-die-chrome');
+  writeFileSync(fake, `#!/usr/bin/env node
+const fs = require('node:fs');
+let buf = '';
+const reader = fs.createReadStream(null, { fd: 3, encoding: 'utf8' });
+reader.on('data', (chunk) => {
+  buf += chunk;
+  let index;
+  while ((index = buf.indexOf('\\0')) >= 0) {
+    const frame = buf.slice(0, index);
+    buf = buf.slice(index + 1);
+    if (!frame) continue;
+    const message = JSON.parse(frame);
+    fs.writeSync(4, JSON.stringify({ id: message.id, result: { product: 'FakePipe/1' } }) + '\\0');
+    process.exit(3);
+  }
+});
+`, { mode: 0o755 });
+  // Save and restore like the test above does. This test DID leak CHROME_BIN pointing at a file it then
+  // deletes, and the leak is invisible here only because resolveChromePath skips a path that is not an
+  // executable file and falls back to the cached Chrome: on a host where CHROME_BIN is the only pointer
+  // to Chrome, every later browser test would fail (web-uplift-py0e review).
+  const savedBin = process.env.CHROME_BIN;
+  process.env.CHROME_BIN = fake;
+  let error = null;
+  try {
+    await launchChrome({ devtoolsTimeoutMs: 2000, log: () => {} });
+  } catch (err) { error = err; } finally {
+    if (savedBin === undefined) delete process.env.CHROME_BIN;
+    else process.env.CHROME_BIN = savedBin;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert(error instanceof Error,
+    'a pipe browser that answers readiness and then exits must fail the launch, not return a dead handle');
+  assert(/exited \(code 3/.test(error.message),
+    `the failure must name the exit rather than a generic error: ${error.message}`);
+  assert(/after 3 attempt/.test(error.message),
+    `the failure must be retried, not treated as fatal: ${error.message}`);
+  console.log('pipe-readiness-then-exit OK: a browser that dies right after answering is rejected and retried');
 }

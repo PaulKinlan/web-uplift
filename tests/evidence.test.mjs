@@ -1820,7 +1820,10 @@ export function testAwaitCensus() {
       // idempotent teardown, launchChromeOnce, withRetry's pass-through). The old count was never
       // wrong to the point of failing loudly: the unmatched-site assertion fires first and its
       // message hid this one behind it.
-      'bounded:pre-existing-mechanism': 9,
+      // web-uplift-py0e added four: the two liveness checks, each a bounded waitForProcExit settle plus
+      // a teardown through the same `await close()` as every other launch failure - deliberately, so the
+      // retry logic treats a browser that died during launch exactly like any other failed attempt.
+      'bounded:pre-existing-mechanism': 13,
       'bounded:sleep': 5,
       'bounded:gather-spine': 4,
       'excluded:primitive-probe': 2,

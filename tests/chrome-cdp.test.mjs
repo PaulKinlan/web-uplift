@@ -40,7 +40,7 @@ import {
 import { gather } from '../evidence/cli.mjs';
 import { launchChrome, resolveChromePath, sandboxDisableReason } from '../evidence/cdp.mjs';
 import { testCdpEndpointExposure } from './cdp-endpoint-exposure.mjs';
-import { testCdpPipeTransport, testSilentPipeReadinessIsBounded, testClosedPipeRejectsPendingSends } from './cdp-pipe-transport.mjs';
+import { testCdpPipeTransport, testSilentPipeReadinessIsBounded, testClosedPipeRejectsPendingSends, testPipeReadinessThenExitFailsTheLaunch } from './cdp-pipe-transport.mjs';
 
 // resolveChromePath must find a Chrome for Testing / Puppeteer cache binary when
 // CHROME_BIN is not set. The fleet VMs have no distro Chrome, so before this an
@@ -154,6 +154,51 @@ export async function testLaunchRetryAndDiagnostics() {
     for (const profile of profiles) {
       assert(!existsSync(profile), `a failed launch must clean up its profile dir: ${profile}`);
     }
+
+    // A browser that announces its DevTools endpoint and THEN dies must fail the attempt, not return a
+    // handle for a corpse. The endpoint promise resolves on the announcement, so the later exit cannot
+    // reject it: without an explicit liveness check after the exposure probe, launchChrome returns a
+    // success handle AND never retries, because the attempt is never seen as failed (web-uplift-py0e).
+    const dying = join(dir, 'announce-then-die-chrome');
+    writeFileSync(dying, '#!/bin/sh\necho "DevTools listening on ws://127.0.0.1:1/" >&2\nexit 3\n', { mode: 0o755 });
+    process.env.CHROME_BIN = dying;
+    let dyingError = null;
+    try {
+      await launchChrome({
+        transport: 'port',
+        devtoolsTimeoutMs: 2000,
+        // The synchronous stub is deliberate, and it makes this case DETERMINISTIC. An earlier version of
+        // this comment argued the opposite and was wrong: it read the harness metric "handleDead" (the
+        // LAUNCHER returned a handle) as the mutation escaping, when a dead handle is exactly what makes
+        // this test's assertion fire - so a dead handle is the test DETECTING the mutation. The real
+        // probe's asynchronous work incidentally gives Node time to observe the exit, so without the
+        // settle the launcher rejects anyway and the mutant SURVIVES mostly (measured 7 of 8 and 9 of 10
+        // in review, 1 in 4 detected for me; the rate is load-dependent). The stub removes
+        // that accidental pause: measured over 8 runs, removing the settle then fails the test 8 of 8
+        // (web-uplift-py0e, second-opinion review). The CONTROL launch below keeps the real probe, on a
+        // LIVE browser through to a successful launch; note that no integration test now runs the real
+        // probe against a browser that is EXITING, which this dying case did in most runs before. A dead
+        // pid is still covered at unit level, in tests/cdp-endpoint-exposure.mjs.
+        exposureProbe: () => ({ exposed: false }),
+        log: () => {},
+      });
+    } catch (err) { dyingError = err; }
+    assert(dyingError instanceof Error,
+      'a browser that exits during the launch must fail it, not produce a handle for a dead browser');
+    assert(/exited \(code 3/.test(dyingError.message),
+      `the failure must name the exit rather than a generic error: ${dyingError.message}`);
+    // A browser dying during launch is plausibly a one-off, so the attempt must be RETRIED, not fatal.
+    // Without this assertion, changing the failure to fatal would silently pass.
+    assert(/after 3 attempt/.test(dyingError.message),
+      `a crash during launch must be retried, not treated as fatal: ${dyingError.message}`);
+    // CONTROL, so that a launcher which simply failed every launch could not pass this test.
+    const live = join(dir, 'announce-and-live-chrome');
+    writeFileSync(live, '#!/bin/sh\necho "DevTools listening on ws://127.0.0.1:1/" >&2\nwhile true; do sleep 1; done\n', { mode: 0o755 });
+    process.env.CHROME_BIN = live;
+    const liveHandle = await launchChrome({ transport: 'port', devtoolsTimeoutMs: 2000, log: () => {} });
+    assert(liveHandle && liveHandle.proc && liveHandle.proc.exitCode === null,
+      'CONTROL: a browser that announces its endpoint and stays alive must still launch');
+    await liveHandle.close();
 
     // A wedge (browser still alive but never printing the DevTools line) must be
     // reported as ALIVE, not as the SIGTERM-killed process that teardown leaves
@@ -926,6 +971,7 @@ export const chromeCdpTests = [
   testCdpPipeTransport,
   testSilentPipeReadinessIsBounded,
   testClosedPipeRejectsPendingSends,
+  testPipeReadinessThenExitFailsTheLaunch,
   testChromeCandidateDiscovery,
   testLaunchRetryAndDiagnostics,
   testChromeSandboxPolicy,
@@ -943,6 +989,7 @@ export {
   testCdpPipeTransport,
   testSilentPipeReadinessIsBounded,
   testClosedPipeRejectsPendingSends,
+  testPipeReadinessThenExitFailsTheLaunch,
 };
 
 await runSuite(chromeCdpTests, import.meta.url);
