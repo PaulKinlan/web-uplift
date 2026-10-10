@@ -19,13 +19,19 @@
 //      This is the sabotage/absence signal: a blind check must never exit 0.
 //   2: Version delta detected (upstream != analysedVersion). Output notes whether
 //      upstream is newer or older. Triggers full reanalysis.
-//   3: Freshness guard failed (freshness mode only). Either lastCheckAt is
-//      missing, null, unreadable, implausibly future-dated, or older than
-//      --max-age (never-run counts as stale); or the state asserts a check
-//      outcome (in-sync or delta) that it cannot substantiate - malformed or
-//      missing versions, or an analysedAt that is unreadable, implausibly
-//      future-dated, or older than --max-age. A detected delta that nobody
-//      actioned must not read as fresh.
+//   3: Freshness guard failed (freshness mode only), in three separate cases.
+//      The heartbeat: lastCheckAt missing, null, unreadable, implausibly
+//      future-dated, or older than --max-age. A never-run state has no heartbeat, so it
+//      counts as stale.
+//      A recorded delta: the recorded upstream version differs from analysedVersion,
+//      or a delta is recorded with no usable upstream version at all, and analysedAt
+//      is unreadable, implausibly future-dated, or older than --max-age. There the
+//      age that matters is the analysis's, so a fresh heartbeat cannot rescue it;
+//      inside the window it stays fresh and the FRESH line says a delta is carried.
+//      A claim that cannot be substantiated: the state says in-sync while the two
+//      versions cannot be shown to agree. That is REJECTED OUTRIGHT and never
+//      age-gated, because a corrupt or hand-edited claim is not a recently detected
+//      change and a fresh analysedAt must not buy it a grace window.
 //  64: Usage error (unknown flags, invalid arguments).
 //
 // Environment variable overrides (fixtures, tests, offline runs):
@@ -200,13 +206,12 @@ if (freshnessOnly) {
   const hasUpstream = typeof checkedUpstream === 'string' && checkedUpstream.length > 0;
   const versionsAgree =
     hasUpstream && typeof analysedVersion === 'string' && checkedUpstream === analysedVersion;
-  // A state that ASSERTS a check outcome has to be able to show that outcome. Two conditions reach the
-  // branch below and they are deliberately kept distinct, because they are different repairs:
-  //   - the versions disagree: a delta the last check really saw, and nobody re-analysed;
-  //   - the state asserts in-sync or delta but cannot substantiate it (a malformed, non-string or
-  //     empty upstream version, or a missing analysedVersion to compare against). Reading that as
-  //     fresh is the same quiet failure, since nothing shows what the last check actually saw.
-  // lastCheckAt is null, so the heartbeat below already reports it stale.
+  // Two distinct conditions, deliberately kept separate because they are different repairs:
+  //   - the state CLAIMS in-sync while the two versions cannot be shown to agree. That is a corrupt
+  //     or hand-edited claim, so it is REJECTED OUTRIGHT below, whatever analysedAt says.
+  //   - the versions disagree, OR a delta is recorded with no usable upstream version at all. That
+  //     is an unactioned upstream change, so it is AGED from analysedAt - inside the window it stays
+  //     fresh with a note, and past it the age rule above reports it stale.
   const unsubstantiatedInSync = state.lastCheckResult === 'in-sync' && !versionsAgree;
   const analysisBehind = !versionsAgree && (hasUpstream || state.lastCheckResult === 'delta');
   const versionsDisagree = hasUpstream && !versionsAgree;
