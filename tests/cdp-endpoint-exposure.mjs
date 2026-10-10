@@ -835,7 +835,10 @@ export async function testOversizedBodyDoesNotEarnACleanVerdict() {
     const smallPort = await start((socket) => socket.end('hello, not devtools'));
     const devtoolsPort = await start((socket) => socket.end('HTTP/1.1 200 OK\r\n\r\n{"webSocketDebuggerUrl":"ws://127.0.0.1:1/devtools/browser/x"}'));
 
-    assert(await probeDevtools('127.0.0.1', paddingPort, 3000) === 'timeout',
+    // 'oversized' rather than 'timeout' (web-uplift-g9zr): both leave the host undecided and unverified
+    // because cdpEndpointExposure treats every verdict except 'other' the same way, but the value is what
+    // the note names, and calling a size cap a timeout sends an operator after a slow endpoint.
+    assert(await probeDevtools('127.0.0.1', paddingPort, 3000) === 'oversized',
       'an oversized unproven body must leave the host undecided, not read as "answers, but not DevTools"');
     assert(await probeDevtools('127.0.0.1', smallPort, 3000) === 'other',
       'a small non-DevTools body must still read as other: the change must stay narrow to oversized bodies');
@@ -853,7 +856,13 @@ export async function testOversizedBodyDoesNotEarnACleanVerdict() {
     const laundered = await cdpEndpointExposure(paddingPort, { timeoutMs: 3000 });
     assert(laundered.unknown === true, `an oversized unproven body must reach the caller as unknown, got ${JSON.stringify(laundered)}`);
     assert(laundered.verifiedBy === undefined, `and must name no verifier, got verifiedBy=${laundered.verifiedBy}`);
-    assert(laundered.exposed === false, 'and must not be reported exposed on the strength of a timeout');
+    assert(laundered.exposed === false, 'and must not be reported exposed on the strength of a size cap');
+    // The verdict alone is half the claim: the NOTE the caller writes has to name the real cause, or an
+    // operator reads "could not be probed (timeout)" while the cause was a size cap (web-uplift-g9zr).
+    assert(/could not be probed \(oversized\)/.test(laundered.note || ''),
+      `the note must name the size cap as the cause, got: ${laundered.note}`);
+    assert(!/could not be probed \(timeout\)/.test(laundered.note || ''),
+      `the note must not report a timeout when the cap fired, got: ${laundered.note}`);
     const narrow = await cdpEndpointExposure(smallPort, { timeoutMs: 3000 });
     assert(narrow.unknown !== true, 'a small non-DevTools peer must still be settled, not left unknown');
     const detected = await cdpEndpointExposure(devtoolsPort, { timeoutMs: 3000 });

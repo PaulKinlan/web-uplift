@@ -747,14 +747,18 @@ export function probeDevtools(host, port, timeoutMs) {
       text += chunk.toString('utf8');
       if (isDevtoolsBody(text)) settle('devtools');
       // A body this large is not /json/version - but that is a heuristic, not a proof, so the verdict is
-      // 'timeout' rather than 'other'. 'other' is read by cdpEndpointExposure as "answers, but not with
+      // 'oversized' rather than 'other'. 'other' is read by cdpEndpointExposure as "answers, but not with
       // DevTools" and earns verifiedBy:'reachability', and leading whitespace is legal JSON, so a peer
       // that pads past the cap before a real DevTools payload was laundered into a clean verdict - the
-      // same fail-open class the total-deadline rule above exists to avoid (web-uplift-6h9o). 'timeout'
-      // leaves the host undecided and with no verifier. This does widen what reads as undecided: a
-      // genuinely non-DevTools peer that sends more than 64KB now reads undecided instead of 'other',
-      // which is the safer label but is a change, hence the separate artifact and its own review.
-      else if (text.length > 64 * 1024) settle('timeout');
+      // same fail-open class the total-deadline rule above exists to avoid (web-uplift-6h9o). 'oversized'
+      // leaves the host undecided and with no verifier, exactly as 'timeout' did: cdpEndpointExposure
+      // treats every verdict except 'other' the same way, so the caller's decision does not change. The
+      // value exists so the note it writes names the real cause. It read "could not be probed (timeout)"
+      // while the cause was a size cap, which sends an operator looking for a slow endpoint instead of a
+      // talkative one (web-uplift-g9zr). This does widen what reads as undecided: a genuinely
+      // non-DevTools peer that sends more than 64KB now reads undecided instead of 'other', which is the
+      // safer label but is a change, hence the separate artifact and its own review.
+      else if (text.length > 64 * 1024) settle('oversized');
     });
     socket.once('end', () => settle(isDevtoolsBody(text) ? 'devtools' : text ? 'other' : 'error'));
     // The idle timeout settles the SAME rule as the total deadline above: 'other' only applies to a
