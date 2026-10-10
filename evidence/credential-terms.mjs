@@ -196,13 +196,14 @@ export const REDACTED_VALUE = '[redacted]';
 //     run with no '@' at all is emitted untouched, which is also the cheap path that keeps this
 //     function's promise never to tidy a string it cannot parse.
 //
-// Known boundary, stated rather than implied: a special-scheme URL written WITHOUT slashes after the
-// colon ('https:user:pw@x.test:99999/a') is not swept, because in an unparseable string 'scheme:text@'
-// is indistinguishable from an opaque path (a mailto address is the everyday case) and guessing
-// there would redact innocent prose to cover a shape that needs BOTH a missing separator and a bad
-// port to arise. Filed as a P3 boundary rather than silently ignored.
+// A boundary resolved in web-uplift-k99c: special-scheme URLs written with zero or one
+// slash-or-backslash after the colon ('https:user:pw@x.test:99999/a', 'https:/...', 'https:\...')
+// are treated by WHATWG URL parsers as leading into the authority. They are swept using a
+// scheme-aware anchor (matching the special schemes https?, ftp, file, wss? followed by ':' and
+// zero or more slashes/backslashes, or any pair of slashes/backslashes). Non-special schemes like
+// mailto: are left alone.
 //
-// A second boundary, kept because it is the price of the first one working: on an unparseable URL
+// A remaining boundary, kept because it is the price of the first one working: on an unparseable URL
 // whose PATH contains an '@', the run up to that '@' is read as userinfo and redacted
 // ('https://x.test:99999/a/b@2x.png' becomes a single redacted userinfo). Slashes have to be allowed
 // inside the run or an AWS-style secret key with an unencoded slash in it would be redacted only up
@@ -213,43 +214,32 @@ export const REDACTED_VALUE = '[redacted]';
 // treating them as breaks left the tail of a credential in the output - 'https://us<TAB>er:pw@host'
 // kept 'pw'. Over-redacting across a tab or a newline is the safe side of that trade. Review measured
 // this as reachable through redactHeaderList, where an internal tab is legal in an HTTP field value.
-// This was filed as a boundary (web-uplift-k99c); it is fixed here because the fix is the break set.
 const SWEEP_RUN_BREAKS = new Set([' ', '\f', '\v', '?', '#']);
 function sweepUnparseableUserinfo(raw) {
   let out = '';
   let cursor = 0;
-  // ONE search for any two characters from the slash-or-backslash class, because a URL parser treats
-  // every mix of them the same way after a special scheme: '//', two backslashes, '\' followed by '/'
-  // and '/' followed by '\' all begin an authority. Searching for two spellings SEPARATELY was not
-  // merely slower, it was WRONG: a string using the mixed pair matched neither, so a credential that
-  // the earlier single-backslash version had redacted came back verbatim. Found by review, reproduced,
-  // and the reason this is one search rather than two.
-  const authorityPair = /[\\/]{2}/g;
-  const findAuthority = () => {
-    authorityPair.lastIndex = cursor;
-    const match = authorityPair.exec(raw);
-    return match ? match.index : -1;
-  };
+  let lastSlice = 0;
+  // ONE search matching:
+  // 1. A special-scheme name (https?, ftp, wss?) followed by ':' and zero or more slashes/backslashes:
+  //    'https:', 'https:/', 'https:\', 'https://', 'https:\/', etc.
+  // 2. OR any two slash-or-backslash characters ('//', '\\', '\/', '/\') for protocol-relative,
+  //    file://, or custom schemes.
+  const authorityStart = /(?:(?<=\b|^)(?:https?|ftp|wss?):[\\/]*|[\\/]{2})/gi;
   // ONE search PER PASS, starting at the cursor, and the cursor never moves backwards: a search only
   // scans as far as the next authority start that no previous pass consumed, so the total work stays
-  // linear even on a string that repeats delimiters. This is deliberately NOT a cache, and an earlier
-  // revision of this comment wrongly described it as one - review proved the reuse guard could never
-  // fire, because a pass always consumes at least the two delimiter characters it matched, which puts
-  // the cursor past every start a previous pass found and leaves nothing to remember. What actually
-  // keeps this linear is that each search begins where the last pass stopped. Running several searches
-  // per pass and re-scanning to the end each time was quadratic on input a page controls (measured 16x
-  // per doubling of the input).
+  // linear even on a string that repeats delimiters. Each pass consumes at least the matched prefix
+  // (>= 2 characters), advancing the cursor forward.
   for (;;) {
-    const start = findAuthority();
-    if (start === -1) return out + raw.slice(cursor);
-    let end = start + 2;
+    authorityStart.lastIndex = cursor;
+    const match = authorityStart.exec(raw);
+    if (!match) return lastSlice === 0 ? raw : out + raw.slice(lastSlice);
+    const start = match.index;
+    const prefix = match[0];
+    let end = start + prefix.length;
     while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
-    const run = raw.slice(start + 2, end);
+    const run = raw.slice(start + prefix.length, end);
     const at = run.lastIndexOf('@');
     if (at === -1) {
-      // No credential separator in this run: keep it and never look inside it again. This is the line
-      // that makes the whole function linear.
-      out += raw.slice(cursor, end);
       cursor = end;
       continue;
     }
@@ -261,7 +251,8 @@ function sweepUnparseableUserinfo(raw) {
         : colon === -1
           ? REDACTED_VALUE
           : `${colon === 0 ? '' : REDACTED_VALUE}:${colon === userinfo.length - 1 ? '' : REDACTED_VALUE}`;
-    out += `${raw.slice(cursor, start)}${raw.slice(start, start + 2)}${replacement}@${run.slice(at + 1)}`;
+    out += `${raw.slice(lastSlice, start)}${prefix}${replacement}@${run.slice(at + 1)}`;
+    lastSlice = end;
     cursor = end;
   }
 }
@@ -322,44 +313,44 @@ export function redactUrlCredentialValues(raw) {
   } catch {
     /* not absolute: a redirect Location is very often a relative path */
   }
-  try {
-    // Parse against a throwaway base and re-emit relative, so a relative redirect target
-    // ('/final?session=...') is redacted too - it used to pass through untouched because
-    // new URL() rejects a relative string. The path is normalised (a bare '?a=b' gains a
-    // leading '/'), which is the only shape change and is noted rather than silent.
-    const u = new URL(raw, 'http://relative.invalid');
-    const paramHit = apply(u);
-    const infoHit = redactUserinfo(u);
-    if (!paramHit && !infoHit) return raw;
-    // A PROTOCOL-RELATIVE input ('//host/path?token=..') is not a relative path: new URL() resolves
-    // it against the base, so it HAS a host, and re-emitting only the path invented a URL that was
-    // never requested - the host silently vanished from the artifact or HAR entry (web-uplift-53o1).
-    // Leading whitespace counts: an HTTP field value may carry it, the URL parser strips it, and
-    // testing only for '//' at index 0 left the same host-loss (found by sweeping edge cases after
-    // the fix, not by the review). Userinfo is re-emitted too, so this branch rebuilds the same URL
-    // shape the absolute branch does. Userinfo is redacted in both branches now (web-uplift-73y3),
-    // so this rebuild re-emits the marker rather than the credentials.
-    const lead = /^\s*/.exec(raw)[0];
-    // '@' belongs to any userinfo at all, not only to a username: '//:s3cr3t@x.test/a' is a valid
-    // URL with a password and an EMPTY username, and gating the '@' on the username re-emitted it as
-    // '//:s3cr3t' followed by the host, so the userinfo ran into the host and the authority was
-    // mangled (web-uplift-5m9f). The absolute branch never had this, because URL.toString()
-    // serialises userinfo itself.
-    const hasUserinfo = Boolean(u.username || u.password);
-    const userinfo = `${u.username}${u.password ? `:${u.password}` : ''}${hasUserinfo ? '@' : ''}`;
-    const authority = /^\s*[\/\\]{2}/.test(raw) ? `//${userinfo}${u.host}` : '';
-    // The whitespace the parser stripped is put back rather than normalised away: this function's
-    // job is to redact one value, not to tidy a header value into a different string.
-    return `${lead}${authority}${u.pathname}${u.search}${u.hash}`;
-  } catch {
-    // Genuinely unparseable: leave it alone rather than guess - EXCEPT for userinfo, because the
-    // parser rejecting a URL is not a reason to write its credential into an artifact. Chrome and
-    // Node reject 'file://user:pass@/path' outright, and an authority whose ':' is read as an
-    // invalid port throws too, so the whole string came back verbatim with the credential intact
-    // (web-uplift-73y3 review, P1). Only the userinfo is rewritten; every other character is left
-    // exactly as it was, which keeps this function's promise never to tidy a value.
-    return sweepUnparseableUserinfo(raw);
+  // A string that already carries a scheme is an absolute URL that failed to parse; resolving it
+  // against http://relative.invalid would mistake http: for a matching scheme-relative path and
+  // miss the unparseable userinfo sweep.
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+    try {
+      // Parse against a throwaway base and re-emit relative, so a relative redirect target
+      // ('/final?session=...') is redacted too - it used to pass through untouched because
+      // new URL() rejects a relative string. The path is normalised (a bare '?a=b' gains a
+      // leading '/'), which is the only shape change and is noted rather than silent.
+      const u = new URL(raw, 'http://relative.invalid');
+      const paramHit = apply(u);
+      const infoHit = redactUserinfo(u);
+      if (!paramHit && !infoHit) return raw;
+      // A PROTOCOL-RELATIVE input ('//host/path?token=..') is not a relative path: new URL() resolves
+      // it against the base, so it HAS a host, and re-emitting only the path invented a URL that was
+      // never requested - the host silently vanished from the artifact or HAR entry (web-uplift-53o1).
+      // Leading whitespace counts: an HTTP field value may carry it, the URL parser strips it, and
+      // testing only for '//' at index 0 left the same host-loss (found by sweeping edge cases after
+      // the fix, not by the review). Userinfo is re-emitted too, so this branch rebuilds the same URL
+      // shape the absolute branch does. Userinfo is redacted in both branches now (web-uplift-73y3),
+      // so this rebuild re-emits the marker rather than the credentials.
+      const lead = /^\s*/.exec(raw)[0];
+      // '@' belongs to any userinfo at all, not only to a username: '//:s3cr3t@x.test/a' is a valid
+      // URL with a password and an EMPTY username, and gating the '@' on the username re-emitted it as
+      // '//:s3cr3t' followed by the host, so the userinfo ran into the host and the authority was
+      // mangled (web-uplift-5m9f). The absolute branch never had this, because URL.toString()
+      // serialises userinfo itself.
+      const hasUserinfo = Boolean(u.username || u.password);
+      const userinfo = `${u.username}${u.password ? `:${u.password}` : ''}${hasUserinfo ? '@' : ''}`;
+      const authority = /^\s*[\/\\]{2}/.test(raw) ? `//${userinfo}${u.host}` : '';
+      // The whitespace the parser stripped is put back rather than normalised away: this function's
+      // job is to redact one value, not to tidy a header value into a different string.
+      return `${lead}${authority}${u.pathname}${u.search}${u.hash}`;
+    } catch {
+      // Genuinely unparseable: leave it alone rather than guess - EXCEPT for userinfo
+    }
   }
+  return sweepUnparseableUserinfo(raw);
 }
 
 // A URL that appears INSIDE a string of prose, redacted. This is a SCANNER, not one regex over the

@@ -291,12 +291,55 @@ export async function testCredentialRedactorsAgree() {
         `${TWO_BACKSLASHES}[redacted]:[redacted]@x.test:99999/a`,
       `an unparseable backslash authority must redact both halves without eating the first character: ${redactor(`${TWO_BACKSLASHES}user:${USERINFO_PASS}@x.test:99999/a`)}`,
     );
-    // The other side of that fix: ONE backslash is not a two-character authority boundary, and it
-    // must not be mistaken for one. A lone backslash is a path separator in ordinary prose, so
-    // treating it as an authority would redact innocent text to cover a shape that is filed as a
-    // boundary (web-uplift-k99c) rather than quietly widened here.
-    assert(redactor('https:\\admin@x.test:99999/p') === 'https:\\admin@x.test:99999/p',
-      `one backslash is a boundary, not a delimiter: ${redactor('https:\\admin@x.test:99999/p')}`);
+    // Special-scheme anchor forms resolved in web-uplift-k99c: zero or one slash-or-backslash
+    // after the scheme colon ('https:', 'https:/', 'https:\') are recognised as authority starts for
+    // the special schemes (https?, ftp, file, wss?), while a lone backslash in ordinary prose or an
+    // opaque-path non-special scheme (mailto:) is left untouched.
+    assert(
+      redactor('https:\\admin@x.test:99999/p') === 'https:\\[redacted]@x.test:99999/p',
+      `one backslash in a special scheme must redact: ${redactor('https:\\admin@x.test:99999/p')}`,
+    );
+    assert(
+      redactor(`https:user:${USERINFO_PASS}@x.test:99999/a`) === `https:[redacted]:[redacted]@x.test:99999/a`,
+      `zero slashes in a special scheme must redact: ${redactor(`https:user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    assert(
+      redactor(`https:/user:${USERINFO_PASS}@x.test:99999/a`) === `https:/[redacted]:[redacted]@x.test:99999/a`,
+      `one slash in a special scheme must redact: ${redactor(`https:/user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    assert(
+      redactor(`https:\\user:${USERINFO_PASS}@x.test:99999/a`) === `https:\\[redacted]:[redacted]@x.test:99999/a`,
+      `one backslash with password in a special scheme must redact: ${redactor(`https:\\user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    assert(
+      redactor(`http:user:${USERINFO_PASS}@x.test:99999/a`) === `http:[redacted]:[redacted]@x.test:99999/a`,
+      `http with zero slashes must redact: ${redactor(`http:user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    assert(
+      redactor(`ftp:user:${USERINFO_PASS}@x.test:99999/a`) === `ftp:[redacted]:[redacted]@x.test:99999/a`,
+      `ftp with zero slashes must redact: ${redactor(`ftp:user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    assert(
+      redactor(`ws:user:${USERINFO_PASS}@x.test:99999/a`) === `ws:[redacted]:[redacted]@x.test:99999/a`,
+      `ws with zero slashes must redact: ${redactor(`ws:user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    assert(
+      redactor(`wss:user:${USERINFO_PASS}@x.test:99999/a`) === `wss:[redacted]:[redacted]@x.test:99999/a`,
+      `wss with zero slashes must redact: ${redactor(`wss:user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    // Negative controls: non-special schemes and ordinary prose with lone backslashes stay untouched.
+    assert(
+      redactor(`mailto:user:${USERINFO_PASS}@x.test`) === `mailto:user:${USERINFO_PASS}@x.test`,
+      'mailto is not a special scheme and must stay untouched',
+    );
+    assert(
+      redactor('a path with a \\ in it') === 'a path with a \\ in it',
+      'ordinary prose with a lone backslash must stay untouched',
+    );
+    assert(
+      redactor('https:x.test:99999/path') === 'https:x.test:99999/path',
+      'special scheme with zero slashes but no userinfo must stay untouched',
+    );
     // Tab, LF and CR are NOT run breaks. The URL parser strips them anywhere in the input, so an
     // authority continues across them; treating them as breaks left the tail of the credential in the
     // output, which review measured as reachable through redactHeaderList because an internal tab is
