@@ -492,29 +492,17 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
 
   ${isSensitiveAutocomplete.toString()}
 
-  const isSensitiveField = (el) => {
-    if (!el) return false;
-    if (CAPTURE_SENSITIVE) return false;
-    const type = (el.type || '').toLowerCase();
-    if (type === 'password') return true;
-    if (type === 'hidden') return !CAPTURE_HIDDEN;
-    if (type === 'email' || type === 'tel') return true;
-
-    const ac = (el.getAttribute('autocomplete') || '').toLowerCase().trim();
-    if (isSensitiveAutocomplete(ac)) return true;
-
-    const labelText = el.labels && el.labels.length ? Array.from(el.labels).map((l) => l.textContent || '').join(' ') : '';
-    const aria = el.getAttribute('aria-label') || '';
-    const placeholder = el.placeholder || '';
-    if (isSensitiveName(el.name) ||
-        isSensitiveName(el.id) ||
-        isSensitiveName(aria) ||
-        isSensitiveName(placeholder) ||
-        isSensitiveName(labelText)) {
-      return true;
-    }
-    return false;
-  };
+  // The element classifier is the MODULE's function, not a copy of it (web-uplift-ngjq). The word
+  // data and the word-matching helpers above were already generated, but this adapter stayed
+  // hand-written with only behavioural coverage - so a copy that behaved identically while drifting
+  // textually (a renamed local, a branch nobody exercises) would have passed every test here while
+  // being a second implementation of the rule that decides what gets written to flow.json.
+  const hasSensitiveWord = ${hasSensitiveWord.toString()};
+  const isSensitiveFieldFromModule = ${isSensitiveField.toString()};
+  // This wrapper exists only to bind the capture flags the module takes as options to the constants
+  // this script was configured with; it deliberately adds nothing else.
+  const isSensitiveField = (el) =>
+    isSensitiveFieldFromModule(el, { captureHidden: CAPTURE_HIDDEN, captureSensitive: CAPTURE_SENSITIVE });
 
   const cssPath = (el) => {
     if (!el || el.nodeType !== 1) return '';

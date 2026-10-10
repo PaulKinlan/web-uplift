@@ -61,7 +61,7 @@ export async function testFlowNormalize() {
 
 export async function testFlowRecordSensitiveRedaction() {
   const { runInNewContext } = await import('node:vm');
-  const { isSensitiveField, makeCaptureJs, sanitizeNavUrl, RECORDER_WORLD, NAME_WORD_DATA, isSensitiveAutocomplete, SENSITIVE_WORDS } = await import('../runner/flow-record.mjs');
+  const { hasSensitiveWord, isSensitiveField, makeCaptureJs, sanitizeNavUrl, RECORDER_WORLD, NAME_WORD_DATA, isSensitiveAutocomplete, SENSITIVE_WORDS } = await import('../runner/flow-record.mjs');
 
   // 1. Password inputs are always sensitive.
   assert(isSensitiveField({ type: 'password', name: 'pwd' }), 'password field must be sensitive');
@@ -476,6 +476,35 @@ export async function testFlowRecordSensitiveRedaction() {
     'makeCaptureJs must inject isPiiWord directly from module');
   assert(captureSource.includes(termsModule.isSensitiveWord.toString()),
     'makeCaptureJs must inject isSensitiveWord directly from module');
+
+  // 5. web-uplift-ngjq: the ELEMENT ADAPTER is generated too, and every generated classifier is
+  // defined exactly once. Before this the word data and the word-matching helpers were injected but
+  // isSensitiveField stayed a hand-written copy with only behavioural coverage, so a copy that
+  // behaved identically while drifting textually - a renamed local, a branch nobody exercises -
+  // would have passed every test in this file while being a second implementation of the rule that
+  // decides what is written to flow.json. That is the failure fejl named, one layer down.
+  for (const [label, fn] of [
+    ['hasSensitiveWord', hasSensitiveWord],
+    ['isSensitiveAutocomplete', isSensitiveAutocomplete],
+    ['isSensitiveField', isSensitiveField],
+    ['isSensitiveName', termsModule.isSensitiveName],
+    ['isSensitiveWord', termsModule.isSensitiveWord],
+    ['splitName', termsModule.splitName],
+    ['member', termsModule.member],
+    ['isCredentialWord', termsModule.isCredentialWord],
+    ['isPiiWord', termsModule.isPiiWord],
+  ]) {
+    const source = fn.toString();
+    const occurrences = captureSource.split(source).length - 1;
+    assert(occurrences === 1,
+      `the page script must contain the module's ${label} exactly once (found ${occurrences}); a second copy is a second implementation`);
+  }
+  // The wrapper must DELEGATE rather than reimplement, and must bind the capture flags: the module
+  // takes them as options and the page holds them as constants.
+  assert(captureSource.includes('isSensitiveFieldFromModule(el, { captureHidden: CAPTURE_HIDDEN, captureSensitive: CAPTURE_SENSITIVE })'),
+    'the page-side isSensitiveField must delegate to the module function with the capture flags bound');
+  assert(!/const isSensitiveField = \(el\) => \{\s*if \(!el\) return false;/.test(captureSource),
+    'the hand-written element adapter must be gone, not merely joined by the generated one');
 
   // B. Opt-in session (captureSensitive:true): values are captured verbatim, on
   // the returned steps AND in their serialisation - the opt-in is only meaningful
