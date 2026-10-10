@@ -14,6 +14,7 @@
 // ORCHESTRATES; it contains no checks. The agent (the model) follows SKILL.md.
 
 import { join, resolve } from 'node:path';
+import { redactUrlCredentialValues } from '../evidence/credential-terms.mjs';
 
 // ---------------------------------------------------------------------------
 // THE SKILL <-> HEADLESS-SANDBOX CONTRACT, declared ONCE and enforced by tests.
@@ -112,6 +113,62 @@ const AGENT_ENV_PASSTHROUGH = [
   'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_RUNTIME_DIR',
   'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
 ];
+
+// Proxy variables are the only allowlisted entry whose VALUE can itself carry a credential, because a
+// proxy URL may embed basic-auth userinfo ("http://user:password@proxy.example:8080"). Passing it
+// verbatim handed that credential to the agent child, which is untrusted and page-driven, while the
+// block comment above promised that every other credential "stays out" - the allowlist's stated
+// guarantee and its behaviour disagreed at exactly the point the guarantee exists for
+// (web-uplift-ql8a).
+//
+// The credential is removed, NOT the proxy. Dropping the variable outright would silently remove the
+// operator's PROXY as well, and the child would egress DIRECTLY: an operator who set that proxy
+// because egress must traverse it would get a quiet egress-policy bypass in place of a credential
+// disclosure, with nothing in the child's environment to show the variable had been dropped. Keeping
+// the host preserves the egress path, and if the proxy genuinely required that auth the child now
+// fails loudly with a 407 instead of quietly holding a secret.
+//
+// "Does this value carry a credential" is answered by the SHARED rule in evidence/credential-terms.mjs
+// rather than by a second regex here. That module already redacts URL userinfo and credential-named
+// query values out of every artifact, and a private detector is exactly how the proxy check and the
+// artifact redactor end up disagreeing about what a credential is (web-uplift-lsn3). The invariant
+// enforced below is therefore checkable and shared: the value handed to the child is one the shared
+// rule would NOT redact.
+const PROXY_ENV_NAMES = new Set(AGENT_ENV_PASSTHROUGH.filter((n) => /_proxy$/i.test(n)));
+
+// An '@' before the first '/', '?' or '#' is userinfo in the authority. A PATH may contain '@'
+// ("https://x.test:99999/a/b@2x.png"), so a plain substring test is not enough - that distinction is
+// the one web-uplift-73y3 established for the redactor, and it is kept here.
+function authorityCarriesUserinfo(value) {
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)?([^/?#]*)/.exec(value);
+  return Boolean(m) && m[2].includes('@');
+}
+
+// -> { value } for a credential-free value to pass, or { withheld: true } when the credential could
+// not be removed, which is the fail-closed answer for a value we cannot classify.
+function sanitizeProxyEnvValue(raw) {
+  const text = String(raw);
+  if (!authorityCarriesUserinfo(text) && redactUrlCredentialValues(text) === text) {
+    return { value: text }; // nothing credential-shaped: pass it through untouched
+  }
+  let candidate = text;
+  if (authorityCarriesUserinfo(text)) {
+    let url;
+    try {
+      url = new URL(text);
+    } catch {
+      return { withheld: true }; // userinfo we cannot parse: do not guess at a partial URL
+    }
+    url.username = '';
+    url.password = '';
+    candidate = url.href;
+  }
+  candidate = redactUrlCredentialValues(candidate); // also covers credential-named query values
+  if (authorityCarriesUserinfo(candidate) || redactUrlCredentialValues(candidate) !== candidate) {
+    return { withheld: true };
+  }
+  return { value: candidate };
+}
 const AGENT_ENV_ALWAYS_PREFIXES = ['WEB_UPLIFT_'];
 // Provider credential families, scoped to the CLI being spawned (5ta): an
 // operator with several provider keys in their shell exposes only the one the
@@ -143,9 +200,36 @@ export function buildAgentEnv({ agentName, extra = {}, env = process.env, warn =
   const family = (agentName && AGENT_ENV_PROVIDER_FAMILIES[agentName]) || AGENT_ENV_PROVIDER_BROAD;
   const prefixes = [...AGENT_ENV_ALWAYS_PREFIXES, ...family.prefixes];
   const names = new Set(family.names);
+  const proxyWarnings = [];
   for (const name of AGENT_ENV_PASSTHROUGH) {
-    if (env[name] !== undefined) out[name] = env[name];
+    if (env[name] === undefined) continue;
+    if (!PROXY_ENV_NAMES.has(name)) {
+      out[name] = env[name];
+      continue;
+    }
+    const safe = sanitizeProxyEnvValue(env[name]);
+    if (safe.value === undefined) {
+      proxyWarnings.push(
+        `[agent-env] withheld ${name}: it carries a credential that could not be removed safely, so the ` +
+          `child gets no proxy from it. Pass it explicitly with --agent-env ${name}=... if this run needs it.`,
+      );
+      continue;
+    }
+    out[name] = safe.value;
+    // Compare in the STRING form, which is the form the sanitiser decided on. Comparing against the
+    // raw value made an injected non-string credential-free value warn that a credential had been
+    // removed from it - a claim that was simply untrue (review finding). Working from one canonical
+    // string form is also what keeps a value with a stateful toString() from being judged as one
+    // thing and then stringified as another when the child is spawned.
+    if (safe.value !== String(env[name])) {
+      proxyWarnings.push(
+        `[agent-env] removed a credential from ${name} before handing it to the agent child (the ` +
+          `credential was not passed; the proxy host still was, so egress still traverses it). Pass the ` +
+          `full value with --agent-env ${name}=... if this run genuinely needs proxy authentication.`,
+      );
+    }
   }
+  for (const message of proxyWarnings) warn(message);
   for (const [name, value] of Object.entries(env)) {
     if (out[name] !== undefined) continue;
     if (prefixes.some((p) => name.startsWith(p)) || names.has(name)) {

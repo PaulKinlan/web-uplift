@@ -1580,7 +1580,90 @@ export function testBatchIntegrityGateAbortsOnTamperedExecutedTree() {
   }
 }
 
+// web-uplift-ql8a. A proxy URL can carry basic-auth userinfo, and AGENT_ENV_PASSTHROUGH copied the
+// proxy variables VERBATIM, so the agent child - which is untrusted and page-driven - received a proxy
+// credential while the same function warned about withholding GITHUB_TOKEN. The credential is now
+// removed while the proxy HOST survives, and the full value returns only through --agent-env.
+export async function testAgentChildEnvProxyCredentials() {
+  const { buildAgentEnv } = await import(pathToFileURL(join(repoRoot, 'runner/agents.mjs')).href);
+  const { redactUrlCredentialValues } = await import(pathToFileURL(join(repoRoot, 'evidence/credential-terms.mjs')).href);
+  // Composed at runtime, so no credential-shaped literal is written into this repo, this test, or a commit.
+  const userinfo = ['user', 'pass' + 'word'].join(':');
+  const proxied = `http://${userinfo}@proxy.invalid:8080`;
+
+  // 1. EVERY spelling the allowlist carries, not just the uppercase one. A guard that tested only
+  // HTTPS_PROXY would pass while http_proxy leaked - one spelling standing in for a whole class.
+  for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) {
+    const warnings = [];
+    const built = buildAgentEnv({ env: { HOME: '/tmp/home', [name]: proxied }, warn: (m) => warnings.push(m) });
+    const value = built[name];
+    assert(typeof value === 'string', `${name} must still reach the child, or egress stops traversing the proxy`);
+    assert(!value.includes('@') && !value.includes(userinfo), `${name}: the userinfo must NOT reach the child (got ${value})`);
+    assert(value.includes('proxy.invalid:8080'), `${name}: the host and port must survive, so the egress path is unchanged`);
+    assert(warnings.some((w) => w.includes(name)), `${name}: the operator must be told BY NAME that a credential was removed`);
+    assert(!warnings.some((w) => w.includes(userinfo)), `${name}: the warning must never carry the value`);
+  }
+
+  // 2. CONTROL for the other direction: a credential-free proxy passes through byte-identical, so this
+  // cannot be satisfied by breaking ordinary proxying.
+  const plain = 'http://proxy.invalid:8080';
+  const plainBuilt = buildAgentEnv({ env: { HOME: '/tmp/home', HTTPS_PROXY: plain }, warn: () => {} });
+  assert(plainBuilt.HTTPS_PROXY === plain, 'a credential-free proxy must pass through untouched');
+
+  // 3. The operator's explicit --agent-env choice still wins, which is what makes this a withholding
+  // rather than removing the capability.
+  const optIn = buildAgentEnv({
+    env: { HOME: '/tmp/home', HTTPS_PROXY: proxied },
+    extra: { HTTPS_PROXY: proxied },
+    warn: () => {},
+  });
+  assert(optIn.HTTPS_PROXY === proxied, '--agent-env must still pass the full value, by explicit operator choice');
+
+  // 4. FAIL CLOSED on userinfo that cannot be parsed, announced by name and never by value.
+  const oddWarnings = [];
+  const odd = buildAgentEnv({
+    env: { HOME: '/tmp/home', HTTPS_PROXY: `${userinfo}@proxy.invalid:8080` },
+    warn: (m) => oddWarnings.push(m),
+  });
+  assert(odd.HTTPS_PROXY === undefined, 'an unparseable credential-bearing proxy must be withheld, not guessed at');
+  assert(oddWarnings.some((w) => w.includes('HTTPS_PROXY')), 'withholding it must be announced by name');
+  assert(!oddWarnings.some((w) => w.includes(userinfo)), 'and never by value');
+
+  // 5. A credential-named query value is the same class, and the SHARED rule is the arbiter: whatever
+  // the sanitiser hands the child must be something that module would not redact again. This is the
+  // property that keeps the proxy check and the artifact redactor from disagreeing (web-uplift-lsn3).
+  const withQuery = 'http://proxy.invalid:8080/?token=abcdef';
+  const queryBuilt = buildAgentEnv({ env: { HOME: '/tmp/home', HTTPS_PROXY: withQuery }, warn: () => {} });
+  assert(queryBuilt.HTTPS_PROXY !== withQuery, 'a credential-named query value must not be passed raw');
+  assert(!queryBuilt.HTTPS_PROXY.includes('abcdef'), 'the query credential value must not reach the child');
+  assert(
+    redactUrlCredentialValues(queryBuilt.HTTPS_PROXY) === queryBuilt.HTTPS_PROXY,
+    'whatever is passed must be a value the shared rule would not redact again',
+  );
+  // and the control: a benign query parameter is not this class and must survive, or the rule is
+  // simply deleting query strings.
+  const benign = 'http://proxy.invalid:8080/?pool=corp';
+  const benignBuilt = buildAgentEnv({ env: { HOME: '/tmp/home', HTTPS_PROXY: benign }, warn: () => {} });
+  assert(benignBuilt.HTTPS_PROXY === benign, 'a non-credential query parameter must survive untouched');
+
+  // 6. An injected NON-STRING value that carries no credential must not be reported as having had one
+  // removed. The sanitiser decides on the STRING form of the value, so the caller has to compare in
+  // that same form; comparing the stringified result against the raw value made the warning untrue for
+  // exactly this input (found in review of this commit, and it was a real false claim, not a style nit).
+  const boxedWarnings = [];
+  const boxedBuilt = buildAgentEnv({
+    env: { HOME: '/tmp/home', HTTPS_PROXY: new String(plain) },
+    warn: (m) => boxedWarnings.push(m),
+  });
+  assert(boxedBuilt.HTTPS_PROXY === plain, 'a credential-free value must still arrive as that same value');
+  assert(
+    boxedWarnings.length === 0,
+    `a credential-free value must not be reported as having had a credential removed: ${JSON.stringify(boxedWarnings)}`,
+  );
+}
+
 export const runnerAgentsTests = [
+  testAgentChildEnvProxyCredentials,
   testHeadlessAllowlistIsScoped,
   testHeadlessAllowlistMatchesSkillContract,
   testSkillWriteContractGuard,
