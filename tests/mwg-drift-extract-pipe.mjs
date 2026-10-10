@@ -134,7 +134,12 @@ export async function testMwgDriftExtractPipe() {
     // 3. THE CLASSIFICATION REPORT IS A PAYLOAD TOO, and it goes out with the same emitter: a
     // 12000-guide delta lost 572803 of its 638339 bytes to the pipe buffer while still exiting 2.
     const { oldCorpus, newCorpus } = makeBigDelta(tmp, 6000);
-    const basis = join(repoRoot, 'tests', 'fixtures', 'mwg-drift', 'basis-fixture.json');
+    // A basis must describe the corpus it is used with: classification refuses a registry whose
+    // rule names a guide absent from the BASELINE corpus, or whose anchors are not verbatim in
+    // that guide's text (web-uplift-uxr). These corpora are synthetic (guide-1..6000, 'x' bodies),
+    // so the real-shaped basis-fixture.json does not fit them - pairing the two only worked while
+    // each change was green in isolation, and failed when they met on the merger's union.
+    const basis = join(repoRoot, 'tests', 'fixtures', 'mwg-drift', 'basis-fixture-synthetic.json');
     const classifyArgs = ['--old-corpus', oldCorpus, '--new-corpus', newCorpus, '--basis', basis, '--json'];
     const toFileReport = await runCliToFile(classifyArgs, join(tmp, 'classification.txt'));
     assert(toFileReport.code === 2, `a delta must still exit 2: ${toFileReport.code} ${toFileReport.err}`);

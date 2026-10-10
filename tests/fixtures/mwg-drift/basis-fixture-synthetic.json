@@ -1,0 +1,14 @@
+{
+  "$comment": "Rule basis for tests whose corpora are SYNTHETIC (guide-1..N with 'x' bodies), as opposed to the real-shaped fixtures next to it. A basis must describe the corpus it is used with: classification refuses a registry whose rule names a guide that is not in the baseline corpus, or whose anchors are not verbatim in that guide's text (web-uplift-uxr). This registry exists because tests/mwg-drift-extract-pipe.mjs builds its own corpora and used the real-shaped basis-fixture.json with them, which only worked until the two met on the merger's union - the enforcement is correct, the pairing was not.",
+  "catalogueVersion": "1.0.0",
+  "rules": [
+    {
+      "id": "rule-synthetic-guide-1",
+      "guide": "guide-1",
+      "where": "tests/fixtures/mwg-drift",
+      "anchors": [
+        "xxxxxxxx"
+      ]
+    }
+  ]
+}
