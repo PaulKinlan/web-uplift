@@ -9,7 +9,7 @@
 //   2. reachability, which also has to ask WHO is answering, or an unrelated daemon on the same
 //      address would refuse a healthy audit.
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -451,6 +451,53 @@ export async function testEndpointProbeRejectionStaysFailClosed() {
   console.log('endpoint probe rejection OK: a later rejection cannot displace a refusal, host order decides which error is thrown even when a later host fails first in time, and a lone rejection stays fail-closed');
 }
 
+// A probe that THROWS must not leave the spawned browser behind. Before this, an escaping exception
+// skipped both recordLaunchFailure and close(), so the browser and its profile outlived the failed
+// launch with no handle left to close them (web-uplift-uuod). The fake writes its OWN pid and then
+// execs the sleep, so the liveness check is an exact /proc lookup: a pgrep pattern would also match
+// the shell running pgrep, which is how an earlier version of this check reported a leak on a tree
+// where the browser had in fact been torn down.
+export async function testThrowingExposureProbeDoesNotLeakTheBrowser() {
+  const dir = mkdtempSync(join(tmpdir(), 'web-uplift-uuod-'));
+  const pidFile = join(dir, 'pid');
+  const fake = join(dir, 'leaky-chrome');
+  writeFileSync(fake, `#!/bin/sh\necho "DevTools listening on ws://127.0.0.1:1/" >&2\necho $$ > ${pidFile}\nexec sleep 30\n`, { mode: 0o755 });
+  const savedBin = process.env.CHROME_BIN;
+  process.env.CHROME_BIN = fake;
+  let error = null;
+  try {
+    await launchChrome({
+      transport: 'port',
+      devtoolsTimeoutMs: 2000,
+      log: () => {},
+      exposureProbe: () => { throw new Error('probe-boom'); },
+    });
+  } catch (err) {
+    error = err;
+  } finally {
+    if (savedBin === undefined) delete process.env.CHROME_BIN;
+    else process.env.CHROME_BIN = savedBin;
+  }
+  assert(error instanceof Error, `a throwing exposure probe must fail the launch, not return a handle: ${error}`);
+  assert(/endpoint exposure probe failed: probe-boom/.test(error.message),
+    `the failure must name the probe so an operator can tell it apart from a bind verdict: ${error.message}`);
+  assert(/after 1 attempt/.test(error.message),
+    `a probe that cannot answer must not be retried into more possibly-exposed listeners: ${error.message}`);
+  // Bounded on the REPEATS, not just the outcome: close() reaps asynchronously, so allow a short
+  // settle before deciding the browser is still there.
+  const pid = existsSync(pidFile) ? readFileSync(pidFile, 'utf8').trim() : '';
+  let alive = false;
+  for (let attempt = 0; attempt < 20 && pid; attempt += 1) {
+    if (!existsSync(`/proc/${pid}`)) { alive = false; break; }
+    alive = true;
+    await new Promise((done) => setTimeout(done, 50));
+  }
+  if (alive && pid) { try { process.kill(Number(pid), 'SIGKILL'); } catch {} }
+  rmSync(dir, { recursive: true, force: true });
+  assert(!alive, `the spawned browser must not outlive the failed launch (pid ${pid} is still in /proc)`);
+  console.log('throwing exposure probe OK: the launch fails fatally after one attempt, names the probe, and leaves no browser behind');
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === here) {
   // Run EVERY test in this file: a direct invocation must not look green while silently skipping
   // the ones added later. This ran only the first until web-uplift-690r added the concurrency
@@ -458,4 +505,5 @@ if (process.argv[1] && resolve(process.argv[1]) === here) {
   await testCdpEndpointExposure();
   await testEndpointProbesRunConcurrently();
   await testEndpointProbeRejectionStaysFailClosed();
+  await testThrowingExposureProbeDoesNotLeakTheBrowser();
 }

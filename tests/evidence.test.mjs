@@ -1827,7 +1827,9 @@ export function testAwaitCensus() {
       // web-uplift-py0e added four: the two liveness checks, each a bounded waitForProcExit settle plus
       // a teardown through the same `await close()` as every other launch failure - deliberately, so the
       // retry logic treats a browser that died during launch exactly like any other failed attempt.
-      'bounded:pre-existing-mechanism': 13,
+      // web-uplift-uuod added one: the throwing-probe path now attributes the attempt and tears the
+      // browser down exactly like every other launch failure, so it gained one `await close()`.
+      'bounded:pre-existing-mechanism': 14,
       'bounded:sleep': 5,
       'bounded:gather-spine': 4,
       'excluded:primitive-probe': 2,

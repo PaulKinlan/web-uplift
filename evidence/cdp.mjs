@@ -1217,7 +1217,30 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
   // operator, read the pages it has open and run script in them. So the claim is measured
   // rather than trusted, and a non-loopback bind fails the launch instead of exposing an
   // audit (web-uplift-4rv).
-  const exposure = await exposureProbe(port, proc.pid);
+  // A probe that THROWS must not escape this function. Every other failure path here attributes the
+  // attempt and then tears the browser down; an escaping exception did neither, so the spawned Chrome
+  // and its profile were left behind with no handle to close them (web-uplift-uuod). The failure is
+  // reported as FATAL, like a non-loopback bind, because a probe that could not answer has not
+  // established that the endpoint is loopback-only - and a retry would spawn another listener whose
+  // exposure nobody has measured, which is the fail-open shape the fatal flag exists to prevent.
+  // A probe that THROWS must not escape this function. Every other failure path here attributes the
+  // attempt and then tears the browser down; an escaping exception did neither, so the spawned Chrome
+  // and its profile were left behind with no handle to close them (web-uplift-uuod). The failure is
+  // reported as FATAL, like a non-loopback bind, because a probe that could not answer has not
+  // established that the endpoint is loopback-only - and a retry would spawn another listener whose
+  // exposure nobody has measured, which is the fail-open shape the fatal flag exists to prevent.
+  let exposure = null;
+  try {
+    exposure = await exposureProbe(port, proc.pid);
+  } catch (err) {
+    const reason = `the endpoint exposure probe failed: ${err && err.message}`;
+    recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason });
+    await close();
+    return {
+      ok: false,
+      detail: { reason, fatal: true, spawned: true, alive: false, exitCode: null, signal: null, stderrText },
+    };
+  }
   if (exposure.exposed) {
     recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: exposure.reason });
     await close();
