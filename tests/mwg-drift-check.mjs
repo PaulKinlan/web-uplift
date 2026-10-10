@@ -20,6 +20,10 @@
 //   2: Version delta detected (upstream != analysedVersion). Output notes whether
 //      upstream is newer or older. Triggers full reanalysis.
 //   3: Freshness guard failed (freshness mode only): lastCheckAt missing/null,
+//      unreadable, implausibly future-dated, or older than --max-age. Also: the
+//      last check found an upstream version the analysis never caught up with,
+//      and analysedAt is unreadable, implausibly future-dated, or older than
+//      --max-age - a detected delta that nobody actioned must not read as fresh.
 //      unparseable, implausibly future-dated, or older than --max-age.
 //      Never-run counts as stale.
 //  64: Usage error (unknown flags, invalid arguments).
@@ -181,6 +185,50 @@ if (freshnessOnly) {
     process.exit(1);
   }
 
+  // A detected-but-unactioned delta is NOT fresh, however recently the check ran. --write advances
+  // lastCheckAt for the delta outcome as well as the in-sync one, so the heartbeat alone cannot see
+  // it: the state file itself records that the last check found an upstream version the analysis never
+  // caught up with. For that case the age that matters is the ANALYSIS's, not the heartbeat's
+  // (web-uplift-yh6o). Without this, a sustained delta refreshes the heartbeat on every run and the
+  // freshness job reports green indefinitely while the analysed catalog stays a version behind.
+  //
+  // The predicate is VERSION-based rather than flag-based (lastCheckResult === 'delta') so that it
+  // clears itself as soon as the catalog is re-analysed, even if a stale result flag was left behind:
+  // versions that agree mean the analysis agrees with what the last check saw.
+  const checkedUpstream = state.lastCheckUpstreamVersion;
+  const analysisBehind =
+    typeof checkedUpstream === 'string' &&
+    checkedUpstream.length > 0 &&
+    typeof state.analysedVersion === 'string' &&
+    checkedUpstream !== state.analysedVersion;
+  if (analysisBehind) {
+    const analysedTime = typeof state.analysedAt === 'string' ? Date.parse(state.analysedAt) : NaN;
+    if (Number.isNaN(analysedTime)) {
+      // Fail closed. If the analysis time cannot be read we cannot say the delta is inside the grace
+      // window, and answering FRESH here would be precisely the quiet failure this guard exists to
+      // prevent, so an unreadable analysedAt is reported stale rather than assumed young.
+      console.error(
+        `STALE: the last check found upstream version ${checkedUpstream} while the analysed version is ${JSON.stringify(state.analysedVersion ?? null)}, and analysedAt (${JSON.stringify(state.analysedAt ?? null)}) cannot be read as a timestamp, so the age of that detected delta is unknown (threshold: ${formatDuration(maxAgeMs)})`
+      );
+      process.exit(3);
+    }
+    const deltaAgeMs = Date.now() - analysedTime;
+    // Same reasoning as the future-dated heartbeat guard below: a future-dated analysedAt must not read
+    // as a young analysis and quietly buy the delta unlimited grace.
+    if (deltaAgeMs < -5 * 60 * 1000) {
+      console.error(
+        `STALE: the last check found upstream version ${checkedUpstream} while the analysed version is ${state.analysedVersion}, and analysedAt is ${formatDuration(-deltaAgeMs)} in the FUTURE (hand-edit or clock skew); refusing to treat a detected delta as fresh`
+      );
+      process.exit(3);
+    }
+    if (deltaAgeMs > maxAgeMs) {
+      console.error(
+        `STALE: the last check found upstream version ${checkedUpstream} but the analysed version is ${state.analysedVersion}, and that analysis is ${formatDuration(deltaAgeMs)} old, exceeding max-age threshold of ${formatDuration(maxAgeMs)}; a detected delta has not been actioned`
+      );
+      process.exit(3);
+    }
+  }
+
   if (!state.lastCheckAt || typeof state.lastCheckAt !== 'string') {
     console.error(
       `STALE: state file has no recorded check timestamp (lastCheckAt is ${JSON.stringify(state.lastCheckAt ?? null)}) (threshold: ${formatDuration(maxAgeMs)})`
@@ -213,7 +261,10 @@ if (freshnessOnly) {
   }
 
   console.log(
-    `FRESH: last check was ${formatDuration(ageMs)} ago (within max-age threshold of ${formatDuration(maxAgeMs)})`
+    `FRESH: last check was ${formatDuration(ageMs)} ago (within max-age threshold of ${formatDuration(maxAgeMs)})` +
+    (analysisBehind
+      ? ` [NOTE: the last check found upstream version ${checkedUpstream} while the analysed version is ${state.analysedVersion}; that detected delta is inside the grace period, which is measured from analysedAt (${state.analysedAt}), not from this heartbeat]`
+      : '')
   );
   process.exit(0);
 }

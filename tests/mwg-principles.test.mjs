@@ -491,6 +491,71 @@ export function testMwgDriftCheckGuard() {
       `mwg-drift: case 14 must report a delta, got:\n${res.stdout}`
     );
   }
+
+  // 15. A DETECTED but unactioned delta must not read as fresh (web-uplift-yh6o). --write advances
+  // lastCheckAt for the delta outcome too, so the heartbeat alone cannot see it; the state records that
+  // upstream moved and the analysis did not, and the age that matters is the ANALYSIS's.
+  {
+    const deltaPath = join(tmp, 'mwg-drift-state-delta-age.json');
+    const deltaState = JSON.parse(readFileSync(stateFixture, 'utf8'));
+    deltaState.analysedVersion = '0.0.193';
+    deltaState.lastCheckUpstreamVersion = '0.0.200'; // upstream moved...
+    deltaState.lastCheckResult = 'delta';
+    deltaState.lastCheckAt = new Date().toISOString(); // ...and the heartbeat is brand new
+
+    // (a) GRACE: the analysis is recent, so the delta is inside the window and a fresh heartbeat stands.
+    deltaState.analysedAt = new Date().toISOString();
+    writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+    const grace = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+    assert(grace.status === 0, `mwg-drift: case 15 (delta inside grace) must exit 0, got ${grace.status}:\n${grace.stderr || grace.stdout}`);
+    assert(
+      grace.stdout.includes('0.0.200') && /NOTE/i.test(grace.stdout),
+      `mwg-drift: case 15 (delta inside grace) must SAY the delta is inside the grace, so an operator is never told "fresh" with no qualification: ${grace.stdout}`
+    );
+
+    // (b) AGED: the analysis is older than the threshold -> stale, and the message names the delta.
+    deltaState.analysedAt = '2020-01-01T00:00:00.000Z';
+    writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+    const aged = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+    assert(aged.status === 3, `mwg-drift: case 15 (aged delta) must exit 3, got ${aged.status}:\n${aged.stderr || aged.stdout}`);
+    assert(
+      (aged.stderr || '').includes('0.0.200') && (aged.stderr || '').includes('0.0.193'),
+      `mwg-drift: case 15 (aged delta) must name the upstream version the check saw AND the analysed version: ${aged.stderr}`
+    );
+
+    // (c) FAIL CLOSED: no usable analysedAt means the delta cannot be aged -> stale, not fresh. This is
+    // the load-bearing case: assuming "young" here is exactly the quiet failure this guard exists for.
+    delete deltaState.analysedAt;
+    writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+    const unageable = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+    assert(unageable.status === 3, `mwg-drift: case 15 (unageable delta) must exit 3, got ${unageable.status}:\n${unageable.stderr || unageable.stdout}`);
+
+    // (f) A future-dated analysedAt must not read as a young analysis and buy the delta unlimited
+    // grace - the same reasoning the heartbeat already applies to a future-dated lastCheckAt.
+    deltaState.analysedAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+    writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+    const future = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+    assert(future.status === 3, `mwg-drift: case 15 (future-dated analysedAt) must exit 3, got ${future.status}:\n${future.stderr || future.stdout}`);
+
+    // (d) CONTROL, the other direction: an in-sync state keeps the OLD heartbeat semantics even with an
+    // ancient analysedAt, so this change cannot have quietly re-pointed the heartbeat at analysedAt.
+    const syncState = JSON.parse(readFileSync(stateFixture, 'utf8'));
+    syncState.lastCheckAt = new Date().toISOString();
+    syncState.lastCheckUpstreamVersion = syncState.analysedVersion; // versions agree: no delta
+    syncState.lastCheckResult = 'in-sync';
+    writeFileSync(deltaPath, JSON.stringify(syncState), 'utf8');
+    const inSync = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+    assert(inSync.status === 0, `mwg-drift: case 15 (in-sync control) must still exit 0 on a fresh heartbeat with an old analysis, got ${inSync.status}:\n${inSync.stderr || inSync.stdout}`);
+    assert(!/NOTE/i.test(inSync.stdout), `mwg-drift: case 15 (in-sync control) must not carry the delta note: ${inSync.stdout}`);
+
+    // (e) CONTROL against over-refusal: a stale result FLAG with agreeing versions is self-healed rather
+    // than an unactioned delta, because the versions are what say whether the analysis matches what the
+    // last check saw.
+    syncState.lastCheckResult = 'delta'; // left behind; versions still agree
+    writeFileSync(deltaPath, JSON.stringify(syncState), 'utf8');
+    const healed = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+    assert(healed.status === 0, `mwg-drift: case 15 (stale flag, agreeing versions) must not be treated as an unactioned delta, got ${healed.status}:\n${healed.stderr || healed.stdout}`);
+  }
 }
 
 
