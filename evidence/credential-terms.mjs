@@ -248,7 +248,13 @@ export function redactUrlCredentialValues(raw) {
     // shape the absolute branch does. Userinfo passwords are redacted in both branches now
     // (web-uplift-73y3), so this rebuild re-emits the username with the password marker.
     const lead = /^\s*/.exec(raw)[0];
-    const userinfo = `${u.username}${u.password ? `:${u.password}` : ''}${u.username ? '@' : ''}`;
+    // '@' belongs to any userinfo at all, not only to a username: '//:s3cr3t@x.test/a' is a valid
+    // URL with a password and an EMPTY username, and gating the '@' on the username re-emitted it as
+    // '//:s3cr3t' followed by the host, so the userinfo ran into the host and the authority was
+    // mangled (web-uplift-5m9f). The absolute branch never had this, because URL.toString()
+    // serialises userinfo itself.
+    const hasUserinfo = Boolean(u.username || u.password);
+    const userinfo = `${u.username}${u.password ? `:${u.password}` : ''}${hasUserinfo ? '@' : ''}`;
     const authority = /^\s*\/\//.test(raw) ? `//${userinfo}${u.host}` : '';
     // The whitespace the parser stripped is put back rather than normalised away: this function's
     // job is to redact one value, not to tidy a header value into a different string.

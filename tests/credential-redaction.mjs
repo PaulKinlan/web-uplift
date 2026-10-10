@@ -200,6 +200,21 @@ export async function testCredentialRedactorsAgree() {
   const headered = cli.redactHeaderList([{ name: 'location', value: `https://user:${USERINFO_PASS}@x.test/next?token=${SECRET_USERINFO}` }]);
   assert(!JSON.stringify(headered).includes(USERINFO_PASS),
     `a redirect Location must not carry the userinfo password into the artifact: ${JSON.stringify(headered)}`);
+
+  // 8. A protocol-relative URL with a PASSWORD and no username keeps its '@' (web-uplift-5m9f). The
+  // relative branch re-emitted '@' only when there was a username, so '//:s3cr3t@x.test/plain' came
+  // back as '//:%5Bredacted%5Dx.test/plain' - the redacted userinfo ran into the host and the
+  // authority was mangled. Found while fixing 73y3; the absolute branch never had it, because
+  // URL.toString() serialises userinfo itself.
+  for (const redactor of [terms.redactUrlCredentialValues, cli.redactUrlCredentialValues]) {
+    assert(redactor(`//:${USERINFO_PASS}@x.test/plain`) === `//:${'%5Bredacted%5D'}@x.test/plain`,
+      'a password-only userinfo must keep its @ and its host');
+    assert(redactor(`//:${USERINFO_PASS}@x.test/a?token=${SECRET_USERINFO}`) === `//:${'%5Bredacted%5D'}@x.test/a?token=${'%5Bredacted%5D'}`,
+      'password-only userinfo with a query credential keeps both');
+    assert(redactor(`https://:${USERINFO_PASS}@x.test/plain`) === `https://:${'%5Bredacted%5D'}@x.test/plain`,
+      'the absolute branch agrees, as it always did');
+    assert(redactor('//x.test/plain') === '//x.test/plain', 'control: no userinfo is unchanged');
+  }
 }
 
 // Run directly (node tests/credential-redaction.mjs), not when imported by the
