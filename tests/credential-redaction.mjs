@@ -342,7 +342,12 @@ export async function testCredentialRedactorsAgree() {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const started = Date.now();
         redactor(input);
-        best = Math.min(best, Date.now() - started);
+        const elapsed = Date.now() - started;
+        best = Math.min(best, elapsed);
+        // Stop repeating once ONE pass is already far past any linear expectation. The repeats exist to
+        // defeat timer noise on a fast run, not to spend three times the cost of a hang - without this a
+        // quadratic regression delays its own failure by a factor of three before the backstop fires.
+        if (elapsed > 5000) break;
       }
       return best;
     };
@@ -355,24 +360,36 @@ export async function testCredentialRedactorsAgree() {
     assert(large < 5000, `the sweep must not hang: 160 kB took ${large}ms`);
     // The fixture above is a single run with ONE authority start, so the loop executes once and it
     // cannot see a quadratic that comes from re-searching for the spelling that does NOT occur. This
-    // fixture repeats the start instead, and it is the one that actually caught that defect: with the
-    // searches re-run each iteration it measured 9.1x at 160 kB and 16.5x at 640 kB, and the fix
-    // brings it back to ~3x. Both fixtures are kept because each is blind to the other's failure.
+    // fixture repeats the start instead, and what it catches is a PER-SPELLING search that re-runs each
+    // pass while its spelling is absent: this fixture never contains a mixed pair, so a four-spelling
+    // version scans to the end twice per pass and took about 36 s at the small size alone.
+    //
+    // It does NOT catch the original two-spelling defect, and review measured that plainly: with both
+    // spellings alternating close together, re-searching either one stays cheap (2.3x, which passes).
+    // That defect is pinned by the mixed-spelling CORRECTNESS assertions above instead, because a search
+    // for two fixed spellings structurally cannot redact a mixed pair. Both fixtures are kept because
+    // each is blind to the other's failure.
     const measureStarts = (length) => {
-      // BOTH spellings, alternating, because that is the shape that exercises the one-search caching:
-      // the two-search version was quadratic both when the other spelling never occurred and when it
-      // occurred far ahead. Sizes are 160k/640k, not 40k/160k, because the defect measured 9.1x against
-      // the 8x bound at the smaller pair - a margin too thin to trust.
-      const input = '// \\\\ '.repeat(Math.floor(length / 5));
+      // BOTH spellings alternating, which is the shape whose re-searching a multi-spelling version
+      // cannot keep cheap. The repeat unit is 6 characters, so the divisor must be 6: with 5 the sizes
+      // silently became 192 kB and 768 kB instead of the 160 kB and 640 kB named in the messages.
+      const input = '// \\\\ '.repeat(Math.floor(length / 6));
       let best = Infinity;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const started = Date.now();
         redactor(input);
-        best = Math.min(best, Date.now() - started);
+        const elapsed = Date.now() - started;
+        best = Math.min(best, elapsed);
+        if (elapsed > 5000) break;
       }
       return best;
     };
     const manySmall = measureStarts(160000);
+    // Stop BEFORE the large measurement when the small one already shows a hang. A truly quadratic
+    // version costs tens of seconds here, and without this the fixed 4x run would then cost minutes;
+    // the bound sits far above the measured tens of milliseconds, so it cannot flake.
+    assert(manySmall < 5000,
+      `the sweep must not hang with many authority starts: 160 kB took ${manySmall}ms`);
     const manyLarge = measureStarts(640000);
     const manyRatio = manyLarge / Math.max(manySmall, 2);
     assert(manyRatio < 8,
