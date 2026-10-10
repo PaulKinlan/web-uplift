@@ -86,7 +86,7 @@ import https from 'node:https';
 import { Readable } from 'node:stream';
 import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
 import { launchChrome, newSession, navigate, evaluate, sleep, attachConsoleCollector, attachConsoleEvidence, configureCdpDeadlines, withDeadline, getNavigationDeadlineMs, getCdpCallDeadlineMs, recordLaunch } from './cdp.mjs';
-import { isCredentialName } from './credential-terms.mjs';
+import { isCredentialName, redactUrlCredentialValues, REDACTED_VALUE } from './credential-terms.mjs';
 
 // --- generic CDP condition helpers (NOT checks) ----------------------------
 
@@ -1751,7 +1751,8 @@ const REDACTED_HEADER_NAMES = new Set([
   'x-api-key',
   'x-amz-security-token',
 ]);
-const REDACTED_HEADER_VALUE = '[redacted]';
+// One literal for every redaction in the tool (web-uplift-lsn3): shared with the URL redactor.
+const REDACTED_HEADER_VALUE = REDACTED_VALUE;
 
 // Replace the value of every credential header in a HAR header list, keeping the
 // name and any other fields. Non-credential headers pass through untouched, so
@@ -1786,38 +1787,10 @@ const REDACTED_HEADER_VALUE = '[redacted]';
 // it does not start rewriting fields the review never asked it to touch.
 export { isCredentialName };
 
-// Redact the VALUES of credential-named query parameters in a URL; keep the names and
-// every other parameter exactly as they were.
-export function redactUrlCredentialValues(raw) {
-  if (typeof raw !== 'string' || !raw) return raw;
-  const apply = (u) => {
-    let hit = false;
-    for (const [k, v] of [...u.searchParams.entries()]) {
-      if (v && isCredentialName(k)) {
-        u.searchParams.set(k, REDACTED_HEADER_VALUE);
-        hit = true;
-      }
-    }
-    return hit;
-  };
-  try {
-    const u = new URL(raw);
-    return apply(u) ? u.toString() : raw;
-  } catch {
-    /* not absolute: a redirect Location is very often a relative path */
-  }
-  try {
-    // Parse against a throwaway base and re-emit relative, so a relative redirect target
-    // ('/final?session=...') is redacted too - it used to pass through untouched because
-    // new URL() rejects a relative string. The path is normalised (a bare '?a=b' gains a
-    // leading '/'), which is the only shape change and is noted rather than silent.
-    const u = new URL(raw, 'http://relative.invalid');
-    if (!apply(u)) return raw;
-    return `${u.pathname}${u.search}${u.hash}`;
-  } catch {
-    return raw; // genuinely unparseable: leave it alone rather than guess
-  }
-}
+// The URL redactor itself now lives in evidence/credential-terms.mjs, because the console-evidence
+// collector in evidence/cdp.mjs needs the same rule and cli.mjs imports cdp.mjs (web-uplift-lsn3).
+// Re-exported here so every existing importer keeps working.
+export { redactUrlCredentialValues };
 
 export function redactQueryList(list) {
   if (!Array.isArray(list)) return list;
@@ -2036,7 +2009,9 @@ export function redactHeaderList(headers) {
     // the same root cause one call site further out; found by the integration test, not
     // by inspection. No name list is needed here: redactUrlCredentialValues only rewrites
     // a value that actually carries a credential-named parameter, so every other value
-    // (content types, sizes, plain words) passes through unchanged.
+    // (content types, sizes, plain words) passes through unchanged. Since web-uplift-73y3 it also
+    // rewrites a userinfo password, so a Location carrying basic-auth credentials is covered here
+    // too - which matters because this is the redirect path the artifact records.
     const value = typeof header?.value === 'string' ? redactUrlCredentialValues(header.value) : header?.value;
     return value === header?.value ? header : { ...header, value };
   });

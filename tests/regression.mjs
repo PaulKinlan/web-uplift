@@ -19,11 +19,13 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { assertPageDerivedFetchAllowed, gather, iconSatisfies, isFirstPartyHost, isThirdPartyCookie, readSourceTree, redactHeaderList, safeFetch, scanTextForSecrets, waitForInteractEvidence } from '../evidence/cli.mjs';
 import { testSourceTreeSkipsSymlinkFileEscape, testSourceTreeSkipsSymlinkDirEscape, testSourceTreeSkipsSymlinkCycle, testSourceTreeDepthGuard } from './source-tree-symlink.mjs';
+import { testConsoleEvidenceRedaction } from './console-evidence-redaction.mjs';
 import { testInstallSkipsSymlinksInVendoredSource, testInstallCopyDepthGuard, testInstallVendorsCompleteClosure } from './install-copy-symlink.mjs';
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { launchChrome, resolveChromePath, sandboxDisableReason } from '../evidence/cdp.mjs';
 import { testMwgDriftExtractPipe } from './mwg-drift-extract-pipe.mjs';
 import { testMwgDriftBasisFloor } from './mwg-drift-basis-floor.mjs';
+import { testCdpEndpointExposure } from './cdp-endpoint-exposure.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
 import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
@@ -51,6 +53,7 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', 'reports', 'scratch']);
 const ALL_TESTS = [
   testMwgDriftExtractPipe,
   testMwgDriftBasisFloor,
+  testCdpEndpointExposure,
   testSyntaxChecks,
   testPackageRootImportIsSideEffectFree,
   testChromeCandidateDiscovery,
@@ -129,6 +132,7 @@ const ALL_TESTS = [
   testExplicitSourceHonoursOperatorSpecifiedRoot,
   testEvidenceTruncationReporting,
   testConsoleEvidence,
+  testConsoleEvidenceRedaction,
   testConsoleInteractDeadlineValidation,
   testFeaturesPrimitive,
   testBatchDryRunUsesRetainedDirs,
@@ -7675,7 +7679,13 @@ function testAwaitCensus() {
     ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable/],
     ['bounded:sleep', /await sleep\(|await new Promise\(\(r\) => setTimeout/],
     ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|return await fn\(\)/],
-    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise/],
+    // web-uplift-4rv added two sites whose bound belongs to the CALLEE, which is why they are
+    // classified here rather than wrapped: `connect(host, port, timeoutMs)` is handed its deadline
+    // explicitly (the regex requires that argument, so removing it leaves the site UNCLASSIFIED
+    // instead of quietly still 'bounded'), and `exposureProbe` is an injected probe whose
+    // production default, cdpEndpointExposure, bounds its own sockets by PROBE_TIMEOUT_MS. Same
+    // shape as `await launchChromeOnce`, which is bounded by the mechanism it contains.
+    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise|await connect\([^)]*timeoutMs\)|await exposureProbe\(/],
     ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
     ['excluded:page-side-template', /await navigator\.|await fetch\(\$\{JSON\.stringify\(su\)\}, \{ signal: controller\.signal \}\)|const t = await res\.text\(\);/],
     ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],
@@ -7683,10 +7693,19 @@ function testAwaitCensus() {
   const expected = {
     'evidence/cdp.mjs': {
       'bounded:withDeadline': 12,
-      'bounded:pre-existing-mechanism': 7,
+      // 8, not 7: the exposure verdict added a SECOND grace-bounded `await close()` on the path that
+      // refuses an exposed launch (web-uplift-4rv), and every site in this bucket is the same
+      // mechanism (waitForProcExit, waitForGroupDrain, the deadline-bounded endpoint wait, the
+      // idempotent teardown, launchChromeOnce, withRetry's pass-through). The old count was never
+      // wrong to the point of failing loudly: the unmatched-site assertion fires first and its
+      // message hid this one behind it.
+      'bounded:pre-existing-mechanism': 8,
       'bounded:sleep': 4,
       'bounded:gather-spine': 4,
       'excluded:primitive-probe': 2,
+      // web-uplift-4rv: the exposure probe's own connect (handed timeoutMs) and the injected
+      // exposureProbe, both bounded by the callee rather than by a wrapper at the call site.
+      'bounded:own-deadline': 2,
     },
     'evidence/cli.mjs': {
       'bounded:withDeadline': 13,

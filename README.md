@@ -344,6 +344,30 @@ seen). If you need a guarantee rather than a tripwire, the boundary has to be
 yours - docker, bwrap, a VM, or a permission model you control - and
 `--isolation` is where you say so.
 
+The browser the audit drives is a real Chrome behind an unauthenticated DevTools
+endpoint, which stays open for the whole run: anything that can reach that port can
+drive the browser as you, read every page it holds open and run script in them. The
+launch passes `--remote-debugging-address=127.0.0.1` and then MEASURES the claim two
+ways (web-uplift-4rv), refusing to start rather than exposing an audit:
+
+- **The binding, from the kernel.** The listeners owned by the browser's own pid are
+  read from `/proc/<pid>/fd` and `/proc/net/tcp{,6}`; if any of them is not loopback
+  (including a `0.0.0.0` or `::` wildcard), the browser is killed and the launch fails.
+  This covers IPv4 and IPv6, and it cannot be confused by an unrelated process holding
+  the same port number.
+- **Reachability, when the binding cannot be read** (macOS, Windows, no `/proc`) and as a
+  second opinion when it can: the launch connects to the endpoint over every non-loopback
+  address this host has and asks Chrome's own `/json/version` who is there. Only a
+  DevTools-shaped answer counts, so an unrelated daemon or a transparent proxy on that
+  address does not refuse a healthy audit.
+
+RESIDUAL: both checks are about the network, not about other users on the machine. A
+local process can still attach to the loopback port for the lifetime of the run, and
+when neither check can decide (a filtered address on a host where `/proc` is
+unreadable) the launch proceeds with the undecided outcome logged rather than silently.
+Run audits on a host whose local users you trust, and let the run finish (teardown kills
+the browser's process group) rather than leaving one open.
+
 The headless runner orchestrates. It still does not contain checks. The spawned
 model follows the same [SKILL.md](.claude/skills/web-audit/SKILL.md).
 
