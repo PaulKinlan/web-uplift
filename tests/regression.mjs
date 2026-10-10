@@ -153,6 +153,7 @@ import {
   testFlowRecordSensitiveRedaction,
   testFlowReplayMutationGate,
   testFlowPierceShadowRootBrowser,
+  testAgentChildEnvProxyCredentials,
 } from "./runner-agents.test.mjs";
 
 import {
@@ -183,6 +184,7 @@ import {
 
 
 export const ALL_TESTS = [
+  testAgentChildEnvProxyCredentials,
   testGenerateVendoredSurfaceLeavesTrackedEditsAlone,
   testTrackedBeadsExportHasNoSecretShapes,
   testBeadsExportRedactionRuleCanFire,
