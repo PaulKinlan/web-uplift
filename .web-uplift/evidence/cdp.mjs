@@ -720,10 +720,169 @@ export function isDevtoolsBody(text) {
 }
 
 // "DevTools listening on ws://..." line Chrome prints to stderr
+// ---- Pipe transport (web-uplift-j3re) --------------------------------------------------------
+//
+// --remote-debugging-port opens an UNAUTHENTICATED TCP endpoint that lives for the whole audit, and
+// anything that can reach loopback can attach to it: measured, a separate process fetched
+// /json/version (HTTP 200) and then attached and ran script in a target. web-uplift-4rv pins and
+// verifies that endpoint; this transport removes it. Chrome speaks the same CDP over
+// --remote-debugging-pipe on fd 3 (commands) and fd 4 (responses), with NUL-terminated JSON frames
+// and no socket at all.
+//
+// Two things not to rediscover: responses are NOT one per read (a second reply can arrive in the
+// same chunk, so the reader buffers and splits on the separator), and the launch must request
+// THREE pipes, because fd 0 and fd 1 take the first two stdio slots and fd 3/4 only exist if the
+// array is that long.
+const PIPE_FRAME_SEPARATOR = '\0';
+// Chrome needs a moment after spawn before the pipe answers; the wait itself is bounded by
+// devtoolsTimeoutMs, this is only the gap between attempts.
+const PIPE_READY_RETRY_MS = 25;
+
+export function createPipeTransport({ toChrome, fromChrome, log = () => {} }) {
+  let nextId = 1;
+  let buffer = '';
+  let closed = false;
+  const pending = new Map();
+  const listeners = new Map();
+
+  // Decode as a stream: a multi-byte character can straddle two chunks, and Buffer.toString per
+  // chunk would corrupt it. setEncoding does that correctly, and this file does not use Buffer.
+  fromChrome.setEncoding('utf8');
+  fromChrome.on('data', (chunk) => {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf(PIPE_FRAME_SEPARATOR)) !== -1) {
+      const frame = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (!frame) continue;
+      let message;
+      try {
+        message = JSON.parse(frame);
+      } catch (err) {
+        // A frame we cannot parse is not a reason to kill the session: log it and keep reading, or
+        // one stray message would take the whole browser away from the caller.
+        log(`[browser] unparseable CDP pipe frame dropped: ${err && err.message}`);
+        continue;
+      }
+      if (message.id !== undefined && pending.has(message.id)) {
+        const entry = pending.get(message.id);
+        pending.delete(message.id);
+        if (message.error) {
+          entry.reject(new Error(`${message.error.message || 'CDP error'}${message.error.code ? ` (code ${message.error.code})` : ''}`));
+        } else {
+          entry.resolve(message.result);
+        }
+        continue;
+      }
+      if (message.method) {
+        for (const entry of listeners.get(message.method) || []) {
+          // A session-scoped listener only hears its own session's events, which is what the
+          // websocket path gives callers through its per-target client.
+          if (entry.sessionId && message.sessionId && entry.sessionId !== message.sessionId) continue;
+          try {
+            entry.callback(message.params, message.sessionId);
+          } catch (err) {
+            log(`[browser] a CDP pipe listener threw: ${err && err.message}`);
+          }
+        }
+      }
+    }
+  });
+  fromChrome.on('error', (err) => log(`[browser] CDP pipe read error: ${err && err.message}`));
+  toChrome.on('error', (err) => log(`[browser] CDP pipe write error: ${err && err.message}`));
+
+  return {
+    send(method, params, sessionId) {
+      if (closed) return Promise.reject(new Error('the CDP pipe is closed'));
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        const frame = `${JSON.stringify({ id, method, params: params === undefined ? {} : params, ...(sessionId ? { sessionId } : {}) })}${PIPE_FRAME_SEPARATOR}`;
+        try {
+          toChrome.write(frame, (err) => {
+            if (err) {
+              pending.delete(id);
+              reject(err);
+            }
+          });
+        } catch (err) {
+          pending.delete(id);
+          reject(err);
+        }
+      });
+    },
+    on(method, callback, sessionId) {
+      const entries = listeners.get(method) || [];
+      entries.push({ callback, sessionId });
+      listeners.set(method, entries);
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      for (const entry of pending.values()) entry.reject(new Error('the CDP pipe was closed'));
+      pending.clear();
+      listeners.clear();
+    },
+  };
+}
+
+// A chrome-remote-interface-shaped client over the pipe. The callers use `client.<Domain>.<method>`
+// for commands and `client.<Domain>.<event>(callback)` for events, and both live in one namespace,
+// so the two are told apart by ARGUMENT SHAPE: a function registers a listener, anything else is
+// sent as a command. The alternative - hand-maintaining a list of event names - would be a new
+// drift surface in a repo that keeps being bitten by exactly that.
+export function createPipeClient(transport, sessionId) {
+  const domains = new Map();
+  return new Proxy({}, {
+    get(_target, property) {
+      const name = String(property);
+      if (name === 'close') return () => Promise.resolve();
+      if (!domains.has(name)) {
+        domains.set(name, new Proxy({}, {
+          get(_domainTarget, methodProperty) {
+            const method = `${name}.${String(methodProperty)}`;
+            return (argument) => {
+              if (typeof argument === 'function') {
+                transport.on(method, argument, sessionId);
+                return Promise.resolve();
+              }
+              return transport.send(method, argument, sessionId);
+            };
+          },
+        }));
+      }
+      return domains.get(name);
+    },
+  });
+}
+
+// Wait until the pipe answers, so a pipe launch has the same "it is usable now" contract the port
+// launch gets from waiting for the DevTools line. Bounded, and it fails fast when the process is
+// already gone rather than sitting out the whole deadline.
+async function waitForPipeReady(pipe, { proc, deadlineMs, log = () => {} }) {
+  const deadline = Date.now() + deadlineMs;
+  let lastError = null;
+  for (;;) {
+    if (proc.exitCode !== null || proc.signalCode) {
+      return { ok: false, reason: `the browser exited during startup (code ${proc.exitCode}, signal ${proc.signalCode})` };
+    }
+    try {
+      const version = await pipe.send('Browser.getVersion');
+      return { ok: true, version };
+    } catch (err) {
+      lastError = err;
+      if (Date.now() >= deadline) {
+        return { ok: false, reason: `the CDP pipe did not answer Browser.getVersion within ${deadlineMs}ms: ${err && err.message}` };
+      }
+      await sleep(PIPE_READY_RETRY_MS);
+    }
+  }
+}
+
 // (remote-debugging-port=0 picks a free port). Returns { ok: true, handle } or
 // { ok: false, detail } and never throws, so launchChrome() can retry the whole
 // attempt and report every reason it failed.
-async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, exposureProbe = (port) => cdpEndpointExposure(port) }) {
+async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, transport = 'port', exposureProbe = (port) => cdpEndpointExposure(port) }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'web-uplift-cdp-'));
   const sandboxReason = sandboxDisableReason();
   log(
@@ -738,11 +897,17 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
       [
         // Headed for `flow record` (the user interacts); headless everywhere else.
         ...(headless ? ['--headless=new'] : []),
-        '--remote-debugging-port=0',
-        // web-uplift-4rv: the CDP endpoint is unauthenticated and lives for the whole audit,
-        // so WHO can reach it is a security property, not a detail. Chrome defaults to
-        // loopback, but the default is not a contract: pin it, and verify it below.
-        '--remote-debugging-address=127.0.0.1',
+        // web-uplift-j3re: the pipe has no endpoint to expose, so it needs no address pin and no
+        // exposure verdict. The port path keeps both.
+        ...(transport === 'pipe'
+          ? ['--remote-debugging-pipe']
+          : [
+              '--remote-debugging-port=0',
+              // web-uplift-4rv: the CDP endpoint is unauthenticated and lives for the whole audit,
+              // so WHO can reach it is a security property, not a detail. Chrome defaults to
+              // loopback, but the default is not a contract: pin it, and verify it below.
+              '--remote-debugging-address=127.0.0.1',
+            ]),
         // Absent unless the operator opted out or Chrome cannot sandbox here.
         ...(sandboxReason ? ['--no-sandbox'] : []),
         `--user-data-dir=${userDataDir}`,
@@ -753,7 +918,9 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
         '--hide-scrollbars=false',
       ],
       {
-        stdio: ['ignore', 'ignore', 'pipe'],
+        // fd 0/1 take the first two slots, so THREE pipes are needed for fds 3 and 4 to exist:
+        // fd 3 is our command channel and fd 4 Chrome's response channel.
+        stdio: transport === 'pipe' ? ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] : ['ignore', 'ignore', 'pipe'],
         // Chrome leads its own process group (setsid), so teardown can signal
         // the whole browser tree with kill(-pid) without ever touching this
         // process's group. See killGroup().
@@ -785,9 +952,18 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
   liveBrowsers.add(browser);
 
   let closed = false;
+  let pipe = null;
   async function close() {
     if (closed) return; // idempotent: an explicit close plus a caller's finally
     closed = true;
+    // Drop our side of the CDP pipe first: pending commands reject immediately instead of waiting
+    // for a browser that is about to be signalled, and the reader stops holding the event loop.
+    if (pipe) {
+      try { pipe.close(); } catch { /* closing twice, or a pipe Chrome already ended */ }
+      for (const fd of [proc.stdio[3], proc.stdio[4]]) {
+        try { if (fd && typeof fd.destroy === 'function') fd.destroy(); } catch { /* already gone */ }
+      }
+    }
     try {
       // Liveness guard before the first group signal: while the child is alive
       // its pid cannot be recycled, so -pid provably names this child's group.
@@ -822,6 +998,32 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
     } finally {
       liveBrowsers.delete(browser);
     }
+  }
+
+  if (transport === 'pipe') {
+    pipe = createPipeTransport({ toChrome: proc.stdio[3], fromChrome: proc.stdio[4], log });
+    const ready = await waitForPipeReady(pipe, { proc, deadlineMs: devtoolsTimeoutMs, log });
+    if (!ready.ok) {
+      recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: ready.reason });
+      await close();
+      return {
+        ok: false,
+        detail: {
+          reason: ready.reason,
+          spawned: true,
+          alive: !procExited(proc),
+          exitCode: proc.exitCode,
+          signal: proc.signalCode,
+          stderrText: '',
+        },
+      };
+    }
+    // No port exists, so there is nothing to expose and no verdict to make: the pipe is the
+    // endpoint, and it is reachable only by a process that already holds this process's file
+    // descriptors. That is the whole point of the transport (web-uplift-j3re), and it is why the
+    // exposure probe below is skipped rather than faked.
+    log(`[browser] CDP pipe ready (${(ready.version && ready.version.product) || 'unknown Chrome'})`);
+    return { ok: true, handle: { proc, pipe, userDataDir, close } };
   }
 
   let stderrText = '';
@@ -909,12 +1111,15 @@ export async function launchChrome({
   // non-loopback, and "the launch fails closed when the endpoint IS exposed" is exactly the
   // behaviour worth telling from a source grep. Production always uses the real probe.
   exposureProbe = (port, pid) => cdpEndpointExposure(port, { pid }),
+  // web-uplift-j3re: 'pipe' is the transport that has no listening endpoint at all; 'port' keeps the
+  // websocket path and with it the exposure guard. This is additive until the call sites migrate.
+  transport = 'port',
 } = {}) {
   const chromePath = resolveChromePath();
   const reasons = [];
   let lastDetail = null;
   for (let attempt = 1; attempt <= LAUNCH_ATTEMPTS; attempt++) {
-    const result = await launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, exposureProbe });
+    const result = await launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, transport, exposureProbe });
     if (result.ok) {
       if (attempt > 1) log(`[browser] launch recovered on attempt ${attempt}/${LAUNCH_ATTEMPTS}`);
       return result.handle;
@@ -1030,7 +1235,14 @@ async function withRetry(fn, { label, attempts = 8, delayMs = 200, maxDelayMs = 
 
 // Open a fresh CDP session against a new target (tab) and enable the domains we
 // rely on across the auditor. Returns the CDP client plus a per-target cleanup.
-export async function newSession(port, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault } = {}) {
+export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault } = {}) {
+  // web-uplift-j3re: a launch HANDLE means the pipe transport, where no port exists to dial; a
+  // number keeps the websocket path unchanged, so the port route stays supported (and audited by
+  // 4rv's exposure guard) rather than being deleted with the fix.
+  if (portOrHandle && typeof portOrHandle === 'object' && portOrHandle.pipe) {
+    return newPipeSession(portOrHandle, { log, cdpDeadlineMs });
+  }
+  const port = portOrHandle;
   // Create a dedicated target via the /json/new HTTP endpoint and attach to the
   // WebSocket URL it returns directly. A bare CDP({ port }) uses chrome-remote-
   // interface's default target chooser, which reads /json/list and throws
@@ -1083,6 +1295,51 @@ export async function newSession(port, { log = () => {}, cdpDeadlineMs = cdpCall
   }
 
   return { client, targetId, close };
+}
+
+// The pipe equivalent of newSession: create a target, attach FLAT (so commands and events carry a
+// sessionId instead of a nested session), enable the same domains, and return the same shape - so a
+// caller cannot tell which transport it got apart from the handle it passed in.
+async function newPipeSession(chrome, { log = () => {}, cdpDeadlineMs }) {
+  const { pipe } = chrome;
+  const created = await withDeadline(
+    pipe.send('Target.createTarget', { url: 'about:blank' }),
+    cdpDeadlineMs,
+    'the browser to accept a new target over the pipe',
+  );
+  const targetId = created.targetId;
+  let sessionId;
+  try {
+    const attached = await withDeadline(
+      pipe.send('Target.attachToTarget', { targetId, flatten: true }),
+      cdpDeadlineMs,
+      'the browser to accept a pipe attach',
+    );
+    sessionId = attached.sessionId;
+  } catch (err) {
+    // Bounded cleanup, for the same reason the websocket path bounds its own: a browser that just
+    // missed a deadline is exactly the browser that may never answer a close.
+    await withDeadline(pipe.send('Target.closeTarget', { targetId }), cdpDeadlineMs, 'the browser to close the unattached target').catch(() => {});
+    throw err;
+  }
+
+  const client = createPipeClient(pipe, sessionId);
+  await withDeadline(
+    Promise.all([client.Page.enable(), client.Runtime.enable(), client.DOM.enable(), client.CSS.enable(), client.Network.enable()]),
+    cdpDeadlineMs,
+    'the browser to enable the CDP domains over the pipe',
+  );
+  log('[browser] session ready (pipe)');
+
+  async function close() {
+    try {
+      await withDeadline(pipe.send('Target.closeTarget', { targetId }), cdpDeadlineMs, 'the browser to close the target over the pipe');
+    } catch {
+      // ignore: the session is going away either way
+    }
+  }
+
+  return { client, targetId, sessionId, close };
 }
 
 // Navigate and wait for the load event plus a short settle window so that
