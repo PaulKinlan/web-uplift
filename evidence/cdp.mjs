@@ -728,8 +728,16 @@ export function probeDevtools(host, port, timeoutMs) {
     // because 'other' reads as "answers, but not with DevTools" and earns verifiedBy:'reachability', so
     // a DevTools body still arriving in pieces would be laundered into a clean verdict. 'timeout' leaves
     // the host undecided, which is the honest answer and the one the caller already handles as unknown.
-    totalTimer = setTimeout(() => settle(isDevtoolsBody(text) ? 'devtools' : 'timeout'), timeoutMs);
+    // Word carefully: this fails closed in the LABEL, not at the launch gate - the caller refuses only
+    // `exposed`, so an unknown host still launches. The deadline therefore trades a slightly stricter
+    // label for a bounded refusal latency, and it is a total bound, so it can in principle cut short a
+    // real DevTools answer that arrives slowly; Chrome is believed to send /json/version in one write.
     const socket = netConnect({ host, port });
+    // Armed AFTER netConnect on purpose: netConnect can throw synchronously (a port above 65535 gives
+    // ERR_SOCKET_BAD_PORT), and a timer armed before it would outlive the rejection and hold the
+    // process open until it expired - measured 5071ms against 68ms without it (web-uplift-wf0r review).
+    // Arming it here also means settle() can never observe `socket` before it exists.
+    totalTimer = setTimeout(() => settle(isDevtoolsBody(text) ? 'devtools' : 'timeout'), timeoutMs);
     socket.setTimeout(timeoutMs);
     socket.once('connect', () => {
       const authority = host.includes(':') ? `[${host.split('%')[0]}]` : host;
