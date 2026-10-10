@@ -69,7 +69,7 @@ Usage: node tests/cdp-copy-sync.mjs [options]
 Options:
   --sync, --write          Sync drifted files from canonical source to vendored copies
   --from-vendored          Sync drifted files from vendored copies back to canonical source
-  --dry-run                Show what would be synced without writing
+  --dry-run                Show what would be synced without writing (exits 1 on drift)
   --repo <dir>             Target repository root (default: current repository)
   --help, -h               Show this help message
 `);
@@ -153,8 +153,13 @@ if (failures.length === 0) {
 
 if (syncMode) {
   if (dryRun) {
-    console.log(`dry-run: ${failures.length} drifted copies would be synced`);
-    process.exit(0);
+    for (const pair of failures) {
+      const targetRel = fromVendored ? pair.srcRel : pair.dstRel;
+      const sourceRel = fromVendored ? pair.dstRel : pair.srcRel;
+      console.log(`dry-run: would sync ${sourceRel} -> ${targetRel}`);
+    }
+    console.error(`dry-run: ${failures.length} drifted copies would be synced (no changes written)`);
+    process.exit(1);
   }
   let syncedCount = 0;
   let errorCount = 0;

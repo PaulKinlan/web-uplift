@@ -4253,6 +4253,27 @@ function testCdpCopySyncMutationGuard() {
   assert(failRun.stderr.includes('vendored copy has drifted'), `error output must explain drift: ${failRun.stderr}`);
   assert(failRun.stderr.includes('vendored copy is missing'), `error output must report missing copy: ${failRun.stderr}`);
 
+  // Verify that --dry-run reports drift, exits non-zero (1), and does not write changes
+  const dryRun = spawnSync(process.execPath, [
+    join(repoRoot, 'tests', 'cdp-copy-sync.mjs'),
+    '--repo', tmpFixture,
+    '--dry-run',
+  ], { encoding: 'utf8' });
+  assert(dryRun.status === 1, `cdp-copy-sync --dry-run must exit 1 on drifted fixture:\n${dryRun.stdout}\n${dryRun.stderr}`);
+  assert(dryRun.stderr.includes('drifted copies would be synced'), `error output must indicate drifted copies: ${dryRun.stderr}`);
+  assert(
+    dryRun.stdout.includes('dry-run: would sync schema/foo.json -> .web-uplift/schema/foo.json'),
+    `stdout must report each drifted pair: ${dryRun.stdout}`
+  );
+  assert(
+    readFileSync(join(dstDir, 'foo.json'), 'utf8') === '{"version": 2}\n',
+    '--dry-run must not modify drifted files'
+  );
+  assert(
+    !existsSync(join(dstDir, 'new-file.json')),
+    '--dry-run must not create missing files'
+  );
+
   // Verify that --sync restores byte identity and creates missing copies
   const syncRun = spawnSync(process.execPath, [
     join(repoRoot, 'tests', 'cdp-copy-sync.mjs'),
