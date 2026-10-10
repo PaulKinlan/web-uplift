@@ -499,10 +499,29 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
   // being a second implementation of the rule that decides what gets written to flow.json.
   const hasSensitiveWord = ${hasSensitiveWord.toString()};
   const isSensitiveFieldFromModule = ${isSensitiveField.toString()};
-  // This wrapper exists only to bind the capture flags the module takes as options to the constants
-  // this script was configured with; it deliberately adds nothing else.
-  const isSensitiveField = (el) =>
-    isSensitiveFieldFromModule(el, { captureHidden: CAPTURE_HIDDEN, captureSensitive: CAPTURE_SENSITIVE });
+  // This wrapper exists only to feed the module the same DOM reads the hand-written adapter made,
+  // and to bind the capture flags the module takes as options to the constants this script was
+  // configured with. It decides nothing itself; the classification stays the module's.
+  //
+  // The explicit reads matter (found in review of web-uplift-ngjq): the module also accepts a plain
+  // descriptor object, so it falls back from a property to getAttribute() for fields an element may
+  // simply not have. A <select> has no placeholder IDL property, so passing the element straight
+  // through made an inert placeholder attribute - never rendered by a select - classify the field as
+  // sensitive and blank a legitimate value. autocomplete and aria-label are read as attributes, as
+  // before, and both are reflected IDL attributes anyway.
+  const isSensitiveField = (el) => {
+    if (!el) return false;
+    const attr = (name) => (typeof el.getAttribute === 'function' ? el.getAttribute(name) : null);
+    return isSensitiveFieldFromModule({
+      type: el.type,
+      name: el.name,
+      id: el.id,
+      autocomplete: attr('autocomplete') || '',
+      ariaLabel: attr('aria-label') || '',
+      placeholder: el.placeholder || '',
+      labels: el.labels,
+    }, { captureHidden: CAPTURE_HIDDEN, captureSensitive: CAPTURE_SENSITIVE });
+  };
 
   const cssPath = (el) => {
     if (!el || el.nodeType !== 1) return '';

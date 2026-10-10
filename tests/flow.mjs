@@ -189,6 +189,9 @@ export async function testFlowRecordSensitiveRedaction() {
       // isTrusted: an event the user agent produced. Without it the listener refuses to
       // record at all (web-uplift-sg5 review), which is asserted below.
       triggerChange: (props, trusted = true) => listeners['change']({ isTrusted: trusted, target: mockEl(props) }),
+      // mockEl merges props into both the property and the attribute namespace, which is exactly the
+      // distinction a <select placeholder=..> test needs. This drives a real element shape instead.
+      triggerChangeOn: (element, trusted = true) => listeners['change']({ isTrusted: trusted, target: element }),
       triggerClick: (props, trusted = true) => listeners['click']({ isTrusted: trusted, target: { closest: () => mockEl(props) } }),
       removeOverlay: () => {
         if (barEl) barEl.isConnected = false;
@@ -500,11 +503,37 @@ export async function testFlowRecordSensitiveRedaction() {
       `the page script must contain the module's ${label} exactly once (found ${occurrences}); a second copy is a second implementation`);
   }
   // The wrapper must DELEGATE rather than reimplement, and must bind the capture flags: the module
-  // takes them as options and the page holds them as constants.
-  assert(captureSource.includes('isSensitiveFieldFromModule(el, { captureHidden: CAPTURE_HIDDEN, captureSensitive: CAPTURE_SENSITIVE })'),
-    'the page-side isSensitiveField must delegate to the module function with the capture flags bound');
-  assert(!/const isSensitiveField = \(el\) => \{\s*if \(!el\) return false;/.test(captureSource),
-    'the hand-written element adapter must be gone, not merely joined by the generated one');
+  // takes them as options and the page holds them as constants. Asserted as two independent facts so
+  // a legitimate reformat of the wrapper does not fail the guard.
+  assert(/isSensitiveFieldFromModule\(\{/.test(captureSource),
+    'the page-side isSensitiveField must delegate to the module function with a descriptor');
+  assert(captureSource.includes('captureHidden: CAPTURE_HIDDEN') && captureSource.includes('captureSensitive: CAPTURE_SENSITIVE'),
+    'the page-side isSensitiveField must bind both capture flags');
+  // Stronger than matching the old adapter's exact shape, which any rewrite would evade: the rule
+  // itself must exist once. A hand-written copy adds a second one, whatever it is spelled like.
+  const passwordBranches = captureSource.split("type === 'password'").length - 1;
+  assert(passwordBranches === 1,
+    `the password rule must appear exactly once in the page script (found ${passwordBranches}); a second copy is a second implementation`);
+
+  // 6. web-uplift-ngjq review (P2): the wrapper feeds the module the same DOM reads the hand-written
+  // adapter made. A <select> has no placeholder IDL property, so an inert placeholder ATTRIBUTE must
+  // not make the field sensitive and blank a legitimate value - the module's property-to-attribute
+  // fallback exists for plain descriptor objects, not for elements that cannot have a placeholder.
+  const inertPlaceholder = testCaptureSession();
+  const selectEl = {
+    getAttribute: (k) => (k === 'placeholder' ? 'Email' : null),
+    tagName: 'SELECT', nodeType: 1, type: 'select-one', name: 'city', id: 'city', value: 'London',
+    labels: null, parentElement: null, ownerDocument: null,
+  };
+  inertPlaceholder.triggerChangeOn(selectEl);
+  assert(inertPlaceholder.steps.length === 1 && inertPlaceholder.steps[0].value === 'London' && !inertPlaceholder.steps[0].redacted,
+    'an inert placeholder attribute on a select must not blank its value');
+  // The same element WITH a real placeholder property is still classified sensitive, so the guard
+  // above is about the property/attribute distinction and not about ignoring placeholders.
+  const realPlaceholder = testCaptureSession();
+  realPlaceholder.triggerChangeOn({ ...selectEl, placeholder: 'Enter your email' });
+  assert(realPlaceholder.steps.length === 1 && realPlaceholder.steps[0].redacted === true && realPlaceholder.steps[0].value === '',
+    'a real placeholder property naming a credential must still be redacted');
 
   // B. Opt-in session (captureSensitive:true): values are captured verbatim, on
   // the returned steps AND in their serialisation - the opt-in is only meaningful
