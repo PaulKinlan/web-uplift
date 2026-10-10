@@ -1221,9 +1221,6 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
     // Attribute the failed attempt BEFORE teardown: close() reaps the tree and
     // removes the profile, and a post-mortem needs the pid/profile/reason of
     // the attempt that just died (web-uplift-6x7).
-    // Attribute the failed attempt BEFORE teardown: close() reaps the tree and
-    // removes the profile, and a post-mortem needs the pid/profile/reason of
-    // the attempt that just died (web-uplift-6x7).
     recordLaunchFailure({ pid: proc.pid, profileDir: userDataDir, reason: err.message });
     // The browser we spawned (or its wedged tree) must not outlive the failure,
     // and its profile dir must not be left behind for the next attempt.
