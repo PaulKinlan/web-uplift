@@ -708,9 +708,12 @@ export function probeDevtools(host, port, timeoutMs) {
   return new Promise((resolve) => {
     let settled = false;
     let text = '';
+    let totalTimer = null;
     const settle = (verdict) => {
       if (settled) return;
       settled = true;
+      // A total deadline must not outlive the verdict, or a settled probe keeps a timer alive.
+      if (totalTimer) clearTimeout(totalTimer);
       try {
         socket.destroy();
       } catch {
@@ -718,6 +721,14 @@ export function probeDevtools(host, port, timeoutMs) {
       }
       resolve(verdict);
     };
+    // A HARD total deadline, independent of socket idleness (web-uplift-wf0r). setTimeout below is an
+    // IDLE timeout, so a peer that trickles bytes resets it forever and holds the probe up to the 64KB
+    // cap: measured 2321ms for a 300ms timeout against a peer that dripped for 2s. On expiry the verdict
+    // is 'devtools' if the body already proved it, otherwise 'timeout' - deliberately NEVER 'other',
+    // because 'other' reads as "answers, but not with DevTools" and earns verifiedBy:'reachability', so
+    // a DevTools body still arriving in pieces would be laundered into a clean verdict. 'timeout' leaves
+    // the host undecided, which is the honest answer and the one the caller already handles as unknown.
+    totalTimer = setTimeout(() => settle(isDevtoolsBody(text) ? 'devtools' : 'timeout'), timeoutMs);
     const socket = netConnect({ host, port });
     socket.setTimeout(timeoutMs);
     socket.once('connect', () => {

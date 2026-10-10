@@ -642,6 +642,60 @@ export async function testUnprintableProbeNoteDoesNotFailTheLaunch() {
   }
 }
 
+// probeDevtools' socket.setTimeout is an IDLE timeout, so a peer that trickles bytes resets it forever
+// and holds the probe up to the 64KB cap - measured at 2321ms for a 300ms timeout against a peer that
+// dripped for 2s (web-uplift-wf0r). A hard total deadline now bounds it. The verdict on expiry is
+// asserted to be 'timeout' rather than 'other' on purpose: 'other' reads as "answers, but not with
+// DevTools" and earns a reachability verifier, so a DevTools body still arriving in pieces would be
+// laundered into a clean verdict, while 'timeout' leaves the host undecided and fails closed. The
+// control peers keep this test from passing by always answering 'timeout'.
+export async function testTricklingPeerIsBoundedByTheTotalDeadline() {
+  const sockets = new Set();
+  const track = (server) => {
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      socket.on('error', () => {});
+    });
+    return server;
+  };
+  const timeoutMs = 300;
+  const trickler = track(createServer((socket) => {
+    // Drip partial bytes for far longer than timeoutMs so the idle timer never fires.
+    let sent = 0;
+    const timer = setInterval(() => {
+      sent += 1;
+      try { socket.write('x'); } catch {}
+      if (sent * 50 >= 2000) clearInterval(timer);
+    }, 50);
+    socket.on('close', () => clearInterval(timer));
+  }));
+  const devtools = track(createServer((socket) => {
+    socket.end('HTTP/1.1 200 OK\r\n\r\n{"webSocketDebuggerUrl":"ws://x"}');
+  }));
+  const other = track(createServer((socket) => {
+    socket.end('HTTP/1.1 200 OK\r\n\r\nhello, not devtools');
+  }));
+  const listen = (server) => new Promise((done) => server.listen(0, '127.0.0.1', () => done(server.address().port)));
+  try {
+    const tricklingPort = await listen(trickler);
+    const started = Date.now();
+    const verdict = await probeDevtools('127.0.0.1', tricklingPort, timeoutMs);
+    const elapsed = Date.now() - started;
+    assert(verdict === 'timeout', `a trickling peer must leave the host undecided, got ${verdict}`);
+    // Generous against a loaded VM, but far below the 2000ms the drip would otherwise take.
+    assert(elapsed < 1200, `the total deadline must bound the probe, took ${elapsed}ms for a ${timeoutMs}ms budget`);
+    const devtoolsVerdict = await probeDevtools('127.0.0.1', await listen(devtools), timeoutMs);
+    assert(devtoolsVerdict === 'devtools', `the control must still be detected as DevTools, got ${devtoolsVerdict}`);
+    const otherVerdict = await probeDevtools('127.0.0.1', await listen(other), timeoutMs);
+    assert(otherVerdict === 'other', `a non-DevTools responder must still read as other, got ${otherVerdict}`);
+    console.log(`trickling peer OK: bounded at ${elapsed}ms with verdict=timeout, while the controls still answer devtools and other`);
+  } finally {
+    for (const socket of sockets) { try { socket.destroy(); } catch {} }
+    for (const server of [trickler, devtools, other]) { try { server.close(); } catch {} }
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === here) {
   // Run EVERY test in this file: a direct invocation must not look green while silently skipping
   // the ones added later. This ran only the first until web-uplift-690r added the concurrency
@@ -652,4 +706,5 @@ if (process.argv[1] && resolve(process.argv[1]) === here) {
   await testExposureProbeFailuresDoNotLeakTheBrowser();
   await testExposureVerdictIsReadOnceInsideTheTry();
   await testUnprintableProbeNoteDoesNotFailTheLaunch();
+  await testTricklingPeerIsBoundedByTheTotalDeadline();
 }
