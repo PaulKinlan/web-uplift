@@ -934,8 +934,9 @@ export async function testPreSpawnLogThrowDoesNotStrandTheProfileDir() {
 // there is an uncaughtException that takes the process down mid-CDP-exchange rather than an error anyone
 // can catch. This drives the logging handler paths with a log that always throws and asserts none escapes.
 export async function testThrowingHandlerLogDoesNotTakeTheProcessDown() {
-  // createPipeTransport returns { send, close } rather than the streams, so the test holds its own
-  // references to the two ends it handed in: those are the objects whose handlers the transport registers.
+  // createPipeTransport returns its own { send, on, off, close } surface and does NOT hand back the two
+  // streams it was given, so the test keeps its own references to them: those are the objects whose
+  // handlers the transport registers, and they are the only way to drive those handlers from a test.
   const toChrome = new PassThrough();
   const fromChrome = new PassThrough();
   const transport = createPipeTransport({
@@ -949,8 +950,11 @@ export async function testThrowingHandlerLogDoesNotTakeTheProcessDown() {
   // The transport's handlers run synchronously for these emit/write calls, so a throw escapes straight into
   // this function rather than reaching the uncaughtException listener - which means an escape must be
   // caught here and reported AS this assertion, or the test would be distinguishing fixed from broken by a
-  // mechanism its comment does not describe (web-uplift-9dqr review, finding 4). The listener stays as the
-  // check for any path that is delivered asynchronously instead.
+  // mechanism its comment does not describe (web-uplift-9dqr review, finding 4). The listener covers a path
+  // delivered ASYNCHRONOUSLY, with the caveat measured in review: under the suite runner the test is failed
+  // by the runner's own uncaught-exception handling first (a setImmediate-delivered frame reverted to a raw
+  // log fails in about 6ms with a bare Error), so the listener reports only when the test function is called
+  // directly. Either way an asynchronous escape fails the test, so it cannot hide one.
   const drive = (label, fn) => {
     try { fn(); } catch (err) {
       throw new Error(`a throwing handler log escaped the ${label} path: ${err && err.message}`);
