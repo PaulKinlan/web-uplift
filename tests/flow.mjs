@@ -1087,12 +1087,36 @@ export async function testFlowReplayMutationGate() {
     ['/credits', 'Site Credits'], ['/contact', 'Our Address'], ['/careers/ladder', 'Engineering Ladder'],
     ['/blog/1', 'Read Post'], ['/news', 'Product Updates'], ['/orders', 'Order History'],
     ['/article', 'Continue Reading'], ['/apply', 'How to Apply'], ['/about', 'About Us'],
+    ['/undelete', 'Undelete item'], ['/records', 'Call Recorder'], ['/updates', 'Latest Updates'],
+    ['/shipping', 'Postage Rates'], ['/membership', 'Monthly Payment'],
   ]) {
     const link = mk({ tagName: 'A', textContent: text, getAttribute: (k) => (k === 'href' ? href : null) });
     assert(!classifyClickControl(link).gated, `a read-only link must not be gated: "${text}" (${href}) -> ${reasonFor(link)}`);
   }
   // ...while a destructive verb in the link's own text still refuses it.
   assert(classifyClickControl(mk({ tagName: 'A', textContent: 'Delete' })).gated, 'a bare <a>Delete</a> is still refused');
+
+  // Boundary cases for classifyClickControl wordMatch (web-uplift-geqc):
+  // 1. Destructive verbs with various punctuation boundaries must be refused
+  for (const destructiveText of [
+    'Delete', 'delete', 'DELETE', 'Delete Account', 'Please Delete', 'Please delete now',
+    '[Delete]', 'Delete!', '!delete', 'delete-now', 'wipe/purge', '(Remove item)',
+    'Sign Out', 'Sign-out', 'sign-out', 'Log out', 'log out', 'Logout',
+    'deleted or delete', 'undelete and delete now',
+  ]) {
+    const link = mk({ tagName: 'A', textContent: destructiveText, getAttribute: (k) => (k === 'href' ? '/home' : null) });
+    assert(classifyClickControl(link).gated,
+      `destructive verb with boundary "${destructiveText}" must be gated: ${reasonFor(link)}`);
+  }
+  // 2. Substrings of destructive verbs must NOT be refused
+  for (const safeText of [
+    'Undelete', 'deleted', 'predelete', 'deletes', 'Orderly', 'recorder', 'recording',
+    'Remover', 'unremoved', 'wiped', 'revoking', 'undelete and deletes',
+  ]) {
+    const link = mk({ tagName: 'A', textContent: safeText, getAttribute: (k) => (k === 'href' ? '/home' : null) });
+    assert(!classifyClickControl(link).gated,
+      `substring of destructive verb "${safeText}" must NOT be gated: ${reasonFor(link)}`);
+  }
   // Finding 3: the link-URL check missed a query verb, a bare relative target and an extension.
   for (const href of ['/items?action=delete', 'delete', './delete', '/delete.php', '/account/logout.php', '/x?op=remove']) {
     const link = mk({ tagName: 'A', textContent: 'go', getAttribute: (k) => (k === 'href' ? href : null) });

@@ -213,7 +213,23 @@ export function classifyClickControl(node) {
     'publish', 'upload', 'invite', 'move', 'rename', 'merge', 'deploy', 'revoke', 'deactivate', 'disable',
     'unsubscribe', 'logout', 'signout', 'sign out', 'sign-out', 'log out', 'cancel', 'reset', 'clear', 'archive',
     'unlink', 'disconnect', 'suspend', 'block', 'proceed', 'continue', 'finish', 'complete'];
-  const wordMatch = (text, term) => new RegExp('(^|[^a-z0-9])' + term + '($|[^a-z0-9])', 'i').test(text);
+  // Self-contained allocation-free whole-word matcher: avoids compiling RegExp per term on in-page click hotpaths
+  const wordMatch = (text, term) => {
+    if (!text || !term) return false;
+    const t = String(text).toLowerCase();
+    const needle = String(term).toLowerCase();
+    const nLen = needle.length;
+    let idx = t.indexOf(needle);
+    while (idx !== -1) {
+      const prev = idx > 0 ? t.charCodeAt(idx - 1) : 0;
+      const next = idx + nLen < t.length ? t.charCodeAt(idx + nLen) : 0;
+      const prevAlnum = (prev >= 48 && prev <= 57) || (prev >= 97 && prev <= 122);
+      const nextAlnum = (next >= 48 && next <= 57) || (next >= 97 && next <= 122);
+      if (!prevAlnum && !nextAlnum) return true;
+      idx = t.indexOf(needle, idx + 1);
+    }
+    return false;
+  };
   const named = WRITE_TERMS.find((term) => wordMatch(label, term) || wordMatch(name, term));
   const namedDetail = named ? ` labelled "${label.slice(0, 40)}"` : '';
 
