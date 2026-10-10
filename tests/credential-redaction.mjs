@@ -253,6 +253,59 @@ export async function testCredentialRedactorsAgree() {
       'the absolute branch agrees, as it always did');
     assert(redactor('//x.test/plain') === '//x.test/plain', 'control: no userinfo is unchanged');
   }
+
+  // 9. The last-resort sweep, for a string the URL parser REFUSED (web-uplift-73y3 review). Three
+  // separate defects lived in the single line it replaced, and each one gets its own assertion
+  // because each was invisible to the others:
+  //   - the regex restarted its forward scan at every '//', so it was QUADRATIC in a run of
+  //     characters with no '@' (213 ms at 10 kB, 2.8 s at 40 kB). The input is the audited site's
+  //     and the path is every response header value and every console line, so that was a hang a
+  //     page could aim at the tool;
+  //   - it stopped at the FIRST '@', but a URL parser ends the userinfo at the LAST one, so
+  //     'file://user:p@ss@/path' kept 'ss' of the password in the artifact;
+  //   - it rebuilt the userinfo as a single marker, so an EMPTY username gained a fabricated one,
+  //     against the shape rule 5m9f established for the parseable path.
+  for (const redactor of [terms.redactUrlCredentialValues, cli.redactUrlCredentialValues]) {
+    assert(redactor(`file://user:${USERINFO_PASS}@/path`) === 'file://[redacted]:[redacted]@/path',
+      `an unparseable URL redacts both halves in place: ${redactor(`file://user:${USERINFO_PASS}@/path`)}`);
+    assert(redactor(`file://user:p@${USERINFO_PASS}@/path`) === 'file://[redacted]:[redacted]@/path',
+      `a raw @ inside the password must not leave its tail: ${redactor(`file://user:p@${USERINFO_PASS}@/path`)}`);
+    assert(!redactor(`file://user:p@${USERINFO_PASS}@/path`).includes(USERINFO_PASS),
+      'no part of that password survives');
+    assert(redactor(`file://:${USERINFO_PASS}@/p`) === 'file://:[redacted]@/p',
+      `an empty username must not gain a fabricated marker: ${redactor(`file://:${USERINFO_PASS}@/p`)}`);
+    assert(redactor('file://@/p') === 'file://@/p', 'control: an empty userinfo has nothing to redact');
+    assert(!redactor('https://AKIAIOSFODNN7EXAMPLE:wJalrXUtnFEMI/K7@x.test/').includes('wJalrXUtnFEMI'),
+      'the invalid-port shape must lose the secret itself, not only the key id');
+    assert(redactor('\\\\user:pw@x.test/a').includes('x.test'),
+      'a backslash authority keeps its host instead of being reduced to a path');
+    // The anti-regression for the quadratic defect, and it measures SCALING rather than a wall
+    // clock. An absolute bound was tried first and was a placebo: a shape-identical quadratic still
+    // passed it, because V8 vectorises the character search and 8e8 byte-scans finish inside a
+    // second. Four times the input must not cost more than eight times the work - linear lands near
+    // 4, a quadratic near 16 and up - and a ratio needs no knowledge of how loaded this VM is,
+    // which an absolute millisecond bound did.
+    // The MINIMUM of three runs, not one: a single short run lands in the timer's resolution and
+    // its noise is what made this assertion flake, and the minimum is the statistic that a busy VM
+    // disturbs least.
+    const measure = (length) => {
+      const input = `https://x.test:99999${'/'.repeat(length)}`;
+      let best = Infinity;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const started = Date.now();
+        redactor(input);
+        best = Math.min(best, Date.now() - started);
+      }
+      return best;
+    };
+    const small = measure(40000);
+    const large = measure(160000);
+    const ratio = large / Math.max(small, 2);
+    assert(ratio < 8,
+      `the sweep must scale linearly: 4x the input took ${ratio.toFixed(1)}x the time (40 kB ${small}ms, 160 kB ${large}ms)`);
+    // A backstop against a hang, set far above the measured 12 ms so it cannot flake.
+    assert(large < 5000, `the sweep must not hang: 160 kB took ${large}ms`);
+  }
 }
 
 // Run directly (node tests/credential-redaction.mjs), not when imported by the

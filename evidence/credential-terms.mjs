@@ -174,6 +174,68 @@ export function looksLikeToken(value) {
 // redactor here and the HAR header redactor in evidence/cli.mjs cannot drift apart.
 export const REDACTED_VALUE = '[redacted]';
 
+// ---- The last-resort userinfo sweep for a string the URL parser refused (web-uplift-73y3) -------
+//
+// Three properties matter here, and all three were learned the hard way rather than designed:
+//
+//   * LINEAR TIME. The obvious spelling - one regex over every '//' reaching forward for an '@' -
+//     scans a run of characters with no '@' and then starts again one character later, so the work
+//     is quadratic in the length of that run. Measured on this tree: 213 ms for 10 kB, 854 ms for
+//     20 kB, 2.8 s for 40 kB of '/' after a bad-port URL, and the input is the AUDITED SITE's. That
+//     is a hang a page can aim at this tool, and it is reachable from every response header value
+//     (redactHeaderList) and every console line (redactUrlsInText). Consuming each run whether or
+//     not it contained an '@' is exactly what makes it linear: the scan can never restart inside a
+//     run it has already crossed. The same class had already been a review finding against the prose
+//     scanner below (lsn3), which is why this one gets a timing test and not just a review.
+//   * The LAST '@' in the run ends the userinfo, because that is what a URL parser does: in
+//     'file://user:p@ss@/path' the password is 'p@ss', so redacting only as far as the FIRST '@'
+//     leaves the tail of the password in the artifact.
+//   * Shape honesty, matching the parseable path: '//user@host' becomes '//[redacted]@host' and
+//     '//user:pw@host' becomes '//[redacted]:[redacted]@host', but an EMPTY username stays empty -
+//     '//:pw@host' becomes '//:[redacted]@host' rather than gaining a fabricated one (5m9f) - and a
+//     run with no '@' at all is emitted untouched, which is also the cheap path that keeps this
+//     function's promise never to tidy a string it cannot parse.
+//
+// Known boundary, stated rather than implied: a special-scheme URL written WITHOUT slashes after the
+// colon ('https:user:pw@x.test:99999/a') is not swept, because in an unparseable string 'scheme:text@'
+// is indistinguishable from an opaque path (a mailto address is the everyday case) and guessing
+// there would redact innocent prose to cover a shape that needs BOTH a missing separator and a bad
+// port to arise. Filed as a P3 boundary rather than silently ignored.
+const SWEEP_RUN_BREAKS = new Set([' ', '\t', '\n', '\r', '\f', '\v', '?', '#']);
+function sweepUnparseableUserinfo(raw) {
+  let out = '';
+  let cursor = 0;
+  for (;;) {
+    const forward = raw.indexOf('//', cursor);
+    // A backslash authority is not valid, but it is what a browser resolves as one, and a string
+    // carrying it here has already failed to parse, so both spellings are swept.
+    const back = raw.indexOf('\\', cursor);
+    const start = forward === -1 ? back : back === -1 ? forward : Math.min(forward, back);
+    if (start === -1) return out + raw.slice(cursor);
+    let end = start + 2;
+    while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
+    const run = raw.slice(start + 2, end);
+    const at = run.lastIndexOf('@');
+    if (at === -1) {
+      // No credential separator in this run: keep it and never look inside it again. This is the
+      // line that makes the whole function linear.
+      out += raw.slice(cursor, end);
+      cursor = end;
+      continue;
+    }
+    const userinfo = run.slice(0, at);
+    const colon = userinfo.indexOf(':');
+    const replacement =
+      userinfo === ''
+        ? ''
+        : colon === -1
+          ? REDACTED_VALUE
+          : `${colon === 0 ? '' : REDACTED_VALUE}:${colon === userinfo.length - 1 ? '' : REDACTED_VALUE}`;
+    out += `${raw.slice(cursor, start)}${raw.slice(start, start + 2)}${replacement}@${run.slice(at + 1)}`;
+    cursor = end;
+  }
+}
+
 // Redact the VALUES of credential-named query parameters in a URL; keep the names and
 // every other parameter exactly as they were.
 //
@@ -255,7 +317,7 @@ export function redactUrlCredentialValues(raw) {
     // serialises userinfo itself.
     const hasUserinfo = Boolean(u.username || u.password);
     const userinfo = `${u.username}${u.password ? `:${u.password}` : ''}${hasUserinfo ? '@' : ''}`;
-    const authority = /^\s*\/\//.test(raw) ? `//${userinfo}${u.host}` : '';
+    const authority = /^\s*[\/\\]{2}/.test(raw) ? `//${userinfo}${u.host}` : '';
     // The whitespace the parser stripped is put back rather than normalised away: this function's
     // job is to redact one value, not to tidy a header value into a different string.
     return `${lead}${authority}${u.pathname}${u.search}${u.hash}`;
@@ -266,7 +328,7 @@ export function redactUrlCredentialValues(raw) {
     // invalid port throws too, so the whole string came back verbatim with the credential intact
     // (web-uplift-73y3 review, P1). Only the userinfo is rewritten; every other character is left
     // exactly as it was, which keeps this function's promise never to tidy a value.
-    return raw.replace(/(\/\/)([^\s?#@]*@)/g, `$1${REDACTED_VALUE}@`);
+    return sweepUnparseableUserinfo(raw);
   }
 }
 
