@@ -279,11 +279,12 @@ export async function testCredentialRedactorsAgree() {
       'the invalid-port shape must lose the secret itself, not only the key id');
     assert(redactor('\\\\user:pw@x.test/a').includes('x.test'),
       'a backslash authority keeps its host instead of being reduced to a path');
-    // An UNPARSEABLE backslash authority, which the previous assertion did not cover because that
-    // string parses and never reaches the sweep. It was the gap that let a real leak through: the
-    // sweep searched for ONE backslash rather than two, so the delimiter ate the first character of
-    // the userinfo and printed it in the artifact. Four backslashes in the source, i.e. two in the
-    // string, is the spelling that is correct here, and this assertion is what pins it.
+    // An UNPARSEABLE backslash authority, which the assertion above did not cover because that string
+    // parses and never reaches the sweep. Which assertion catches what, stated honestly: THIS one
+    // passes even with the defective single-backslash search, because the match then lands at index 0
+    // and the run still starts at the username. The one-backslash assertion below is the one that pins
+    // that defect (it produced 'https:\a[redacted]@...'), and this one pins the two-character
+    // delimiter itself. Four backslashes in the source, i.e. two in the string, is what is correct.
     const TWO_BACKSLASHES = '\\\\';
     assert(
       redactor(`${TWO_BACKSLASHES}user:${USERINFO_PASS}@x.test:99999/a`) ===
@@ -296,6 +297,24 @@ export async function testCredentialRedactorsAgree() {
     // boundary (web-uplift-k99c) rather than quietly widened here.
     assert(redactor('https:\\admin@x.test:99999/p') === 'https:\\admin@x.test:99999/p',
       `one backslash is a boundary, not a delimiter: ${redactor('https:\\admin@x.test:99999/p')}`);
+    // MIXED SPELLINGS, the regression a later review found in this fix. A URL parser for the special
+    // schemes reads ANY pair from the slash-or-backslash class as the start of an authority, so these
+    // are authorities, they fail on the port, and they reach this sweep. An intermediate version
+    // searched for '//' and for two backslashes SEPARATELY, so the mixed pairs matched neither and came
+    // back VERBATIM with the password - worse than the version before it, which redacted them by
+    // accident. One search over the whole class closed it, and these assertions hold it closed.
+    assert(
+      redactor(`https:\\/user:${USERINFO_PASS}@x.test:99999/a`) === `https:\\/[redacted]:[redacted]@x.test:99999/a`,
+      `a backslash-then-slash authority must redact, not leak: ${redactor(`https:\\/user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    assert(
+      redactor(`https:/\\user:${USERINFO_PASS}@x.test:99999/a`) === `https:/\\[redacted]:[redacted]@x.test:99999/a`,
+      `a slash-then-backslash authority must redact, not leak: ${redactor(`https:/\\user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
+    assert(
+      redactor(`\\/user:${USERINFO_PASS}@x.test:99999/a`) === `\\/[redacted]:[redacted]@x.test:99999/a`,
+      `the protocol-relative mixed pair redacts too: ${redactor(`\\/user:${USERINFO_PASS}@x.test:99999/a`)}`,
+    );
     // The anti-regression for the quadratic defect, and it measures SCALING rather than a wall
     // clock. An absolute bound was tried first and was a placebo: a shape-identical quadratic still
     // passed it, because V8 vectorises the character search and 8e8 byte-scans finish inside a
@@ -328,7 +347,11 @@ export async function testCredentialRedactorsAgree() {
     // searches re-run each iteration it measured 9.1x at 160 kB and 16.5x at 640 kB, and the fix
     // brings it back to ~3x. Both fixtures are kept because each is blind to the other's failure.
     const measureStarts = (length) => {
-      const input = '// '.repeat(Math.floor(length / 3));
+      // BOTH spellings, alternating, because that is the shape that exercises the one-search caching:
+      // the two-search version was quadratic both when the other spelling never occurred and when it
+      // occurred far ahead. Sizes are 160k/640k, not 40k/160k, because the defect measured 9.1x against
+      // the 8x bound at the smaller pair - a margin too thin to trust.
+      const input = '// \\\\ '.repeat(Math.floor(length / 5));
       let best = Infinity;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const started = Date.now();
@@ -337,11 +360,11 @@ export async function testCredentialRedactorsAgree() {
       }
       return best;
     };
-    const manySmall = measureStarts(40000);
-    const manyLarge = measureStarts(160000);
+    const manySmall = measureStarts(160000);
+    const manyLarge = measureStarts(640000);
     const manyRatio = manyLarge / Math.max(manySmall, 2);
     assert(manyRatio < 8,
-      `the sweep must stay linear with MANY authority starts, not just one: 4x the input took ${manyRatio.toFixed(1)}x (40 kB ${manySmall}ms, 160 kB ${manyLarge}ms)`);
+      `the sweep must stay linear with MANY authority starts, not just one: 4x the input took ${manyRatio.toFixed(1)}x (160 kB ${manySmall}ms, 640 kB ${manyLarge}ms)`);
   }
 }
 

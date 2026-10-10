@@ -212,32 +212,37 @@ const SWEEP_RUN_BREAKS = new Set([' ', '\t', '\n', '\r', '\f', '\v', '?', '#']);
 function sweepUnparseableUserinfo(raw) {
   let out = '';
   let cursor = 0;
-  // BOTH authority spellings are located ONCE and the results are reused until the cursor passes
-  // them. Re-querying indexOf inside the loop for a spelling that does not occur makes the sweep
-  // quadratic on a string that repeats the OTHER one: measured on a run of '// ', 6.3 ms at 40 kB,
-  // 57.6 ms at 160 kB and 949 ms at 640 kB, which is 16x per doubling and an input a page controls.
-  // Each search only ever moves forward, so the total work stays linear.
-  let forward = raw.indexOf('//', 0);
-  // FOUR backslashes in the source, which is TWO in the string. Two here searches for a SINGLE
-  // backslash, and because the run then starts one character early the first character of the
-  // userinfo is consumed as if it were half of the delimiter and leaks in plaintext - a real leak of
-  // the first character of a credential, found by review and not by the tests, which is why the
-  // unparseable backslash authority now has its own assertion.
-  let back = raw.indexOf('\\\\', 0);
+  let next = -1;
+  // ONE search for any two characters from the slash-or-backslash class, because a URL parser treats
+  // every mix of them the same way after a special scheme: '//', two backslashes, '\' followed by '/'
+  // and '/' followed by '\' all begin an authority. Searching for two spellings SEPARATELY was not
+  // merely slower, it was WRONG: a string using the mixed pair matched neither, so a credential that
+  // the earlier single-backslash version had redacted came back verbatim. Found by review, reproduced,
+  // and the reason this is one search rather than two.
+  const authorityPair = /[\\/]{2}/g;
+  const findAuthority = () => {
+    authorityPair.lastIndex = cursor;
+    const match = authorityPair.exec(raw);
+    return match ? match.index : -1;
+  };
+  // The search is reused until the cursor passes it. Each search scans forward from the cursor and the
+  // cursor only ever advances, so the total work is linear even on a string that repeats delimiters;
+  // re-running both searches every iteration is what made an earlier version 16x per doubling on input
+  // a page controls. A -1 is cached too, which is sound because the string does not change: if no
+  // delimiter exists from here on, none can appear later.
   for (;;) {
-    const start = forward === -1 ? back : back === -1 ? forward : Math.min(forward, back);
-    if (start === -1) return out + raw.slice(cursor);
+    if (next === -1 || next < cursor) next = findAuthority();
+    if (next === -1) return out + raw.slice(cursor);
+    const start = next;
     let end = start + 2;
     while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
     const run = raw.slice(start + 2, end);
     const at = run.lastIndexOf('@');
     if (at === -1) {
-      // No credential separator in this run: keep it and never look inside it again. This is the
-      // line that makes the whole function linear.
+      // No credential separator in this run: keep it and never look inside it again. This is the line
+      // that makes the whole function linear.
       out += raw.slice(cursor, end);
       cursor = end;
-      if (forward !== -1 && forward < cursor) forward = raw.indexOf('//', cursor);
-      if (back !== -1 && back < cursor) back = raw.indexOf('\\\\', cursor);
       continue;
     }
     const userinfo = run.slice(0, at);
@@ -250,8 +255,6 @@ function sweepUnparseableUserinfo(raw) {
           : `${colon === 0 ? '' : REDACTED_VALUE}:${colon === userinfo.length - 1 ? '' : REDACTED_VALUE}`;
     out += `${raw.slice(cursor, start)}${raw.slice(start, start + 2)}${replacement}@${run.slice(at + 1)}`;
     cursor = end;
-    if (forward !== -1 && forward < cursor) forward = raw.indexOf('//', cursor);
-    if (back !== -1 && back < cursor) back = raw.indexOf('\\\\', cursor);
   }
 }
 
