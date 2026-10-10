@@ -422,16 +422,31 @@ export async function testEndpointProbeRejectionStaysFailClosed() {
   });
   assert(first.error && first.error.message === 'boom-first',
     `the first rejection in host order must be the one thrown, got ${first.error ? first.error.message : JSON.stringify(first.verdict)}`);
-  // (c) A LONE rejection with every other host refused must still throw. This is the assertion that
-  //     fails if the rethrow becomes `continue`, which would resolve with exposed:false and a
-  //     reachability verifier - a clean-looking answer for a probe that never answered.
+  // (c) A LONE rejection with every other host refused must still throw. Treating a rejected probe as
+  //     merely undecided instead of rethrowing would resolve with exposed:false and a reachability
+  //     verifier - a clean-looking answer for a probe that never answered. (With `continue` the (b)
+  //     assertion fires first, so this one is the guard for a different rewrite of the same mistake.)
   const only = await run(async (host) => {
     if (host === '10.0.0.5') throw new Error('boom-only');
     return 'refused';
   });
   assert(only.error && only.error.message === 'boom-only',
     `a rejected probe must never resolve as a clean answer: got ${only.error ? only.error.message : JSON.stringify(only.verdict)}`);
-  console.log('endpoint probe rejection OK: a later rejection cannot displace a refusal, host order decides which error is thrown, and a lone rejection stays fail-closed');
+  // (d) Two rejecting hosts, where the LATER host in interface order rejects FIRST in time. This is the
+  //     only case that distinguishes "first in host order" from "first in time": every other scenario
+  //     here has a single rejecting host, so the two orders coincide and a mutation that throws the
+  //     earliest-in-time error would pass everything (web-uplift-690r, third review round).
+  const both = await run(async (host) => {
+    if (host === '172.17.0.1') {
+      await new Promise((done) => setTimeout(done, 30));
+      throw new Error('boom-slow-earlier-host');
+    }
+    if (host === '10.8.0.2') throw new Error('boom-fast-later-host');
+    return 'refused';
+  });
+  assert(both.error && both.error.message === 'boom-slow-earlier-host',
+    `the error thrown must be the first rejecting host in ORDER, not the first in time: got ${both.error ? both.error.message : JSON.stringify(both.verdict)}`);
+  console.log('endpoint probe rejection OK: a later rejection cannot displace a refusal, host order decides which error is thrown even when a later host fails first in time, and a lone rejection stays fail-closed');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === here) {
