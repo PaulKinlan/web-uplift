@@ -137,15 +137,21 @@ const AGENT_ENV_PASSTHROUGH = [
 const PROXY_ENV_NAMES = new Set(AGENT_ENV_PASSTHROUGH.filter((n) => /_proxy$/i.test(n)));
 
 // An '@' before the first '/', '?' or '#' is userinfo in the authority. A PATH may contain '@'
-// ("https://x.test:99999/a/b@2x.png"), so a plain substring test is not enough - that distinction is
-// the one web-uplift-73y3 established for the redactor, and it is kept here.
+// ("https://x.test:8080/a/b@2x.png"), so a plain substring test is not enough - that distinction is
+// the one web-uplift-73y3 established for the redactor, and it is kept here. The example has to be a
+// URL the parser ACCEPTS for that claim to hold: with an invalid port ("...:99999/a/b@2x.png") the
+// value is unparseable and takes the withheld path below instead, which is a different story about a
+// different value - the earlier revision of this comment cited that very URL (web-uplift-k7ba).
 function authorityCarriesUserinfo(value) {
   const m = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)?([^/?#]*)/.exec(value);
   return Boolean(m) && m[2].includes('@');
 }
 
-// -> { value } for a credential-free value to pass, or { withheld: true } when the credential could
-// not be removed, which is the fail-closed answer for a value we cannot classify.
+// -> { value } for a credential-free value to pass, or { withheld: true } when the value carries a
+// credential that could not be removed OR cannot be shown not to, which is the fail-closed answer for a
+// value we cannot classify. The second half is why the warning below is worded as it is: a
+// credential-free value the parser REJECTS and whose sweep leaves an '@' before a break lands here too,
+// and it is not distinguishable from one whose credential was left behind (web-uplift-k7ba).
 function sanitizeProxyEnvValue(raw) {
   const text = String(raw);
   if (!authorityCarriesUserinfo(text) && redactUrlCredentialValues(text) === text) {
@@ -209,9 +215,15 @@ export function buildAgentEnv({ agentName, extra = {}, env = process.env, warn =
     }
     const safe = sanitizeProxyEnvValue(env[name]);
     if (safe.value === undefined) {
+      // "or cannot be distinguished from" rather than asserting a credential, because a value reaching
+      // this branch may hold none at all: one the parser REJECTS whose sweep leaves an '@' before a break
+      // cannot be told apart from one whose credential survived, and fail-closed treats both the same. The
+      // earlier wording claimed a credential for such a value, naming a reason that was not the reason
+      // (web-uplift-k7ba).
       proxyWarnings.push(
-        `[agent-env] withheld ${name}: it carries a credential that could not be removed safely, so the ` +
-          `child gets no proxy from it. Pass it explicitly with --agent-env ${name}=... if this run needs it.`,
+        `[agent-env] withheld ${name}: it carries, or cannot be distinguished from, a credential that ` +
+          `could not be removed safely, so the child gets no proxy from it. Pass it explicitly with ` +
+          `--agent-env ${name}=... if this run needs it.`,
       );
       continue;
     }

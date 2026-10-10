@@ -1660,6 +1660,37 @@ export async function testAgentChildEnvProxyCredentials() {
     boxedWarnings.length === 0,
     `a credential-free value must not be reported as having had a credential removed: ${JSON.stringify(boxedWarnings)}`,
   );
+  // 7. The withheld message must not assert a credential the value may not have. A credential-free value
+  // whose PATH contains '@' on a URL the parser REJECTS takes the withheld path - measured here, and it is
+  // the exact URL an earlier revision of the comment above cited as an ordinary example - so a message
+  // saying the value "carries a credential" names a reason that is not the reason (web-uplift-k7ba).
+  const pathAt = 'https://x.test:99999/a/b@2x.png';
+  const pathWarnings = [];
+  const pathBuilt = buildAgentEnv({ env: { HOME: '/tmp/home', HTTPS_PROXY: pathAt }, warn: (m) => pathWarnings.push(m) });
+  assert(
+    pathBuilt.HTTPS_PROXY === undefined,
+    'this credential-free value is genuinely unclassifiable and must still fail closed',
+  );
+  assert(pathWarnings.length === 1, `exactly one warning, and it names the variable: ${JSON.stringify(pathWarnings)}`);
+  assert(
+    pathWarnings[0].includes('cannot be distinguished from'),
+    `the warning must allow that the value may hold no credential: ${pathWarnings[0]}`,
+  );
+  assert(
+    !/it carries a credential\b/.test(pathWarnings[0]),
+    `and must not assert one, which is what it did for this input: ${pathWarnings[0]}`,
+  );
+  // CONTROL: the SAME path-@ URL on a port the parser accepts is unremarkable, and passes byte-identical
+  // with no warning. That is the claim the comment's example makes, so binding it here keeps the comment
+  // from being illustrated by a URL that quietly takes a different path.
+  const pathAtValidPort = 'https://x.test:8080/a/b@2x.png';
+  const validWarnings = [];
+  const validBuilt = buildAgentEnv({
+    env: { HOME: '/tmp/home', HTTPS_PROXY: pathAtValidPort },
+    warn: (m) => validWarnings.push(m),
+  });
+  assert(validBuilt.HTTPS_PROXY === pathAtValidPort, 'a path-@ URL on a valid port must pass untouched');
+  assert(validWarnings.length === 0, `and must not warn: ${JSON.stringify(validWarnings)}`);
 }
 
 export const runnerAgentsTests = [
