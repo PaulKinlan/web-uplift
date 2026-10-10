@@ -197,8 +197,8 @@ export async function testCredentialRedactorsAgree() {
     // not exist, and the fix for that is to use the vendor's TEST-mode prefix rather than to allowlist
     // a fake. Stripe test keys are not secrets; the live-mode prefix is deliberately absent.
     for (const token of [
-      'ghp_1234567890abcdefghijklmnopqrstuvwx',  // GitHub PAT shape
-      'sk_test_51H8xYzAbCdEfGhIjKlMnOpQrSt',    // Stripe TEST key shape (never sk_live_ in a fixture)
+      'ghp_NOTAREALKEY',  // GitHub PAT shape
+      'sk_test_NOTAREALKEY',    // Stripe TEST key shape (never sk_live_ in a fixture)
       'AKIAIOSFODNN7EXAMPLE',                    // AWS's own documented example key id
       'glpat-xxxxxxxxxxxxxxxxxxxx',              // GitLab PAT shape
     ]) {
