@@ -209,10 +209,19 @@ export function redactUrlCredentialValues(raw) {
     // A PROTOCOL-RELATIVE input ('//host/path?token=..') is not a relative path: new URL() resolves
     // it against the base, so it HAS a host, and re-emitting only the path invented a URL that was
     // never requested - the host silently vanished from the artifact or HAR entry (web-uplift-53o1).
-    // Note the host is re-emitted as host:port and any userinfo is not, which is unchanged
-    // behaviour for the absolute branch above too.
-    const authority = /^\/\//.test(raw) ? `//${u.host}` : '';
-    return `${authority}${u.pathname}${u.search}${u.hash}`;
+    // Leading whitespace counts: an HTTP field value may carry it, the URL parser strips it, and
+    // testing only for '//' at index 0 left the same host-loss (found by sweeping edge cases after
+    // the fix, not by the review). Userinfo is re-emitted too, so this branch rebuilds the same URL
+    // shape the absolute branch does - the absolute branch keeps 'user:pass@' via URL.toString(),
+    // and dropping it here would have been an inconsistent, silent deletion. Neither branch
+    // REDACTES userinfo: this redactor is scoped to credential-named query parameters, and a
+    // credential in userinfo is a separate finding.
+    const lead = /^\s*/.exec(raw)[0];
+    const userinfo = `${u.username}${u.password ? `:${u.password}` : ''}${u.username ? '@' : ''}`;
+    const authority = /^\s*\/\//.test(raw) ? `//${userinfo}${u.host}` : '';
+    // The whitespace the parser stripped is put back rather than normalised away: this function's
+    // job is to redact one value, not to tidy a header value into a different string.
+    return `${lead}${authority}${u.pathname}${u.search}${u.hash}`;
   } catch {
     return raw; // genuinely unparseable: leave it alone rather than guess
   }

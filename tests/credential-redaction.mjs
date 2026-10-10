@@ -133,6 +133,14 @@ export async function testCredentialRedactorsAgree() {
     assert(redactor('//x.test/a?page=2') === '//x.test/a?page=2', 'a protocol-relative URL with no credential parameter is untouched');
     assert(redactor(`/a?token=${SECRET_53O1}`) === `/a?token=${'%5Bredacted%5D'}`, 'a rooted relative path is unchanged by this fix');
     assert(redactor('not a url at all ?') === 'not a url at all ?', 'an unparseable string is left alone');
+    // Edge cases from a sweep after the first fix (each one measured, not assumed): the parser
+    // strips leading whitespace and an HTTP field value may carry it, so the authority test has to
+    // allow it; bracketed IPv6 and a fragment must survive; userinfo must be re-emitted in the
+    // protocol-relative form as it already is in the absolute form.
+    assert(redactor(` //x.test/a?token=${SECRET_53O1}`) === ` //x.test/a?token=${'%5Bredacted%5D'}`, 'leading whitespace must not hide the host');
+    assert(redactor(`//[::1]:8443/a?token=${SECRET_53O1}`) === `//[::1]:8443/a?token=${'%5Bredacted%5D'}`, 'a bracketed IPv6 host must survive');
+    assert(redactor(`//x.test/a?token=${SECRET_53O1}#frag`) === `//x.test/a?token=${'%5Bredacted%5D'}#frag`, 'a fragment must survive');
+    assert(redactor(`//user:pass@x.test/a?token=${SECRET_53O1}`) === `//user:pass@x.test/a?token=${'%5Bredacted%5D'}`, 'userinfo must be re-emitted, as the absolute branch does');
   }
 
   for (const word of [
