@@ -290,8 +290,10 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // and the online restore; in safeFetch the response-body reads. Bounded transitively:
 // applyConditions' six internals and sw.enable's internal enable (every caller wraps the
 // call). Bounded by their own deadlines: the fetch and pinnedFetch exchanges (AbortSignal), the capped body
-// reader, har's network-idle wait, --interact's poll, the headers docPromise timeout, and
-// resilience's offline load race. Bounded by pre-existing mechanisms: the launch endpoint
+// reader, har's network-idle wait, --interact's poll, the headers docPromise timeout,
+// resilience's offline load race, and (web-uplift-4rv) the exposure probe's own connect, which is
+// handed its timeoutMs explicitly, plus the injected exposureProbe, whose production default
+// cdpEndpointExposure bounds its own sockets by PROBE_TIMEOUT_MS. Bounded by pre-existing mechanisms: the launch endpoint
 // poll and its grace-bounded teardown, sleeps, withRetry around bounded calls, the gather
 // spine. EXCLUDED WITH REASON: the per-primitive content probes after or outside the shared
 // spine (evaluate() probes, screenshots, getResponseBody, screencast, heap, axe, a11y and
