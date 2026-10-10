@@ -23,7 +23,7 @@ let ok = 0;
 for (let i = 1; i <= iterations; i++) {
   const chrome = await launchChrome({ log: () => {} });
   try {
-    const session = await newSession(chrome.port, { log: () => {} });
+    const session = await newSession(chrome, { log: () => {} });
     try {
       // Prove the target is actually attached and usable, not just created.
       const value = await session.client.Runtime.evaluate({

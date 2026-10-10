@@ -84,7 +84,7 @@ export async function testFlowPierceShadowRootBrowser() {
   let chrome;
   try {
     chrome = await launchChrome({ log });
-    const session = await newSession(chrome.port, { log });
+    const session = await newSession(chrome, { log });
     try {
       const client = session.client;
       await navigate(client, url, { settleMs: 300, log });

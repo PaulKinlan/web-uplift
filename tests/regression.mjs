@@ -26,6 +26,7 @@ import { launchChrome, resolveChromePath, sandboxDisableReason } from '../eviden
 import { testMwgDriftExtractPipe } from './mwg-drift-extract-pipe.mjs';
 import { testMwgDriftBasisFloor } from './mwg-drift-basis-floor.mjs';
 import { testCdpEndpointExposure } from './cdp-endpoint-exposure.mjs';
+import { testCdpPipeTransport } from './cdp-pipe-transport.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
 import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
@@ -54,6 +55,7 @@ const ALL_TESTS = [
   testMwgDriftExtractPipe,
   testMwgDriftBasisFloor,
   testCdpEndpointExposure,
+  testCdpPipeTransport,
   testSyntaxChecks,
   testPackageRootImportIsSideEffectFree,
   testChromeCandidateDiscovery,
@@ -7438,7 +7440,7 @@ async function testCdpDeadline() {
   await new Promise((res) => blackhole.listen(0, '127.0.0.1', res));
   const chrome = await launchChrome({ log: () => {} });
   try {
-    const session = await newSession(chrome.port, { log: () => {} });
+    const session = await newSession(chrome, { log: () => {} });
     try {
       const starvedUrl = `http://127.0.0.1:${blackhole.address().port}/`;
       const hitsBeforeNav = blackholeHits;

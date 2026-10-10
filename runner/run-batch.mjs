@@ -641,7 +641,7 @@ async function replayFlowIntoRun(url, siteDir) {
   // the agent's CLI invocations write (web-uplift-4wx).
   recordLaunch({ primitive: 'flow-replay', url, chrome, launchesFile: join(siteDir, 'launches.jsonl') });
   try {
-    const session = await newSession(chrome.port, { log });
+    const session = await newSession(chrome, { log });
     try {
       const res = await replayFlow(session.client, flow, { startUrl: url, outDir: flowDir, log, allowMutations });
       writeFileSync(join(flowDir, 'flow-result.json'), JSON.stringify(res, null, 2) + '\n');

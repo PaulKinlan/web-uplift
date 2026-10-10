@@ -812,9 +812,18 @@ export function createPipeTransport({ toChrome, fromChrome, log = () => {} }) {
       });
     },
     on(method, callback, sessionId) {
+      const entry = { callback, sessionId };
       const entries = listeners.get(method) || [];
-      entries.push({ callback, sessionId });
+      entries.push(entry);
       listeners.set(method, entries);
+      return entry;
+    },
+    off(method, entry) {
+      const entries = listeners.get(method);
+      if (!entries) return;
+      const index = entries.indexOf(entry);
+      if (index !== -1) entries.splice(index, 1);
+      if (entries.length === 0) listeners.delete(method);
     },
     close() {
       if (closed) return;
@@ -833,6 +842,22 @@ export function createPipeTransport({ toChrome, fromChrome, log = () => {} }) {
 // drift surface in a repo that keeps being bitten by exactly that.
 export function createPipeClient(transport, sessionId) {
   const domains = new Map();
+  // A name called with NO argument is genuinely ambiguous in CDP, and the callers use both meanings:
+  // `client.Tracing.end()` is a command that takes no parameters, while `client.Page.loadEventFired()`
+  // is how this codebase waits for the next event (four call sites await exactly that). The port
+  // path's client resolves it from a schema the browser publishes over HTTP - which is the endpoint
+  // the pipe exists to not have - so this does BOTH instead of guessing: it registers the one-shot
+  // listener eagerly, which is what removes the race (the event can fire before a round trip would
+  // have told us the name was an event), and it also sends the command, swallowing the -32601 that
+  // says the name was an event after all. Whichever answers first wins, and a listener that loses the
+  // race is removed so this cannot grow.
+  const waitForEvent = (method) => {
+    let entry = null;
+    const promise = new Promise((resolve) => {
+      entry = transport.on(method, (params) => resolve(params), sessionId);
+    });
+    return { promise, cleanup: () => entry && transport.off(method, entry) };
+  };
   return new Proxy({}, {
     get(_target, property) {
       const name = String(property);
@@ -846,7 +871,19 @@ export function createPipeClient(transport, sessionId) {
                 transport.on(method, argument, sessionId);
                 return Promise.resolve();
               }
-              return transport.send(method, argument, sessionId);
+              if (argument !== undefined) return transport.send(method, argument, sessionId);
+              const event = waitForEvent(method);
+              const command = transport.send(method, {}, sessionId).catch((err) => {
+                // -32601 is "method not found", which for a name awaited as an event is the answer
+                // rather than a failure. Anything else is a real error and is re-thrown, and if
+                // NEITHER ever settles the caller's own deadline is what bounds it.
+                if (!/wasn't found|was not found|-32601/.test(err && err.message)) throw err;
+                return new Promise(() => {});
+              });
+              return Promise.race([
+                command.finally(() => event.cleanup()),
+                event.promise.finally(() => event.cleanup()),
+              ]);
             };
           },
         }));
@@ -882,7 +919,7 @@ async function waitForPipeReady(pipe, { proc, deadlineMs, log = () => {} }) {
 // (remote-debugging-port=0 picks a free port). Returns { ok: true, handle } or
 // { ok: false, detail } and never throws, so launchChrome() can retry the whole
 // attempt and report every reason it failed.
-async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, transport = 'port', exposureProbe = (port) => cdpEndpointExposure(port) }) {
+async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, transport = 'pipe', exposureProbe = (port) => cdpEndpointExposure(port) }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'web-uplift-cdp-'));
   const sandboxReason = sandboxDisableReason();
   log(
@@ -1111,9 +1148,10 @@ export async function launchChrome({
   // non-loopback, and "the launch fails closed when the endpoint IS exposed" is exactly the
   // behaviour worth telling from a source grep. Production always uses the real probe.
   exposureProbe = (port, pid) => cdpEndpointExposure(port, { pid }),
-  // web-uplift-j3re: 'pipe' is the transport that has no listening endpoint at all; 'port' keeps the
-  // websocket path and with it the exposure guard. This is additive until the call sites migrate.
-  transport = 'port',
+  // web-uplift-j3re: the PIPE is the default, because it is the only transport with no listening
+  // endpoint for another local process to attach to. 'port' stays available and stays guarded: it is
+  // what 4rv's exposure verdict exists for, and passing it is a deliberate choice to publish a port.
+  transport = 'pipe',
 } = {}) {
   const chromePath = resolveChromePath();
   const reasons = [];
@@ -1585,7 +1623,7 @@ export function attachConsoleEvidence(client, result) {
 export async function withSession(fn, { log = () => {} } = {}) {
   const chrome = await launchChrome({ log });
   try {
-    const session = await newSession(chrome.port, { log });
+    const session = await newSession(chrome, { log });
     try {
       return await fn(session.client, { chrome, session });
     } finally {

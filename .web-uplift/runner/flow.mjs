@@ -545,7 +545,7 @@ async function main() {
     // (web-uplift-6x7): env-unset is a no-op.
     recordLaunch({ primitive: 'flow-replay', url: startUrl ?? null, chrome });
     try {
-      const session = await newSession(chrome.port, { log });
+      const session = await newSession(chrome, { log });
       try {
         const res = await replayFlow(session.client, flow, { startUrl, outDir, log, allowMutations });
         const summaryPath = join(outDir, '..', 'flow-result.json');
@@ -573,7 +573,7 @@ async function main() {
     // Same attribution as the replay path (web-uplift-6x7).
     recordLaunch({ primitive: 'flow-record', url, chrome });
     try {
-      const session = await newSession(chrome.port, { log });
+      const session = await newSession(chrome, { log });
       try {
         const flow = await recordFlow(session.client, url, { log, captureHidden, captureSensitive, timeoutMs });
         writeFileSync(outPath, JSON.stringify(flow, null, 2) + '\n');

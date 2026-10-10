@@ -242,7 +242,7 @@ export async function gather(primitive, url, opts = {}) {
   // marker nothing in the run tree ties a surviving chrome to its primitive.
   recordLaunch({ primitive, url, chrome });
   try {
-    const session = await newSession(chrome.port, { log });
+    const session = await newSession(chrome, { log });
     try {
       // Attach BEFORE the primitive runs so console output from the load itself
       // is captured, not just whatever fires after it settles.

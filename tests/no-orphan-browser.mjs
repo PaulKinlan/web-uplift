@@ -45,7 +45,7 @@ for (let i = 1; i <= browsers; i++) {
           'teardown cannot kill its tree by group, see launchChrome()',
       );
     }
-    const session = await newSession(chrome.port, { log: () => {} });
+    const session = await newSession(chrome, { log: () => {} });
     try {
       // Prove the browser is really up and attached, not just spawned.
       const value = await session.client.Runtime.evaluate({
