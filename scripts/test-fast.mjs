@@ -193,6 +193,20 @@ export const SUBSYSTEMS = [
     ],
   },
   {
+    id: 'agent-dispatch',
+    description: 'Agent invocation, environment allowlist, and proxy credential sanitisation',
+    // Name the FILE rather than leaning on the runner/ prefix. This is the one target that runs the
+    // agent-environment suite DIRECTLY, and the defect (web-uplift-b2q5) was that a change to
+    // runner/agents.mjs selected no direct target at all: its tests ran only because the runner
+    // subsystem's 'Agent' name filter happened to match testAgentChildEnvProxyCredentials and
+    // testAgentChildEnvAllowlist. That is coverage by accident of naming, and a rename dropping
+    // 'Agent' would have dropped the whole suite from the gate with no other signal.
+    match: (f) => f === 'runner/agents.mjs',
+    targets: [
+      { type: 'node', path: 'tests/runner-agents.test.mjs', label: 'Agent env, proxy and write-scope tests' },
+    ],
+  },
+  {
     id: 'skills',
     description: 'Agent skill definitions and headless bash rules',
     match: (f) =>

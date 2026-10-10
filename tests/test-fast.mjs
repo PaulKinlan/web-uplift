@@ -130,6 +130,29 @@ function testSubsystemMappings() {
   assert(!beadsConfigPlan.matchedSubsystems.includes('beads-export'), '.beads/config.yaml must NOT match beads-export: the matcher must name files, not the directory');
   assert(beadsConfigPlan.isBaseline, '.beads/config.yaml maps nothing, so it must still fall back to baseline');
 
+  // 15. Agent dispatch and its proxy/env guards (web-uplift-b2q5). Before this entry existed a change to
+  // runner/agents.mjs selected no DIRECT test target: its suite ran only because the runner subsystem's
+  // 'Agent' name filter matched testAgentChildEnvProxyCredentials and testAgentChildEnvAllowlist. The
+  // assertion below names the target FILE, which is what lets it tell a direct selection from the
+  // incidental one - an assertion on the filter would have passed BEFORE the fix and proved nothing.
+  const agentPlan = mapFilesToTests(['runner/agents.mjs']);
+  assert(agentPlan.matchedSubsystems.includes('agent-dispatch'), 'runner/agents.mjs must map to the agent-dispatch subsystem');
+  assert(!agentPlan.isBaseline, 'runner/agents.mjs must not fall back to the baseline targets');
+  assert(
+    agentPlan.targets.some((t) => t.type === 'node' && t.path === 'tests/runner-agents.test.mjs'),
+    'runner/agents.mjs must select its own test file DIRECTLY, not only through a name filter',
+  );
+  // Control for the other direction, which the assertion above cannot see: a match written as a prefix
+  // or as the runner/ directory would satisfy it while pulling the agent suite into every runner change.
+  // This pins the entry to the one named file, so the fix cannot quietly become a blanket.
+  for (const otherRunnerFile of ['runner/run-batch.mjs', 'runner/write-scope.mjs', 'runner/README.md']) {
+    const otherPlan = mapFilesToTests([otherRunnerFile]);
+    assert(
+      !otherPlan.matchedSubsystems.includes('agent-dispatch'),
+      `${otherRunnerFile} must NOT match agent-dispatch: the entry names one file, not the directory`,
+    );
+  }
+  
   console.log('✔ Subsystem mapping rules passed');
 }
 
