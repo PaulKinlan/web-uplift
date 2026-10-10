@@ -558,6 +558,33 @@ export function testMwgDriftCheckGuard() {
         const unnamed = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
         assert(unnamed.status === 3, `mwg-drift: case 15 (delta flag with no recorded upstream version) must exit 3, got ${unnamed.status}:\n${unnamed.stderr || unnamed.stdout}`);
 
+    // (i) REJECTED OUTRIGHT: the state claims in-sync but records no comparable upstream version, so
+        // agreement cannot be shown. analysedAt is deliberately set to NOW, which proves this is a rejection
+        // of an unsubstantiable claim rather than the age rule firing - and the first version of this check
+        // read exactly this state as FRESH (measured, review finding).
+        deltaState.lastCheckResult = 'in-sync';
+        deltaState.lastCheckUpstreamVersion = null;
+        deltaState.analysedVersion = '0.0.193';
+        deltaState.analysedAt = new Date().toISOString();
+        writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+        const unsubstantiated = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+        assert(unsubstantiated.status === 3, `mwg-drift: case 15 (in-sync with a null upstream version) must exit 3 even with a fresh analysedAt, got ${unsubstantiated.status}:\n${unsubstantiated.stderr || unsubstantiated.stdout}`);
+
+        // (j) Same for a NON-STRING upstream version: it cannot be compared either, so the claim is equally
+        // unsubstantiable.
+        deltaState.lastCheckUpstreamVersion = { version: '0.0.200' };
+        writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+        const nonString = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+        assert(nonString.status === 3, `mwg-drift: case 15 (in-sync with a non-string upstream version) must exit 3, got ${nonString.status}:\n${nonString.stderr || nonString.stdout}`);
+
+        // (k) CONTROL: the VALID in-sync state must still pass, or this fix has broken the real workflow.
+        // The committed knowledge/mwg-state.json records the same version on both sides.
+        deltaState.lastCheckUpstreamVersion = deltaState.analysedVersion;
+        deltaState.analysedAt = '2020-01-01T00:00:00.000Z';
+        writeFileSync(deltaPath, JSON.stringify(deltaState), 'utf8');
+        const validSync = runCheck(['--freshness-only'], { MWG_DRIFT_STATE: deltaPath });
+        assert(validSync.status === 0, `mwg-drift: case 15 (valid in-sync control) must still exit 0, got ${validSync.status}:\n${validSync.stderr || validSync.stdout}`);
+
     // (d) CONTROL, the other direction: an in-sync state keeps the OLD heartbeat semantics even with an
     // ancient analysedAt, so this change cannot have quietly re-pointed the heartbeat at analysedAt.
     const syncState = JSON.parse(readFileSync(stateFixture, 'utf8'));

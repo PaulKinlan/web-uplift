@@ -19,13 +19,13 @@
 //      This is the sabotage/absence signal: a blind check must never exit 0.
 //   2: Version delta detected (upstream != analysedVersion). Output notes whether
 //      upstream is newer or older. Triggers full reanalysis.
-//   3: Freshness guard failed (freshness mode only): lastCheckAt missing/null,
-//      unreadable, implausibly future-dated, or older than --max-age. Also: the
-//      last check found an upstream version the analysis never caught up with,
-//      and analysedAt is unreadable, implausibly future-dated, or older than
-//      --max-age - a detected delta that nobody actioned must not read as fresh.
-//      unparseable, implausibly future-dated, or older than --max-age.
-//      Never-run counts as stale.
+//   3: Freshness guard failed (freshness mode only). Either lastCheckAt is
+//      missing, null, unreadable, implausibly future-dated, or older than
+//      --max-age (never-run counts as stale); or the state asserts a check
+//      outcome (in-sync or delta) that it cannot substantiate - malformed or
+//      missing versions, or an analysedAt that is unreadable, implausibly
+//      future-dated, or older than --max-age. A detected delta that nobody
+//      actioned must not read as fresh.
 //  64: Usage error (unknown flags, invalid arguments).
 //
 // Environment variable overrides (fixtures, tests, offline runs):
@@ -200,37 +200,57 @@ if (freshnessOnly) {
   const hasUpstream = typeof checkedUpstream === 'string' && checkedUpstream.length > 0;
   const versionsAgree =
     hasUpstream && typeof analysedVersion === 'string' && checkedUpstream === analysedVersion;
-  // A delta counts as recorded unless the two versions are SHOWN to agree. That phrasing is
-  // deliberate, and it is the fail-closed direction: an upstream version with no analysedVersion
-  // to compare against, or a state that says delta without recording which version it saw, are both
-  // cases where the analysis cannot be shown to match what the last check found. Reading either as
-  // fresh is the quiet failure this guard exists to prevent, and both were MEASURED as FRESH
-  // against the first version of this check before it was written this way.
-  const analysisBehind =
-    !versionsAgree && (hasUpstream || state.lastCheckResult === 'delta');
+  // A state that ASSERTS a check outcome has to be able to show that outcome. Two conditions reach the
+  // branch below and they are deliberately kept distinct, because they are different repairs:
+  //   - the versions disagree: a delta the last check really saw, and nobody re-analysed;
+  //   - the state asserts in-sync or delta but cannot substantiate it (a malformed, non-string or
+  //     empty upstream version, or a missing analysedVersion to compare against). Reading that as
+  //     fresh is the same quiet failure, since nothing shows what the last check actually saw.
+  // lastCheckAt is null, so the heartbeat below already reports it stale.
+  const unsubstantiatedInSync = state.lastCheckResult === 'in-sync' && !versionsAgree;
+  const analysisBehind = !versionsAgree && (hasUpstream || state.lastCheckResult === 'delta');
+  const versionsDisagree = hasUpstream && !versionsAgree;
+  const upstreamText = JSON.stringify(checkedUpstream ?? null);
+  const analysedText = JSON.stringify(analysedVersion ?? null);
+  const why = versionsDisagree
+    ? `the last check found upstream version ${upstreamText} but the analysed version is ${analysedText}`
+    : `the state records result ${JSON.stringify(state.lastCheckResult ?? null)} with upstream version ${upstreamText} against analysed version ${analysedText}, which cannot be shown to agree`;
+  const trailing = versionsDisagree
+    ? 'a detected delta has not been actioned'
+    : 'the state cannot show the analysis matching what the last check recorded';
+  // An in-sync claim that cannot be substantiated is REJECTED outright rather than aged: it
+  // is a malformed or hand-edited state, not a recently-detected change, and a fresh analysedAt
+  // must not buy it a grace window. --write always records a version for both sides, so no
+  // legitimate state reaches here (review finding, web-uplift-yh6o).
+  if (unsubstantiatedInSync) {
+    console.error(
+      `STALE: the state records result ${JSON.stringify(state.lastCheckResult)} but cannot show it (upstream version ${upstreamText} against analysed version ${analysedText}), so the analysis cannot be shown to match what the last check recorded; an unsubstantiated in-sync claim is rejected (threshold: ${formatDuration(maxAgeMs)})`
+    );
+    process.exit(3);
+  }
   if (analysisBehind) {
     const analysedTime = typeof state.analysedAt === 'string' ? Date.parse(state.analysedAt) : NaN;
     if (Number.isNaN(analysedTime)) {
-      // Fail closed. If the analysis time cannot be read we cannot say the delta is inside the grace
-      // window, and answering FRESH here would be precisely the quiet failure this guard exists to
-      // prevent, so an unreadable analysedAt is reported stale rather than assumed young.
+      // Fail closed. If the analysis time cannot be read we cannot say the delta is inside the
+      // grace window, and answering FRESH here would be precisely the quiet failure this guard
+      // exists to prevent, so an unreadable analysedAt is reported stale rather than assumed young.
       console.error(
-        `STALE: the state records a detected delta (last check found upstream version ${JSON.stringify(checkedUpstream ?? null)}, analysed version ${JSON.stringify(analysedVersion ?? null)}) but analysedAt (${JSON.stringify(state.analysedAt ?? null)}) cannot be read as a timestamp, so the age of that delta is unknown (threshold: ${formatDuration(maxAgeMs)})`
+        `STALE: ${why}, and analysedAt (${JSON.stringify(state.analysedAt ?? null)}) cannot be read as a timestamp, so the age of that analysis is unknown (threshold: ${formatDuration(maxAgeMs)}); ${trailing}`
       );
       process.exit(3);
     }
     const deltaAgeMs = Date.now() - analysedTime;
-    // Same reasoning as the future-dated heartbeat guard below: a future-dated analysedAt must not read
-    // as a young analysis and quietly buy the delta unlimited grace.
+    // Same reasoning as the future-dated heartbeat guard below: a future-dated analysedAt must not
+    // read as a young analysis and quietly buy the delta unlimited grace.
     if (deltaAgeMs < -5 * 60 * 1000) {
       console.error(
-        `STALE: the state records a detected delta (last check found upstream version ${JSON.stringify(checkedUpstream ?? null)}, analysed version ${JSON.stringify(analysedVersion ?? null)}) and analysedAt is ${formatDuration(-deltaAgeMs)} in the FUTURE (hand-edit or clock skew); refusing to treat a detected delta as fresh`
+        `STALE: ${why}, and analysedAt is ${formatDuration(-deltaAgeMs)} in the FUTURE (hand-edit or clock skew); refusing to treat it as fresh; ${trailing}`
       );
       process.exit(3);
     }
     if (deltaAgeMs > maxAgeMs) {
       console.error(
-        `STALE: the state records a detected delta (last check found upstream version ${JSON.stringify(checkedUpstream ?? null)}, analysed version ${JSON.stringify(analysedVersion ?? null)}), and that analysis is ${formatDuration(deltaAgeMs)} old, exceeding max-age threshold of ${formatDuration(maxAgeMs)}; a detected delta has not been actioned`
+        `STALE: ${why}, and that analysis is ${formatDuration(deltaAgeMs)} old, exceeding max-age threshold of ${formatDuration(maxAgeMs)}; ${trailing}`
       );
       process.exit(3);
     }
@@ -270,7 +290,7 @@ if (freshnessOnly) {
   console.log(
     `FRESH: last check was ${formatDuration(ageMs)} ago (within max-age threshold of ${formatDuration(maxAgeMs)})` +
     (analysisBehind
-      ? ` [NOTE: the state records a detected delta (last check found upstream version ${JSON.stringify(checkedUpstream ?? null)}, analysed version ${JSON.stringify(analysedVersion ?? null)}); it is inside the grace period, which is measured from analysedAt (${state.analysedAt}), not from this heartbeat]`
+      ? ` [NOTE: ${why}; it is inside the grace period, which is measured from analysedAt (${state.analysedAt}), not from this heartbeat]`
       : '')
   );
   process.exit(0);
