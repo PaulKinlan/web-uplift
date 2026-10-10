@@ -18,7 +18,8 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import { launchChrome, newSession, readBoundListeners } from '../evidence/cdp.mjs';
+import { PassThrough } from 'node:stream';
+import { createPipeTransport, launchChrome, newSession, readBoundListeners } from '../evidence/cdp.mjs';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -125,15 +126,43 @@ export async function testSilentPipeReadinessIsBounded() {
   const elapsed = Date.now() - started;
   assert(error !== null,
     `a silent browser must fail the launch instead of hanging (waited ${elapsed}ms for a ${budgetMs}ms budget)`);
-  assert(/did not answer Browser\.getVersion|exited during startup/.test(error.message),
-    `the failure must name the readiness wait rather than a generic spawn error: ${error.message}`);
-  // Far below the 30s the fake sleeps and below any unbounded wait, so this is what proves the deadline
-  // is ENFORCED rather than merely written down: without the bound the wait ends only when the child
-  // exits, which is what the mutation that removes it demonstrates.
-  assert(elapsed < 15000, `the readiness wait must be bounded by its budget, took ${elapsed}ms`);
+  assert(/did not answer Browser\.getVersion within \d+ms/.test(error.message),
+    `the failure must name the readiness BUDGET, not merely an exit: ${error.message}`);
+  // What this asserts, stated honestly: the whole call returns in seconds, not in the 30s the fake sleeps.
+  // The budget is per attempt and the launcher retries, so the total includes up to 3 x 400ms attempts
+  // plus backoff and teardown - measured at about 2.6s. An earlier version of this comment claimed the
+  // launch fails "inside its 400ms budget", which overstated what the assertion below can show (the opus
+  // review of 5da2310 caught that). The bound is what distinguishes a bounded wait from an unbounded one:
+  // without the race the call ends only when the child exits at 30s.
+  assert(elapsed < 6000,
+    `the readiness wait must be bounded by its budget rather than by the child's lifetime, took ${elapsed}ms`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await testCdpPipeTransport();
   console.log('cdp-pipe-transport OK: the default transport publishes no endpoint, and the control shows the check can see one');
+}
+
+// A pipe that closes must reject the commands still in flight (web-uplift-h6yn). Without it, a Chrome
+// that dies mid-audit leaves every send pending FOREVER for any caller that passed no deadline - a hang
+// rather than a failure, and strictly worse than the port transport, which fails fast on a dead browser.
+// The read side is closed without an answer, which is exactly what a dying Chrome leaves behind.
+export async function testClosedPipeRejectsPendingSends() {
+  const toChrome = new PassThrough();
+  const fromChrome = new PassThrough();
+  const transport = createPipeTransport({ toChrome, fromChrome, log: () => {} });
+  const inFlight = transport.send('Browser.getVersion');
+  fromChrome.destroy();
+  const outcome = await Promise.race([
+    inFlight.then(() => 'resolved', () => 'rejected'),
+    // Bounded on purpose: removing the close handler must FAIL this test rather than hang the suite,
+    // which is the same trap web-uplift-xnte was about.
+    new Promise((resolve) => setTimeout(() => resolve('still pending'), 3000)),
+  ]);
+  assert(outcome === 'rejected', `a send in flight when the pipe closes must reject, got ${outcome}`);
+  let later = null;
+  await transport.send('Browser.getVersion').then(() => {}, (err) => { later = err; });
+  assert(later instanceof Error, 'a send after the pipe closed must reject immediately, not queue forever');
+  toChrome.destroy();
+  console.log('closed-pipe rejection OK: an in-flight send and a later send both reject');
 }

@@ -290,9 +290,11 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // and the online restore; in safeFetch the response-body reads; and (web-uplift-j3re) the five
 // pipe calls in the launch and session paths, the readiness retry sleep and the grace-bounded close
 // on the readiness failure path. Bounded transitively:
-// applyConditions' six internals and sw.enable's internal enable (every caller wraps the
-// call), and (web-uplift-j3re) the Browser.getVersion probe inside waitForPipeReady's loop, which
-// deadlineMs bounds. Bounded by their own deadlines: the fetch and pinnedFetch exchanges (AbortSignal), the capped body
+// applyConditions' six internals and sw.enable's internal enable (every caller wraps the call).
+// web-uplift-xnte REMOVED the Browser.getVersion probe from this bucket: it was listed here as bounded
+// by waitForPipeReady's deadlineMs, and that was false, because the loop consulted its deadline only in
+// the catch and a promise that never settled never reached it. The probe is now inside a race that owns
+// its bound, so it counts as bounded by its own deadline and nothing is listed here for the pipe. Bounded by their own deadlines: the fetch and pinnedFetch exchanges (AbortSignal), the capped body
 // reader, har's network-idle wait, --interact's poll, the headers docPromise timeout,
 // resilience's offline load race, and (web-uplift-4rv) the exposure probe's own connect, which is
 // handed its timeoutMs explicitly, plus the injected exposureProbe, whose production default
@@ -792,6 +794,19 @@ export function createPipeTransport({ toChrome, fromChrome, log = () => {} }) {
     }
   });
   fromChrome.on('error', (err) => log(`[browser] CDP pipe read error: ${err && err.message}`));
+  // A closed pipe takes every in-flight command with it (web-uplift-h6yn). Without this, a Chrome that
+  // dies mid-audit leaves its answers pending FOREVER for any caller that passed no deadline, which is a
+  // hang rather than a failure - the same class as web-uplift-xnte, whose readiness instance is bounded
+  // only by racing process exit, and strictly worse than the port transport, which fails fast on a dead
+  // browser. chrome-remote-interface rejects these too
+  // (node_modules/chrome-remote-interface/lib/chrome.js:254-258).
+  fromChrome.on('close', () => {
+    closed = true;
+    for (const [id, entry] of [...pending.entries()]) {
+      pending.delete(id);
+      entry.reject(new Error('the CDP pipe closed before every pending command was answered'));
+    }
+  });
   toChrome.on('error', (err) => log(`[browser] CDP pipe write error: ${err && err.message}`));
 
   return {
@@ -1078,7 +1093,8 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
     // reported as a dead one with no stderr. Reading proc.stderr here also drains a stream that would
     // otherwise buffer with nothing consuming it.
     let pipeStderrText = '';
-    proc.stderr.on('data', (chunk) => { pipeStderrText += chunk.toString(); });
+    const pipeStderrOnData = (chunk) => { pipeStderrText += chunk.toString(); };
+    proc.stderr.on('data', pipeStderrOnData);
     const ready = await waitForPipeReady(pipe, { proc, deadlineMs: devtoolsTimeoutMs, log });
     if (!ready.ok) {
       const failureDetail = {
@@ -1093,6 +1109,10 @@ async function launchChromeOnce({ chromePath, headless, log, devtoolsTimeoutMs, 
       await close();
       return { ok: false, detail: failureDetail };
     }
+    // Success means nothing will read this text again, so detach the listener and let the stream flow:
+    // otherwise the audit accumulates the browser's entire stderr for its whole life (web-uplift-xnte P3).
+    proc.stderr.off('data', pipeStderrOnData);
+    proc.stderr.resume();
     // No port exists, so there is nothing to expose and no verdict to make: the pipe is the
     // endpoint, and it is reachable only by a process that already holds this process's file
     // descriptors. That is the whole point of the transport (web-uplift-j3re), and it is why the

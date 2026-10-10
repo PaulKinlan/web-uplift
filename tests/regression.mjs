@@ -26,7 +26,7 @@ import { launchChrome, resolveChromePath, sandboxDisableReason } from '../eviden
 import { testMwgDriftExtractPipe } from './mwg-drift-extract-pipe.mjs';
 import { testMwgDriftBasisFloor } from './mwg-drift-basis-floor.mjs';
 import { testCdpEndpointExposure } from './cdp-endpoint-exposure.mjs';
-import { testCdpPipeTransport, testSilentPipeReadinessIsBounded } from './cdp-pipe-transport.mjs';
+import { testCdpPipeTransport, testSilentPipeReadinessIsBounded, testClosedPipeRejectsPendingSends } from './cdp-pipe-transport.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
 import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
@@ -57,6 +57,7 @@ const ALL_TESTS = [
   testCdpEndpointExposure,
   testCdpPipeTransport,
   testSilentPipeReadinessIsBounded,
+  testClosedPipeRejectsPendingSends,
   testSyntaxChecks,
   testPackageRootImportIsSideEffectFree,
   testChromeCandidateDiscovery,
@@ -3677,8 +3678,10 @@ async function testLaunchRetryAndDiagnostics() {
       error = err;
     }
     assert(error instanceof Error, 'launchChrome must reject when every attempt fails');
-    // Both transports must NAME the early exit; they word it differently because the port path reads
-    // Chrome's own stderr while the pipe path only sees the process state (web-uplift-ik04).
+    // Both transports must NAME the early exit. They word it differently because the port path parses
+    // Chrome's DevTools line out of stderr while the pipe path reads the process state; BOTH now attach
+    // that stderr to the failure detail (web-uplift-ik04), and the pipe capture is asserted by a fake
+    // that writes a marker in tests/cdp-pipe-transport.mjs.
     assert(/exited (early|during startup)/.test(error.message),
       `launch failure must name the early exit: ${error.message}`);
     assert(/code 7/.test(error.message), `launch failure must report the exit code: ${error.message}`);
@@ -3701,7 +3704,7 @@ async function testLaunchRetryAndDiagnostics() {
     // behind. The short timeout keeps this cheap, and this is the assertion that
     // fails if liveness is read after close() instead of before it.
     const wedging = join(dir, 'wedging-chrome');
-    writeFileSync(wedging, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    writeFileSync(wedging, '#!/bin/sh\necho "wedge-marker-h6yn" >&2\nsleep 30\n', { mode: 0o755 });
     const wedgeProfiles = [];
     process.env.CHROME_BIN = wedging;
     let wedgeError = null;
@@ -3719,6 +3722,11 @@ async function testLaunchRetryAndDiagnostics() {
     assert(wedgeError instanceof Error, 'a wedged chrome must fail the launch');
     assert(/alive=true/.test(wedgeError.message), `a wedge must be reported as alive-but-silent: ${wedgeError.message}`);
     assert(/signal=null/.test(wedgeError.message), `a wedge must not be reported as signal-killed: ${wedgeError.message}`);
+    // The stderr half of the diagnosis needs its own evidence: "stderr=" also matches "(stderr empty)",
+    // so on its own it proves nothing about the capture (the opus review of 5da2310 said exactly that).
+    // The wedge fake writes this marker to fd 2, and it must survive into the reported failure.
+    assert(/wedge-marker-h6yn/.test(wedgeError.message),
+      `a wedge must carry the browser's own stderr into the failure: ${wedgeError.message}`);
     assert(/stderr=/.test(wedgeError.message), `a wedge must report stderr: ${wedgeError.message}`);
     assert(wedgeProfiles.length > 1, `a wedged launch must still retry, saw ${wedgeProfiles.length}`);
     for (const profile of wedgeProfiles) {
@@ -7733,11 +7741,12 @@ function testAwaitCensus() {
   const rules = [
     ['bounded:withDeadline', /await withDeadline\(|await withRetry\(/],
     ['bounded:navigate-helper', /await navigate\(/],
-    // web-uplift-j3re: the pipe readiness probe is a command inside a loop that the enclosing
-    // waitForPipeReady() bounds by deadlineMs, so like applyConditions' internals its bound is its
-    // caller's. It is listed by its exact shape rather than as "anything on a pipe", so a new
-    // unbounded pipe call cannot inherit the classification.
-    ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable|await pipe\.send\('Browser\.getVersion'\)/],
+    // web-uplift-j3re listed the pipe readiness probe here as bounded by the enclosing
+    // waitForPipeReady(). web-uplift-xnte proved that false - the loop consulted its deadline only in the
+    // catch - and moved the probe into a race that owns its bound. The shape is therefore dropped from
+    // this rule rather than left looking classified: a bare await of it reappearing is now UNCLASSIFIED
+    // and loud, which is the truthful disposition, because no caller bounds it.
+    ['bounded:transitive-caller-wraps', /await client\.Emulation\.(setEmulatedMedia|setDeviceMetricsOverride|setCPUThrottlingRate|setLocaleOverride|setTimezoneOverride)|await client\.Network\.emulateNetworkConditions|await client\.ServiceWorker\.enable/],
     ['bounded:sleep', /await sleep\(|await new Promise\(\(r\) => setTimeout/],
     ['bounded:pre-existing-mechanism', /await waitForProcExit|await waitForGroupDrain|port = await new Promise|await close\(\)|await launchChromeOnce|return await fn\(\)/],
     // web-uplift-4rv added two sites whose bound belongs to the CALLEE, which is why they are
@@ -7778,10 +7787,9 @@ function testAwaitCensus() {
       'bounded:own-deadline': 4,
       // web-uplift-j3re: the Browser.getVersion probe inside waitForPipeReady's bounded loop.
       // web-uplift-xnte moved that probe OUT of an awaited line and into the race that owns its bound, so
-      // the rule matches nothing on this tree now. It is kept rather than deleted: a bare
-      // `await pipe.send('Browser.getVersion')` reappearing is still a transitive-caller-wraps site, and
-      // deleting the rule would make that line unclassified and therefore loud, which is not the same
-      // claim as this one. The site did not disappear, it moved: see bounded:own-deadline above.
+      // the rule matches nothing on this tree now. It is kept rather than deleted because applyConditions
+      // and sw.enable still rely on it (see the rule above), and a bare await of the probe reappearing
+      // would now be unclassified and loud - the truthful disposition, not an accident.
       'bounded:transitive-caller-wraps': 0,
     },
     'evidence/cli.mjs': {
@@ -8365,9 +8373,11 @@ async function testOperatorLaunchAttribution() {
     process.env.WEB_UPLIFT_LAUNCH_LOG = launchesFile;
     let launchErr = null;
     try {
-      // The devtools budget is a PORT-transport deadline; on the pipe the readiness probe answers in
-      // well under 50ms and the launch legitimately succeeds, so the budget must be exercised on the
-      // transport that has it (web-uplift-ik04).
+      // devtoolsTimeoutMs IS the pipe deadline too (waitForPipeReady receives it), so a 50ms budget fails
+      // on both transports - an earlier version of this comment said otherwise and was wrong. The port
+      // transport is still the right one here, because the assertion below reads the reason this
+      // transport words as "timed out waiting for the DevTools endpoint", which is a port diagnostic
+      // (web-uplift-ik04).
       await launchChrome({ log: () => {}, devtoolsTimeoutMs: 50, transport: 'port' });
     } catch (e) {
       launchErr = e;
