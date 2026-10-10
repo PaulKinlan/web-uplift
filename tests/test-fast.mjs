@@ -113,6 +113,23 @@ function testSubsystemMappings() {
   assert(selfPlan.matchedSubsystems.includes('fast-gate-self'), 'scripts/test-fast.mjs must map to fast-gate-self');
   assert(selfPlan.targets.some((t) => t.path === 'tests/test-fast.mjs'), 'must target tests/test-fast.mjs');
 
+  // 14. Beads export and its redaction guard (web-uplift-0sx0). Before this entry existed, all three of
+  // these files selected only the baseline four, so the guard that exists to keep provider tokens out of
+  // the tracked export was invisible to the gate that runs when the export changes.
+  for (const beadsFile of ['.beads/issues.jsonl', 'scripts/beads-export.mjs', 'tests/beads-export-redaction.mjs']) {
+    const beadsPlan = mapFilesToTests([beadsFile]);
+    assert(beadsPlan.matchedSubsystems.includes('beads-export'), `${beadsFile} must map to the beads-export subsystem`);
+    assert(!beadsPlan.isBaseline, `${beadsFile} must not fall back to the baseline targets`);
+    assert(beadsPlan.targets.some((t) => t.filter === 'TrackedBeadsExportHasNoSecretShapes'), `${beadsFile} must select the tracked-export guard`);
+    assert(beadsPlan.targets.some((t) => t.filter === 'BeadsExportRedactionRuleCanFire'), `${beadsFile} must select the redaction-rule control`);
+  }
+  // Control for the other direction, which the assertions above cannot see: a match written as a prefix
+  // ('.beads/') would satisfy every one of them while putting the export guard into every beads change.
+  // This pins the matcher to the named files rather than to the directory.
+  const beadsConfigPlan = mapFilesToTests(['.beads/config.yaml']);
+  assert(!beadsConfigPlan.matchedSubsystems.includes('beads-export'), '.beads/config.yaml must NOT match beads-export: the matcher must name files, not the directory');
+  assert(beadsConfigPlan.isBaseline, '.beads/config.yaml maps nothing, so it must still fall back to baseline');
+
   console.log('✔ Subsystem mapping rules passed');
 }
 

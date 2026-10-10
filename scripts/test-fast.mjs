@@ -227,6 +227,20 @@ export const SUBSYSTEMS = [
     ],
   },
   {
+    id: 'beads-export',
+    description: 'Tracked passive beads export, its generator, and the guard that keeps provider tokens out of it',
+    // Name the FILES, not the .beads/ directory: a prefix match here would put the export guard into every
+    // beads change, and tests/test-fast.mjs pins that with a negative control on .beads/config.yaml.
+    match: (f) =>
+      f === '.beads/issues.jsonl' ||
+      f === 'scripts/beads-export.mjs' ||
+      f === 'tests/beads-export-redaction.mjs',
+    targets: [
+      { type: 'regression', filter: 'TrackedBeadsExportHasNoSecretShapes', label: 'Regression: Tracked beads export has no secret shapes' },
+      { type: 'regression', filter: 'BeadsExportRedactionRuleCanFire', label: 'Regression: Beads export redaction rule can fire' },
+    ],
+  },
+  {
     id: 'fast-gate-self',
     description: 'Fast test gate script, test helpers, and self-verification test suite',
     match: (f) =>
