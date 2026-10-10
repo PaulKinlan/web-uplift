@@ -102,6 +102,8 @@ import {
   testInstallSkipsSymlinksInVendoredSource,
   testInstallCopyDepthGuard,
   testInstallVendorsCompleteClosure,
+  testInstallRefusesDestinationSymlinks,
+  testInstallNormalDestinationWrites,
   testMcpSkillsServerStdio,
 } from "./install-package.test.mjs";
 
@@ -241,6 +243,8 @@ export const ALL_TESTS = [
   testInstallSkipsSymlinksInVendoredSource,
   testInstallCopyDepthGuard,
   testInstallVendorsCompleteClosure,
+  testInstallRefusesDestinationSymlinks,
+  testInstallNormalDestinationWrites,
   testMcpSkillsServerStdio,
   testHeadlessAllowlistIsScoped,
   testHeadlessAllowlistMatchesSkillContract,

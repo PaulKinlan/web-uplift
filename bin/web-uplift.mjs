@@ -25,7 +25,7 @@
  * -p/exec mode, which uses API tokens.
  */
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve, relative } from 'node:path';
+import { dirname, join, resolve, relative, isAbsolute } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
@@ -37,6 +37,10 @@ import {
   existsSync,
   readdirSync,
   lstatSync,
+  statSync,
+  openSync,
+  closeSync,
+  constants,
 } from 'node:fs';
 import { AGENT_NAMES } from '../runner/agents.mjs';
 import { VENDORED_DIRS, VENDORED_FILES, VENDORED_DEPENDENCIES } from '../install-surface.mjs';
@@ -280,7 +284,7 @@ agent session (uses your subscription).`);
       console.log(`  would ${step.action.padEnd(9)} ${relTo}   (${step.what})`);
       continue;
     }
-    applyStep(step);
+    applyStep(step, projectRoot);
     console.log(`  ${step.action.padEnd(9)} ${relTo}   (${step.what})`);
     if (step.skippedFiles && step.skippedFiles.length > 0) {
       for (const skip of step.skippedFiles) {
@@ -343,27 +347,183 @@ function printExistingInstallNotice(vendorRoot, pkg) {
   }
 }
 
-function applyStep(step) {
+function findSymlinkComponent(targetPath, rootDir) {
+  if (!rootDir) {
+    const st = lstatSync(targetPath, { throwIfNoEntry: false });
+    return st?.isSymbolicLink() ? targetPath : null;
+  }
+  const root = resolve(rootDir);
+  const target = resolve(targetPath);
+  const rel = relative(root, target);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    return target;
+  }
+  const parts = rel.split(/[\\/]/).filter(Boolean);
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    const st = lstatSync(current, { throwIfNoEntry: false });
+    if (st?.isSymbolicLink()) {
+      return current;
+    }
+  }
+  return null;
+}
+
+function safeCopyFileSync(src, dst) {
+  const dstStat = lstatSync(dst, { throwIfNoEntry: false });
+  if (dstStat?.isSymbolicLink()) {
+    return { skipped: true, path: dst, reason: 'symlink' };
+  }
+  let srcStat;
+  try {
+    srcStat = statSync(src);
+  } catch {
+    copyFileSync(src, dst);
+    return { skipped: false };
+  }
+  let fd;
+  const noFollow = constants.O_NOFOLLOW || 0;
+  try {
+    fd = openSync(dst, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | noFollow, srcStat.mode);
+  } catch (err) {
+    if (err.code === 'ELOOP' || err.code === 'EMLINK') {
+      return { skipped: true, path: dst, reason: 'symlink' };
+    }
+    throw err;
+  }
+  try {
+    writeFileSync(fd, readFileSync(src));
+  } finally {
+    closeSync(fd);
+  }
+  return { skipped: false };
+}
+
+function safeWriteFileSync(dst, content) {
+  const dstStat = lstatSync(dst, { throwIfNoEntry: false });
+  if (dstStat?.isSymbolicLink()) {
+    return { skipped: true, path: dst, reason: 'symlink' };
+  }
+  let fd;
+  const noFollow = constants.O_NOFOLLOW || 0;
+  try {
+    fd = openSync(dst, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | noFollow, 0o666);
+  } catch (err) {
+    if (err.code === 'ELOOP' || err.code === 'EMLINK') {
+      return { skipped: true, path: dst, reason: 'symlink' };
+    }
+    throw err;
+  }
+  try {
+    writeFileSync(fd, content);
+  } finally {
+    closeSync(fd);
+  }
+  return { skipped: false };
+}
+
+function safeAppendMarker(dst, marker, content) {
+  const dstStat = lstatSync(dst, { throwIfNoEntry: false });
+  if (dstStat?.isSymbolicLink()) {
+    return { skipped: true, path: dst, reason: 'symlink' };
+  }
+  let existing = '';
+  const noFollow = constants.O_NOFOLLOW || 0;
+  if (dstStat) {
+    let readFd;
+    try {
+      readFd = openSync(dst, constants.O_RDONLY | noFollow);
+    } catch (err) {
+      if (err.code === 'ELOOP' || err.code === 'EMLINK') {
+        return { skipped: true, path: dst, reason: 'symlink' };
+      }
+      throw err;
+    }
+    try {
+      existing = readFileSync(readFd, 'utf8');
+    } finally {
+      closeSync(readFd);
+    }
+    if (existing.includes(marker)) {
+      return { skipped: false };
+    }
+  }
+  let writeFd;
+  try {
+    writeFd = openSync(dst, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | noFollow, 0o666);
+  } catch (err) {
+    if (err.code === 'ELOOP' || err.code === 'EMLINK') {
+      return { skipped: true, path: dst, reason: 'symlink' };
+    }
+    throw err;
+  }
+  try {
+    writeFileSync(writeFd, existing + content);
+  } finally {
+    closeSync(writeFd);
+  }
+  return { skipped: false };
+}
+
+function applyStep(step, projectRoot = null) {
+  step.skippedFiles = step.skippedFiles || [];
   if (step.action === 'copy-dir') {
-    const acc = copyDir(step.from, step.to);
+    const acc = copyDir(step.from, step.to, { skippedFiles: [] }, 1, projectRoot);
     step.skippedFiles = acc.skippedFiles;
-  } else if (step.action === 'copy-file') {
-    mkdirSync(dirname(step.to), { recursive: true });
-    copyFileSync(step.from, step.to);
+    return;
+  }
+
+  const symlinkComponent = findSymlinkComponent(step.to, projectRoot);
+  if (symlinkComponent) {
+    step.skippedFiles.push({ path: symlinkComponent, reason: 'symlink' });
+    if (symlinkComponent !== step.to) {
+      step.skippedFiles.push({ path: step.to, reason: 'symlink' });
+    }
+    return;
+  }
+
+  const toDir = dirname(step.to);
+  const dirSymlink = findSymlinkComponent(toDir, projectRoot);
+  if (dirSymlink) {
+    step.skippedFiles.push({ path: dirSymlink, reason: 'symlink' });
+    if (dirSymlink !== step.to) {
+      step.skippedFiles.push({ path: step.to, reason: 'symlink' });
+    }
+    return;
+  }
+
+  mkdirSync(toDir, { recursive: true });
+
+  if (step.action === 'copy-file') {
+    const res = safeCopyFileSync(step.from, step.to);
+    if (res.skipped) {
+      step.skippedFiles.push({ path: res.path, reason: res.reason });
+    }
   } else if (step.action === 'write') {
-    mkdirSync(dirname(step.to), { recursive: true });
-    writeFileSync(step.to, step.content);
+    const res = safeWriteFileSync(step.to, step.content);
+    if (res.skipped) {
+      step.skippedFiles.push({ path: res.path, reason: res.reason });
+    }
   } else if (step.action === 'append') {
-    mkdirSync(dirname(step.to), { recursive: true });
-    let existing = existsSync(step.to) ? readFileSync(step.to, 'utf8') : '';
-    if (existing.includes('<!-- web-uplift:install -->')) return; // idempotent
-    writeFileSync(step.to, existing + step.content);
+    const res = safeAppendMarker(step.to, '<!-- web-uplift:install -->', step.content);
+    if (res.skipped) {
+      step.skippedFiles.push({ path: res.path, reason: res.reason });
+    }
   }
 }
 
-function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1) {
+function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = null) {
   if (depth > 64) {
     acc.skippedFiles.push({ path: from, reason: 'depth-limit' });
+    return acc;
+  }
+  const toSymlink = findSymlinkComponent(to, projectRoot);
+  if (toSymlink) {
+    acc.skippedFiles.push({ path: toSymlink, reason: 'symlink' });
+    if (toSymlink !== to) {
+      acc.skippedFiles.push({ path: to, reason: 'symlink' });
+    }
     return acc;
   }
   mkdirSync(to, { recursive: true });
@@ -375,8 +535,18 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1) {
       acc.skippedFiles.push({ path: src, reason: 'symlink' });
       continue;
     }
-    if (st.isDirectory()) copyDir(src, dst, acc, depth + 1);
-    else copyFileSync(src, dst);
+    const dstStat = lstatSync(dst, { throwIfNoEntry: false });
+    if (dstStat?.isSymbolicLink()) {
+      acc.skippedFiles.push({ path: dst, reason: 'symlink' });
+      continue;
+    }
+    if (st.isDirectory()) copyDir(src, dst, acc, depth + 1, projectRoot);
+    else {
+      const res = safeCopyFileSync(src, dst);
+      if (res.skipped) {
+        acc.skippedFiles.push({ path: res.path, reason: res.reason });
+      }
+    }
   }
   return acc;
 }
@@ -486,8 +656,9 @@ function readUpdateCache() {
 
 function writeUpdateCache(data) {
   const path = updateCachePath();
+  if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) return;
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
+  safeWriteFileSync(path, JSON.stringify(data, null, 2) + '\n');
 }
 
 async function fetchLatestVersion(packageName) {

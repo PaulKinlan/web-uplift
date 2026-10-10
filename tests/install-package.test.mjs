@@ -41,6 +41,8 @@ import {
   testInstallSkipsSymlinksInVendoredSource,
   testInstallCopyDepthGuard,
   testInstallVendorsCompleteClosure,
+  testInstallRefusesDestinationSymlinks,
+  testInstallNormalDestinationWrites,
 } from './install-copy-symlink.mjs';
 
 // The in-tree vendored copies under .web-uplift/ must stay 100% byte-identical
@@ -563,6 +565,8 @@ export const installPackageTests = [
   testInstallSkipsSymlinksInVendoredSource,
   testInstallCopyDepthGuard,
   testInstallVendorsCompleteClosure,
+  testInstallRefusesDestinationSymlinks,
+  testInstallNormalDestinationWrites,
   testMcpSkillsServerStdio,
 ];
 
@@ -570,6 +574,8 @@ export {
   testInstallSkipsSymlinksInVendoredSource,
   testInstallCopyDepthGuard,
   testInstallVendorsCompleteClosure,
+  testInstallRefusesDestinationSymlinks,
+  testInstallNormalDestinationWrites,
 };
 
 await runSuite(installPackageTests, import.meta.url);

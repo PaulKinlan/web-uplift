@@ -15,7 +15,7 @@
 // This file is the fast, browser-free foreground check. Run it directly:
 //   node tests/install-copy-symlink.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -187,11 +187,105 @@ export function testInstallVendorsCompleteClosure() {
   }
 }
 
+// Fixture 4: pre-planted destination symlinks must be refused and skipped,
+// never followed or clobbered (web-uplift-yel3). We plant symlinks for every
+// installer action (write, copy-file, copy-dir file and dir, append) pointing
+// to victim files outside the target project, run install, and verify all
+// victims are untouched and the skips are reported in stdout.
+export function testInstallRefusesDestinationSymlinks() {
+  const outside = mkdtempSync(join(tmpdir(), 'web-uplift-dest-symlink-outside-'));
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-dest-symlink-target-'));
+  try {
+    const victimManifest = join(outside, 'victim-manifest.json');
+    const victimSkill = join(outside, 'victim-skill.md');
+    const victimSchema = join(outside, 'victim-schema.json');
+    const victimAgents = join(outside, 'victim-agents.md');
+    const victimDir = join(outside, 'victim-dir');
+
+    writeFileSync(victimManifest, 'VICTIM-MANIFEST-SECRET\n');
+    writeFileSync(victimSkill, 'VICTIM-SKILL-SECRET\n');
+    writeFileSync(victimSchema, 'VICTIM-SCHEMA-SECRET\n');
+    writeFileSync(victimAgents, 'VICTIM-AGENTS-SECRET\n');
+    mkdirSync(victimDir);
+    writeFileSync(join(victimDir, 'safe.txt'), 'VICTIM-DIR-SECRET\n');
+
+    // Pre-plant destination symlinks covering every install write action:
+    // 1. write: .web-uplift/manifest.json
+    mkdirSync(join(target, '.web-uplift'), { recursive: true });
+    symlinkSync(victimManifest, join(target, '.web-uplift', 'manifest.json'));
+
+    // 2. copy-file: .codex/skills/web-audit/SKILL.md
+    mkdirSync(join(target, '.codex', 'skills', 'web-audit'), { recursive: true });
+    symlinkSync(victimSkill, join(target, '.codex', 'skills', 'web-audit', 'SKILL.md'));
+
+    // 3. copy-dir (file): .web-uplift/schema/findings.schema.json
+    mkdirSync(join(target, '.web-uplift', 'schema'), { recursive: true });
+    symlinkSync(victimSchema, join(target, '.web-uplift', 'schema', 'findings.schema.json'));
+
+    // 4. copy-dir (directory): .web-uplift/knowledge
+    symlinkSync(victimDir, join(target, '.web-uplift', 'knowledge'));
+
+    // 5. append: AGENTS.md
+    symlinkSync(victimAgents, join(target, 'AGENTS.md'));
+
+    const install = runInstall(target);
+    assert(install.status === 0, `install with destination symlinks failed:\n${install.stderr || install.stdout}`);
+
+    // Assert that all victims remain completely untouched
+    assert(readFileSync(victimManifest, 'utf8') === 'VICTIM-MANIFEST-SECRET\n', 'victim manifest must not be clobbered');
+    assert(readFileSync(victimSkill, 'utf8') === 'VICTIM-SKILL-SECRET\n', 'victim skill must not be clobbered');
+    assert(readFileSync(victimSchema, 'utf8') === 'VICTIM-SCHEMA-SECRET\n', 'victim schema must not be clobbered');
+    assert(readFileSync(victimAgents, 'utf8') === 'VICTIM-AGENTS-SECRET\n', 'victim agents must not be clobbered');
+    assert(readFileSync(join(victimDir, 'safe.txt'), 'utf8') === 'VICTIM-DIR-SECRET\n', 'victim dir must not be clobbered');
+    assert(readdirSync(victimDir).length === 1, 'victim dir must not have files copied into it');
+
+    // Assert that skipped symlinks are reported in output
+    assert(install.stdout.includes('manifest.json (symlink)'), `install did not record skipping manifest symlink:\n${install.stdout}`);
+    assert(install.stdout.includes('SKILL.md (symlink)'), `install did not record skipping skill symlink:\n${install.stdout}`);
+    assert(install.stdout.includes('findings.schema.json (symlink)'), `install did not record skipping schema symlink:\n${install.stdout}`);
+    assert(install.stdout.includes('knowledge (symlink)'), `install did not record skipping knowledge dir symlink:\n${install.stdout}`);
+    assert(install.stdout.includes('AGENTS.md (symlink)'), `install did not record skipping agents symlink:\n${install.stdout}`);
+
+    // Positive check: unsymlinked files in the same install were still written normally
+    assert(existsSync(join(target, '.web-uplift', 'schema', 'config.schema.json')), 'unpoisoned schema file must be written');
+    assert(existsSync(join(target, '.web-uplift', 'evidence', 'cli.mjs')), 'unpoisoned evidence CLI must be written');
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
+}
+
+// Fixture 5: normal clean destination writes succeed and create regular files,
+// with no symlink skips reported.
+export function testInstallNormalDestinationWrites() {
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-dest-normal-target-'));
+  try {
+    const install = runInstall(target);
+    assert(install.status === 0, `clean install failed:\n${install.stderr || install.stdout}`);
+    assert(!install.stdout.includes('(symlink)'), `clean install must not report any symlinks skipped:\n${install.stdout}`);
+
+    const manifestPath = join(target, '.web-uplift', 'manifest.json');
+    const skillPath = join(target, '.codex', 'skills', 'web-audit', 'SKILL.md');
+    const schemaPath = join(target, '.web-uplift', 'schema', 'findings.schema.json');
+    const agentsPath = join(target, 'AGENTS.md');
+
+    assert(existsSync(manifestPath) && !lstatSync(manifestPath).isSymbolicLink(), 'manifest must be a regular file');
+    assert(existsSync(skillPath) && !lstatSync(skillPath).isSymbolicLink(), 'skill must be a regular file');
+    assert(existsSync(schemaPath) && !lstatSync(schemaPath).isSymbolicLink(), 'schema must be a regular file');
+    assert(existsSync(agentsPath) && !lstatSync(agentsPath).isSymbolicLink(), 'agents marker must be a regular file');
+    assert(readFileSync(agentsPath, 'utf8').includes('<!-- web-uplift:install -->'), 'agents snippet must be present');
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+}
+
 // Run directly (node tests/install-copy-symlink.mjs), not when imported by the
 // regression suite, which calls the exported functions itself.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   testInstallSkipsSymlinksInVendoredSource();
   testInstallCopyDepthGuard();
   testInstallVendorsCompleteClosure();
+  testInstallRefusesDestinationSymlinks();
+  testInstallNormalDestinationWrites();
   console.log('tests OK');
 }
