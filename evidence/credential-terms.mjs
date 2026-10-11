@@ -252,6 +252,71 @@ export const REDACTED_VALUE = '[redacted]';
 // kept 'pw'. Over-redacting across a tab or a newline is the safe side of that trade. Review measured
 // this as reachable through redactHeaderList, where an internal tab is legal in an HTTP field value.
 //
+// Does this value carry userinfo at the authority level, answered by the SAME route
+// redactUrlCredentialValues takes to decide it? A parseable value is judged by its parsed authority, so an
+// '@' in a QUERY is not userinfo ('http://proxy.invalid:8080/?next=a@b' has none). A value that is only a
+// relative reference is judged through the same throwaway base the redactor uses. Anything else falls to the
+// run rule below, which is the rule the sweep applies.
+//
+// This exists so a caller that must know whether a value carries a credential asks the shared rule instead
+// of keeping a private regex. The proxy env sanitiser did keep one, with a boundary one delimiter narrower:
+// it ended the authority at the first '/?#', so userinfo truncated by '#' or '?' was invisible to it and it
+// withheld only as a side effect of this module redacting the value first (web-uplift-2rw1, and the review
+// finding behind it). One concept, one detector, one boundary.
+export function carriesAuthorityUserinfo(raw) {
+  if (typeof raw !== 'string' || raw === '') return false;
+  try {
+    const u = new URL(raw);
+    // Trust the parsed authority ONLY when the parse produced one. 'user:pass@proxy.invalid:8080' parses
+    // with 'user:' as its SCHEME and an opaque path, so the parser reports no userinfo for a value a human
+    // plainly wrote as userinfo - web-uplift-ql8a pinned that this must still be withheld, and a predicate
+    // that believed the parser here would hand the credential to the child. An empty host means the parse
+    // found no authority, so its answer is not the authority answer.
+    if (u.host) return Boolean(u.username || u.password);
+  } catch {
+    /* not absolute */
+  }
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+    try {
+      const u = new URL(raw, 'http://relative.invalid');
+      // Same test on the relative route: the base's own host is not this value's authority.
+      if (u.host && u.host !== 'relative.invalid') return Boolean(u.username || u.password);
+    } catch {
+      /* not a relative reference either */
+    }
+  }
+  return runCarriesUserinfo(raw) || leadingRunCarriesUserinfo(raw);
+}
+
+// The rule the sanitiser's deleted regex implied, and the reason it was not simply redundant: with no
+// scheme to mark where an authority starts, the run from offset 0 is the candidate, up to the first
+// whitespace. This closes the gap between the parser's answer and the sweep's - the sweep only looks for an
+// authority start after a special scheme or '//', so a scheme-less 'user:pass@host' has no authority start
+// for it either, and nothing else would read the '@'. One place answers it, not a detector in the caller.
+function leadingRunCarriesUserinfo(raw) {
+  let end = 0;
+  while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
+  const run = raw.slice(0, end);
+  const at = run.lastIndexOf('@');
+  return at !== -1 && run.slice(0, at) !== '';
+}
+
+// The sweep's question, isolated: is there a NON-EMPTY userinfo before the LAST '@' in any authority run?
+// Empty userinfo is not a credential and the sweep makes the same distinction (it replaces it with nothing).
+function runCarriesUserinfo(raw) {
+  const runs = authorityStartRegex();
+  for (;;) {
+    const match = runs.exec(raw);
+    if (!match) return false;
+    let end = match.index + match[0].length;
+    while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
+    const run = raw.slice(match.index + match[0].length, end);
+    const at = run.lastIndexOf('@');
+    if (at !== -1 && run.slice(0, at) !== '') return true;
+    runs.lastIndex = end; // the cursor never moves backwards, as in the sweep
+  }
+}
+
 // '?' and '#' USED to be breaks and no longer are (web-uplift-nxsy). A password containing a raw '#'
 // or '?' ('https://user:pa#ss@proxy.example:8080') ended the run before the '@', so the run held no
 // '@' at all and the whole value came back VERBATIM - the credential was never even considered. The
@@ -262,6 +327,12 @@ export const REDACTED_VALUE = '[redacted]';
 // untouched query. That is over-redaction of a string no client can use, which is the safe side of
 // the trade this file already documents, and it is pinned by a test so it stays a decision.
 const SWEEP_RUN_BREAKS = new Set([' ', '\f', '\v']);
+// ONE definition of "where an authority starts" and "where the run ends", shared by the sweep and by the
+// predicate below. Two copies of this is how the proxy sanitiser came to ask a narrower question than the
+// rule it delegates to (web-uplift-2rw1), so the pattern lives here as a source and each caller compiles
+// its own regex from it - a module-level /g regex would carry lastIndex between callers.
+const AUTHORITY_START_PATTERN = '(?:(?<=\\b|^)(?:https?|ftp|wss?):[\\\\/]*|[\\\\/]{2})';
+const authorityStartRegex = () => new RegExp(AUTHORITY_START_PATTERN, 'gi');
 function sweepUnparseableUserinfo(raw) {
   let out = '';
   let cursor = 0;
@@ -271,7 +342,7 @@ function sweepUnparseableUserinfo(raw) {
   //    'https:', 'https:/', 'https:\', 'https://', 'https:\/', etc.
   // 2. OR any two slash-or-backslash characters ('//', '\\', '\/', '/\') for protocol-relative,
   //    file://, or custom schemes.
-  const authorityStart = /(?:(?<=\b|^)(?:https?|ftp|wss?):[\\/]*|[\\/]{2})/gi;
+  const authorityStart = authorityStartRegex();
   // ONE search PER PASS, starting at the cursor, and the cursor never moves backwards: a search only
   // scans as far as the next authority start that no previous pass consumed, so the total work stays
   // linear even on a string that repeats delimiters. Each pass consumes at least the matched prefix

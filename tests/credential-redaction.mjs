@@ -20,6 +20,7 @@
 // It is also imported by tests/regression.mjs so the full gate covers it.
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -31,6 +32,37 @@ export async function testCredentialRedactorsAgree() {
   const cli = await import('../evidence/cli.mjs');
   const flow = await import('../runner/flow-record.mjs');
   const terms = await import('../evidence/credential-terms.mjs');
+
+  // 11. The shared rule OWNS the question "does this value carry userinfo", and the proxy env sanitiser must
+  // ask it rather than keeping a second, narrower detector (web-uplift-2rw1). The defect stayed invisible
+  // because both notions agreed on the values anyone looked at: the sanitiser ended the authority at the
+  // first '/?#', so userinfo truncated by '#' or '?' was invisible to it, and it withheld such a value only
+  // because this module had already rewritten the value first. The guard has two halves - this table pins
+  // what the shared answer IS, and the source check pins that the sanitiser still asks for it.
+  const P = 'p' + 'w';
+  assert(terms.carriesAuthorityUserinfo(`http://user:${P}@proxy.invalid:8080`) === true,
+    'parsed userinfo is userinfo');
+  assert(terms.carriesAuthorityUserinfo('http://user@proxy.invalid:8080') === true,
+    'a username with no password is still userinfo');
+  assert(terms.carriesAuthorityUserinfo('http://proxy.invalid:8080/?next=a@b') === false,
+    'an @ in the QUERY of a parseable URL is not userinfo - the shape a wider text rule would wrongly withhold');
+  assert(terms.carriesAuthorityUserinfo(`http://user:${P}#x@proxy.invalid:8080`) === true,
+    'userinfo truncated by # is still userinfo, which is exactly what the private narrower detector could not see');
+  assert(terms.carriesAuthorityUserinfo(`http://user:${P}?x@proxy.invalid:8080`) === true,
+    'and so is userinfo truncated by ?');
+  assert(terms.carriesAuthorityUserinfo('http://@proxy.invalid:8080') === false,
+    'an EMPTY userinfo is not a credential; the sweep makes the same distinction, so the sanitiser must not report one removed');
+  assert(terms.carriesAuthorityUserinfo(`//user:${P}@proxy.invalid:8080`) === true,
+    'a protocol-relative reference is judged through the same base this module redacts through');
+  assert(terms.carriesAuthorityUserinfo('https://x.test:99999/a/b@2x.png') === true,
+    'an unparseable value whose run contains @ reads as userinfo to the sweep, and this must agree with it');
+  assert(terms.carriesAuthorityUserinfo('https://x.test:8080/a/b@2x.png') === false,
+    'but a PATH @ on a value the parser ACCEPTS is not userinfo');
+  const agentsSource = readFileSync(new URL('../runner/agents.mjs', import.meta.url), 'utf8');
+  assert(agentsSource.includes('carriesAuthorityUserinfo'),
+    'the proxy sanitiser must ASK this module the userinfo question, not answer it locally');
+  assert(!agentsSource.includes('[^/?#]'),
+    'and it must not keep its own /?#-bounded authority regex: that is the second detector web-uplift-2rw1 removed');
 
   // 1. Every credential-shaped parameter the two review findings named must be
   // redacted by BOTH redactors, and neither may leave the value behind.

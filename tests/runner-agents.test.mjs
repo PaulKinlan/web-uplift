@@ -1629,6 +1629,23 @@ export async function testAgentChildEnvProxyCredentials() {
   assert(oddWarnings.some((w) => w.includes('HTTPS_PROXY')), 'withholding it must be announced by name');
   assert(!oddWarnings.some((w) => w.includes(userinfo)), 'and never by value');
 
+  // 4b. The OPPOSITE case, and the reason the two must be told apart: a PROTOCOL-RELATIVE value does have a
+  // determinable host, so shape (c) applies to it - keep the proxy and drop the credential. Withholding it
+  // would remove the PROXY and send the child out directly, the quiet egress-policy bypass that decision
+  // rejected (web-uplift-2rw1, coordinator). The scheme-less value above has no host at all and stays
+  // withheld; a proxy URL is what the operator set to make egress traverse it, and a warning does not
+  // preserve egress.
+  const relWarnings = [];
+  const rel = buildAgentEnv({
+    env: { HOME: '/tmp/home', HTTPS_PROXY: `//${userinfo}@proxy.invalid:8080` },
+    warn: (m) => relWarnings.push(m),
+  });
+  assert(rel.HTTPS_PROXY === '//proxy.invalid:8080/',
+    'a protocol-relative proxy must keep its host and lose only the userinfo, not be withheld');
+  assert(relWarnings.length === 1 && /removed a credential/.test(relWarnings[0]),
+    'and dropping the userinfo must be announced exactly once as a removal');
+  assert(!relWarnings.some((w) => w.includes(userinfo)), 'never by value');
+
   // 5. A credential-named query value is the same class, and the SHARED rule is the arbiter: whatever
   // the sanitiser hands the child must be something that module would not redact again. This is the
   // property that keeps the proxy check and the artifact redactor from disagreeing (web-uplift-lsn3).

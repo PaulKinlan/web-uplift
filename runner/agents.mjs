@@ -14,7 +14,7 @@
 // ORCHESTRATES; it contains no checks. The agent (the model) follows SKILL.md.
 
 import { join, resolve } from 'node:path';
-import { redactUrlCredentialValues } from '../evidence/credential-terms.mjs';
+import { carriesAuthorityUserinfo, redactUrlCredentialValues } from '../evidence/credential-terms.mjs';
 
 // ---------------------------------------------------------------------------
 // THE SKILL <-> HEADLESS-SANDBOX CONTRACT, declared ONCE and enforced by tests.
@@ -136,16 +136,15 @@ const AGENT_ENV_PASSTHROUGH = [
 // rule would NOT redact.
 const PROXY_ENV_NAMES = new Set(AGENT_ENV_PASSTHROUGH.filter((n) => /_proxy$/i.test(n)));
 
-// An '@' before the first '/', '?' or '#' is userinfo in the authority. A PATH may contain '@'
-// ("https://x.test:8080/a/b@2x.png"), so a plain substring test is not enough - that distinction is
-// the one web-uplift-73y3 established for the redactor, and it is kept here. The example has to be a
-// URL the parser ACCEPTS for that claim to hold: with an invalid port ("...:99999/a/b@2x.png") the
-// value is unparseable and takes the withheld path below instead, which is a different story about a
-// different value - the earlier revision of this comment cited that very URL (web-uplift-k7ba).
-function authorityCarriesUserinfo(value) {
-  const m = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)?([^/?#]*)/.exec(value);
-  return Boolean(m) && m[2].includes('@');
-}
+// "Does this value carry userinfo" is asked of the SHARED rule, which answers it by the same route its
+// redactor takes: a parseable value is judged on its parsed authority (so an '@' in a query is not
+// userinfo), a relative reference through the same throwaway base, and anything else by the run rule the
+// sweep uses. This file used to keep its own regex with a boundary one delimiter narrower - it ended the
+// authority at the first '/?#', so it could not see userinfo truncated by '#' or '?' and withheld such a
+// value only because the shared redactor had already rewritten it (web-uplift-2rw1). A PATH may still
+// contain '@' ("https://x.test:8080/a/b@2x.png") and this must not mistake it for userinfo; that is why the
+// question is not a substring test, and the example has to be a URL the parser ACCEPTS for the claim to
+// hold - with an invalid port it is unparseable and takes the withheld path below instead (web-uplift-k7ba).
 
 // -> { value } for a credential-free value to pass, or { withheld: true } when the value carries a
 // credential that could not be removed OR cannot be shown not to, which is the fail-closed answer for a
@@ -154,23 +153,43 @@ function authorityCarriesUserinfo(value) {
 // and it is not distinguishable from one whose credential was left behind (web-uplift-k7ba).
 function sanitizeProxyEnvValue(raw) {
   const text = String(raw);
-  if (!authorityCarriesUserinfo(text) && redactUrlCredentialValues(text) === text) {
+  if (!carriesAuthorityUserinfo(text) && redactUrlCredentialValues(text) === text) {
     return { value: text }; // nothing credential-shaped: pass it through untouched
   }
   let candidate = text;
-  if (authorityCarriesUserinfo(text)) {
+  if (carriesAuthorityUserinfo(text)) {
     let url;
     try {
       url = new URL(text);
     } catch {
-      return { withheld: true }; // userinfo we cannot parse: do not guess at a partial URL
+      // Not absolute. A PROTOCOL-RELATIVE value ('//user:pw@host:8080') is not unclassifiable: its host is
+      // determinable through the same throwaway base the shared rule redacts through, so the ql8a shape (c)
+      // decision applies - keep the proxy and drop the credential. Withholding here would remove the PROXY
+      // and send the child out directly, which is the quiet egress-policy bypass that decision rejected
+      // (web-uplift-2rw1, coordinator). Only a value whose host is NOT determinable is withheld, and
+      // 'user:pw@host:8080' is exactly that: the parser reads 'user:' as a scheme with an opaque path, so
+      // there is no authority to keep and the text cannot be stripped - ql8a pinned that it is withheld.
+      try {
+        const rel = new URL(text, 'http://relative.invalid');
+        if (!rel.host || rel.host === 'relative.invalid') return { withheld: true };
+        rel.username = '';
+        rel.password = '';
+        // Re-emit in the form the caller wrote. NOT href.slice(origin.length): with userinfo present the
+        // origin is not a prefix of href, so that slice silently yields garbage.
+        candidate = `//${rel.host}${rel.pathname}${rel.search}${rel.hash}`;
+        url = null;
+      } catch {
+        return { withheld: true }; // userinfo we cannot parse: do not guess at a partial URL
+      }
     }
-    url.username = '';
-    url.password = '';
-    candidate = url.href;
+    if (url) {
+      url.username = '';
+      url.password = '';
+      candidate = url.href;
+    }
   }
   candidate = redactUrlCredentialValues(candidate); // also covers credential-named query values
-  if (authorityCarriesUserinfo(candidate) || redactUrlCredentialValues(candidate) !== candidate) {
+  if (carriesAuthorityUserinfo(candidate) || redactUrlCredentialValues(candidate) !== candidate) {
     return { withheld: true };
   }
   return { value: candidate };
