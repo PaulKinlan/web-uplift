@@ -27,38 +27,221 @@ function assert(condition, message) {
 }
 
 const REDACTED = /%5Bredacted%5D|\[redacted\]/;
+function assertThrows(fn, message) {
+  let threw = false;
+  try { fn(); } catch { threw = true; }
+  if (!threw) throw new Error(message);
+}
+
 
 // ---------------------------------------------------------------------------------------------
 // A structural scan for a second, locally spelled authority detector (web-uplift-wxax).
 //
 // The check below used to be `!source.includes('[^/?#]')`, which has both faults any literal
-// character-class match has. It saw only the exact spelling the deleted line used, so /[^?#/]/,
-// /[^\s/?#]/ or new RegExp('[^/?#]') walked past it, and a comment that merely quoted the removed class
-// failed the build. This reads the source AS CODE instead: comments are removed, strings are skipped,
-// regex literals are taken from the token stream, and the character classes inside them are examined.
+// character-class match has: it saw only the exact spelling the deleted line used, and it could not tell
+// code from prose. The first version of this scan fixed the spelling blindness in the wrong layer. It read
+// the class LEXICALLY, so /[^\x2f\x3f\x23]/ (the same detector in hex) contributed the literal 'x', '2' and
+// 'f' and was invisible (web-uplift-og7y). It also kept string literals in the code view, so a string that
+// merely named the import and the call satisfied both (web-uplift-85gs).
+//
+// Two rules follow, and they are why this is a token walk rather than a regex over the text:
+//
+//   1. ESCAPES ARE DECODED before a class decides what it contains, in both layers: the regex layer
+//      (\xNN, \uNNNN, \u{...}, \cX, and ranges) and, for a pattern written as a string, the JavaScript
+//      string layer beneath it (\\, \', \n, and that string's own hex and unicode escapes). A construct
+//      that cannot be enumerated confidently FAILS LOUDLY instead of being guessed at, because silently
+//      wrong members are what produced this round.
+//   2. ONLY A STRING USED AS A RegExp ARGUMENT CONTRIBUTES A PATTERN, and no string reaches the code view.
+//      The code view holds identifiers, keywords and punctuation only: every literal, whether string,
+//      template or regex, is blanked to a space. That is what keeps a quoted mention from standing in for
+//      the import and the call.
 //
 // The property it looks for is "this class stops at the authority terminators", which is what the removed
-// detector did. Two spellings of that property count, and the failure names whichever it saw:
+// detector did. Two spellings count, and the failure names whichever it saw:
 //   - a NEGATED class excluding all of '/', '?' and '#' (any order, with or without extra members), which
 //     is the shape the deleted line used;
 //   - a POSITIVE class listing all three, that is, splitting the value at the first terminator.
-// A class excluding only '/' is a path-segment class rather than an authority one and is deliberately left
-// alone, and the negative controls in the test pin the shapes that must stay quiet.
-// Limit of any static scan, recorded rather than hidden: a class assembled at runtime from a variable is
-// invisible to this.
+// A class excluding only '/' is a path-segment class rather than an authority one and stays quiet.
+const CLASS_SHORTHANDS = new Set(['d', 'D', 's', 'S', 'w', 'W']);
+const CLASS_CONTROL_CHARS = new Map([['n', '\n'], ['r', '\r'], ['t', '\t'], ['f', '\f'], ['v', '\v'], ['b', '\b']]);
 const REGEX_ALLOWED_AFTER = new Set([
   '(', '[', '{', ',', ';', ':', '=', '!', '&', '|', '?', '+', '-', '*', '%', '~', '^', '<', '>',
   'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'do', 'else', 'yield', 'await', 'case', 'throw',
 ]);
 
-// One pass. Comments become a single space, so prose can neither satisfy nor trip a check. Strings and
-// template literals are kept, because an import specifier IS a string, and a string handed straight to
-// RegExp is collected as a pattern as well: that is the same detector spelled differently.
+function undecodable(reason) {
+  throw new Error(
+    `the authority scan cannot decode a construct and will not guess at it (web-uplift-og7y): ${reason}. `
+    + 'Fix the scan or rewrite the pattern; do not loosen the check.');
+}
+
+const isHex = (str) => /^[0-9a-fA-F]+$/.test(str);
+
+function codePointFrom(digits, raw, where) {
+  const point = parseInt(digits, 16);
+  if (!Number.isInteger(point) || point > 0x10ffff) undecodable(`the code point ${raw} in ${where}`);
+  return String.fromCodePoint(point);
+}
+
+// One escape sequence inside a REGEX, starting at its backslash. Returns { ch } for a single character or
+// { set: true } for a shorthand, plus how many characters the sequence occupies.
+function decodeRegexEscape(pattern, i, where) {
+  const next = pattern[i + 1];
+  if (next === undefined) undecodable(`a trailing backslash in ${where}`);
+  if (next === 'x') {
+    const digits = pattern.slice(i + 2, i + 4);
+    if (digits.length !== 2 || !isHex(digits)) undecodable(`\\x${digits} in ${where}`);
+    return { ch: codePointFrom(digits, `\\x${digits}`, where), length: 4 };
+  }
+  if (next === 'u') {
+    if (pattern[i + 2] === '{') {
+      const close = pattern.indexOf('}', i + 3);
+      if (close === -1) undecodable(`an unclosed \\u{ in ${where}`);
+      const digits = pattern.slice(i + 3, close);
+      if (digits.length < 1 || digits.length > 6 || !isHex(digits)) undecodable(`\\u{${digits}} in ${where}`);
+      return { ch: codePointFrom(digits, `\\u{${digits}}`, where), length: close - i + 1 };
+    }
+    const digits = pattern.slice(i + 2, i + 6);
+    if (digits.length !== 4 || !isHex(digits)) undecodable(`\\u${digits} in ${where}`);
+    return { ch: codePointFrom(digits, `\\u${digits}`, where), length: 6 };
+  }
+  if (next === 'c') {
+    const letter = pattern[i + 2];
+    if (!letter || !/[A-Za-z]/.test(letter)) undecodable(`\\c without a letter in ${where}`);
+    return { ch: String.fromCharCode(letter.toUpperCase().charCodeAt(0) - 64), length: 3 };
+  }
+  if (CLASS_SHORTHANDS.has(next)) return { set: true, length: 2 };
+  if (next === 'p' || next === 'P') {
+    // A Unicode property names a set this scan cannot enumerate, and some properties DO contain '/', '?'
+    // or '#'. Refusing is the honest answer; treating it as empty is the silent guess this round removed.
+    undecodable(`the Unicode property escape \\${next}{...} in ${where}`);
+  }
+  if (CLASS_CONTROL_CHARS.has(next)) return { ch: CLASS_CONTROL_CHARS.get(next), length: 2 };
+  if (next === '0') {
+    if (/[0-9]/.test(pattern[i + 2] ?? '')) undecodable(`the legacy octal escape \\0${pattern[i + 2]} in ${where}`);
+    return { ch: '\0', length: 2 };
+  }
+  if (/[1-9]/.test(next) || next === 'k') undecodable(`the reference escape \\${next} inside a class in ${where}`);
+  if (/[A-Za-z]/.test(next)) {
+    undecodable(`the unknown escape \\${next} in ${where}: a letter escape means something and this scan does not know what`);
+  }
+  return { ch: next, length: 2 }; // an escaped punctuation character is that character
+}
+
+// The JavaScript string layer beneath a pattern written as a string: '\\x2f' is the regex source \x2f, and
+// '\\\\' is one backslash. Returns the string's VALUE, which is the regex source to analyse next.
+function decodeStringValue(raw, quote, where) {
+  const body = raw.slice(1, -1);
+  if (quote === '`' && /(?<!\\)\$\{/.test(body)) undecodable(`a template literal with an interpolation in ${where}`);
+  let value = '';
+  for (let i = 0; i < body.length; i += 1) {
+    const c = body[i];
+    if (c !== '\\') { value += c; continue; }
+    const next = body[i + 1];
+    if (next === undefined) undecodable(`a trailing backslash in ${where}`);
+    if (next === 'x') {
+      const digits = body.slice(i + 2, i + 4);
+      if (digits.length !== 2 || !isHex(digits)) undecodable(`\\x${digits} in ${where}`);
+      value += codePointFrom(digits, `\\x${digits}`, where);
+      i += 3;
+      continue;
+    }
+    if (next === 'u') {
+      if (body[i + 2] === '{') {
+        const close = body.indexOf('}', i + 3);
+        if (close === -1) undecodable(`an unclosed \\u{ in ${where}`);
+        const digits = body.slice(i + 3, close);
+        if (digits.length < 1 || digits.length > 6 || !isHex(digits)) undecodable(`\\u{${digits}} in ${where}`);
+        value += codePointFrom(digits, `\\u{${digits}}`, where);
+        i = close;
+        continue;
+      }
+      const digits = body.slice(i + 2, i + 6);
+      if (digits.length !== 4 || !isHex(digits)) undecodable(`\\u${digits} in ${where}`);
+      value += codePointFrom(digits, `\\u${digits}`, where);
+      i += 5;
+      continue;
+    }
+    if (next === '\n') { i += 1; continue; } // a line continuation contributes nothing
+    if (next === '\r') { i += body[i + 2] === '\n' ? 2 : 1; continue; }
+    if (next === '0' && !/[0-9]/.test(body[i + 2] ?? '')) { value += '\0'; i += 1; continue; }
+    if (/[1-9]/.test(next)) undecodable(`the legacy octal escape \\${next} in ${where}`);
+    if (CLASS_CONTROL_CHARS.has(next)) { value += CLASS_CONTROL_CHARS.get(next); i += 1; continue; }
+    value += next; // \\, the escaped quote, and every identity escape
+    i += 1;
+  }
+  return value;
+}
+
+// Every character class in a pattern, escapes decoded and ranges expanded, because deciding what a class
+// contains is the whole job: /[^\x2f\x3f\x23]/ excludes what /[^/?#]/ excludes, and /[\x23-\x3f]/ names the
+// same three characters as a range.
+function characterClassesIn(pattern, where) {
+  const classes = [];
+  let i = 0;
+  while (i < pattern.length) {
+    if (pattern[i] === '\\') { i += decodeRegexEscape(pattern, i, where).length; continue; }
+    if (pattern[i] !== '[') { i += 1; continue; }
+    const negated = pattern[i + 1] === '^';
+    let j = i + (negated ? 2 : 1);
+    const atoms = [];
+    if (pattern[j] === ']') {
+      // A leading ']' is a literal member, except in the empty-class form /[^]/ which closes right here.
+      if (j + 1 >= pattern.length) {
+        classes.push({ negated, members: new Set(), raw: pattern.slice(i) });
+        i = pattern.length;
+        continue;
+      }
+      atoms.push({ ch: ']', escaped: false });
+      j += 1;
+    }
+    let closed = false;
+    while (j < pattern.length) {
+      const c = pattern[j];
+      if (c === '\\') {
+        const decoded = decodeRegexEscape(pattern, j, where);
+        atoms.push(decoded.ch === undefined ? { set: true, escaped: true } : { ch: decoded.ch, escaped: true });
+        j += decoded.length;
+        continue;
+      }
+      if (c === ']') { closed = true; break; }
+      atoms.push({ ch: c, escaped: false });
+      j += 1;
+    }
+    if (!closed) undecodable(`an unclosed character class in ${where}`);
+    const members = new Set();
+    for (let k = 0; k < atoms.length; k += 1) {
+      const start = atoms[k];
+      const dash = atoms[k + 1];
+      const end = atoms[k + 2];
+      // A range needs an unescaped '-' between two single characters; an escaped '-' is a literal hyphen.
+      if (start.ch !== undefined && dash && dash.ch === '-' && dash.escaped === false && end && end.ch !== undefined) {
+        const low = start.ch.codePointAt(0);
+        const high = end.ch.codePointAt(0);
+        if (low <= high) for (let point = low; point <= high; point += 1) members.add(String.fromCodePoint(point));
+        k += 2;
+        continue;
+      }
+      if (start.set) continue; // a shorthand names characters but none of them as a literal
+      members.add(start.ch);
+    }
+    classes.push({ negated, members, raw: pattern.slice(i, j + 1) });
+    i = j + 1;
+  }
+  return classes;
+}
+
+// One token walk. Comments become a space so prose can neither satisfy nor trip a check. Every literal is
+// blanked out of the code view. A string handed to RegExp is decoded and collected as a pattern; a string
+// that is an import specifier is recorded against that import; every other string contributes nothing.
 function scanAgentSource(source) {
   const regexPatterns = [];
+  const imports = [];
   let code = '';
   let i = 0;
   let prev = '';
+  let pendingImport = null;
+  let expectSpecifier = false;
   while (i < source.length) {
     const c = source[i];
     if (c === '/' && source[i + 1] === '/') {
@@ -79,9 +262,18 @@ function scanAgentSource(source) {
       while (i < source.length && source[i] !== c) i += source[i] === '\\' ? 2 : 1;
       i += 1;
       const raw = source.slice(start, i);
-      if (/RegExp\s*\(\s*$/.test(code)) regexPatterns.push(raw.slice(1, -1));
-      code += raw;
-      prev = 'x'; // a string is a value, so a following '/' divides
+      const short = raw.length > 60 ? `${raw.slice(0, 57)}...` : raw;
+      const where = `the string ${short}`;
+      if (/(?:^|[^A-Za-z0-9_$.])RegExp\s*\(\s*$/.test(code)) {
+        regexPatterns.push({ pattern: decodeStringValue(raw, c, where), where: `new RegExp(${short})` });
+      } else if (expectSpecifier && pendingImport) {
+        pendingImport.specifier = decodeStringValue(raw, c, where);
+        imports.push(pendingImport);
+        pendingImport = null;
+        expectSpecifier = false;
+      }
+      code += ' ';
+      prev = 'x'; // a literal is a value, so a following '/' divides
       continue;
     }
     if (c === '/' && REGEX_ALLOWED_AFTER.has(prev)) {
@@ -97,10 +289,11 @@ function scanAgentSource(source) {
         j += 1;
       }
       if (source[j] === '/') {
-        regexPatterns.push(source.slice(i + 1, j));
+        const pattern = source.slice(i + 1, j);
         j += 1;
         while (j < source.length && /[a-z]/i.test(source[j])) j += 1;
-        code += source.slice(i, j);
+        regexPatterns.push({ pattern, where: `the regex literal /${pattern}/` });
+        code += ' '; // a regex literal is a value as well, not code
         i = j;
         prev = 'x';
         continue;
@@ -110,52 +303,41 @@ function scanAgentSource(source) {
     if (/[A-Za-z0-9_$]/.test(c)) {
       let j = i;
       while (j < source.length && /[A-Za-z0-9_$]/.test(source[j])) j += 1;
-      prev = source.slice(i, j);
-      code += prev;
+      const word = source.slice(i, j);
+      if (word === 'import') { pendingImport = { names: [], specifier: null }; expectSpecifier = false; }
+      else if (pendingImport && word === 'from') expectSpecifier = true;
+      else if (pendingImport) pendingImport.names.push(word);
+      prev = word;
+      code += word;
       i = j;
       continue;
     }
+    if (c === ';') { pendingImport = null; expectSpecifier = false; }
     prev = c;
     code += c;
     i += 1;
   }
-  return { code, regexPatterns };
-}
-
-// Every character class in a pattern: negated or not, and which characters it names.
-function characterClassesIn(pattern) {
-  const classes = [];
-  let i = 0;
-  while (i < pattern.length) {
-    if (pattern[i] === '\\') { i += 2; continue; }
-    if (pattern[i] !== '[') { i += 1; continue; }
-    const negated = pattern[i + 1] === '^';
-    let j = i + (negated ? 2 : 1);
-    const members = new Set();
-    if (pattern[j] === ']') { members.add(']'); j += 1; } // a leading ']' is a literal member
-    for (; j < pattern.length; j += 1) {
-      if (pattern[j] === '\\') { if (pattern[j + 1]) members.add(pattern[j + 1]); j += 1; continue; }
-      if (pattern[j] === ']') break;
-      members.add(pattern[j]);
-    }
-    classes.push({ negated, members, raw: pattern.slice(i, j + 1) });
-    i = j + 1;
-  }
-  return classes;
+  return { code, regexPatterns, imports };
 }
 
 // The findings as text, so a failure names what it saw rather than only failing.
 function authorityBoundRegexesIn(source) {
   const findings = [];
-  for (const pattern of scanAgentSource(source).regexPatterns) {
-    for (const { negated, members, raw } of characterClassesIn(pattern)) {
+  for (const { pattern, where } of scanAgentSource(source).regexPatterns) {
+    for (const { negated, members, raw } of characterClassesIn(pattern, where)) {
       const named = ['/', '?', '#'].filter((t) => members.has(t));
       if (named.length !== 3) continue;
-      findings.push(`/${pattern}/ ${negated ? 'excludes' : 'lists'} ${named.join('')} in ${raw}`);
+      findings.push(`${where} ${negated ? 'excludes' : 'lists'} ${named.join('')} in ${raw}`);
     }
   }
   return findings;
 }
+
+// Both requirements read the TOKEN WALK, not the text: the import has to be a real import statement and the
+// call has to be real code, and no literal survives in the code view to stand in for either.
+const importsSharedRule = (scan) => scan.imports.some((entry) => entry.names.includes('carriesAuthorityUserinfo')
+  && /(^|\/)credential-terms\.mjs$/.test(entry.specifier || ''));
+const callsSharedRule = (scan) => /\bcarriesAuthorityUserinfo\s*\(/.test(scan.code);
 
 export async function testCredentialRedactorsAgree() {
   const cli = await import('../evidence/cli.mjs');
@@ -188,30 +370,36 @@ export async function testCredentialRedactorsAgree() {
   assert(terms.carriesAuthorityUserinfo('https://x.test:8080/a/b@2x.png') === false,
     'but a PATH @ on a value the parser ACCEPTS is not userinfo');
   const agentsSource = readFileSync(new URL('../runner/agents.mjs', import.meta.url), 'utf8');
-  const { code: agentsCode } = scanAgentSource(agentsSource);
-  // The import and the call are checked against COMMENT-STRIPPED code, so a note describing the shared rule
-  // cannot stand in for asking it. That is the same blindness from the other side: prose is not a call.
-  assert(/import\s*\{[^}]*\bcarriesAuthorityUserinfo\b[^}]*\}\s*from\s*['"][^'"]*credential-terms\.mjs['"]/.test(agentsCode),
+  const agentsScan = scanAgentSource(agentsSource);
+  assert(importsSharedRule(agentsScan),
     'the proxy sanitiser must IMPORT the userinfo question from the shared rule, not answer it locally');
-  assert(/\bcarriesAuthorityUserinfo\s*\(/.test(agentsCode),
+  assert(callsSharedRule(agentsScan),
     'and it must actually CALL that rule: importing it and then deciding locally is still a second detector');
-  // POSITIVE control: a detector spelled differently must fail, however it is written.
+  // POSITIVE control: a detector spelled differently must fail however it is written, INCLUDING when its
+  // class is written with escapes, which is exactly how the first version of this scan was evaded.
   for (const spelling of [
     'const re = /[^/?#]/;',
     'const re = /[^?#/]/;',
     'const re = /[^\\s/?#]+/;',
     "const re = new RegExp('[^/?#]');",
     'const re = /[/?#]/;',
+    'const re = /[^\\x2f\\x3f\\x23]/;', // web-uplift-og7y: the same exclusion in hex
+    'const re = /[^\\u002f\\u003f\\u0023]/;', // and in unicode escapes
+    'const re = /[^\\u{2f}\\u{3f}\\u{23}]/;', // and in the code-point form
+    'const re = /[\\x23-\\x3f]/;', // and as a range spanning the terminators
+    "const re = new RegExp('[^\\\\x2f\\\\x3f\\\\x23]');", // and double-escaped through a string
   ]) {
     assert(authorityBoundRegexesIn(spelling).length === 1,
       `the scan must catch a second authority detector whatever its spelling: ${spelling}`);
   }
-  // NEGATIVE control: classes that are not authority shaped, so the scan is precise rather than loud.
+  // NEGATIVE control: classes that are not authority shaped, so the scan stays precise rather than loud.
   for (const innocent of [
     'const re = /[^/]/;', // a path segment, not an authority
     'const re = /[?#]/;', // two terminators, not the boundary shape
     'const re = /^https?:\\/\\//;',
     'const re = /foo\\/bar/;',
+    'const re = /[\\x00-\\x1f]/;', // a range that does not reach any terminator
+    'const re = /[^\\d\\s]/;', // shorthands name no literal character
   ]) {
     assert(authorityBoundRegexesIn(innocent).length === 0,
       `a class that is not authority shaped must stay quiet: ${innocent}`);
@@ -225,9 +413,32 @@ export async function testCredentialRedactorsAgree() {
     assert(authorityBoundRegexesIn(prose).length === 0,
       `prose that merely mentions the class must not trip the guard: ${prose}`);
   }
-  // The prose control compares AGAINST the real source's own result, so it isolates the thing it is
-  // testing: prose must not ADD findings. Asserting zero here instead would have turned every real
-  // detector into a failure reported under the prose message, which is how it first behaved.
+  // NEGATIVE control for web-uplift-85gs: a string that NAMES the import and the call must satisfy neither,
+  // because a quoted mention is not code. These are the two predicates the guard above uses.
+  const fakeMentions = [
+    'const note = "import { carriesAuthorityUserinfo } from \'../evidence/credential-terms.mjs\'";',
+    'const also = "carriesAuthorityUserinfo(value)";',
+  ].join('\n');
+  const fakeScan = scanAgentSource(fakeMentions);
+  assert(!importsSharedRule(fakeScan),
+    'a string that merely NAMES the import must not satisfy the import requirement (web-uplift-85gs)');
+  assert(!callsSharedRule(fakeScan),
+    'and a string that merely NAMES the call must not satisfy the call requirement either');
+  // and the same predicates are not merely always false: a real import and a real call satisfy both.
+  const realShaped = 'import { carriesAuthorityUserinfo } from "../evidence/credential-terms.mjs";\n'
+    + 'const value = carriesAuthorityUserinfo(input);\n';
+  const realShapedScan = scanAgentSource(realShaped);
+  assert(importsSharedRule(realShapedScan) && callsSharedRule(realShapedScan),
+    'a real import and a real call must satisfy both requirements, or the guard passes for the wrong reason');
+  // A construct that cannot be enumerated fails LOUDLY rather than being counted as empty, which is the
+  // behaviour that lets an authority class through invisibly (web-uplift-og7y).
+  assertThrows(() => authorityBoundRegexesIn('const re = /[^\\p{ASCII}]/;'),
+    'a Unicode property escape names a set the scan cannot enumerate, so it must fail loudly rather than guess');
+  assertThrows(() => authorityBoundRegexesIn('const re = /[^\\x2g]/;'),
+    'a malformed hex escape must fail loudly rather than contribute the wrong members');
+  // The prose control compares AGAINST the real source's own result, so it isolates the thing it is testing:
+  // prose must not ADD findings. Asserting zero here instead would have turned every real detector into a
+  // failure reported under the prose message, which is how it first behaved.
   const realFindings = authorityBoundRegexesIn(agentsSource);
   assert(authorityBoundRegexesIn(`${agentsSource}\n// the removed detector used [^/?#], recorded here\n`).length === realFindings.length,
     'prose that merely mentions the class must not add findings when it sits in the real source');
