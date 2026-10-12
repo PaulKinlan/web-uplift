@@ -18,9 +18,11 @@
 // This file is the fast, browser-free foreground check. Run it directly:
 //   node tests/credential-redaction.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -62,6 +64,18 @@ function assertThrows(fn, message) {
 //     is the shape the deleted line used;
 //   - a POSITIVE class listing all three, that is, splitting the value at the first terminator.
 // A class excluding only '/' is a path-segment class rather than an authority one and stays quiet.
+//
+// WHAT THIS SCAN IS NOT, so a reader meets its limits here rather than discovering them in review: it is a
+// best-effort belt, NOT the authority for this guard, and it is NOT complete. It re-implements part of the
+// JavaScript lexer, and every evasion found in review was one more lexing rule it had not implemented
+// (escape decoding, then value versus code, then backslash parity inside a template). Unmodelled, and not
+// fixable by adding cases: a pattern assembled by concatenation, by a variable, by a helper, or by
+// RegExp.escape; String.raw, where escapes stay literal; flags that change what an escape means; the v
+// flag's class set notation ([a-z&&[^aeiou]], [[a-z]--[aeiou]]); a class assembled by interpolating a
+// template, which now refuses loudly rather than being parsed as text; and any re-derivation that writes no
+// character class at all, such as splitting a value on a literal '#'. The list is open because it is "all of
+// JavaScript". The runtime delegation check further down is the authority; this scan stays because it is
+// cheap and it catches the literal spellings a person would actually write.
 const CLASS_SHORTHANDS = new Set(['d', 'D', 's', 'S', 'w', 'W']);
 const CLASS_CONTROL_CHARS = new Map([['n', '\n'], ['r', '\r'], ['t', '\t'], ['f', '\f'], ['v', '\v'], ['b', '\b']]);
 const REGEX_ALLOWED_AFTER = new Set([
@@ -128,11 +142,24 @@ function decodeRegexEscape(pattern, i, where) {
   return { ch: next, length: 2 }; // an escaped punctuation character is that character
 }
 
+// A '${' opens an interpolation unless its '$' is preceded by an ODD number of backslashes, because each
+// PAIR of backslashes is one escaped backslash: \\${x} interpolates while \${x} does not. A lookbehind for
+// a single backslash got this wrong (web-uplift-pud6), so an assembled detector was read as static text.
+function hasTemplateInterpolation(body) {
+  for (let i = 0; i + 1 < body.length; i += 1) {
+    if (body[i] !== '$' || body[i + 1] !== '{') continue;
+    let backslashes = 0;
+    for (let k = i - 1; k >= 0 && body[k] === '\\'; k -= 1) backslashes += 1;
+    if (backslashes % 2 === 0) return true;
+  }
+  return false;
+}
+
 // The JavaScript string layer beneath a pattern written as a string: '\\x2f' is the regex source \x2f, and
 // '\\\\' is one backslash. Returns the string's VALUE, which is the regex source to analyse next.
 function decodeStringValue(raw, quote, where) {
   const body = raw.slice(1, -1);
-  if (quote === '`' && /(?<!\\)\$\{/.test(body)) undecodable(`a template literal with an interpolation in ${where}`);
+  if (quote === '`' && hasTemplateInterpolation(body)) undecodable(`a template literal with an interpolation in ${where}`);
   let value = '';
   for (let i = 0; i < body.length; i += 1) {
     const c = body[i];
@@ -339,6 +366,88 @@ const importsSharedRule = (scan) => scan.imports.some((entry) => entry.names.inc
   && /(^|\/)credential-terms\.mjs$/.test(entry.specifier || ''));
 const callsSharedRule = (scan) => /\bcarriesAuthorityUserinfo\s*\(/.test(scan.code);
 
+// ---------------------------------------------------------------------------------------------
+// THE RUNTIME DELEGATION CHECK. This is the AUTHORITY for this guard (web-uplift-pud6 and the shape
+// question it raised); the source scan above is the belt.
+//
+// The property this guard exists for is a RUNTIME property: that the proxy sanitiser ASKS the shared rule
+// instead of answering the question itself. Reading source can only ever approximate that, and three rounds
+// of review proved the approximation leaky. So this observes it instead. The shared module is loaded behind
+// a counting wrapper, the runner's real sanitiser is driven over shapes where the shared rule and a locally
+// re-derived narrower detector DISAGREE, and two things are asserted: that the shared predicate was
+// INVOKED, and that its answer, not a re-derivation, decided the OUTCOME. Spelling cannot evade this,
+// because it watches behaviour rather than syntax, and neither can a re-implementation, because a runner
+// that answers locally does not call the shared rule at all.
+//
+// HOW. A module load hook serves a wrapper in place of evidence/credential-terms.mjs. The wrapper
+// re-exports everything from the real file (an explicit export takes precedence over the star export) and
+// wraps carriesAuthorityUserinfo so each call is recorded. That runs in a child process, because a hook has
+// to be in place before the first load of the shared module and this suite shares a process with others.
+const DELEGATION_SHAPES = [
+  ['a proxy with no credential', 'http://proxy.invalid:8080'],
+  ['parsed userinfo', 'http://user:pw@proxy.invalid:8080'],
+  ['userinfo truncated by #', 'http://user:pw#x@proxy.invalid:8080'],
+  ['userinfo truncated by ?', 'http://user:pw?x@proxy.invalid:8080'],
+  ['a protocol-relative reference', '//user:pw@proxy.invalid:8080'],
+  ['an @ in the PATH of a parseable URL', 'https://x.test:8080/a/b@2x.png'],
+];
+
+function runDelegationProbe() {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const sharedUrl = pathToFileURL(resolve(root, 'evidence/credential-terms.mjs')).href;
+  const runnerUrl = pathToFileURL(resolve(root, 'runner/agents.mjs')).href;
+  const dir = mkdtempSync(join(tmpdir(), 'web-uplift-delegation-'));
+  try {
+    writeFileSync(join(dir, 'wrapper.mjs'), [
+      `export * from ${JSON.stringify(`${sharedUrl}?probe=1`)};`,
+      `import { carriesAuthorityUserinfo as real } from ${JSON.stringify(`${sharedUrl}?probe=1`)};`,
+      'export const __sharedCalls = [];',
+      'export function carriesAuthorityUserinfo(input) { __sharedCalls.push(input); return real(input); }',
+      '',
+    ].join('\n'));
+    writeFileSync(join(dir, 'bootstrap.mjs'), [
+      "import { registerHooks } from 'node:module';",
+      "import { readFileSync } from 'node:fs';",
+      `const REAL = ${JSON.stringify(sharedUrl)};`,
+      `const WRAPPER = readFileSync(${JSON.stringify(join(dir, 'wrapper.mjs'))}, 'utf8');`,
+      'registerHooks({',
+      '  load(url, context, nextLoad) {',
+      '    if (url === REAL) return { format: \'module\', source: WRAPPER, shortCircuit: true };',
+      '    return nextLoad(url, context);',
+      '  },',
+      '});',
+      '',
+    ].join('\n'));
+    writeFileSync(join(dir, 'driver.mjs'), [
+      `const shared = await import(${JSON.stringify(sharedUrl)});`,
+      // The real answers come from an UNINSTRUMENTED instance, or the probe's own questions would fill the
+      // call log and make the delegation assertion vacuous (it did, until this line existed).
+      `const expected = await import(${JSON.stringify(`${sharedUrl}?uninstrumented=1`)});`,
+      `const runner = await import(${JSON.stringify(runnerUrl)});`,
+      `const shapes = ${JSON.stringify(DELEGATION_SHAPES)};`,
+      'const outcomes = {};',
+      'shared.__sharedCalls.length = 0;',
+      'for (const [name, value] of shapes) {',
+      "  const built = runner.buildAgentEnv({ env: { HOME: '/tmp/home', HTTPS_PROXY: value }, warn: () => {} });",
+      '  outcomes[name] = { sharedSays: expected.carriesAuthorityUserinfo(value), passed: built.HTTPS_PROXY ?? null };',
+      '}',
+      'process.stdout.write(JSON.stringify({ calls: shared.__sharedCalls, outcomes }));',
+      '',
+    ].join('\n'));
+    const run = spawnSync(process.execPath,
+      ['--import', pathToFileURL(join(dir, 'bootstrap.mjs')).href, join(dir, 'driver.mjs')],
+      { encoding: 'utf8', timeout: 60000 });
+    if (run.status !== 0) {
+      throw new Error(
+        `the runtime delegation probe did not run (status ${run.status}, ${run.error ? run.error.code : 'no error'}). `
+        + `This IS the guard, so it fails loudly rather than passing silently. stderr: ${(run.stderr || '').slice(0, 500)}`);
+    }
+    return JSON.parse(run.stdout);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export async function testCredentialRedactorsAgree() {
   const cli = await import('../evidence/cli.mjs');
   const flow = await import('../runner/flow-record.mjs');
@@ -445,6 +554,41 @@ export async function testCredentialRedactorsAgree() {
   // The guard itself: no authority-shaped class, in any spelling, in the file as it stands.
   assert(realFindings.length === 0,
     `the sanitiser must not keep its own /?#-bounded authority detector, in any spelling: ${realFindings.join('; ')}`);
+
+  // THE RUNTIME DELEGATION CHECK, the authority for this guard. It observes behaviour, so no spelling can
+  // evade it, and a runner that answers the question locally is caught because it never asks.
+  const probe = runDelegationProbe();
+  const probeBlob = JSON.stringify(probe);
+  for (const [name, value] of DELEGATION_SHAPES) {
+    const outcome = probe.outcomes[name];
+    assert(outcome, `the probe must report an outcome for ${name}: ${probeBlob}`);
+    assert(probe.calls.includes(value),
+      `the runner must ASK the shared rule about ${name}, and the probe recorded no call with that value: ${probeBlob}`);
+    if (outcome.sharedSays) {
+      assert(outcome.passed === null || !outcome.passed.includes('@'),
+        `${name} carries userinfo per the shared rule, so it must not reach the child intact: ${probeBlob}`);
+    } else {
+      assert(outcome.passed === value,
+        `${name} is not userinfo per the shared rule, so it must pass through byte-identical: ${probeBlob}`);
+    }
+  }
+  // The two shapes a locally re-derived narrower detector (the 2rw1 defect) got WRONG, asserted by name so
+  // the failure says which regression came back rather than only that something did.
+  for (const name of ['userinfo truncated by #', 'userinfo truncated by ?']) {
+    const outcome = probe.outcomes[name];
+    assert(outcome.sharedSays === true,
+      `${name} must read as userinfo to the shared rule, or this guard is testing the wrong shapes: ${probeBlob}`);
+    assert(outcome.passed === null,
+      `${name} is userinfo the parser cannot strip, so it must be WITHHELD; the 2rw1 detector ended the authority `
+      + `at the first /?#, read it as credential-free, and would have passed the value through: ${probeBlob}`);
+  }
+
+  // CONTROL for the scanner's own pitfall (web-uplift-pud6): a template whose interpolation supplies the
+  // terminators is a RUNTIME pattern, so it must refuse loudly rather than be parsed as static text.
+  assertThrows(() => authorityBoundRegexesIn('const c = "\\x2f\\x3f\\x23"; const re = new RegExp(`[^\\\\${c}]`);'),
+    'an interpolated template pattern must fail loudly, even when the interpolation is preceded by an escaped backslash');
+  assertThrows(() => authorityBoundRegexesIn('const re = new RegExp(`[^${din}]`);'),
+    'an interpolated template pattern must fail loudly');
 
   // 1. Every credential-shaped parameter the two review findings named must be
   // redacted by BOTH redactors, and neither may leave the value behind.
