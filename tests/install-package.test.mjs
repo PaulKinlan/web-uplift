@@ -569,6 +569,12 @@ export const installPackageTests = [
   testInstallRefusesDestinationSymlinks,
   testInstallNormalDestinationWrites,
   testMcpSkillsServerStdio,
+  // DECLARED LATER IN THIS FILE and registered here too (web-uplift-o4ec). These two used to live
+  // only in tests/regression.mjs's ALL_TESTS, so `node --test tests/*.test.mjs` - the alternative
+  // gate AGENTS.md documents - ran 142 of 147 cases and was green while omitting both. Both are
+  // integrity guards, and a suite that cannot run as a suite is not a suite.
+  testCdpCopySyncRefusesToOverwriteTrackedEdits,
+  testGenerateVendoredSurfaceLeavesTrackedEditsAlone,
 ];
 
 export {
