@@ -1431,6 +1431,68 @@ export async function testCompareArtifactContainment() {
 }
 
 
+// web-uplift-o4ec. The gate has two ways to run the same cases: `npm test` runs each
+// tests/*.test.mjs in its own node:test process, and tests/regression.mjs is the hand-written
+// registry that flattens them into one process, which the fast gate's `--only <filter>` targets
+// still use. Two paths over one body of tests can silently disagree, and they did: five cases lived
+// only in the registry, so every per-file path ran 142 of 147 and reported success (web-uplift-o4ec
+// INC 1). This makes the agreement a checked invariant instead of a hope.
+//
+// It asserts by SPAWNING both paths with --list rather than importing ALL_TESTS. Importing
+// regression.mjs from a suite that regression.mjs already imports is a cycle, and parsing the
+// registry's source instead would agree with a registry that had drifted, which is the same
+// self-agreement defect as a guard keeping its own copy of the rule it is meant to check.
+export function testSuiteListsMatchRegressionRegistry() {
+  // Only test-shaped names count. A suite that printed something during import must not be able to
+  // add phantom names to the comparison, and each path names its cases in exactly this shape.
+  const listOf = (args) => {
+    const res = spawnSync(process.execPath, args, { cwd: repoRoot, encoding: 'utf8', timeout: 120000 });
+    assert(res.status === 0, `${args.join(' ')} --list must exit 0:\n${res.stdout}\n${res.stderr}`);
+    return res.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^test[A-Za-z0-9_]+$/.test(line));
+  };
+
+  const suiteFiles = readdirSync(join(repoRoot, 'tests'))
+    .filter((name) => name.endsWith('.test.mjs'))
+    .sort();
+
+  const byName = new Map();
+  for (const file of suiteFiles) {
+    const names = listOf([join(repoRoot, 'tests', file), '--list']);
+    // A suite that registers nothing would satisfy every check below while running nothing at all,
+    // which is the clean-versus-blind shape this project keeps having to correct.
+    assert(names.length > 0, `tests/${file} lists no tests at all, so it cannot be shown to run anything`);
+    for (const name of names) {
+      assert(
+        !byName.has(name),
+        `"${name}" is listed twice (${byName.get(name)} and tests/${file}), so a per-file gate would run it twice`,
+      );
+      byName.set(name, `tests/${file}`);
+    }
+  }
+
+  const registry = listOf([join(repoRoot, 'tests', 'regression.mjs'), '--list']);
+  const registrySet = new Set(registry);
+
+  const onlyInRegistry = [...registrySet].filter((name) => !byName.has(name));
+  const onlyInFiles = [...byName.keys()].filter((name) => !registrySet.has(name));
+
+  assert(
+    onlyInRegistry.length === 0,
+    `the registry lists ${onlyInRegistry.length} case(s) that no suite file runs, so no per-file gate can ever run them: ${onlyInRegistry.join(', ')}. Register each one in its suite (web-uplift-o4ec).`,
+  );
+  assert(
+    onlyInFiles.length === 0,
+    `${onlyInFiles.length} case(s) run in a suite file but are absent from the registry, so a --only filter can never select them: ${onlyInFiles.join(', ')}`,
+  );
+
+  console.log(
+    `gate parity OK: ${registry.length} case(s) agree between ${suiteFiles.length} suite file(s) and tests/regression.mjs`,
+  );
+}
+
 export const syntaxCoreTests = [
   testSyntaxChecks,
   testPackageRootImportIsSideEffectFree,
@@ -1456,6 +1518,7 @@ export const syntaxCoreTests = [
   testScorecardArtifactContainment,
   testCompareArtifactContainment,
   testCensusTargetsAreTracked,
+  testSuiteListsMatchRegressionRegistry,
 ];
 
 export {
