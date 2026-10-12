@@ -390,6 +390,14 @@ const DELEGATION_SHAPES = [
   ['userinfo truncated by ?', 'http://user:pw?x@proxy.invalid:8080'],
   ['a protocol-relative reference', '//user:pw@proxy.invalid:8080'],
   ['an @ in the PATH of a parseable URL', 'https://x.test:8080/a/b@2x.png'],
+  // The class ck2s named: the first terminator comes BEFORE the '@', and the redactor leaves the value
+  // alone, so a narrow detector's error survives to the output instead of being repaired downstream.
+  ['an @ in the path of an UNPARSEABLE proxy', 'proxy.invalid:8080/a/b@2x.png'],
+  ['an @ after a slash, another host and port', 'cache.invalid:3128/p@th'],
+  // Measured NOT to discriminate, kept so nobody re-adds it believing it does (I did, and the precondition
+  // assertion below caught me): this value has no terminator at all, so a narrow detector takes the WHOLE
+  // value as the authority, finds the '@', and gets this shape right.
+  ['a malformed proxy the narrow rule also gets right', 'proxy.invalid:8080@attacker.invalid'],
 ];
 
 function runDelegationProbe() {
@@ -429,7 +437,8 @@ function runDelegationProbe() {
       'shared.__sharedCalls.length = 0;',
       'for (const [name, value] of shapes) {',
       "  const built = runner.buildAgentEnv({ env: { HOME: '/tmp/home', HTTPS_PROXY: value }, warn: () => {} });",
-      '  outcomes[name] = { sharedSays: expected.carriesAuthorityUserinfo(value), passed: built.HTTPS_PROXY ?? null };',
+      '  outcomes[name] = { sharedSays: expected.carriesAuthorityUserinfo(value), '
+      + 'passed: built.HTTPS_PROXY ?? null, redactorLeavesIt: expected.redactUrlCredentialValues(value) === value };',
       '}',
       'process.stdout.write(JSON.stringify({ calls: shared.__sharedCalls, outcomes }));',
       '',
@@ -581,6 +590,33 @@ export async function testCredentialRedactorsAgree() {
     assert(outcome.passed === null,
       `${name} is userinfo the parser cannot strip, so it must be WITHHELD; the 2rw1 detector ended the authority `
       + `at the first /?#, read it as credential-free, and would have passed the value through: ${probeBlob}`);
+  }
+
+  // THE CLASS ASSERTION (web-uplift-ck2s). An outcome assertion only discriminates where a wrong
+  // implementation's error SURVIVES to the observed output, so the shapes that matter are the ones where the
+  // first terminator comes BEFORE the '@' AND the redactor leaves the value byte-identical: nothing
+  // downstream repairs the narrow answer, so the shared rule withholds while a detector that ended the
+  // authority at the first /?# reads no userinfo and lets the value through intact. The preconditions are
+  // asserted with the outcome, so if a future change makes the redactor touch these values, this fails
+  // saying the class no longer tests anything rather than quietly passing.
+  for (const name of ['an @ in the path of an UNPARSEABLE proxy', 'an @ after a slash, another host and port']) {
+    const value = DELEGATION_SHAPES.find(([n]) => n === name)[1];
+    const outcome = probe.outcomes[name];
+    const terminator = Math.min(...['/', '?', '#'].map((ch) => {
+      const at = value.indexOf(ch);
+      return at === -1 ? value.length : at;
+    }));
+    assert(terminator < value.indexOf('@'),
+      `${name} must keep its @ AFTER the first /?#, or it has left the class this assertion exists for: ${probeBlob}`);
+    assert(outcome.redactorLeavesIt === true,
+      `${name} must stay byte-identical through redactUrlCredentialValues; if the redactor now repairs it, a narrow `
+      + `detector is hidden again by the follow-up check and this shape stops discriminating (ck2s): ${probeBlob}`);
+    assert(outcome.sharedSays === true,
+      `${name} must read as userinfo to the shared rule, through its run rule for an unparseable value: ${probeBlob}`);
+    assert(outcome.passed === null,
+      `${name} must be WITHHELD. A detector that ended the authority at the first /?# (web-uplift-2rw1) reads the `
+      + `authority, finds no @, and lets the value reach the child intact, and THAT difference, not any other, is `
+      + `what makes this a check rather than a decoration: ${probeBlob}`);
   }
 
   // CONTROL for the scanner's own pitfall (web-uplift-pud6): a template whose interpolation supplies the
