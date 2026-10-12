@@ -96,12 +96,20 @@ minutes on the project VM. It runs once per landing on the merger's merged union
 **Why concurrency 3, and whether raising it is safe** (measured 2026-10-12, web-uplift-tb6p;
 replacing these numbers with adjectives is how this becomes a guess again):
 
-- concurrency 2: 173-224s across four interleaved runs. concurrency 3: 98.5s and 98.8s.
-  That is the ~2x, and it is nearly all of the available win.
-- concurrency 4: 94.2s, so about 4s better than 3, and that is the point at which memory is
-  the risk rather than the reward. Peak memory was measured at about 2.2GB in use with 3-4
-  concurrent browser suites (MemAvailable never fell below 14,159,152 kB of 16,369,444 kB), so
-  a 2GB host is already too small at 3. Do not raise this to 4 for 4 seconds.
+- Paired runs in one tree, load recorded on every run (web-uplift-tb6p), each 148/148:
+    concurrency 2: 141.6s at load 2.4-3.8, then 127.9s at load 5.2-6.7
+    concurrency 3:  91.7s at load 3.8-5.2, then 104.8s at load 6.7-8.3
+  So concurrency 3 is consistently faster, about 1.2x to 1.5x, mean 134.8s to 98.3s (~1.4x). Do not
+  expect more from a further bump: the gate is bounded by total work over the number of slots, so the
+  ceiling here is 1.5x.
+- Compare concurrency settings with PAIRED runs, never against a single run from earlier in the day.
+  Background load on this shared VM moves the wall time by more than the setting does: one unpaired
+  concurrency 3 run through `npm test` took 226s at load 3-6, longer than every paired run at either
+  setting.
+- concurrency 4: 94.2s in an unpaired run, inside the noise of concurrency 3, and that is the point
+  at which memory is the risk rather than the reward. Peak memory measured about 2.2GB in use with
+  3-4 concurrent browser suites (MemAvailable never fell below 14,159,152 kB of 16,369,444 kB), so a
+  2GB host is already too small at 3. Do not raise this to 4 for a few seconds of noise.
 - Raising concurrency was BLOCKED until web-uplift-tb6p: `testCredentialRedactorsAgree`
   asserted a wall-clock ratio between a cache-resident 160 kB measurement and a non-resident
   640 kB one, so it failed at concurrency 3 and 4 on both the split and the unsplit layouts.
