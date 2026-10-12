@@ -153,6 +153,24 @@ function testSubsystemMappings() {
     );
   }
   
+  // 16. A changed census module must select the guard that READS it (web-uplift-iwof). Measured before this
+  // entry existed: changing tests/census-targets.mjs selected four targets - CDP copy sync byte check,
+  // Changelog and version agreement, Regression: Syntax checks and Regression: Package root import - and
+  // NONE of them was the census guard, so a green fast gate could report success without ever running the
+  // check that file feeds. That is the clean-versus-blind shape: the gate looks the same either way.
+  // Both assertions below are stated so they FAIL before the fix, and deliberately name the subsystem and the
+  // guard's own filter rather than a target count, because a count-based check would also have passed against
+  // the four baseline targets.
+  const censusPlan = mapFilesToTests(['tests/census-targets.mjs']);
+  assert(censusPlan.matchedSubsystems.includes('census-targets'),
+    'tests/census-targets.mjs must map to the census-targets subsystem, not only to the default targets');
+  assert(censusPlan.targets.some((t) => t.type === 'regression' && t.filter === 'CensusTargetsAreTracked'),
+    'and it must select the guard that reads the census, named by its own filter: a green gate that never ran that guard looks like a green gate that did');
+  // Negative direction: the entry names ONE file, so an unrelated changed file must not pull the census
+  // guard into its plan. Without this the entry could silently become a directory- or prefix-wide match.
+  const unrelatedPlan = mapFilesToTests(['evidence/cdp.mjs']);
+  assert(!unrelatedPlan.matchedSubsystems.includes('census-targets'),
+    'an unrelated changed file must NOT select the census subsystem: the entry names one file, not tests/');
   console.log('✔ Subsystem mapping rules passed');
 }
 

@@ -241,6 +241,18 @@ export const SUBSYSTEMS = [
     ],
   },
   {
+    id: 'census-targets',
+    description: 'The baseline census module and the guard that keeps its targets tracked',
+    // Name the FILE, not a directory: a prefix match would pull the census guard into unrelated changes
+    // under tests/, and tests/test-fast.mjs pins that with a negative control. Before this entry existed,
+    // changing this file selected only the BASELINE targets and never the guard that reads it, so a green
+    // fast gate could report success without ever running the check the file exists to feed.
+    match: (f) => f === 'tests/census-targets.mjs',
+    targets: [
+      { type: 'regression', filter: 'CensusTargetsAreTracked', label: 'Regression: Baseline census targets are tracked' },
+    ],
+  },
+  {
     id: 'beads-export',
     description: 'Tracked passive beads export, its generator, and the guard that keeps provider tokens out of it',
     // Name the FILES, not the .beads/ directory: a prefix match here would put the export guard into every
