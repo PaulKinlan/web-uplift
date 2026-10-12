@@ -180,6 +180,7 @@ import {
   testScorecardScoringAndRender,
   testScorecardArtifactContainment,
   testCompareArtifactContainment,
+  testSuiteListsMatchRegressionRegistry,
 } from "./syntax-core.test.mjs";
 
 
@@ -331,6 +332,7 @@ export const ALL_TESTS = [
   testScorecardScoringAndRender,
   testScorecardArtifactContainment,
   testCompareArtifactContainment,
+  testSuiteListsMatchRegressionRegistry,
 ];
 
 await runSuite(ALL_TESTS, import.meta.url, { timeoutMs: 120000, concurrency: 1 });

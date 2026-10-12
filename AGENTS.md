@@ -72,7 +72,7 @@ The only host requirements: Node, `google-chrome-stable` (override `CHROME_BIN`)
   `node install-surface.mjs`), while `.web-uplift/` is gitignored to prevent
   duplicate merge conflicts (web-uplift-diaq). Run `npm run sync:vendored` (or
   `node tests/cdp-copy-sync.mjs --sync`) to resync copies. The test gate
-  (`tests/regression.mjs`) enforces byte identity via `testCdpCopySyncGuard`.
+  (`npm test`) enforces byte identity via `testCdpCopySyncGuard`.
 
 ## Codex specifics
 
@@ -88,17 +88,19 @@ at the skill). opencode also reads this `AGENTS.md` for project context.
 
 ## Testing & fast gates (fleet-check --fast)
 
-The full test suite (`npm test`, running `node tests/regression.mjs`) exercises
-all test functions across 7 modular test suites (`tests/*.test.mjs`),
-taking 4 to 18 minutes. It runs once per landing on the merger's merged union.
+The full test suite is `npm test`, which runs `npm run sync:vendored` and then
+`node --test --test-concurrency=2 tests/*.test.mjs`: the 7 modular suites
+(`tests/*.test.mjs`) each run in their own `node:test` process, taking about 2 to 3
+minutes on the project VM. It runs once per landing on the merger's merged union.
 
 For iteration and implementer fast gates, several selective mechanisms are provided:
 
 1. **Native node:test runner:** All 7 suites use native `node:test` and `node:assert/strict`.
    Run `node --test tests/evidence.test.mjs` or filter natively by pattern via
-   `node --test --test-name-pattern="<regex>" tests/evidence.test.mjs`. Multi-suite sequential
-   execution is enforced via `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`)
-   to prevent port collisions and RAM starvation on 2-vCPU VMs.
+   `node --test --test-name-pattern="<regex>" tests/evidence.test.mjs`. Multi-suite
+   execution is bounded by `--test-concurrency`: `npm test` runs the 7 files at concurrency 2,
+   while `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`) pins it to 1
+   as the serial escape hatch for a host too small for two concurrent browser suites.
 2. **Direct suite execution:** Each `tests/*.test.mjs` suite can be run directly
    (e.g. `node tests/evidence.test.mjs`, `node tests/redaction.test.mjs`), with
    support for `--only <filter>`, `--filter`, `--grep`, and `--list`.
@@ -164,7 +166,7 @@ for breaking skill/schema changes):
 1. Edit `package.json` to the new version (`npm run prepare` regenerates `.web-uplift/manifest.json`).
 2. Regenerate installed skill copies so the repo is self-consistent:
    `node bin/web-uplift.mjs install --agent all`.
-3. `npm test` (regression suite) and spot-check the frontmatter parser above.
+3. `npm test` (the 7 suites) and spot-check the frontmatter parser above.
 4. `git commit -m "chore: release v<VERSION>"`.
 5. `npm publish` (publishes `bin/`, `evidence/`, `runner/`, `fixer/`,
    `aggregate/`, `index.mjs`, `mcp/`, `knowledge/`, `schema/`, `tests/`, and the
