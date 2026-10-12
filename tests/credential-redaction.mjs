@@ -28,6 +28,135 @@ function assert(condition, message) {
 
 const REDACTED = /%5Bredacted%5D|\[redacted\]/;
 
+// ---------------------------------------------------------------------------------------------
+// A structural scan for a second, locally spelled authority detector (web-uplift-wxax).
+//
+// The check below used to be `!source.includes('[^/?#]')`, which has both faults any literal
+// character-class match has. It saw only the exact spelling the deleted line used, so /[^?#/]/,
+// /[^\s/?#]/ or new RegExp('[^/?#]') walked past it, and a comment that merely quoted the removed class
+// failed the build. This reads the source AS CODE instead: comments are removed, strings are skipped,
+// regex literals are taken from the token stream, and the character classes inside them are examined.
+//
+// The property it looks for is "this class stops at the authority terminators", which is what the removed
+// detector did. Two spellings of that property count, and the failure names whichever it saw:
+//   - a NEGATED class excluding all of '/', '?' and '#' (any order, with or without extra members), which
+//     is the shape the deleted line used;
+//   - a POSITIVE class listing all three, that is, splitting the value at the first terminator.
+// A class excluding only '/' is a path-segment class rather than an authority one and is deliberately left
+// alone, and the negative controls in the test pin the shapes that must stay quiet.
+// Limit of any static scan, recorded rather than hidden: a class assembled at runtime from a variable is
+// invisible to this.
+const REGEX_ALLOWED_AFTER = new Set([
+  '(', '[', '{', ',', ';', ':', '=', '!', '&', '|', '?', '+', '-', '*', '%', '~', '^', '<', '>',
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'do', 'else', 'yield', 'await', 'case', 'throw',
+]);
+
+// One pass. Comments become a single space, so prose can neither satisfy nor trip a check. Strings and
+// template literals are kept, because an import specifier IS a string, and a string handed straight to
+// RegExp is collected as a pattern as well: that is the same detector spelled differently.
+function scanAgentSource(source) {
+  const regexPatterns = [];
+  let code = '';
+  let i = 0;
+  let prev = '';
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1;
+      code += ' ';
+      continue;
+    }
+    if (c === '/' && source[i + 1] === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
+      i += 2;
+      code += ' ';
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const start = i;
+      i += 1;
+      while (i < source.length && source[i] !== c) i += source[i] === '\\' ? 2 : 1;
+      i += 1;
+      const raw = source.slice(start, i);
+      if (/RegExp\s*\(\s*$/.test(code)) regexPatterns.push(raw.slice(1, -1));
+      code += raw;
+      prev = 'x'; // a string is a value, so a following '/' divides
+      continue;
+    }
+    if (c === '/' && REGEX_ALLOWED_AFTER.has(prev)) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < source.length) {
+        const ch = source[j];
+        if (ch === '\\') { j += 2; continue; }
+        if (ch === '[') inClass = true;
+        else if (ch === ']') inClass = false;
+        else if (ch === '/' && !inClass) break;
+        else if (ch === '\n') break;
+        j += 1;
+      }
+      if (source[j] === '/') {
+        regexPatterns.push(source.slice(i + 1, j));
+        j += 1;
+        while (j < source.length && /[a-z]/i.test(source[j])) j += 1;
+        code += source.slice(i, j);
+        i = j;
+        prev = 'x';
+        continue;
+      }
+    }
+    if (/\s/.test(c)) { code += c; i += 1; continue; }
+    if (/[A-Za-z0-9_$]/.test(c)) {
+      let j = i;
+      while (j < source.length && /[A-Za-z0-9_$]/.test(source[j])) j += 1;
+      prev = source.slice(i, j);
+      code += prev;
+      i = j;
+      continue;
+    }
+    prev = c;
+    code += c;
+    i += 1;
+  }
+  return { code, regexPatterns };
+}
+
+// Every character class in a pattern: negated or not, and which characters it names.
+function characterClassesIn(pattern) {
+  const classes = [];
+  let i = 0;
+  while (i < pattern.length) {
+    if (pattern[i] === '\\') { i += 2; continue; }
+    if (pattern[i] !== '[') { i += 1; continue; }
+    const negated = pattern[i + 1] === '^';
+    let j = i + (negated ? 2 : 1);
+    const members = new Set();
+    if (pattern[j] === ']') { members.add(']'); j += 1; } // a leading ']' is a literal member
+    for (; j < pattern.length; j += 1) {
+      if (pattern[j] === '\\') { if (pattern[j + 1]) members.add(pattern[j + 1]); j += 1; continue; }
+      if (pattern[j] === ']') break;
+      members.add(pattern[j]);
+    }
+    classes.push({ negated, members, raw: pattern.slice(i, j + 1) });
+    i = j + 1;
+  }
+  return classes;
+}
+
+// The findings as text, so a failure names what it saw rather than only failing.
+function authorityBoundRegexesIn(source) {
+  const findings = [];
+  for (const pattern of scanAgentSource(source).regexPatterns) {
+    for (const { negated, members, raw } of characterClassesIn(pattern)) {
+      const named = ['/', '?', '#'].filter((t) => members.has(t));
+      if (named.length !== 3) continue;
+      findings.push(`/${pattern}/ ${negated ? 'excludes' : 'lists'} ${named.join('')} in ${raw}`);
+    }
+  }
+  return findings;
+}
+
 export async function testCredentialRedactorsAgree() {
   const cli = await import('../evidence/cli.mjs');
   const flow = await import('../runner/flow-record.mjs');
@@ -59,10 +188,52 @@ export async function testCredentialRedactorsAgree() {
   assert(terms.carriesAuthorityUserinfo('https://x.test:8080/a/b@2x.png') === false,
     'but a PATH @ on a value the parser ACCEPTS is not userinfo');
   const agentsSource = readFileSync(new URL('../runner/agents.mjs', import.meta.url), 'utf8');
-  assert(agentsSource.includes('carriesAuthorityUserinfo'),
-    'the proxy sanitiser must ASK this module the userinfo question, not answer it locally');
-  assert(!agentsSource.includes('[^/?#]'),
-    'and it must not keep its own /?#-bounded authority regex: that is the second detector web-uplift-2rw1 removed');
+  const { code: agentsCode } = scanAgentSource(agentsSource);
+  // The import and the call are checked against COMMENT-STRIPPED code, so a note describing the shared rule
+  // cannot stand in for asking it. That is the same blindness from the other side: prose is not a call.
+  assert(/import\s*\{[^}]*\bcarriesAuthorityUserinfo\b[^}]*\}\s*from\s*['"][^'"]*credential-terms\.mjs['"]/.test(agentsCode),
+    'the proxy sanitiser must IMPORT the userinfo question from the shared rule, not answer it locally');
+  assert(/\bcarriesAuthorityUserinfo\s*\(/.test(agentsCode),
+    'and it must actually CALL that rule: importing it and then deciding locally is still a second detector');
+  // POSITIVE control: a detector spelled differently must fail, however it is written.
+  for (const spelling of [
+    'const re = /[^/?#]/;',
+    'const re = /[^?#/]/;',
+    'const re = /[^\\s/?#]+/;',
+    "const re = new RegExp('[^/?#]');",
+    'const re = /[/?#]/;',
+  ]) {
+    assert(authorityBoundRegexesIn(spelling).length === 1,
+      `the scan must catch a second authority detector whatever its spelling: ${spelling}`);
+  }
+  // NEGATIVE control: classes that are not authority shaped, so the scan is precise rather than loud.
+  for (const innocent of [
+    'const re = /[^/]/;', // a path segment, not an authority
+    'const re = /[?#]/;', // two terminators, not the boundary shape
+    'const re = /^https?:\\/\\//;',
+    'const re = /foo\\/bar/;',
+  ]) {
+    assert(authorityBoundRegexesIn(innocent).length === 0,
+      `a class that is not authority shaped must stay quiet: ${innocent}`);
+  }
+  // NEGATIVE control: prose that mentions the class must not trip it, which is the fault this fixes.
+  for (const prose of [
+    '// the deleted detector ended the authority at [^/?#], do not bring it back',
+    '/* [^/?#] was removed in web-uplift-2rw1 */',
+    'const note = "[^/?#]";',
+  ]) {
+    assert(authorityBoundRegexesIn(prose).length === 0,
+      `prose that merely mentions the class must not trip the guard: ${prose}`);
+  }
+  // The prose control compares AGAINST the real source's own result, so it isolates the thing it is
+  // testing: prose must not ADD findings. Asserting zero here instead would have turned every real
+  // detector into a failure reported under the prose message, which is how it first behaved.
+  const realFindings = authorityBoundRegexesIn(agentsSource);
+  assert(authorityBoundRegexesIn(`${agentsSource}\n// the removed detector used [^/?#], recorded here\n`).length === realFindings.length,
+    'prose that merely mentions the class must not add findings when it sits in the real source');
+  // The guard itself: no authority-shaped class, in any spelling, in the file as it stands.
+  assert(realFindings.length === 0,
+    `the sanitiser must not keep its own /?#-bounded authority detector, in any spelling: ${realFindings.join('; ')}`);
 
   // 1. Every credential-shaped parameter the two review findings named must be
   // redacted by BOTH redactors, and neither may leave the value behind.
