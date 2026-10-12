@@ -420,36 +420,32 @@ export async function testCredentialRedactorsAgree() {
       redactor(`\\/user:${USERINFO_PASS}@x.test:99999/a`) === `\\/[redacted]:[redacted]@x.test:99999/a`,
       `the protocol-relative mixed pair redacts too: ${redactor(`\\/user:${USERINFO_PASS}@x.test:99999/a`)}`,
     );
-    // The anti-regression for the quadratic defect, and it measures SCALING rather than a wall
-    // clock. An absolute bound was tried first and was a placebo: a shape-identical quadratic still
-    // passed it, because V8 vectorises the character search and 8e8 byte-scans finish inside a
-    // second. Four times the input must not cost more than eight times the work - linear lands near
-    // 4, a quadratic near 16 and up - and a ratio needs no knowledge of how loaded this VM is,
-    // which an absolute millisecond bound did.
-    // The MINIMUM of three runs, not one: a single short run lands in the timer's resolution and
-    // its noise is what made this assertion flake, and the minimum is the statistic that a busy VM
-    // disturbs least.
+    // The anti-regression for the quadratic defect. It used to assert that four times the input must
+    // not cost more than eight times the work, using a ratio for machine-independence. That ratio is
+    // gone, and both attempts at this fixture are worth recording so nobody rebuilds either one:
+    //   - An absolute bound was tried first and was a placebo, because a shape-identical quadratic
+    //     still passed it: V8 vectorises the character search, and 8e8 byte-scans fit inside a second.
+    //     That was a failure of WHERE the bound sat, not of absolute bounds in general: 8e8 byte-scans
+    //     is what a quadratic costs at 40 kB, which is the size that fits inside a one second bound.
+    //   - The ratio that replaced it could not be made to mean anything either, measured both ways:
+    //     with Date.now() the small sample read 0 ms and the floor turned the ratio into about 0.5 so
+    //     it could not fail; with process.cpuUsage(), which does resolve these durations (a 20 us busy
+    //     loop reports 0.023 ms), the ratio ranged from 1.42 to 8.01 over ten runs of this test and
+    //     tripped the threshold once. The spread is warm-up: the first redactor measured is still being
+    //     optimised while the second settles at 4.1 to 4.7. A ratio whose noise spans its own threshold
+    //     is not a guard, and one that fails a run in ten is worse than one that never failed.
+    // What is left is the assertion that can be trusted, at a size where the regression cannot hide. This
+    // fixture costs 1.1 to 6 ms linear, and a genuinely quadratic scan of the same shape measured at
+    // about 92 s at this size (fitted from 1.4 s at 20 kB and 5.8 s at 40 kB), so the bound below sits
+    // about 800x above the real cost and 18x below the regression. Cost, stated rather than hidden: a
+    // MILD superlinearity is not detected here. It never was.
     const measure = (length) => {
       const input = `https://x.test:99999${'/'.repeat(length)}`;
-      let best = Infinity;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const started = Date.now();
-        redactor(input);
-        const elapsed = Date.now() - started;
-        best = Math.min(best, elapsed);
-        // Stop repeating once ONE pass is already far past any linear expectation. The repeats exist to
-        // defeat timer noise on a fast run, not to spend three times the cost of a hang - without this a
-        // quadratic regression delays its own failure by a factor of three before the backstop fires.
-        if (elapsed > 5000) break;
-      }
-      return best;
+      const started = Date.now();
+      redactor(input);
+      return Date.now() - started;
     };
-    const small = measure(40000);
     const large = measure(160000);
-    const ratio = large / Math.max(small, 2);
-    assert(ratio < 8,
-      `the sweep must scale linearly: 4x the input took ${ratio.toFixed(1)}x the time (40 kB ${small}ms, 160 kB ${large}ms)`);
-    // A backstop against a hang, set far above the measured 12 ms so it cannot flake.
     assert(large < 5000, `the sweep must not hang: 160 kB took ${large}ms`);
     // The fixture above is a single run with ONE authority start, so the loop executes once and it
     // cannot see a quadratic that comes from re-searching for the spelling that does NOT occur. This
