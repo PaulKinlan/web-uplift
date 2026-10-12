@@ -89,18 +89,34 @@ at the skill). opencode also reads this `AGENTS.md` for project context.
 ## Testing & fast gates (fleet-check --fast)
 
 The full test suite is `npm test`, which runs `npm run sync:vendored` and then
-`node --test --test-concurrency=2 tests/*.test.mjs`: the 7 modular suites
-(`tests/*.test.mjs`) each run in their own `node:test` process, taking about 2 to 3
+`node --test --test-concurrency=3 tests/*.test.mjs`: the 9 modular suites
+(`tests/*.test.mjs`) each run in their own `node:test` process, taking 1.5 to 2.5
 minutes on the project VM. It runs once per landing on the merger's merged union.
+
+**Why concurrency 3, and whether raising it is safe** (measured 2026-10-12, web-uplift-tb6p;
+replacing these numbers with adjectives is how this becomes a guess again):
+
+- concurrency 2: 173-224s across four interleaved runs. concurrency 3: 98.5s and 98.8s.
+  That is the ~2x, and it is nearly all of the available win.
+- concurrency 4: 94.2s, so about 4s better than 3, and that is the point at which memory is
+  the risk rather than the reward. Peak memory was measured at about 2.2GB in use with 3-4
+  concurrent browser suites (MemAvailable never fell below 14,159,152 kB of 16,369,444 kB), so
+  a 2GB host is already too small at 3. Do not raise this to 4 for 4 seconds.
+- Raising concurrency was BLOCKED until web-uplift-tb6p: `testCredentialRedactorsAgree`
+  asserted a wall-clock ratio between a cache-resident 160 kB measurement and a non-resident
+  640 kB one, so it failed at concurrency 3 and 4 on both the split and the unsplit layouts.
+  If a gate run ever fails there again, that is a machine-speed assertion, not the sweep.
+- `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`) pins concurrency to
+  1 and is the serial escape hatch for a host too small for concurrent browser suites.
 
 For iteration and implementer fast gates, several selective mechanisms are provided:
 
-1. **Native node:test runner:** All 7 suites use native `node:test` and `node:assert/strict`.
+1. **Native node:test runner:** All 9 suites use native `node:test` and `node:assert/strict`.
    Run `node --test tests/evidence.test.mjs` or filter natively by pattern via
    `node --test --test-name-pattern="<regex>" tests/evidence.test.mjs`. Multi-suite
-   execution is bounded by `--test-concurrency`: `npm test` runs the 7 files at concurrency 2,
+   execution is bounded by `--test-concurrency`: `npm test` runs the 9 files at concurrency 3,
    while `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`) pins it to 1
-   as the serial escape hatch for a host too small for two concurrent browser suites.
+   as the serial escape hatch for a host too small for concurrent browser suites.
 2. **Direct suite execution:** Each `tests/*.test.mjs` suite can be run directly
    (e.g. `node tests/evidence.test.mjs`, `node tests/redaction.test.mjs`), with
    support for `--only <filter>`, `--filter`, `--grep`, and `--list`.
@@ -166,7 +182,7 @@ for breaking skill/schema changes):
 1. Edit `package.json` to the new version (`npm run prepare` regenerates `.web-uplift/manifest.json`).
 2. Regenerate installed skill copies so the repo is self-consistent:
    `node bin/web-uplift.mjs install --agent all`.
-3. `npm test` (the 7 suites) and spot-check the frontmatter parser above.
+3. `npm test` (the 9 suites) and spot-check the frontmatter parser above.
 4. `git commit -m "chore: release v<VERSION>"`.
 5. `npm publish` (publishes `bin/`, `evidence/`, `runner/`, `fixer/`,
    `aggregate/`, `index.mjs`, `mcp/`, `knowledge/`, `schema/`, `tests/`, and the
