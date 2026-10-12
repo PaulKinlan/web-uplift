@@ -46,6 +46,13 @@ import {
 import { testLogUrlRedaction } from './log-redaction.mjs';
 import { testCredentialRedactorsAgree } from './credential-redaction.mjs';
 import { testSecretsCoverageClassification } from './secrets-coverage.mjs';
+// web-uplift-o4ec: these two guards existed only in tests/regression.mjs's ALL_TESTS, so a
+// per-suite run omitted them. The tracked passive export must carry no provider-secret shapes, and
+// the rule that redacts it must be able to fire - both are redaction concerns, so they live here.
+import {
+  testTrackedBeadsExportHasNoSecretShapes,
+  testBeadsExportRedactionRuleCanFire,
+} from './beads-export-redaction.mjs';
 
 export function testRedactHeaderList() {
   const list = [
@@ -836,6 +843,8 @@ export const redactionTests = [
   testDomSourceArtifactIsRedacted,
   testLogUrlRedaction,
   testCredentialRedactorsAgree,
+  testTrackedBeadsExportHasNoSecretShapes,
+  testBeadsExportRedactionRuleCanFire,
 ];
 
 export {

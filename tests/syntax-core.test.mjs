@@ -55,6 +55,10 @@ import {
   testSourceTreeSkipsSymlinkCycle,
   testSourceTreeDepthGuard,
 } from './source-tree-symlink.mjs';
+// web-uplift-o4ec: this guard existed only in tests/regression.mjs's ALL_TESTS, so a per-suite run
+// omitted it. It is a repo-wide structural check - every target a static census names must resolve
+// to a tracked path - which is what this suite is for.
+import { testCensusTargetsAreTracked } from './census-targets.mjs';
 
 export function testSyntaxChecks() {
   for (const file of listFiles(repoRoot, (p) => p.endsWith('.mjs'))) {
@@ -1451,6 +1455,7 @@ export const syntaxCoreTests = [
   testScorecardScoringAndRender,
   testScorecardArtifactContainment,
   testCompareArtifactContainment,
+  testCensusTargetsAreTracked,
 ];
 
 export {
