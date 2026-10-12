@@ -26,25 +26,29 @@ import {
   testConsoleEvidence,
   testConsoleEvidenceRedaction,
   testConsoleInteractDeadlineValidation,
+} from "./evidence.test.mjs";
+import {
   testHeadersPrimitiveFindsHeadersRegardlessOfNameCase,
   testHeadersPrimitiveSurvivesSlowResponseUnderLoad,
   testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase,
   testHarRedirects,
   testHarWaitsForPendingResponses,
   testTrackersThirdPartySuffix,
+  testResiliencePrimitive,
+  testResilienceWaitsForLateServiceWorkerRegistration,
+} from "./evidence-network.test.mjs";
+import {
   testEvidenceTruncationReporting,
   testFeaturesPrimitive,
   testDiscoverabilityHelpers,
   testDiscoverabilityH1InRaw,
   testTargetsPrimitive,
-  testResiliencePrimitive,
-  testResilienceWaitsForLateServiceWorkerRegistration,
   testA11yTreePrimitive,
   testAwaitCensus,
   testNoSourceArgumentOmitsSource,
   testAdversarialPageCannotInfluenceSource,
   testExplicitSourceHonoursOperatorSpecifiedRoot,
-} from "./evidence.test.mjs";
+} from "./evidence-content.test.mjs";
 
 import {
   testRedactHeaderList,

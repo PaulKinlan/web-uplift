@@ -9,7 +9,7 @@
 //
 // The design follows from how censuses actually declare their targets, which I checked rather than
 // assumed. There is exactly ONE literal target list in this repo - tests/log-redaction.mjs's
-// `const targets = [...]` - and the await census in tests/evidence.test.mjs does not have one at all;
+// `const targets = [...]` - and the await census in tests/evidence-content.test.mjs does not have one at all;
 // it WALKS evidence/ and so cannot name a generated file. A generic sweep of every array literal in
 // tests/ would therefore be mostly false positives, so the registry below is explicit.
 //
