@@ -484,9 +484,32 @@ export async function testCredentialRedactorsAgree() {
     assert(manySmall < 5000,
       `the sweep must not hang with many authority starts: 160 kB took ${manySmall}ms`);
     const manyLarge = measureStarts(640000);
-    const manyRatio = manyLarge / Math.max(manySmall, 2);
-    assert(manyRatio < 8,
-      `the sweep must stay linear with MANY authority starts, not just one: 4x the input took ${manyRatio.toFixed(1)}x (160 kB ${manySmall}ms, 640 kB ${manyLarge}ms)`);
+    // An ABSOLUTE budget at BOTH sizes, not a wall-clock ratio between them (web-uplift-tb6p).
+    //
+    // The ratio this replaces compared 160 kB against 640 kB and asserted that 4x the input costs
+    // under 8x the time. Measured on this VM, that ratio cannot separate the regression it was
+    // written for from a busy machine. A linear sweep sits at about 4.0 on a quiet box (40 samples,
+    // p50 3.86, max 4.83), but under the parallel load the gate itself now creates, the SAME code
+    // produces ratios of 8.9, 10.0 and 11.4 at concurrency 3 and up to 16 under 6-way CPU load.
+    // The reason is that the 640 kB measurement is memory-bound while the 160 kB one stays in cache,
+    // so contention inflates the large one about 4x; that is bandwidth, not scheduling, because the
+    // CPU time inflates the same way (27 ms becomes 97 ms). A quadratic lands near 16. Noise that
+    // reaches 16 against a signal of 16 is not a guard, at any threshold: raising the 8 to clear the
+    // noise would pass the defect, and leaving it at 8 fails a quiet-intent assertion on a busy box.
+    //
+    // What the ratio protected is real, and it is catastrophic rather than marginal, so the budget
+    // below still catches it. Rather than assume that, I measured a genuinely quadratic scan of this
+    // fixture shape: 1.4 s at 20 kB and 5.8 s at 40 kB (x4.1 per doubling), which fits to about 92 s
+    // at 160 kB and 1,480 s at 640 kB, against 1 ms and 4 ms for the linear sweep. A 5 s budget
+    // therefore sits roughly 300x below the regression at 640 kB and more than 10x above the worst
+    // load inflation measured, so the assertion still catches the defect it exists for and no longer
+    // asserts how quiet this VM is. It is also why the small-size bound above already caught the
+    // documented four-spelling version on its own: that one took tens of seconds at 160 kB.
+    //
+    // The cost, stated plainly: a MILD superlinearity, say 8x, is no longer detected. In practice it
+    // never was, because that is the same band the load noise occupies.
+    assert(manyLarge < 5000,
+      `the sweep must stay linear with MANY authority starts: 640 kB took ${manyLarge}ms, past the budget`);
   }
   // 10. Two blind spots in the VALUE-level rule, both of which the proxy env sanitiser inherits
   // rather than re-implements (web-uplift-nxsy). Measured on the committed tree before the fix: each
