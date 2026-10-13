@@ -49,6 +49,21 @@ export const CREDENTIAL_WORDS = new Set([
 // substring match here would take postalCode, countryCode and sortKey with it.
 export const WEAK_CREDENTIAL_WORDS = new Set(['code', 'key', 'pass']);
 
+// A weak word JOINED to a qualifier with no separator: userpass, dbpass, databasepass. The weak class above
+// matches the whole name only, and such a name is neither that word nor a strong spelling, so it was
+// invisible. This is a RULE over the qualifier list rather than a list of the spellings that happened to be
+// reported (web-uplift-yb2a): a filter that misses spellings and forwards the value gets worse with age, so
+// the fix generalises instead of enumerating.
+export function isWeakQualifiedCompound(word) {
+  // STRONG words are tails too: dbpassword, userpassword and proxytoken are the same miss as db_pass, and
+  // covering only the weak set would leave the joined form of every strong spelling open.
+  for (const tail of [...WEAK_CREDENTIAL_WORDS, ...CREDENTIAL_WORDS]) {
+    if (!word.endsWith(tail) || word.length === tail.length) continue;
+    if (WEAK_QUALIFIER_WORDS.has(word.slice(0, -tail.length))) return true;
+  }
+  return false;
+}
+
 // Qualifiers that turn a weak word into a credential compound: auth+code,
 // verify+code, api+key, otp+code are credentials, while sort+key, postal+code,
 // country+code and redirect+uri+code are ordinary names that must keep their
@@ -58,6 +73,10 @@ export const WEAK_QUALIFIER_WORDS = new Set([
   'auth', 'api', 'otp', 'mfa', 'totp', 'verify', 'verification', 'confirm', 'confirmation',
   'activate', 'activation', 'reset', 'recover', 'recovery', 'invite', 'unlock',
   'sms', 'email', 'device', 'backup', 'security', 'secret', 'private', 'access',
+  // web-uplift-yb2a: the subject of a password, and the two most common proxies for one. Without these,
+  // db_pass / proxy_pass / user_pass / database_pass were invisible to the weak class (which matches the
+  // whole name only), so the value reached the untrusted agent child verbatim.
+  'user', 'db', 'database', 'proxy',
 ]);
 
 // Sensitive PII / identity numbers. Used by the flow recorder's field and
@@ -107,6 +126,7 @@ export function isCredentialName(name) {
   if (!words.length) return false;
   const joined = words.join('');
   if (isCredentialWord(joined) || isWeakCredentialWord(joined)) return true;
+  if (words.length === 1 && isWeakQualifiedCompound(joined)) return true;
   if (words.some(isCredentialWord)) return true;
   // A weak word qualified by a credential context: verifyCode, auth_code, api_key.
   if (words.some(isWeakCredentialWord) && words.some((w) => WEAK_QUALIFIER_WORDS.has(w))) return true;
@@ -136,6 +156,22 @@ export function isSensitiveName(name) {
   for (let i = 0; i < words.length - 1; i++) {
     if (isSensitiveWord(words[i] + words[i + 1])) return true;
   }
+
+  // web-uplift-d8i4: THE PASSWORD FAMILY, which the weak-word exclusion above deliberately left out. The
+  // exclusion is right for `code` and `key` - a form field named `code` is usually a promo code and redacting
+  // it breaks replay - but a field named db_pass / user_pass / proxy_pass IS a password field, and the
+  // recorder was writing its value into flow.json in plaintext: the URL/HAR test classified the name while
+  // the FIELD test (this one) did not, and the value persisted.
+  //
+  // The rule is the narrow join between the two: the name must look like a password word AND be
+  // credential-shaped, so nothing is redacted on the strength of a word alone. `passenger`, `bypass`,
+  // `compass` and `pass_count` are not credential names, so they keep their values; `promoCode`, `code` and
+  // `sortKey` contain no password word at all. The list is inline so this function stays self-contained when
+  // it is injected into the page script by toString.
+  const passwordWords = ['pass', 'passwd', 'password', 'passphrase', 'passkey', 'passcode'];
+  const passwordWord = words.some((w) => passwordWords.some((pw) => w === pw || w.endsWith(pw)))
+    || passwordWords.some((pw) => joined.endsWith(pw));
+  if (passwordWord && isCredentialName(name)) return true;
   return false;
 }
 

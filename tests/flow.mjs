@@ -205,6 +205,30 @@ export async function testFlowRecordSensitiveRedaction() {
     };
   }
 
+  // web-uplift-d8i4: THE PASSWORD FAMILY, on its own session so the step-count assertions below are
+  // untouched. A field named db_pass / user_pass / proxy_pass IS a password field, and the recorder was
+  // writing its value into flow.json in plaintext: the URL/HAR classifier knew the name while the FIELD test
+  // did not. The DOM carries NO password cue here on purpose - type is text, no autocomplete, label or
+  // placeholder - so the field's NAME is the only thing that can classify it, which is how the leak was
+  // measured. The boundary is in the same block: ordinary names, including the words that merely contain
+  // 'pass', must stay replayable, because a rule that redacts on the word 'pass' alone would break the
+  // journeys this recorder exists to capture.
+  const passwordFamilySession = testCaptureSession({ captureHidden: false, captureSensitive: false });
+  for (const [name, value] of [['db_pass', 'hunter2'], ['proxy_pass', 's3cret'], ['user_pass', 'pw123'],
+    ['database_pass', 'dbpw'], ['userpass', 'joined'], ['dbpassword', 'joinedstrong']]) {
+    passwordFamilySession.triggerChange({ type: 'text', name, value, id: `pf-${name}` });
+    const step = passwordFamilySession.steps[passwordFamilySession.steps.length - 1];
+    assert(step && step.value === '' && step.redacted === true, `a field named ${name} must be redacted, not persisted (web-uplift-d8i4)`);
+    assert(!JSON.stringify(step).includes(value), `the value of ${name} must not appear anywhere in the step flow.json persists`);
+  }
+  for (const [name, value] of [['promoCode', 'SAVE10'], ['search', 'blue sneakers'], ['passenger', 'Alice'],
+    ['bypass', 'B1'], ['pass_count', '2']]) {
+    passwordFamilySession.triggerChange({ type: 'text', name, value, id: `pf-ok-${name}` });
+    const step = passwordFamilySession.steps[passwordFamilySession.steps.length - 1];
+    assert(step.value === value && !step.redacted, `a field named ${name} must stay replayable, not be redacted`);
+  }
+  console.log('✔ compound password fields are redacted at the recording boundary and ordinary names replay');
+
   // A. Default session: verify sensitive and hidden fields are redacted/omitted,
   // on BOTH the returned steps and their JSON serialisation (what flow.json
   // actually persists - a redacted step that still serialises the secret is a leak).
@@ -1566,3 +1590,4 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   await testFlowReplayMutationGate();
   console.log('tests OK');
 }
+
