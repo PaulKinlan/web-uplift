@@ -9,7 +9,7 @@
  * 4. Deduplication ensures targets are not run redundantly when multiple files change in the same subsystem.
  * 5. A documentation/data-only or deleted-file diff is omitted by a NAMED rule and still falls back to
  *    the fast baseline suite; an unmapped EXECUTABLE path fails the gate before any target runs
- *    (web-uplift-5i9a).
+ *    (web-uplift-5i9a), and an executable path is never omitted by a tree, doc or data rule.
  * 6. Every configured regression filter matches at least one declared test in tests/regression.mjs.
  * 7. Missing/deleted mapped files are skipped cleanly in runTarget rather than failing (P2-3).
  * 8. The fast gate exits non-zero when an affected test fails.
@@ -32,6 +32,7 @@ import {
   mapFilesToTests,
   isDirectRunnableTest,
   classifyUnmappedPath,
+  hasCodeExtension,
   runTarget,
   SUBSYSTEMS,
   BASELINE_TARGETS,
@@ -541,11 +542,37 @@ function testOmittedRulesAreNamedAndNarrow() {
   assert(docOnly.omittedFiles.every((o) => o.rule === 'docs'), 'the documentation paths must be omitted by the docs rule');
   assert(docOnly.isBaseline, 'a documentation-only diff still runs the baseline suite');
 
-  // A named fixture/demo tree is omitted; the same extension OUTSIDE every named tree fails. Without this
-  // pair the rule could quietly widen into "any .js that is not mapped is fine".
-  const fixture = mapFilesToTests(['playground/app.js'], existsAlways);
-  assert.deepEqual(fixture.unmappedFiles, [], 'a named fixture/demo tree is omitted, not failed');
-  assert.equal(fixture.omittedFiles[0].rule, 'fixture-and-demo-trees', 'the fixture tree must be the rule that omitted it');
+  // An EXECUTABLE file inside a named fixture/demo tree is NOT omitted: the tree rules only see
+  // non-executable paths, so playground/app.js is refused like any other unmapped executable. This is
+  // the review finding (P1) on the first version of this change, which omitted it and thereby skipped a
+  // changed module; mapping those trees is filed as web-uplift-5r7z. The non-executable files beside it
+  // are still omitted, by their own rules.
+  const fixture = mapFilesToTests(
+    ['playground/app.js', 'playground/README.md', 'playground/expected-findings.json'],
+    existsAlways
+  );
+  assert.deepEqual(
+    fixture.unmappedFiles,
+    ['playground/app.js'],
+    'an executable file in a fixture/demo tree must be REFUSED, not omitted: a tree rule may not skip a changed module'
+  );
+  assert.equal(fixture.omittedFiles.length, 2, 'the non-executable files beside it are omitted');
+  assert(
+    fixture.omittedFiles.every((o) => o.rule === 'docs' || o.rule === 'data-and-config'),
+    'those omissions must be named by the doc/data rules that cover them'
+  );
+  // The other direction: no rule that omits an executable path may exist without saying so. Exactly two
+  // do (deleted, recorded-artefacts), and each carries the flag that makes it explicit.
+  const executableOmitters = OMITTED_RULES.filter((rule) => rule.mayOmitExecutable === true).map((rule) => rule.id);
+  assert.deepEqual(
+    executableOmitters.sort(),
+    ['deleted', 'recorded-artefacts'],
+    'only the deletion and recorded-artefact rules may omit an executable path; adding a third must be a deliberate, reviewed change'
+  );
+  // The declared exception, exercised: a probe script recorded by a run is omitted, with its rule named.
+  const recordedProbe = mapFilesToTests(['evidence-out/fb6-stuck/fb6-probe.mjs'], existsAlways);
+  assert.deepEqual(recordedProbe.unmappedFiles, [], 'a recorded artefact probe is the declared exception, not a failure');
+  assert.equal(recordedProbe.omittedFiles[0].rule, 'recorded-artefacts', 'the record rule must be the one that omitted it');
 
   // A deleted path has nothing left to run, so it is OMITTED with its own rule rather than reported as an
   // unmapped executable (runTarget already skips a mapped target whose file is gone, P2-3).
@@ -553,23 +580,48 @@ function testOmittedRulesAreNamedAndNarrow() {
   assert.deepEqual(deleted.unmappedFiles, [], 'a deleted path is not an unmapped executable');
   assert.equal(deleted.omittedFiles.length, 1, 'a deleted path must be recorded as omitted');
   assert.equal(deleted.omittedFiles[0].rule, 'deleted', 'a deleted path must be omitted by the deleted rule');
-  assert(deleted.isBaseline, 'a deleted-only diff falls back to the baseline');
+  assert(deleted.isBaseline, 'an unmatched deleted path falls back to the baseline');
+  // A deleted path a SUBSYSTEM maps is not baseline: the subsystem wins and runTarget skips the missing
+  // file, which is why the baseline claim has to be about UNMAPPED deletions only (review finding P2).
+  const deletedMapped = mapFilesToTests(['tests/flow.mjs'], { exists: () => false });
+  assert(
+    deletedMapped.matchedSubsystems.includes('flow') && !deletedMapped.isBaseline,
+    'a deleted file that a subsystem maps selects that subsystem, not the baseline'
+  );
   assert(classifyUnmappedPath('docs/gone.md', repoRoot, () => false).omitted.rule === 'deleted', 'classifyUnmappedPath must expose the same decision');
 
-  // The invariant that keeps the rule list honest: every tracked file is either mapped by a subsystem or
-  // covered by a named rule. A new executable file added without a mapping FAILS the gate (that is the
-  // point) and this test names it at the moment the gate itself changes.
+  // The invariants that keep the rule list honest. The gate refuses an unmapped executable path at run
+  // time; these pin the two ways a rule could quietly defeat that:
+  //   1. NO AUTHORED executable tracked path may be omitted by a rule (the record trees and deletions are
+  //      the declared exceptions), and
+  //   2. every NON-EXECUTABLE tracked path must be mapped or omitted, so nothing is dropped silently.
+  // Unmapped tracked executables are allowed only in the two trees whose mapping is filed as
+  // web-uplift-5r7z, so a new unmapped module anywhere else fails this test as well as the gate.
   const tracked = spawnSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
   assert(tracked.length > 100, `expected a real tracked-file list, got ${tracked.length}`);
-  const unclassified = tracked.filter((f) => mapFilesToTests([f]).unmappedFiles.length > 0);
+  const plans = tracked.map((f) => [f, mapFilesToTests([f])]);
+  const recordTrees = ['evidence-out/', '.pi-subagents/'];
+  const omittedExecutables = plans
+    .filter(([f, p]) => hasCodeExtension(f) && p.omittedFiles.length > 0)
+    .map(([f, p]) => `${f} [${p.omittedFiles[0].rule}]`);
   assert.deepEqual(
-    unclassified,
+    omittedExecutables.filter((s) => !recordTrees.some((t) => s.startsWith(t))),
     [],
-    `every tracked executable path must be mapped or omitted by a named rule; these are neither: ${unclassified.join(', ')}`
+    'no authored executable path may be omitted by a rule: a tree rule that skips a changed module is the silent narrowing this bead forbids'
+  );
+  const droppedNonExecutables = plans.filter(([f, p]) => !hasCodeExtension(f) && p.unmappedFiles.length > 0).map(([f]) => f);
+  assert.deepEqual(droppedNonExecutables, [], 'every non-executable tracked path must be mapped or omitted by a named rule');
+  const unmappedExecutables = plans.filter(([, p]) => p.unmappedFiles.length > 0).map(([f]) => f);
+  assert.deepEqual(
+    unmappedExecutables.filter((f) => !f.startsWith('playground/') && !f.startsWith('eval/')),
+    [],
+    'only the trees whose consumer mapping is filed as web-uplift-5r7z may currently be unmapped; anything else must be mapped or covered by a named rule'
   );
   assert(CODE_EXTENSIONS.has('.mjs'), 'the executable-extension set must describe this repo\'s modules');
 
-  console.log(`✔ ${OMITTED_RULES.length} named omission rules; ${tracked.length} tracked paths all classified`);
+  console.log(
+    `✔ ${OMITTED_RULES.length} named omission rules; ${tracked.length} tracked paths classified (${unmappedExecutables.length} refused pending web-uplift-5r7z, ${omittedExecutables.length} recorded-artefact executables declared)`
+  );
 }
 
 function testSuiteExecutionMarkers() {

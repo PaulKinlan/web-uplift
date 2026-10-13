@@ -143,26 +143,34 @@ baseline pass: a green gate that never ran the suite for a changed module is a f
 `node scripts/test-fast.mjs`:
 
 - **FAILS** (exit 1, before running anything) on any changed path with an executable extension
-  (`CODE_EXTENSIONS`: `.mjs`, `.js`, `.cjs`, `.ts`, `.tsx`, `.jsx`, `.mts`, `.cts`, `.py`, `.sh`, `.bash`,
-  plus the C/Go/Rust extensions the fleet's own coverage checker treats as code) that no `SUBSYSTEMS`
-  entry maps. It prints one `fast-gate: unmapped: <path>` per path, then `fast-gate: FAIL - N changed
-  file(s) map to no suite:` with the paths and the three ways to fix it (add a `SUBSYSTEMS` entry, add the
-  file to `KNOWN_STANDALONE_TESTS`, or add a named `OMITTED_RULES` entry). A mixed diff fails: the mapped
-  half never buys a green verdict for the unmapped half.
-- **OMITS, by a named rule with its reason printed**, a changed path that no suite maps but that is not
-  executable: documentation and prose, media and markup, data and config, `evidence-out/` and
-  `.pi-subagents/` artefacts, `.beads/`, `.github/`, `.gemini/`, `.claude-plugin/` tooling config, the
-  fixture/demo trees (`tests/fixtures/`, `playground/`, `eval/`, `examples/`), and paths deleted by the
-  change. `node scripts/test-fast.mjs --list` prints the rules and their reasons. A documentation-only or
-  deletion-only diff still runs the baseline four.
+  (`CODE_EXTENSIONS`, identical to the fleet's own `code_exts`: `.mjs`, `.js`, `.cjs`, `.ts`, `.tsx`,
+  `.jsx`, `.py`, `.sh`, `.rs`, `.go`, `.c`, `.cpp`) that no `SUBSYSTEMS` entry maps. It prints one
+  `fast-gate: unmapped: <path>` per path, then `fast-gate: FAIL - N changed file(s) map to no suite:` with
+  the paths and the three ways to fix it (add a `SUBSYSTEMS` entry, add the file to
+  `KNOWN_STANDALONE_TESTS`, or add a named `OMITTED_RULES` entry). A mixed diff fails: the mapped half
+  never buys a green verdict for the unmapped half. There are exactly TWO exceptions, and both are
+  declared in `OMITTED_RULES` with `mayOmitExecutable`: a path the change DELETES (nothing is left to
+  run), and files under `evidence-out/` or `.pi-subagents/`, which are outputs of a run that no suite
+  imports. Executable files in the fixture/demo trees are NOT exceptions: `playground/app.js` and
+  `eval/fixtures/**/*.js` are refused today, and mapping them to the suites that read them is
+  web-uplift-5r7z.
+- **OMITS, by a named rule with its reason printed**, a NON-EXECUTABLE changed path that no suite maps:
+  documentation and prose, media and markup, data and config, `.beads/`, `.github/`, `.gemini/`,
+  `.claude-plugin/` tooling config, non-executable files in the fixture/demo trees (`tests/fixtures/`,
+  `playground/`, `eval/`, `examples/`), and deleted paths. A rule only sees an executable path when it
+  sets `mayOmitExecutable`, so a tree, doc or data rule can never be the reason a changed module went
+  untested. `node scripts/test-fast.mjs --list` prints the rules and their reasons. A diff whose changed
+  paths are all omitted by a rule (documentation-only, or a deleted path that no subsystem maps) still
+  runs the baseline four; a deleted file that a subsystem DOES map selects that subsystem's targets, and
+  `runTarget` skips the missing file (P2-3).
 - **PUBLISHES what ran** with the fleet's anchored markers: `fast-gate: running: <suite>`, then
   `fast-gate: passed: <suite>` or `fast-gate: failed: <suite>`. The suite is named by file, because that is
   what `fleet remote/check-coverage.py` matches against the diff; the record for a fast run can then state
   its coverage instead of `UNKNOWN` (fleet docs/speed.md R15).
 
-`tests/test-fast.mjs` pins each of these, including that EVERY tracked file is either mapped or omitted by
-one of the named rules, so the rule list cannot rot silently. `npm test` remains the merger's full union
-gate and is unchanged.
+`tests/test-fast.mjs` pins each of these, including that NO AUTHORED executable tracked path is omitted by
+a rule while every non-executable tracked path is mapped or omitted, so the rule list cannot rot silently.
+`npm test` remains the merger's full union gate and is unchanged.
 
 ### Fleet configuration (~/.fleet/check.conf)
 
