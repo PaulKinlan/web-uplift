@@ -2,7 +2,7 @@
 /**
  * scripts/test-fast.mjs - Targeted fast test gate for web-uplift.
  *
- * Runs only the tests affected by changed files (via git diff vs origin/master
+ * Runs only the tests affected by changed files (via the merge-base of HEAD and origin/master
  * or passed file paths), drastically reducing the test run time from 4-18 minutes
  * to a few seconds for focused changes.
  *
@@ -482,14 +482,26 @@ export function resolveDiffRef(repo = repoRoot, preferred = 'origin/master') {
 }
 
 /**
- * Get changed files using git diff and untracked status.
+ * Compare the branch to the common ancestor of HEAD and the selected ref, rather than charging
+ * a stale branch for commits that landed on master later. If history is shallow/unrelated, fall
+ * back to the old ref-based diff (conservative over-selection, never silent under-selection).
+ */
+export function resolveDiffBase(repo = repoRoot, diffRef = 'origin/master') {
+  const ref = resolveDiffRef(repo, diffRef);
+  if (!ref) return { ref: null, base: null };
+  const mergeBase = spawnSync('git', ['merge-base', ref, 'HEAD'], { cwd: repo, encoding: 'utf8' });
+  return { ref, base: mergeBase.status === 0 && mergeBase.stdout.trim() ? mergeBase.stdout.trim() : ref };
+}
+
+/**
+ * Get changed files using git diff from the merge-base to the working tree, plus untracked status.
  */
 export function getChangedFiles(repo = repoRoot, diffRef = 'origin/master') {
-  const resolvedRef = resolveDiffRef(repo, diffRef);
+  const { ref: resolvedRef, base } = resolveDiffBase(repo, diffRef);
   const files = new Set();
 
   if (resolvedRef) {
-    const diff = spawnSync('git', ['diff', '--name-only', resolvedRef], { cwd: repo, encoding: 'utf8' });
+    const diff = spawnSync('git', ['diff', '--name-only', base], { cwd: repo, encoding: 'utf8' });
     if (diff.status === 0 && diff.stdout) {
       for (const line of diff.stdout.split('\n')) {
         const trimmed = line.trim();
@@ -507,16 +519,16 @@ export function getChangedFiles(repo = repoRoot, diffRef = 'origin/master') {
     }
   }
 
-  return { files: Array.from(files), resolvedRef };
+  return { files: Array.from(files), resolvedRef, base };
 }
 
 /**
  * Inspect git diff on tests/regression.mjs to discover changed test function names.
  */
 export function getChangedRegressionTests(repo = repoRoot, diffRef = 'origin/master') {
-  const resolvedRef = resolveDiffRef(repo, diffRef);
-  if (!resolvedRef) return [];
-  const diff = spawnSync('git', ['diff', '-U1', resolvedRef, '--', 'tests/regression.mjs'], { cwd: repo, encoding: 'utf8' });
+  const { base } = resolveDiffBase(repo, diffRef);
+  if (!base) return [];
+  const diff = spawnSync('git', ['diff', '-U1', base, '--', 'tests/regression.mjs'], { cwd: repo, encoding: 'utf8' });
   if (diff.status !== 0 || !diff.stdout) return [];
 
   const testNames = new Set();
@@ -697,8 +709,8 @@ export function main(argv = process.argv.slice(2)) {
 scripts/test-fast.mjs - Targeted fast test gate for web-uplift
 
 Usage:
-  node scripts/test-fast.mjs                     # diff against origin/master
-  node scripts/test-fast.mjs --diff <ref>        # diff against specific ref
+  node scripts/test-fast.mjs                     # diff from merge-base with origin/master
+  node scripts/test-fast.mjs --diff <ref>        # diff from merge-base with specific ref
   node scripts/test-fast.mjs <file...>           # test affected by explicit files
   node scripts/test-fast.mjs --all               # run all fast test targets
   node scripts/test-fast.mjs --dry-run           # print planned test targets without running

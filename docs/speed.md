@@ -34,6 +34,17 @@ imported only for helpers, is not covered even if the fast gate does not map it.
 
 ## The fast gate routes by changed path, and refuses what it cannot route
 
+`scripts/test-fast.mjs` compares the working tree to the merge-base of `HEAD` and `origin/master`, then
+adds untracked files; `--diff <ref>` uses the merge-base with that ref. This keeps master-only landings out
+of a stale branch's fast gate, while staged/unstaged changes still count. If a merge-base cannot be found
+(shallow or unrelated history), it falls back to the old ref-based diff, which may over-select but does
+not silently drop changes. Measured before this fix on the same four-file branch (web-uplift-s3pq): 4
+targets/51s when master equalled the merge-base, versus 22 targets/217s after master advanced one landing;
+the extra 18 targets were master-only work. These are before-fix observations, not a promised runtime.
+The new local-git stale-branch control adds no test target; the existing fast-gate self-test measured
+7.41s standalone after the change on this VM (2026-10-13, `node tests/test-fast.mjs`), with no paired
+before sample under the same load, so no per-run speedup is claimed from that number.
+
 `scripts/test-fast.mjs` maps every changed path to the suite that covers it. Two rules decide the plan:
 
 1. **A path a `SUBSYSTEMS` entry maps** (or a runnable suite, which maps to itself) selects that suite.
