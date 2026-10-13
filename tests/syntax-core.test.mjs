@@ -18,7 +18,7 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   assert,
@@ -83,8 +83,68 @@ function parseModuleFiles(files, overrides = {}) {
   ], { cwd: repoRoot, encoding: 'utf8', input: JSON.stringify(overrides), timeout: 10000 });
 }
 
+// The census ASSERTS ITS OWN DECLARED POPULATION (web-uplift-k63b). Every other check in this file compares
+// the walk against something the walk produced, so a source file the walk stops REACHING - which it can do
+// silently, because it skips symlinks and it skips directory names anywhere in the tree (web-uplift-lql5) -
+// would simply not be in the set, and every check would pass on the smaller set. DERIVE WHEN YOU WANT THE
+// NUMBER TO STAY TRUE; DECLARE WHEN YOU WANT TO NOTICE WHEN SOMETHING DISAPPEARS.
+//
+// The declared population is the TRACKED population, not the walk's total, because the total is a property
+// of the CHECKOUT rather than of the tree: this worktree walks 143 .mjs files and a freshly cloned one walks
+// 103, the difference being the forty generated, gitignored files under .web-uplift/ that sync:vendored
+// writes. A declared 143 would fire on a clean checkout, which is a false alarm, and a checkout-dependent
+// total cannot be declared honestly at all. git is an INDEPENDENT source for what the repository claims to
+// contain, which is what lets this NAME the file that stopped being reached.
+//
+// THE INSTRUMENT'S BLIND SPOT, stated rather than discovered later: git does not know about an UNTRACKED
+// .mjs that a symlinked directory hides, so this control cannot see that case either. Its coverage is
+// "every .mjs the repository tracks", which is checkable; it is not "every .mjs on disk".
+const DECLARED_TRACKED_CENSUS = 103;
+const DECLARED_EXCLUDED_BY_RULE = 5;
+
+// The census's own declared population, which is the number this bead exists for: the .mjs files the WALK
+// must reach outside the generated .web-uplift/ surface, which sync:vendored writes and a fresh clone does
+// not have. This is the assertion that makes the symlink residual LOUD - if the walk stops reaching a file,
+// or starts reaching one it did not (the pre-lql5 walk followed links and would have pulled in files behind
+// schema/install-symlink-escape.txt), the number moves and this fails naming the number that moved.
+// It is deliberately a second, INDEPENDENT route to the same population as DECLARED_TRACKED_CENSUS: one
+// counts what the walk returned, the other counts what the repository says it tracks. If the two ever
+// disagree, the walk and git disagree about the repository, and that is worth a failure on its own.
+const DECLARED_RECURSIVE_CENSUS = 103;
+
+// Returns the reason a population is unacceptable, or null when it is acceptable, so the control can drive it
+// with a synthetic list instead of writing into the repository, which is what web-uplift-lql5 was about.
+export function censusPopulationProblem(files, { trackable = null } = {}) {
+  const prefix = `${repoRoot}/`;
+  const walked = new Set(files.map((file) => file.replace(prefix, '')));
+  const underSkipRule = (file) => file.split('/').some((segment) => SKIP_DIRS.has(segment));
+  const tracked = trackable ?? execFileSync('git', ['ls-files', '*.mjs'], { cwd: repoRoot, encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean);
+  const excluded = tracked.filter(underSkipRule);
+  const required = tracked.filter((file) => !underSkipRule(file));
+  const unreachable = required.filter((file) => !walked.has(file));
+  if (unreachable.length > 0) {
+    return `${unreachable.length} tracked source file(s) exist in the repository and are NOT reachable by the syntax census, so nothing checks their syntax: ${unreachable.slice(0, 5).join(', ')}. The walk skips symlinks and skips these directory names anywhere in the tree (${[...SKIP_DIRS].join(', ')}), so a symlinked directory or a newly skipped name containing .mjs is the first thing to check (web-uplift-k63b).`;
+  }
+  if (required.length !== DECLARED_TRACKED_CENSUS) {
+    return `the census DECLARES ${DECLARED_TRACKED_CENSUS} tracked .mjs file(s) outside the walk's skip rules and the repository tracks ${required.length}, so the population changed without saying so. If a source file was added or removed deliberately, update DECLARED_TRACKED_CENSUS in the same commit (web-uplift-k63b).`;
+  }
+  if (excluded.length !== DECLARED_EXCLUDED_BY_RULE) {
+    return `${excluded.length} tracked .mjs file(s) sit under a directory the walk skips BY NAME and this control declares ${DECLARED_EXCLUDED_BY_RULE}. A change here is a real change in what the census cannot see, so update DECLARED_EXCLUDED_BY_RULE deliberately rather than letting it drift: ${excluded.slice(0, 5).join(', ')} (web-uplift-k63b).`;
+  }
+  return null;
+}
+
 export function testSyntaxChecks() {
   const files = listFiles(repoRoot, (p) => p.endsWith('.mjs'));
+  const populationProblem = censusPopulationProblem(files);
+  assert(populationProblem === null, `syntax census population: ${populationProblem}`);
+  const outsideGenerated = files.filter((file) => !file.includes('/.web-uplift/'));
+  assert(
+    outsideGenerated.length === DECLARED_RECURSIVE_CENSUS,
+    `the walk reached ${outsideGenerated.length} .mjs file(s) outside the generated .web-uplift/ surface and this census DECLARES ${DECLARED_RECURSIVE_CENSUS}. A drop means a source file stopped being reachable - the walk skips symlinks, so a symlinked directory containing .mjs is the first thing to check - and a rise means the walk started reaching something it should not, which is the pre-web-uplift-lql5 behaviour of following a link out of the repository. If the change is deliberate, update DECLARED_RECURSIVE_CENSUS in the same commit (web-uplift-k63b).`,
+  );
   assert(files.length > 0, 'syntax check must walk the .mjs tree, not an empty set');
   const result = parseModuleFiles(files);
   assert(result.status === 0, `syntax check failed for .mjs files:\n${result.error?.message || result.stderr || result.stdout}`);
@@ -1864,7 +1924,7 @@ export function testSuiteListsMatchRegressionRegistry() {
   // population changed without saying so. When a case or a suite file is added or removed deliberately,
   // update the number in the same commit and say why in the message.
   const EXPECTED_SUITE_FILES = 14;
-  const EXPECTED_CASES = 161;
+  const EXPECTED_CASES = 162;
   assert(
     suiteFiles.length === EXPECTED_SUITE_FILES,
     `the gate now runs ${suiteFiles.length} suite file(s) and this control is pinned at ${EXPECTED_SUITE_FILES}. If a suite file was added or removed on purpose, update EXPECTED_SUITE_FILES and EXPECTED_CASES in the same commit; if it was not, a suite has silently stopped running (web-uplift-ougd).`,
@@ -1912,8 +1972,37 @@ export function testSuiteListsMatchRegressionRegistry() {
   );
 }
 
+// The control that makes the population DECLARED rather than derived, driven with a synthetic list so it
+// writes nothing into the repository. It must FAIL LOUDLY and NAME the file, because a census that notices a
+// loss without saying what was lost still leaves the reader searching.
+export function testCensusDeclaredPopulationNamesATrackedFileItCannotReach() {
+  const files = listFiles(repoRoot, (p) => p.endsWith('.mjs'));
+  assert(censusPopulationProblem(files) === null, 'an unmodified tree must satisfy its declared population');
+
+  const withheld = `${repoRoot}/tests/fixture-sites.test.mjs`;
+  assert(files.includes(withheld), 'the control needs a real tracked file to withhold');
+  const problem = censusPopulationProblem(files.filter((file) => file !== withheld));
+  assert(problem !== null, 'withholding a tracked file from the census must be a FAILURE, not a smaller green run');
+  assert(
+    problem.includes('tests/fixture-sites.test.mjs'),
+    `the failure must NAME the file the census could not reach, or a reader cannot act on it: ${problem}`,
+  );
+
+  // The declared count must also reject a population that GREW silently, which the reachability check alone
+  // cannot see because nothing is unreachable when something extra appears.
+  // The count rule has to be exercised on its OWN, with a reachable file, or the reachability rule fires
+  // first and this would be testing the other branch. A single real tracked file is reachable and is not
+  // 103 of them, so only the declared-count rule can reject it.
+  const miscounted = censusPopulationProblem(files, { trackable: ['tests/fixture-sites.test.mjs'] });
+  assert(
+    miscounted !== null && miscounted.includes('DECLARES'),
+    `a tracked population that no longer matches the declared number must fail on the count rule: ${miscounted}`,
+  );
+}
+
 export const syntaxCoreTests = [
   testSyntaxChecks,
+  testCensusDeclaredPopulationNamesATrackedFileItCannotReach,
   testPackageRootImportIsSideEffectFree,
   testIconSatisfiesMatrix,
   testFirstPartyHostMatrix,
