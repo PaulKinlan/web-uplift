@@ -879,6 +879,7 @@ export const evidenceContentTests = [
   testFeaturesPrimitive,
   testDiscoverabilityHelpers,
   testDiscoverabilityH1InRaw,
+  testDiscoverabilitySettleKeepsTheSpaDefaultAndHonoursAnExplicitWait,
   testTargetsPrimitive,
   testA11yTreePrimitive,
   testAwaitCensus,
