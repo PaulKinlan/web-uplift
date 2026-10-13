@@ -881,6 +881,10 @@ export function testEveryDestinationRefusalCarriesTheMarker() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   testInstallSkipsSymlinksInVendoredSource();
   testInstallCopyDepthGuard();
+  // Run directly as well as under `node --test`: this one was registered in the npm-test block but
+  // omitted here, so `node tests/install-copy-symlink.mjs` missed the control that proves both
+  // fixtures survive the leftovers a killed run leaves (web-uplift-by7c).
+  testInstallFixturesTolerateLeftoversFromAKilledRun();
   testInstallVendorsCompleteClosure();
   testInstallRefusesDestinationSymlinks();
   testInstallNormalDestinationWrites();
