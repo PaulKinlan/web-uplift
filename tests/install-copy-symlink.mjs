@@ -21,7 +21,8 @@ import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { VENDORED_DEPENDENCIES, VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, publishStagedTree, pruneObsoleteEntries } from '../install-surface.mjs';
+import { VENDORED_DEPENDENCIES, VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface } from '../install-surface.mjs';
+import { Worker } from 'node:worker_threads';
 import { listFiles } from './test-helpers.mjs';
 
 const require = createRequire(import.meta.url);
@@ -944,7 +945,12 @@ export function testRepublishReaderInstrumentDetectsDeleteThenCopy() {
 // prune obsolete entries after, so the worst a reader can observe is stale content, never a hole
 // (web-uplift-c6i1). The two phases are exported for exactly this: a single function would leave the order
 // untestable except by racing it, which the acceptance criteria rule out.
-export function testPublishOrderLeavesObsoleteEntriesUntilAfterPublish() {
+export async function testPublishOrderLeavesObsoleteEntriesUntilAfterPublish() {
+  // Imported HERE rather than at module scope (web-uplift-ckly): if the fix is reverted these two exports are
+  // gone, and a module-scope import would take the whole suite down with an ESM error before any case ran. This
+  // way each case fails on its own terms - this one with a missing export, the interleaving case below
+  // behaviourally, with the ENOENT the revert reintroduces.
+  const { publishStagedTree, pruneObsoleteEntries } = await import('../install-surface.mjs');
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-publish-order-'));
   const put = (dir, rel, content) => {
     mkdirSync(dirname(join(dir, rel)), { recursive: true });
@@ -987,5 +993,102 @@ export function testPublishOrderLeavesObsoleteEntriesUntilAfterPublish() {
     assert(lstatSync(join(dest, 'gone.mjs')).isFile(), 'a source file replacing a destination directory must be published as a file');
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// Fixture 9: the interleaving fixture of web-uplift-ckly, and the reason it exists as well as fixture 7. Every
+// read in the cases above happens AFTER generation returns, so on the old delete-then-recopy generator the paths
+// exist again by the time the case reads them and it still passes. This one keeps a reader running WHILE the
+// real generator republishes a populated tree, which is the event the acceptance criteria name. The reader is a
+// worker thread, so it reads on a second thread while the synchronous generator runs on this one, and it keeps
+// the census's own skip list so it cannot see the staging tree. Reverting the fix must make THIS case fail, with
+// the vanished path printed rather than only a count.
+export async function testRepublishKeepsListedPathsReadableForAConcurrentReader() {
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-republish-concurrent-'));
+  const put = (rel, content) => {
+    mkdirSync(dirname(join(target, rel)), { recursive: true });
+    writeFileSync(join(target, rel), content);
+  };
+  let worker;
+  let readyTimer;
+  try {
+    for (const dir of ['evidence', 'runner', 'schema']) {
+      for (let i = 0; i < 4; i++) put(`${dir}/m${i}.mjs`, `// ${dir} ${i} v1\n`);
+    }
+    generateVendoredSurface({ targetRoot: target });
+    const vendorRoot = join(target, '.web-uplift');
+
+    worker = new Worker(`
+      const { parentPort, workerData } = require('node:worker_threads');
+      const { existsSync, lstatSync, readdirSync, readFileSync } = require('node:fs');
+      const { join } = require('node:path');
+      const SKIP = new Set(['scratch', 'node_modules', 'reports', '.git']);
+      const root = workerData.root;
+      let reads = 0, enoent = 0, lists = 0, announced = false;
+      const vanished = [];
+      const walk = (dir, out = []) => {
+        for (const name of readdirSync(dir)) {
+          if (SKIP.has(name)) continue;
+          const full = join(dir, name);
+          let st;
+          try { st = lstatSync(full); } catch { continue; }
+          if (st.isDirectory()) walk(full, out); else out.push(full);
+        }
+        return out;
+      };
+      parentPort.on('message', (m) => {
+        if (m === 'stop') parentPort.postMessage({ reads, enoent, lists, vanished: vanished.slice(0, 6) });
+      });
+      const tick = () => {
+        if (existsSync(root)) {
+          let listed = [];
+          try { listed = walk(root); } catch { listed = []; }
+          if (listed.length > 0) {
+            lists++;
+            for (const f of listed) {
+              reads++;
+              try { readFileSync(f); } catch (err) {
+                if (err.code === 'ENOENT') { enoent++; if (vanished.length < 6) vanished.push(f.slice(root.length + 1)); }
+              }
+            }
+            if (!announced) { announced = true; parentPort.postMessage('ready'); }
+          }
+        }
+        setImmediate(tick);
+      };
+      tick();
+    `, { eval: true, workerData: { root: vendorRoot } });
+
+    // Wait for the reader to be genuinely looping before republishing, so the window is not missed because the
+    // worker had not started. The timeout is a failure, not a skip: a reader that never reads cannot certify this.
+    await Promise.race([
+      new Promise((resolve) => worker.once('message', () => resolve(true))),
+      new Promise((_, reject) => { readyTimer = setTimeout(() => reject(new Error('the reader never listed the tree')), 10000); }),
+    ]);
+    clearTimeout(readyTimer); // or the pending timer keeps the runner alive for its full 10s after the case passes
+    const stopped = new Promise((resolve) => worker.once('message', resolve));
+
+    // Twelve republishes: at a single republish the unfixed generator reports ENOENT in most runs, so this makes
+    // a missed window improbable rather than merely unlikely, while a fixed generator has no window to hit.
+    for (let i = 0; i < 12; i++) {
+      for (const dir of ['evidence', 'runner', 'schema']) {
+        for (let k = 0; k < 4; k++) put(`${dir}/m${k}.mjs`, `// ${dir} ${k} v${i + 2}\n`);
+      }
+      generateVendoredSurface({ targetRoot: target });
+    }
+    worker.postMessage('stop');
+    const report = await stopped;
+    assert(report.reads > 50, `the reader must actually have read the tree, saw ${report.reads} reads over ${report.lists} listings`);
+    assert(report.enoent === 0, `a reader running during a republish must not see a path vanish; ${report.enoent} of ${report.reads} reads failed with ENOENT, vanished: ${JSON.stringify(report.vanished)}`);
+    console.log(`concurrent republish OK: ${report.reads} list-then-read cycles over ${report.lists} listings, ENOENT 0, vanished []`);
+
+    // Post-conditions, so "publish nothing" cannot satisfy the assertion above: the last write wins and the tree
+    // is whole afterwards.
+    assert(listFiles(vendorRoot, (p) => p.endsWith('.mjs')).length === 12, 'every module must be present after the republishes');
+    assert(readFileSync(join(vendorRoot, 'evidence', 'm0.mjs'), 'utf8') === '// evidence 0 v13\n', 'the published tree must hold the last written bytes');
+  } finally {
+    clearTimeout(readyTimer);
+    if (worker) await worker.terminate();
+    rmSync(target, { recursive: true, force: true });
   }
 }

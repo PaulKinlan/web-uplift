@@ -54,6 +54,7 @@ import {
   testGenerateVendoredSurfaceKeepsListedPathsReadable,
   testRepublishReaderInstrumentDetectsDeleteThenCopy,
   testPublishOrderLeavesObsoleteEntriesUntilAfterPublish,
+  testRepublishKeepsListedPathsReadableForAConcurrentReader,
 } from './install-copy-symlink.mjs';
 
 // The in-tree vendored copies under .web-uplift/ must stay 100% byte-identical
@@ -607,6 +608,7 @@ export const installPackageTests = [
   testGenerateVendoredSurfaceKeepsListedPathsReadable,
   testRepublishReaderInstrumentDetectsDeleteThenCopy,
   testPublishOrderLeavesObsoleteEntriesUntilAfterPublish,
+  testRepublishKeepsListedPathsReadableForAConcurrentReader,
 ];
 
 export {
