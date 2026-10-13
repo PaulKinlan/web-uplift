@@ -25,6 +25,7 @@
 // opens from file:// and is safe to publish as a CI artifact.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostSlug, listRuns, resolveLatest } from '../runner/run-history.mjs';
@@ -680,6 +681,7 @@ export function renderScorecard(data) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="${esc(CSP)}">
 <title>web-uplift scorecard — ${esc(host)}</title>
 <style>${CSS}</style>
 </head>
@@ -973,6 +975,44 @@ const JS = `
   }
 })();
 `;
+
+// --- Content-Security-Policy (web-uplift-zl7c) -------------------------------
+//
+// The scorecard renders untrusted report data, so the document carries a
+// restrictive policy as a SECOND line behind the sink validation (6fno: the
+// href scheme allowlist; a CSP does not govern URL schemes, so it cannot
+// replace that check - it bounds the damage a future unvalidated sink could
+// do). What the artifact needs, measured from the template itself, not guessed:
+// one inline <style> (CSS), one inline <script> (JS, no fetch/eval/dynamic
+// injection), images as data: URIs or same-directory relative paths, and video
+// by relative path. Everything else is 'none'.
+//
+// The inline script and style are allowed BY HASH of the exact bytes emitted,
+// computed here from the same constants the template interpolates - not by
+// 'unsafe-inline', which would make the policy a token: any injected <script>
+// or <style> whose bytes differ from the generated ones is blocked, so an
+// attacker who finds a future markup-injection sink cannot run script of their
+// choosing even though they can add elements. Hashes are honoured in a <meta>
+// policy (CSP3), which is how a static, header-less artifact gets a real one.
+//
+// Two stated exceptions, each the narrowest that keeps the page working:
+// - style-src-attr 'unsafe-inline': the history chart sets a dynamic
+//   min-width on its SVG (a per-render pixel count no static rule can express).
+//   This allows style ATTRIBUTES only; injected <style> elements stay blocked.
+// - img-src 'self' data: and media-src 'self': relative artifact paths resolve
+//   against wherever the reports folder is published (http(s) or file://),
+//   and inlined screenshots are data: URIs. No network origin is whitelisted.
+const cspDigest = (s) => createHash('sha256').update(s).digest('base64');
+const CSP = [
+  "default-src 'none'",
+  `script-src 'sha256-${cspDigest(JS)}'`,
+  `style-src 'sha256-${cspDigest(CSS)}'`,
+  "style-src-attr 'unsafe-inline'",
+  "img-src 'self' data:",
+  "media-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join('; ');
 
 // --- CLI --------------------------------------------------------------------
 

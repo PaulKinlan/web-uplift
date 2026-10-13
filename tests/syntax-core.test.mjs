@@ -1120,6 +1120,160 @@ export async function testReservedImageBoxInBrowser() {
 }
 
 
+// The scorecard carries a restrictive Content-Security-Policy as defence in depth
+// behind the sink validation (web-uplift-zl7c; the 6fno href allowlist stays the
+// first line - a CSP does not govern URL schemes). What makes this test worth its
+// browser time is the pair it refuses to skip: the artifact must still FUNCTION
+// under its own policy (tabs switch, a finding dialog opens, inlined screenshots
+// decode, the hashed stylesheet actually applies), and the policy must actually
+// BITE (an injected inline script with bytes that match no hash is blocked), with a
+// stripped-policy control proving the probe can run when nothing stops it. A policy
+// that silently broke the page, or one that blocked nothing, both fail here.
+export async function testScorecardCspRestrictsAndFunctions() {
+  const { evaluate, sleep, withSession } = await import('../evidence/cdp.mjs');
+  const { renderScorecard, scoreReport } = await import('../aggregate/scorecard.mjs');
+  const { createHash } = await import('node:crypto');
+
+  const hostRoot = join(tmp, 'zl7c-runs', 'example');
+  const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
+  const runIds = ['20260101-000000', '20260102-000000'];
+  const dirs = runIds.map((id) => join(hostRoot, id));
+  mkdirSync(hostRoot, { recursive: true });
+  // A real 1x1 PNG so the inlined data: URI genuinely decodes rather than only
+  // existing: `complete && naturalWidth > 0` is the assertion, and a broken
+  // bitmap satisfies neither.
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  dirs.forEach((dir, index) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'report.json'), JSON.stringify(report));
+    writeFileSync(join(dir, index === 0 ? 'before.png' : 'after.png'), png);
+    // The report's own artifacts (dialog screenshots under evidence/) are written
+    // too, so the generator inlines them as data: URIs exactly as it would for a
+    // real run and every image in the document is one the policy must let decode.
+    for (const a of report.artifacts ?? []) {
+      if (a.type === 'screenshot') {
+        mkdirSync(join(dir, 'evidence'), { recursive: true });
+        writeFileSync(join(dir, a.path), png);
+      }
+    }
+  });
+  const run = (runId, dir, compare) => ({ runId, dir, report, compare, ...scoreReport(report) });
+  const data = {
+    host: 'example',
+    generatedAt: '2026-01-01 00:00',
+    runs: runIds.map((id, i) => run(id, dirs[i], null)),
+    latest: run(runIds[1], dirs[1], {
+      runA: runIds[0],
+      runB: runIds[1],
+      metrics: [],
+      summary: {},
+      screenshotPairs: [{ before: 'before.png', after: 'after.png', caption: 'hero' }],
+    }),
+  };
+  const html = renderScorecard(data);
+
+  // Markup level: the policy exists, sits in <head>, and its script/style hashes are
+  // the hashes of the exact bytes the document carries - self-verifying, so a policy
+  // that allowed nothing the page uses, or hashes that drifted from the emitted
+  // constants, both fail without needing a browser to notice.
+  const meta = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/);
+  assert(meta, 'csp: the scorecard must carry a Content-Security-Policy meta');
+  const policy = meta[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  assert(html.indexOf(meta[0]) < html.indexOf('<style>'), 'csp: the policy must appear before the first style block');
+  const digest = (s) => createHash('sha256').update(s).digest('base64');
+  const scriptBytes = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? '';
+  const styleBytes = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '';
+  assert(policy.includes(`script-src 'sha256-${digest(scriptBytes)}'`), 'csp: the script hash must match the emitted script bytes');
+  assert(policy.includes(`style-src 'sha256-${digest(styleBytes)}'`), 'csp: the style hash must match the emitted style bytes');
+  assert(!/unsafe-inline/.test(policy.replace("style-src-attr 'unsafe-inline'", '')), 'csp: no directive outside the stated style-attr exception may allow unsafe-inline');
+  assert(/default-src 'none'/.test(policy), 'csp: the policy must default to none');
+
+  // The in-page probe runs under the policy; the control strips the meta and serves
+  // the same document so the injected script CAN run there. One server, two paths.
+  const probe = `(async () => {
+    const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+    const tab = document.querySelector('.tab[data-tab="findings"]');
+    tab.click();
+    const findingsActive = document.getElementById('findings').classList.contains('active');
+    const opener = document.querySelector('button[commandfor]');
+    const dlg = opener ? document.getElementById(opener.getAttribute('commandfor')) : null;
+    opener.click();
+    const dialogOpen = !!(dlg && dlg.open);
+    // The artifact lazy-loads its images and hides inactive panels, and decode()
+    // on a never-fetched lazy image never settles, so each img is switched to
+    // eager first (the reader scrolling to it), then decode() is forced: the
+    // assertion measures whether the policy lets the bitmap arrive, not
+    // lazy-load timing.
+    document.querySelector('.tab[data-tab="beforeafter"]').click();
+    const imgs = [...document.querySelectorAll('img')];
+    imgs.forEach((i) => { i.loading = 'eager'; });
+    let decoded = 0;
+    await Promise.all(imgs.map((i) => i.decode().then(() => { decoded += 1; }, () => {})));
+    if (dialogOpen) dlg.close();
+    const bodyBg = getComputedStyle(document.body).backgroundColor;
+    window.__zl7cProbe = false;
+    const s = document.createElement('script');
+    s.textContent = 'window.__zl7cProbe = true;';
+    document.body.appendChild(s);
+    const injectionBlocked = window.__zl7cProbe === false;
+    return JSON.stringify({ hasMeta: !!meta, findingsActive, hasOpener: !!opener, dialogOpen, imgCount: imgs.length, decoded, bodyBg, injectionBlocked, ready: document.readyState });
+  })()`;
+
+  const measured = await withSession(async (client) => {
+    const server = http.createServer((req, res) => {
+      if ((req.url || '') === '/no-csp') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(html.replace(meta[0], ''));
+        return;
+      }
+      if ((req.url || '') === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(html);
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    try {
+      const base = `http://127.0.0.1:${server.address().port}`;
+      const read = async (path) => {
+        await client.Page.navigate({ url: base + path });
+        for (let i = 0; i < 60 && (await evaluate(client, 'document.readyState')) === 'loading'; i += 1) await sleep(50);
+        return JSON.parse(await evaluate(client, probe));
+      };
+      const under = await read('/');
+      const control = await read('/no-csp');
+      return { under, control };
+    } finally {
+      // Chrome holds a non-idle socket after the last navigation (measured:
+      // close() alone waits ~60s for it every run), and nothing needs it once
+      // both pages have been read, so every connection is torn down explicitly
+      // and teardown is deterministic instead of timed.
+      server.closeAllConnections();
+      await new Promise((resolveClose) => server.close(resolveClose));
+    }
+  });
+
+  // Function under the policy: everything the page is for still works.
+  assert(measured.under.ready === 'complete' || measured.under.ready === 'interactive', `csp: the document must parse under its own policy, got ${measured.under.ready}`);
+  assert(measured.under.findingsActive === true, 'csp: the tab switch (hash-allowed inline script) must still work under the policy');
+  assert(measured.under.hasOpener === true, 'csp: the fixture must include a finding-dialog opener (commandfor button)');
+  assert(measured.under.dialogOpen === true, 'csp: a finding dialog must still open under the policy');
+  assert(measured.under.decoded === measured.under.imgCount, `csp: every image the artifact carries (inlined screenshots and the compare pair) must decode under the policy, got ${measured.under.decoded} of ${measured.under.imgCount}`);
+  assert(measured.under.bodyBg === 'rgb(15, 18, 22)', `csp: the hashed stylesheet must still apply (body background ${measured.under.bodyBg}), not fall back to the default`);
+  // Enforcement: the policy bites, and the control proves the probe is not inert.
+  assert(measured.under.injectionBlocked === true, 'csp: an injected inline script matching no hash must NOT run under the policy');
+  assert(measured.under.hasMeta === true, 'csp: the served document must carry the policy');
+  assert(measured.control.hasMeta === false, 'csp: the control page must really be the same document without the policy');
+  assert(measured.control.injectionBlocked === false, 'csp: the control must show the same injection DOES run without the policy - otherwise this test could not see the difference');
+  console.log(`[zl7c] under: tabs=${measured.under.findingsActive} dialog=${measured.under.dialogOpen} decoded=${measured.under.decoded}/${measured.under.imgCount} bg=${measured.under.bodyBg} blocked=${measured.under.injectionBlocked} | control blocked=${measured.control.injectionBlocked}`);
+}
+
+
 // The `latest` pointer is a file in a tree the audited agent can write, and a consumer
 // reads it as the directory to load a run's report from. A planted target must not be able
 // to name a directory outside the host's run root (web-uplift-9t8), and EACH pointer form
@@ -1616,6 +1770,7 @@ export const syntaxCoreTests = [
   testScorecardWithholdsScriptedFindingUrls,
   testScorecardReservesImageBoxes,
   testReservedImageBoxInBrowser,
+  testScorecardCspRestrictsAndFunctions,
   testLatestPointerCannotEscapeTheRunRoot,
   testSourceTreeSkipsSymlinkFileEscape,
   testSourceTreeSkipsSymlinkDirEscape,
