@@ -44,7 +44,13 @@ export function runAsync(command, args, opts = {}) {
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('close', (status) => resolvePromise({ status, stdout, stderr }));
+    // The SIGNAL travels with the status (web-uplift-z3b8). A child killed by a signal reports status null,
+    // which is also what a child that never started reports, so a caller that sees only the status cannot
+    // tell 'killed' from 'no spawn at all'. The batch isolation case prints both fields when its stub agent
+    // left no trace and it exists to tell those fates apart, but every one of them read as signal=undefined
+    // (Node reports null rather than undefined for a child that exited on its own, so the distinction is
+    // between a signal name and an absence of one).
+    child.on('close', (status, signal) => resolvePromise({ status, signal, stdout, stderr }));
   });
 }
 
