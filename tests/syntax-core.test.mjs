@@ -1931,7 +1931,7 @@ export function testSuiteListsMatchRegressionRegistry() {
   // so it changes the case count only - never EXPECTED_SUITE_FILES and never the census.
   // web-uplift-8fus adds the two cases above this line's file: an orphaned staged tree is swept by the next
   // run, and a LIVE run's staged tree is left alone. Both are registered in tests/install-package.test.mjs.
-  const EXPECTED_CASES = 178;
+  const EXPECTED_CASES = 179;   // 178 plus the malformed-stage age case (web-uplift-8fus)
   assert(
     suiteFiles.length === EXPECTED_SUITE_FILES,
     `the gate now runs ${suiteFiles.length} suite file(s) and this control is pinned at ${EXPECTED_SUITE_FILES}. If a suite file was added or removed on purpose, update EXPECTED_SUITE_FILES and EXPECTED_CASES in the same commit; if it was not, a suite has silently stopped running (web-uplift-ougd).`,

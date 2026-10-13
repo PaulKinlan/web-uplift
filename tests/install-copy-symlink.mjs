@@ -15,7 +15,7 @@
 // This file is the fast, browser-free foreground check. Run it directly:
 //   node tests/install-copy-symlink.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -1175,6 +1175,36 @@ export function testSweepLeavesALiveRunsStagedTreeAlone() {
     );
   } finally {
     child.kill('SIGKILL');
+    rmSync(target, { recursive: true, force: true });
+  }
+}
+
+// The malformed half of the same rule (web-uplift-8fus): a name this version did not write cannot be judged by
+// pid, so AGE decides - old enough and it is swept, recent and it is left alone because a concurrent run may be
+// mid-write. Without the rule the malformed case leaks forever, and with a naive "sweep every .stage-*" it
+// would be deleted while someone was still writing it.
+export function testSweepRemovesAMalformedStageNameOnlyWhenItIsOld() {
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-malformed-stage-'));
+  try {
+    const scratch = join(target, '.web-uplift', 'scratch');
+    const old = join(scratch, '.stage-not-a-pid');
+    const recent = join(scratch, '.stage-also-not-a-pid');
+    mkdirSync(old, { recursive: true });
+    mkdirSync(recent, { recursive: true });
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(old, twoHoursAgo, twoHoursAgo);
+
+    const report = generateVendoredSurface({ targetRoot: target });
+    assert(!existsSync(old), 'a malformed stage name that is OLD must be swept, or it leaks forever (web-uplift-8fus)');
+    assert(
+      report.sweptOrphans.includes('.stage-not-a-pid'),
+      `the run must report the malformed orphan it removed: ${JSON.stringify(report.sweptOrphans)}`,
+    );
+    assert(
+      existsSync(recent),
+      'a malformed stage name that is RECENT must be left alone, because a concurrent run may be mid-write',
+    );
+  } finally {
     rmSync(target, { recursive: true, force: true });
   }
 }

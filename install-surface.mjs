@@ -279,7 +279,23 @@ export function sweepOrphanedStages(scratchRoot) {
   }
   for (const name of entries) {
     const match = /^\.stage-(\d+)-/.exec(name);
-    if (!match) continue;
+    if (!match) {
+      // AGREED WITH COORD (web-uplift-8fus): a name this version did not write is judged by AGE, not by shape,
+      // so a run that is mid-write keeps its staging tree even if a later version spells the name differently.
+      // The conservative direction is a RECYCLED pid, which makes a genuinely stale stage look live: it leaks
+      // one directory rather than deleting a live run's work, which is the right way to be wrong.
+      if (!name.startsWith('.stage-')) continue;
+      let ageMs = null;
+      try {
+        ageMs = Date.now() - lstatSync(join(scratchRoot, name)).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (ageMs <= 60 * 60 * 1000) continue;
+      rmSync(join(scratchRoot, name), { recursive: true, force: true });
+      removed.push(name);
+      continue;
+    }
     const pid = Number(match[1]);
     if (pid === process.pid) continue;
     let alive = true;
