@@ -158,12 +158,35 @@ export function refusedDestination(dst, rootDir) {
 // generator used to delete each destination directory whole and recopy it, so a reader that listed a path and
 // then read it - which is exactly what the syntax census does to this repository - could hold a path that no
 // longer existed. Measured before this change, over a republished tree: 5407 list-then-read cycles produced
-// one ENOENT on .web-uplift/runner/c.mjs. Every file is now moved into place with a single rename, which is
+// one ENOENT on .web-uplift/runner/c.mjs; reproduced independently for this change with a two-process reader
+// over a 60-module tree, 10 republishes: 336 ENOENT in 394617 reads before, 0 in 461465 reads after.
+// Every file is now moved into place with a single rename, which is
 // atomic within a filesystem, and OBSOLETE entries are removed only AFTER the new content is present, so the
 // worst a reader can observe is STALE content, never a hole.
 //
 // This is NOT cross-file atomicity and does not claim to be: per-file rename means a reader can still observe
 // a MIX of new and old files. That is a strictly better failure mode than ENOENT, and it is the limitation.
+//
+// WHAT THIS DOES AND DOES NOT COVER (web-uplift-c6i1):
+//   - initial creation: there is no delete on this path at all; a destination that does not exist is created.
+//   - a changed source: the path goes from old bytes to new bytes in one rename, so it is never absent. A
+//     single vendored FILE is staged beside its destination and renamed for the same reason, because
+//     copyFileSync truncates its destination first.
+//   - a removed source: the destination entry is removed by pruneObsoleteEntries AFTER the new content is
+//     published, so what a reader can still see is stale rather than missing.
+//   - a whole-tree mixed version: possible, and stated rather than assumed.
+//   - a type change (a source file replacing a destination directory, or the reverse): handled explicitly,
+//     because a rename cannot cross types; those two transitions remove the old entry first.
+//   - a crash mid-publish: the staging tree under `.web-uplift/scratch/` can be left behind, and it is
+//     removed at the start of the next run. Nothing has been deleted from the destination at that point.
+//   - the staging tree is invisible to the syntax census because that walk skips a directory named `scratch`
+//     (tests/test-helpers.mjs SKIP_DIRS). That coupling is asserted from the test side too: the fixture walks
+//     with the census's own listFiles and fails if a staged path becomes visible.
+//   - COST, measured rather than assumed: regenerating this repository measured medians of 64ms before and
+//     70ms after over three paired runs each; on a synthetic 80-file tree, medians of 6.8ms before and 8.5ms
+//     after over five paired runs. The staging write plus the rename is the difference, so it is milliseconds
+//     per prepare against a gate budget measured in tens of seconds.
+//
 // The two phases are exported SEPARATELY, and that is the seam the interleaving test drives step by step
 // (web-uplift-c6i1). The order is the whole property: publish first, remove obsolete entries after, so the
 // only thing a reader can see is STALE content, never a hole. A single function that did both would leave the
