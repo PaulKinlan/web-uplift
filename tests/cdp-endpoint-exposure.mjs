@@ -818,6 +818,14 @@ export async function testThrowingLogDoesNotLeakTheSpawnedBrowser() {
 // The two controls matter as much as the fix: a small non-DevTools body must STILL read 'other' (so the
 // change is narrow to oversized bodies rather than making everything undecided), and a real DevTools
 // body must still be detected and still refuse.
+//
+// WHICH RULE WINS FOR A PADDED BODY WITH A PAYLOAD DEPENDS ON THE CHUNK BOUNDARY, and this case used to
+// assume one side of that boundary (web-uplift-wo80). Measured: padding and payload arriving as two chunks
+// settles 'oversized', and the same two writes coalescing into one chunk settles 'devtools', because
+// evidence/cdp.mjs tests the marker before the cap - a marker is proof, the cap is a heuristic. Under load
+// the kernel and the scheduler choose, so at --test-concurrency=8 this case failed one run in three. The
+// strict assertions therefore sit on a peer whose verdict CANNOT depend on scheduling (padding, no payload,
+// ever), and the payload-bearing peer asserts the property that holds for either boundary.
 export async function testOversizedBodyDoesNotEarnACleanVerdict() {
   const servers = [];
   const start = async (write) => {
@@ -829,9 +837,16 @@ export async function testOversizedBodyDoesNotEarnACleanVerdict() {
     return server.address().port;
   };
   try {
+    // The deterministic peer: more than the cap, and no DevTools payload ever. No timer, no second write,
+    // so no chunk boundary can change its verdict - which is why the strict assertions below are made
+    // against THIS peer rather than the padded one.
+    const padOnlyPort = await start((socket) => {
+      socket.write(' '.repeat(70 * 1024));
+    });
     const paddingPort = await start((socket) => {
       // Flush the padding BEFORE the payload so the cap is what decides. Written back-to-back these
-      // coalesce into one chunk, the data handler sees the marker, and the cap never runs.
+      // coalesce into one chunk, the data handler sees the marker, and the cap never runs - which is why
+      // the assertions on this peer have to accept either outcome (web-uplift-wo80).
       socket.write(' '.repeat(70 * 1024));
       setTimeout(() => socket.write('{"webSocketDebuggerUrl":"ws://127.0.0.1:1/devtools/browser/x"}'), 30);
     });
@@ -842,11 +857,18 @@ export async function testOversizedBodyDoesNotEarnACleanVerdict() {
     // because cdpEndpointExposure gives each of 'refused', 'devtools' and 'other' its own branch and
     // treats everything else alike, but the value is what the note names, and calling a size cap a timeout
     // sends an operator after a slow endpoint.
-    const paddedVerdict = await probeDevtools('127.0.0.1', paddingPort, 3000);
+    const padOnlyVerdict = await probeDevtools('127.0.0.1', padOnlyPort, 3000);
     // The message has to describe the property that FAILED. 'timeout' also leaves the host undecided, so
     // the previous wording described the web-uplift-6h9o property rather than this one (review P2).
-    assert(paddedVerdict === 'oversized',
-      `an oversized unproven body must settle 'oversized' (got ${paddedVerdict}), not 'other' or 'timeout'`);
+    assert(padOnlyVerdict === 'oversized',
+      `a body over the cap with no DevTools payload must settle 'oversized' (got ${padOnlyVerdict}), not 'other' or 'timeout'`);
+    const paddedVerdict = await probeDevtools('127.0.0.1', paddingPort, 3000);
+    // Either outcome is a non-clean one: 'oversized' when the cap ran first, 'devtools' when the marker
+    // was read in the same chunk. Both leave the caller without a clean verdict, which is the property
+    // this case exists to pin; demanding exactly 'oversized' here pinning the reader's scheduling instead
+    // is what made it flaky.
+    assert(paddedVerdict === 'oversized' || paddedVerdict === 'devtools',
+      `a body over the cap must never settle as a clean non-DevTools answer, whichever chunk boundary the reader sees (got ${paddedVerdict})`);
     assert(await probeDevtools('127.0.0.1', smallPort, 3000) === 'other',
       'a small non-DevTools body must still read as other: the change must stay narrow to oversized bodies');
     assert(await probeDevtools('127.0.0.1', devtoolsPort, 3000) === 'devtools',
@@ -860,17 +882,35 @@ export async function testOversizedBodyDoesNotEarnACleanVerdict() {
       console.log('oversized body OK: probe verdicts hold; skipped the caller-level check, this host has no non-loopback address');
       return;
     }
-    const laundered = await cdpEndpointExposure(paddingPort, { timeoutMs: 3000 });
-    assert(laundered.unknown === true, `an oversized unproven body must reach the caller as unknown, got ${JSON.stringify(laundered)}`);
-    assert(laundered.verifiedBy === undefined, `and must name no verifier, got verifiedBy=${laundered.verifiedBy}`);
-    assert(laundered.exposed === false, 'and must not be reported exposed on the strength of a size cap');
+    // The deterministic peer carries the strict caller-level assertions, for the same reason as above.
+    const padOnly = await cdpEndpointExposure(padOnlyPort, { timeoutMs: 3000 });
+    assert(padOnly.unknown === true, `an oversized unproven body must reach the caller as unknown, got ${JSON.stringify(padOnly)}`);
+    assert(padOnly.verifiedBy === undefined, `and must name no verifier, got verifiedBy=${padOnly.verifiedBy}`);
+    assert(padOnly.exposed === false, 'and must not be reported exposed on the strength of a size cap');
 
     // The verdict alone is half the claim: the NOTE the caller writes has to name the real cause, or an
     // operator reads "could not be probed (timeout)" while the cause was a size cap (web-uplift-g9zr).
-    assert(/could not be probed \(oversized\)/.test(laundered.note || ''),
-      `the note must name the size cap as the cause, got: ${laundered.note}`);
-    assert(!/could not be probed \(timeout\)/.test(laundered.note || ''),
-      `the note must not report a timeout when the cap fired, got: ${laundered.note}`);
+    assert(/could not be probed \(oversized\)/.test(padOnly.note || ''),
+      `the note must name the size cap as the cause, got: ${padOnly.note}`);
+    assert(!/could not be probed \(timeout\)/.test(padOnly.note || ''),
+      `the note must not report a timeout when the cap fired, got: ${padOnly.note}`);
+
+    // The payload-bearing peer, where the chunk boundary decides which non-clean branch the caller takes:
+    // assert only what is true for BOTH, so the case stops depending on the reader's scheduling.
+    const laundered = await cdpEndpointExposure(paddingPort, { timeoutMs: 3000 });
+    assert(laundered.unknown === true || laundered.exposed === true,
+      `a body over the cap must never reach the caller as a clean non-DevTools verdict, got ${JSON.stringify(laundered)}`);
+    if (laundered.unknown === true) {
+      assert(laundered.verifiedBy === undefined, `and must name no verifier, got verifiedBy=${laundered.verifiedBy}`);
+      assert(laundered.exposed === false, 'and must not be reported exposed on the strength of a size cap');
+      assert(/could not be probed \(oversized\)/.test(laundered.note || ''),
+        `the note must name the size cap as the cause, got: ${laundered.note}`);
+      assert(!/could not be probed \(timeout\)/.test(laundered.note || ''),
+        `the note must not report a timeout when the cap fired, got: ${laundered.note}`);
+    } else {
+      assert(/Chrome DevTools/.test(laundered.reason || ''),
+        `when the marker is read instead of the cap, the refusal must still name the DevTools answer, got: ${laundered.reason}`);
+    }
     const narrow = await cdpEndpointExposure(smallPort, { timeoutMs: 3000 });
     assert(narrow.unknown !== true, 'a small non-DevTools peer must still be settled, not left unknown');
     const detected = await cdpEndpointExposure(devtoolsPort, { timeoutMs: 3000 });
