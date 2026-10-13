@@ -645,6 +645,36 @@ export async function testScorecardRejectsEscapingComparisonRunIds() {
 // through the DOM, so an href that reaches the document resolves exactly as it
 // would on click - including the whitespace-obfuscated schemes a string-level
 // regex can miss.
+/**
+ * Close a local fixture server, bounded and loud (web-uplift-nvq1).
+ *
+ * `server.close()` only stops new connections; it WAITS for the open ones, and a Chrome target keeps a
+ * keep-alive socket to a local fixture until the target itself is gone. Both cases below awaited it INSIDE
+ * the withSession callback, i.e. before Chrome's session/target was torn down, so the wait was for Chrome to
+ * hang up: measured 59294ms in this exact shape against the 60.6-62.9s case durations the architect found,
+ * and free on the runs where Chrome had already dropped the socket - which is why the defect looked bimodal
+ * rather than broken. closeAllConnections() removes the socket that close() would wait for (the same move
+ * already used by testScorecardCspRestrictsAndFunctions at the close of its own fixture), and the budget
+ * makes a future hang LOUD instead of a silent minute.
+ */
+const FIXTURE_CLOSE_BUDGET_MS = 2000;
+async function closeFixtureServer(server, label, budgetMs = FIXTURE_CLOSE_BUDGET_MS) {
+  if (!server || !server.listening) return;
+  server.closeAllConnections?.();
+  let timer = null;
+  const closed = await Promise.race([
+    new Promise((resolve) => server.close(() => resolve(true))),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(false), budgetMs);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  assert(
+    closed === true,
+    `${label}: the fixture server did not close within ${budgetMs}ms, so its teardown is hanging - fix the fixture rather than raising the bound (web-uplift-nvq1)`,
+  );
+}
+
 export async function testScorecardWithholdsScriptedFindingUrls() {
   const { evaluate, sleep, withSession } = await import('../evidence/cdp.mjs');
   const { renderScorecard, scoreReport } = await import('../aggregate/scorecard.mjs');
@@ -725,9 +755,18 @@ export async function testScorecardWithholdsScriptedFindingUrls() {
         };
       })()`);
     } finally {
-      await new Promise((resolveClose) => server.close(resolveClose));
+      await closeFixtureServer(server, 'scorecard scripted-url page');
     }
   });
+
+  // The bound is PROVEN rather than assumed, the same discipline the rest of this suite uses: a close that
+  // never completes must fail loudly inside the budget instead of quietly adding a minute to the gate. The
+  // stub never calls back, so nothing but the bound can end the wait.
+  await assert.rejects(
+    () => closeFixtureServer({ listening: true, closeAllConnections() {}, close() {} }, 'bound control', 20),
+    /did not close within 20ms/,
+    'the fixture-close bound must fail loudly when a server never closes',
+  );
 
   assert(['interactive', 'complete'].includes(measured.ready), `scorecard: the document must parse before the anchor census, got ${measured.ready}`);
   assert(measured.anchors === friendly.length, `scorecard: the shipped document must carry exactly the ${friendly.length} friendly links, found ${measured.anchors} (${JSON.stringify(measured.protocols)})`);
@@ -1079,7 +1118,7 @@ export async function testReservedImageBoxInBrowser() {
       const decoded = await evaluate(client, reader);
       return { pending, decoded };
     } finally {
-      await new Promise((resolveClose) => server.close(resolveClose));
+      await closeFixtureServer(server, 'reserved image box page');
     }
   });
 
