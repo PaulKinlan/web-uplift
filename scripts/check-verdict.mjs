@@ -21,7 +21,7 @@
  *   node scripts/check-verdict.mjs [--tree <sha>] [--dir <cache>] [--json]
  * Exit 0 = accepted, 1 = refused (with one next action), 2 = usage error.
  */
-import { readFileSync, readdirSync, statSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,7 +69,18 @@ export function judgeVerdict(record, { repo = repoRoot, thisCommonDir = gitCommo
 
 /** Newest record, or the one for a tree. */
 export function findRecord(dir, tree) {
-  if (tree) return join(dir, `${tree}.json`);
+  if (tree) {
+    const exact = join(dir, `${tree}.json`);
+    if (existsSync(exact)) return exact;
+    // The cache names records <tree>.<kind>.json (e.g. <tree>.fast.json), so assuming <tree>.json made the
+    // POSITIVE case fail on LOOKUP while the changed paths passed - which is why the positive case goes
+    // first. Match the real naming and take the newest of them (web-uplift-ebvj).
+    const matches = readdirSync(dir)
+      .filter((f) => f.startsWith(`${tree}.`) && f.endsWith('.json'))
+      .map((f) => join(dir, f));
+    if (matches.length === 0) return null;
+    return matches.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+  }
   const files = readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => join(dir, f));
   if (files.length === 0) return null;
   return files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
