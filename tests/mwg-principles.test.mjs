@@ -670,8 +670,8 @@ export function testMwgArtefactGuard() {
       `mwg-artefact: case 2 canonicalisation mismatch:\nexpected: ${expectedCanon}\ngot:      ${state.canonicalisation}`
     );
     assert(
-      state.appliedRulesVersion === '0.0.193',
-      `mwg-artefact: case 2 appliedRulesVersion must be "0.0.193", got ${state.appliedRulesVersion}`
+      state.appliedRulesVersion === JSON.parse(readFileSync(new URL('../knowledge/mwg-rule-basis.json', import.meta.url), 'utf8')).catalogueVersion,
+      `mwg-artefact: case 2 appliedRulesVersion must equal the applied rules' catalogueVersion (${JSON.parse(readFileSync(new URL('../knowledge/mwg-rule-basis.json', import.meta.url), 'utf8')).catalogueVersion}), got ${state.appliedRulesVersion}`
     );
     // Set identity fields: derived from the live catalog, never a hardcoded count
     // (the catalog set may gain prompt-api via web-uplift-968's fix bead).
