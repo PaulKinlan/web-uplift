@@ -625,6 +625,113 @@ export async function testScorecardRejectsEscapingComparisonRunIds() {
 }
 
 
+// A finding's url is untrusted report input (the schema types it as a string,
+// nothing more), and findingDialog() used to emit it as an <a href> behind esc()
+// alone. esc() stops attribute breakout but not the scheme, so a javascript: URI
+// survived intact and would script the scorecard origin when a reader clicked
+// the link (web-uplift-6fno). The fix allows only http(s) and scheme-less
+// relative references as hrefs; every other value stays visible as plain
+// escaped text. Markup is asserted first, deterministically, and then the
+// browser's own URL parser gets the last word: the anchors are enumerated
+// through the DOM, so an href that reaches the document resolves exactly as it
+// would on click - including the whitespace-obfuscated schemes a string-level
+// regex can miss.
+export async function testScorecardWithholdsScriptedFindingUrls() {
+  const { evaluate, sleep, withSession } = await import('../evidence/cdp.mjs');
+  const { renderScorecard, scoreReport } = await import('../aggregate/scorecard.mjs');
+
+  const base = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
+  // The bead's repro, then the shapes that dodge a naive scheme test: scheme
+  // case belongs to the parser, a tab inside the scheme is stripped before
+  // parsing, and a leading space is trimmed. data:/blob:/vbscript: are withheld
+  // by the same rule rather than enumerated case by case.
+  const hostile = [
+    'javascript:alert(document.domain)',
+    'JaVaScRiPt:alert(1)',
+    'jav\tascript:alert(2)',
+    ' javascript:alert(3)',
+    'data:text/html,<b>ping</b>',
+    'vbscript:msgbox(1)',
+    'blob:https://example.com/deadbeef',
+  ];
+  const friendly = ['https://example.com/evidence', '/relative-evidence'];
+  const report = structuredClone(base);
+  report.findings = base.findings.map((f, i) => ({
+    ...f,
+    url: i < hostile.length ? hostile[i] : friendly[i - hostile.length],
+  }));
+  const run = { runId: 'pwn', dir: tmp, report, compare: null, ...scoreReport(report) };
+  const html = renderScorecard({ host: 'example', generatedAt: '2026-01-01 00:00', runs: [run], latest: run });
+
+  // findingDialog() is the only href emitter in the document, so the whole
+  // attribute set is assertable at once: every href must resolve to http(s)
+  // (relative references resolve against the pretend base, which is https).
+  const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
+  assert(hrefs.length === friendly.length, `scorecard: only the ${friendly.length} friendly finding urls may render as links, got ${JSON.stringify(hrefs)}`);
+  assert(hrefs.includes('https://example.com/evidence'), 'scorecard: an https finding url must still render as a link');
+  assert(hrefs.includes('/relative-evidence'), 'scorecard: a scheme-less relative finding url must still render as a link');
+  for (const v of hrefs) {
+    const resolved = new URL(v, 'https://scorecard.invalid/');
+    assert(
+      resolved.protocol === 'https:' || resolved.protocol === 'http:',
+      `scorecard: a finding url reached an href attribute as ${resolved.protocol} (${v})`,
+    );
+  }
+  // Withheld, not hidden: the value stays readable as escaped text, next to the
+  // reason it is not a link.
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const withheldMarkers = html.match(/link withheld: finding url is not http\(s\)/g) ?? [];
+  assert(withheldMarkers.length === hostile.length, `scorecard: every scripted url must be withheld with its reason, found ${withheldMarkers.length} of ${hostile.length}`);
+  for (const raw of hostile) {
+    assert(html.includes(esc(raw)), `scorecard: a withheld finding url must stay visible as escaped text: ${JSON.stringify(raw)}`);
+  }
+
+  // The browser's parser, on the document that actually shipped.
+  const measured = await withSession(async (client) => {
+    const server = http.createServer((req, res) => {
+      if ((req.url || '') === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(html);
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    try {
+      const url = `http://127.0.0.1:${server.address().port}/`;
+      await client.Page.navigate({ url });
+      for (let i = 0; i < 60 && (await evaluate(client, 'document.readyState')) === 'loading'; i += 1) await sleep(50);
+      return await evaluate(client, `(() => {
+        const anchors = [...document.querySelectorAll('a')];
+        const protocols = anchors.map((a) => {
+          try { return new URL(a.href).protocol; } catch { return 'unparsed:'; }
+        });
+        return {
+          ready: document.readyState,
+          anchors: anchors.length,
+          protocols,
+          text: ${JSON.stringify(hostile)}.every((s) => document.body.textContent.includes(s)),
+          friendlyRaw: ${JSON.stringify(friendly)}.every((s) => [...document.querySelectorAll('a')].some((a) => (a.getAttribute('href') || '') === s)),
+        };
+      })()`);
+    } finally {
+      await new Promise((resolveClose) => server.close(resolveClose));
+    }
+  });
+
+  assert(['interactive', 'complete'].includes(measured.ready), `scorecard: the document must parse before the anchor census, got ${measured.ready}`);
+  assert(measured.anchors === friendly.length, `scorecard: the shipped document must carry exactly the ${friendly.length} friendly links, found ${measured.anchors} (${JSON.stringify(measured.protocols)})`);
+  assert(
+    measured.protocols.every((p) => p === 'http:' || p === 'https:'),
+    `scorecard: the browser must resolve every anchor to http(s), got ${JSON.stringify(measured.protocols)}`,
+  );
+  assert(measured.text === true, 'scorecard: every withheld scripted url must still be readable in the rendered text');
+  assert(measured.friendlyRaw === true, 'scorecard: the friendly hrefs must reach the document verbatim');
+  console.log(`[6fno] anchors=${measured.anchors} protocols=${JSON.stringify(measured.protocols)} withheld=${withheldMarkers.length}`);
+}
+
+
 // The report inlines its screenshots as data URIs, so the browser takes no network
 // hop that could tell it the size: unless the image element carries its width and
 // height, its box is zero high until the bitmap decodes and everything below it moves
@@ -1506,6 +1613,7 @@ export const syntaxCoreTests = [
   testAtomicCoverageValidator,
   testFetchDeadlineAndRawComparison,
   testScorecardRejectsEscapingComparisonRunIds,
+  testScorecardWithholdsScriptedFindingUrls,
   testScorecardReservesImageBoxes,
   testReservedImageBoxInBrowser,
   testLatestPointerCannotEscapeTheRunRoot,
