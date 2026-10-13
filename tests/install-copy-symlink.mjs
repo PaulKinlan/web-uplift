@@ -229,7 +229,15 @@ export function testInstallRefusesDestinationSymlinks() {
     symlinkSync(victimAgents, join(target, 'AGENTS.md'));
 
     const install = runInstall(target);
-    assert(install.status === 0, `install with destination symlinks failed:\n${install.stderr || install.stdout}`);
+    // web-uplift-v167: an install that refused a destination is INCOMPLETE and must not report success. It used
+    // to print these same skips, print 'Installed' and exit 0, so a user or a CI script saw success for an
+    // install with five files missing - the same condition the vendored sync already refuses AND fails on.
+    assert(install.status !== 0,
+      `install with destination symlinks must FAIL, not exit 0, got ${install.status}:\n${install.stdout}`);
+    assert(!/^Installed\./m.test(install.stdout),
+      `an incomplete install must NOT print the success line:\n${install.stdout}`);
+    assert(/FAILED: refused to write \d+ destination/.test(install.stdout + install.stderr),
+      `the failure must be loud rather than a silent refusal:\n${install.stdout}${install.stderr}`);
 
     // Assert that all victims remain completely untouched
     assert(readFileSync(victimManifest, 'utf8') === 'VICTIM-MANIFEST-SECRET\n', 'victim manifest must not be clobbered');
@@ -263,6 +271,9 @@ export function testInstallNormalDestinationWrites() {
     const install = runInstall(target);
     assert(install.status === 0, `clean install failed:\n${install.stderr || install.stdout}`);
     assert(!install.stdout.includes('(symlink)'), `clean install must not report any symlinks skipped:\n${install.stdout}`);
+    // The other half of web-uplift-v167: a complete install must still succeed AND still say so. Without this the
+    // stricter exit could be satisfied by a CLI that failed everything.
+    assert(/^Installed\./m.test(install.stdout), `a clean install must still report success:\n${install.stdout}`);
 
     const manifestPath = join(target, '.web-uplift', 'manifest.json');
     const skillPath = join(target, '.codex', 'skills', 'web-audit', 'SKILL.md');
@@ -611,7 +622,8 @@ export function testInstallAsksTheSharedSymlinkGuard() {
       '--import', pathToFileURL(join(probeDir, 'bootstrap.mjs')).href,
       join(repoRoot, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', target,
     ], { encoding: 'utf8', cwd: repoRoot, timeout: 120000 });
-    assert(run.status === 0, `the install must still succeed while a destination is refused: ${run.stdout}${run.stderr}`);
+    assert(run.status !== 0,
+      `an install that refused a destination must now FAIL (web-uplift-v167), got ${run.status} while the guard was asked: ${run.stdout}${run.stderr}`);
     const calls = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
     assert(calls.includes(planted),
       `the CLI must ASK the shared guard about the planted destination (${planted}), and the probe recorded ${calls.length} call(s): ${JSON.stringify(calls.slice(0, 6))}\n${run.stdout}`);
@@ -636,6 +648,48 @@ export function testInstallAsksTheSharedSymlinkGuard() {
   }
 }
 
+// Fixture 9 (web-uplift-v167): the CONTROL, on the pre-fix decision. The exit status is the half that was
+// wrong, and a test that only asserts the new status would pass just as well against code that never had the
+// defect - so this runs the SAME fixture against a copy of the CURRENT CLI with the single decision line
+// mutated back to the old answer and asserts the OLD outcome: exit 0, and 'Installed' printed over a refused
+// destination. That is what makes fixture 4's assertion discriminating rather than merely true. The copy is
+// written one level under the repo root so every '../x' import resolves to the very file the real CLI imports,
+// and the mutation is asserted to have applied, so this control cannot quietly become a no-op if the source
+// moves.
+export function testInstallIncompleteExitControl() {
+  const outside = mkdtempSync(join(tmpdir(), 'web-uplift-v167-control-outside-'));
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-v167-control-target-'));
+  const controlDir = join(repoRoot, `.v167-control-${process.pid}`);
+  try {
+    const source = readFileSync(join(repoRoot, 'bin', 'web-uplift.mjs'), 'utf8');
+    const mutated = source.replace('  return refusedDestinationCount > 0;', '  return false; // PRE-FIX CONTROL');
+    assert(mutated !== source,
+      'the control must mutate the decision line; if the source moved, this control is a no-op and must fail loudly rather than pass vacuously');
+    mkdirSync(controlDir, { recursive: true });
+    const controlCli = join(controlDir, 'web-uplift.mjs');
+    writeFileSync(controlCli, mutated);
+
+    const victim = join(outside, 'victim-manifest.json');
+    writeFileSync(victim, 'VICTIM-MANIFEST\n');
+    mkdirSync(join(target, '.web-uplift'), { recursive: true });
+    symlinkSync(victim, join(target, '.web-uplift', 'manifest.json'));
+
+    const run = spawnSync(process.execPath, [controlCli, 'install', '--agent', 'codex', '--target', target], { encoding: 'utf8', cwd: repoRoot });
+    assert(run.status === 0,
+      `control: the PRE-FIX decision must exit 0 on this fixture, or fixture 4's assertion is not about the fix: ${run.stdout}${run.stderr}`);
+    assert(/^Installed\./m.test(run.stdout),
+      `control: the pre-fix decision printed 'Installed' over a refused destination, which is exactly the defect the fix removes: ${run.stdout}`);
+    assert(run.stdout.includes('manifest.json (symlink)'),
+      `control: and it still reported the skip, so the defect was the status rather than a silent refusal: ${run.stdout}`);
+    assert(readFileSync(victim, 'utf8') === 'VICTIM-MANIFEST\n',
+      'the control run must leave the victim untouched too: the refusal was never the broken half, the exit status was');
+  } finally {
+    rmSync(controlDir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
+}
+
 // Run directly (node tests/install-copy-symlink.mjs), not when imported by the
 // regression suite, which calls the exported functions itself.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -648,5 +702,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   testSyncRefusesCommittedSymlinkDestination();
   testSyncRefusesEqualByteSymlinkDestination();
   testInstallAsksTheSharedSymlinkGuard();
+  testInstallIncompleteExitControl();
   console.log('tests OK');
 }
