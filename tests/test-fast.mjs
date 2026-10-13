@@ -647,21 +647,18 @@ function testOmittedRulesAreNamedAndNarrow() {
   assert(docOnly.omittedFiles.every((o) => o.rule === 'docs'), 'the documentation paths must be omitted by the docs rule');
   assert(docOnly.isBaseline, 'a documentation-only diff still runs the baseline suite');
 
-  // An EXECUTABLE file inside a named fixture/demo tree is NOT omitted: the tree rules only see
-  // non-executable paths, so playground/app.js is refused like any other unmapped executable. This is
-  // the review finding (P1) on the first version of this change, which omitted it and thereby skipped a
-  // changed module; mapping those trees is filed as web-uplift-5r7z. The non-executable files beside it
-  // are still omitted, by their own rules.
+  // The two browser-site trees now select the suite that reads all their JavaScript modules;
+  // non-executable files beside them remain omitted, not silently included in this mapping.
   const fixture = mapFilesToTests(
-    ['playground/app.js', 'playground/README.md', 'playground/expected-findings.json'],
+    ['playground/app.js', 'eval/fixtures/seeded-issues/site/scenarios/motion.js', 'playground/README.md', 'playground/expected-findings.json'],
     existsAlways
   );
-  assert.deepEqual(
-    fixture.unmappedFiles,
-    ['playground/app.js'],
-    'an executable file in a fixture/demo tree must be REFUSED, not omitted: a tree rule may not skip a changed module'
-  );
+  assert.deepEqual(fixture.unmappedFiles, [], 'both site JavaScript trees must map to a real suite');
+  assert(fixture.matchedSubsystems.includes('fixture-sites'), 'both sites must select the fixture-sites subsystem');
+  assert(fixture.targets.some((target) => target.path === 'tests/fixture-sites.test.mjs'), 'the selected suite must read the site modules');
   assert.equal(fixture.omittedFiles.length, 2, 'the non-executable files beside it are omitted');
+  const unrelatedFixtureCode = mapFilesToTests(['eval/other-script.js'], existsAlways);
+  assert.deepEqual(unrelatedFixtureCode.unmappedFiles, ['eval/other-script.js'], 'other executable fixture paths must still be refused');
   assert(
     fixture.omittedFiles.every((o) => o.rule === 'docs' || o.rule === 'data-and-config'),
     'those omissions must be named by the doc/data rules that cover them'
@@ -715,8 +712,7 @@ function testOmittedRulesAreNamedAndNarrow() {
   //   1. NO AUTHORED executable tracked path may be omitted by a rule (the record trees and deletions are
   //      the declared exceptions), and
   //   2. every NON-EXECUTABLE tracked path must be mapped or omitted, so nothing is dropped silently.
-  // Unmapped tracked executables are allowed only in the two trees whose mapping is filed as
-  // web-uplift-5r7z, so a new unmapped module anywhere else fails this test as well as the gate.
+  // No authored executable may remain unmapped after web-uplift-5r7z.
   const tracked = spawnSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
   assert(tracked.length > 100, `expected a real tracked-file list, got ${tracked.length}`);
   const plans = tracked.map((f) => [f, mapFilesToTests([f])]);
@@ -732,15 +728,11 @@ function testOmittedRulesAreNamedAndNarrow() {
   const droppedNonExecutables = plans.filter(([f, p]) => !hasCodeExtension(f) && p.unmappedFiles.length > 0).map(([f]) => f);
   assert.deepEqual(droppedNonExecutables, [], 'every non-executable tracked path must be mapped or omitted by a named rule');
   const unmappedExecutables = plans.filter(([, p]) => p.unmappedFiles.length > 0).map(([f]) => f);
-  assert.deepEqual(
-    unmappedExecutables.filter((f) => !f.startsWith('playground/') && !f.startsWith('eval/')),
-    [],
-    'only the trees whose consumer mapping is filed as web-uplift-5r7z may currently be unmapped; anything else must be mapped or covered by a named rule'
-  );
+  assert.deepEqual(unmappedExecutables, [], 'every authored tracked executable must be mapped or covered by a named rule');
   assert(CODE_EXTENSIONS.has('.mjs'), 'the executable-extension set must describe this repo\'s modules');
 
   console.log(
-    `✔ ${OMITTED_RULES.length} named omission rules; ${tracked.length} tracked paths classified (${unmappedExecutables.length} refused pending web-uplift-5r7z, ${omittedExecutables.length} recorded-artefact executables declared)`
+    `✔ ${OMITTED_RULES.length} named omission rules; ${tracked.length} tracked paths classified (${unmappedExecutables.length} unmapped executables, ${omittedExecutables.length} recorded-artefact executables declared)`
   );
 }
 

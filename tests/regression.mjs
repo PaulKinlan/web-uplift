@@ -196,7 +196,11 @@ import {
 } from "./syntax-core.test.mjs";
 
 
+import { testFixtureSitesAreStructured, testFixtureSiteChecksRejectBrokenModules } from './fixture-sites.test.mjs';
+
 export const ALL_TESTS = [
+  testFixtureSitesAreStructured,
+  testFixtureSiteChecksRejectBrokenModules,
   testAgentChildEnvProxyCredentials,
   testGenerateVendoredSurfaceLeavesTrackedEditsAlone,
   testTrackedBeadsExportHasNoSecretShapes,
