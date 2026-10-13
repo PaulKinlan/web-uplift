@@ -532,6 +532,56 @@ export async function testCredentialRedactorsAgree() {
       }
     }
   }
+  // THE COMPOSITION (web-uplift-q76w), stated as the product that found it rather than as the two shapes that
+  // were reported: credential text on one side of a marker and the '@' on the other, with the marker either
+  // between two '@'s ('user:pw@https://@host:99999') or between the credential and the only '@'
+  // ('user:p//@host'). Two rounds missed this by testing the userinfo axis and the marker axis APART, and each
+  // axis alone looked right - that is the fourth instance of the same lesson on this predicate. The control is
+  // the rule this change replaced, kept here rather than described, so the table is shown to discriminate the
+  // defect instead of merely agreeing with the code that exists. The second half is reachability, measured
+  // against the REAL child-env builder: 'the predicate says true' is only worth anything if the credential
+  // text actually stops reaching the child.
+  const OLD_LEADING_RULE = (raw) => {
+    let end = 0;
+    while (end < raw.length && !' \f\v'.includes(raw[end])) end += 1;
+    const run = raw.slice(0, end);
+    const at = run.lastIndexOf('@');
+    if (at === -1) return false;
+    const prefix = run.slice(0, at);
+    const colon = prefix.indexOf(':');
+    const carriesPrefix = colon === -1 ? prefix !== '' : prefix.slice(0, colon) !== '' || prefix.slice(colon + 1) !== '';
+    if (!carriesPrefix) return false;
+    const marker = /(?:[a-z][a-z0-9+.-]*:)?\/\//i.exec(run);
+    return marker === null || marker.index >= at;
+  };
+  const runner = await import('../runner/agents.mjs');
+  for (const cred of ['user:pw', 'user:pa#ss', 'u:p']) {
+    for (const marker of ['https://', 'http://', '//', 'ftp://']) {
+      for (const [position, value] of [
+        ['between two @s', `${cred}@${marker}@host:99999`],
+        ['between the credential and the only @', `${cred}${marker}@host:8080`],
+      ]) {
+        assert(terms.carriesAuthorityUserinfo(value) === true,
+          `credential text before a marker ${position} is still a credential: ${value}`);
+        assert(terms.redactUrlCredentialValues(value) === value,
+          `the sweep is NOT this fix, so the redactor must still leave it alone, which is why the predicate had to widen: ${value}`);
+        assert(OLD_LEADING_RULE(value) === false,
+          `control: the rule this change replaced must call this row credential-FREE, or this table does not discriminate the defect it exists for: ${value}`);
+        const built = runner.buildAgentEnv({ env: { HOME: '/tmp/home', HTTPS_PROXY: value }, warn: () => {} });
+        assert(built.HTTPS_PROXY === undefined,
+          `the credential text must not reach the child, and it did: ${value} -> ${JSON.stringify(built.HTTPS_PROXY)}`);
+      }
+    }
+  }
+  // The boundary of that widening, asserted here as its negative control: an empty userinfo and a plain proxy
+  // value must be exactly as untouched as they were before, or this fix has swallowed values it should not.
+  for (const stillFree of ['https://@host:99999', '//:@host:99999', 'http://localhost:3128']) {
+    assert(terms.carriesAuthorityUserinfo(stillFree) === false,
+      `widening the leading rule must not swallow an empty userinfo or a plain proxy: ${stillFree}`);
+  }
+  assert(terms.carriesAuthorityUserinfo('https://:99999@host') === true,
+    'control: a value whose only userinfo text is the password half is still a credential');
+
   const agentsSource = readFileSync(new URL('../runner/agents.mjs', import.meta.url), 'utf8');
   const agentsScan = scanAgentSource(agentsSource);
   assert(importsSharedRule(agentsScan),
