@@ -248,6 +248,9 @@ export function importingSuitesOf(modulePath, repo = repoRoot) {
   }
   const base = posix.basename(modulePath);
   const needle = new RegExp(`['"\`][^'"\`]*${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]`);
+  // A text REFERENCE to the module path, not a parsed import: it over-approximates on purpose, because
+  // naming one consumer too many is safer for a refusal than omitting a suite that exercises the change.
+  // Every message below therefore says "named by", which the scan can support.
   const suites = [];
   for (const entry of [...entries].sort()) {
     if (!entry.endsWith('.mjs')) continue;
@@ -1029,12 +1032,12 @@ Usage:
   // and one command keeps the choice with the author instead of hiding it behind a fast-tier subset.
   if (plan.refusedFiles.length > 0) {
     for (const f of plan.refusedFiles) {
-      console.log(`fast-gate: refused: ${f.path} (${f.consumers.length} importing suite(s))`);
+      console.log(`fast-gate: refused: ${f.path} (named by ${f.consumers.length} suite(s) under tests/)`);
     }
     console.error(`fast-gate: FAIL - ${plan.refusedFiles.length} changed file(s) need the full gate, not a fast-tier subset:`);
     for (const f of plan.refusedFiles) {
       console.error(`  ${f.path}: a shared module whose consumers are most of the fast tier.`);
-      console.error(`    imported by ${f.consumers.length} suite(s): ${f.consumers.join(', ') || 'none found in the tree'}`);
+      console.error(`    named by ${f.consumers.length} suite(s) under tests/: ${f.consumers.join(', ') || 'none found in the tree'}`);
     }
     console.error('[test:fast] NEXT ACTION: run the full gate for this change, which runs every suite:');
     console.error('    npm test');
