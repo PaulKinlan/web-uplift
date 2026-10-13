@@ -73,6 +73,8 @@ import {
   SHORT_PII_WORDS,
   SENSITIVE_WORDS,
   isCredentialName,
+  isWeakCredentialWord,
+  isWeakQualifiedCompound,
   isCredentialWord,
   isPiiWord,
   isSensitiveName,
@@ -485,6 +487,15 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
   const isCredentialWord = ${isCredentialWord.toString()};
   const isPiiWord = ${isPiiWord.toString()};
   const isSensitiveWord = ${isSensitiveWord.toString()};
+
+  const WEAK_CREDENTIAL_WORDS = new Set(${JSON.stringify(wordData.weak)});
+  const WEAK_QUALIFIER_WORDS = new Set(${JSON.stringify(wordData.weakQualifier)});
+  const isWeakCredentialWord = ${isWeakCredentialWord.toString()};
+  const isWeakQualifiedCompound = ${isWeakQualifiedCompound.toString()};
+  // web-uplift-d8i4: the FIELD classifier now asks the credential-shape helper, so it is injected here
+  // rather than re-implemented. The alternative - a second qualifier list inside isSensitiveName - is
+  // the drift this file already warns about twice.
+  const isCredentialName = ${isCredentialName.toString()};
 
   ${splitName.toString()}
 
