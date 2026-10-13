@@ -577,7 +577,10 @@ export function mapFilesToTests(filePaths, options = {}) {
           targetsByKey.set(targetKey(target), target);
         }
       } else {
-        const target = { type: 'regression', filter: 'testSyntaxChecks', label: 'Regression: Syntax checks' };
+        // A registry edit that does not add a case (the normal shape now: the registry discovers suites) is
+        // checked by the parity guard, which is the case that validates the registry's own invariant
+        // (web-uplift-jyyq). Running the broad syntax case instead would spend ~8s to check less.
+        const target = { type: 'regression', filter: 'testSuiteListsMatchRegressionRegistry', label: 'Regression: Registry parity' };
         targetsByKey.set(targetKey(target), target);
       }
       matched = true;

@@ -1741,13 +1741,61 @@ export function testSuiteListsMatchRegressionRegistry() {
       );
       byName.set(name, `tests/${file}`);
     }
+    // A case the file EXPORTS but its own list omits can never run: `npm test` runs the list, --list prints the
+    // list, and the registry aggregates the list, so nothing ever sees the function - the silently-unrunnable
+    // shape, one level below the registry (web-uplift-jyyq).
+    //
+    // EVERY export spelling counts, because guarding one spelling of the language and not the others is itself a
+    // vacuous green: 'export function testX' was caught and 'export const testX = () => {}' walked straight
+    // past this control (web-uplift-p5xi). Each form below is exercised by a mutation in the bead's evidence,
+    // so the control is known to fail on the thing it claims to catch.
+    const source = readFileSync(join(repoRoot, 'tests', file), 'utf8');
+    const exportedCaseNames = (src) => {
+      const names = new Set();
+      // export function testX / export async function testX
+      for (const m of src.matchAll(/^export[ \t]+(?:async[ \t]+)?function[ \t]+(test[A-Za-z0-9_]+)/gm)) names.add(m[1]);
+      // export const testX = ... / let / var - arrow, function expression, or any other value
+      for (const m of src.matchAll(/^export[ \t]+(?:const|let|var)[ \t]+(test[A-Za-z0-9_]+)[ \t]*=/gm)) names.add(m[1]);
+      // export { testX, testY as testZ } - the exported name is the one after 'as'
+      for (const m of src.matchAll(/^export[ \t]*\{([^}]*)\}/gm)) {
+        for (const part of m[1].split(',')) {
+          const exported = part.trim().split(/\s+as\s+/).pop().trim();
+          if (/^test[A-Za-z0-9_]+$/.test(exported)) names.add(exported);
+        }
+      }
+      return names;
+    };
+    const listedHere = new Set(names);
+    const orphans = [...exportedCaseNames(source)].filter((name) => !listedHere.has(name));
+    assert(
+      orphans.length === 0,
+      `tests/${file} exports ${orphans.length} case(s) that its own list does not run, so no gate can ever run them: ${orphans.join(', ')}. Add them to the suite's list or delete them.`,
+    );
   }
 
   const registry = listOf([join(repoRoot, 'tests', 'regression.mjs'), '--list']);
-  const registrySet = new Set(registry);
 
-  const onlyInRegistry = [...registrySet].filter((name) => !byName.has(name));
-  const onlyInFiles = [...byName.keys()].filter((name) => !registrySet.has(name));
+  // Multiplicity, not membership (web-uplift-bgcr): taking a Set of the registry's names erased duplicates, so
+  // a registry that pushed each suite list twice reported "318 case(s) agree" and passed while running every
+  // case twice. byName above catches a duplicate within or across SUITE files; this is the registry's
+  // equivalent, and the count equality below makes the comparison an exact multiset rather than a set.
+  const registryCounts = new Map();
+  for (const name of registry) registryCounts.set(name, (registryCounts.get(name) || 0) + 1);
+  const repeated = [...registryCounts].filter(([, count]) => count > 1);
+  assert(
+    repeated.length === 0,
+    `the registry lists ${repeated.length} case(s) more than once (${repeated
+      .slice(0, 3)
+      .map(([name, count]) => `${name} x${count}`)
+      .join(', ')}), so those cases run more than once per gate run`,
+  );
+  assert(
+    registry.length === byName.size,
+    `the registry lists ${registry.length} case name(s) and the suite files list ${byName.size} distinct one(s), so the registry is not exactly the union of the suite lists`,
+  );
+
+  const onlyInRegistry = [...registryCounts.keys()].filter((name) => !byName.has(name));
+  const onlyInFiles = [...byName.keys()].filter((name) => !registryCounts.has(name));
 
   assert(
     onlyInRegistry.length === 0,

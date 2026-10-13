@@ -217,36 +217,37 @@ function testNonTestExclusion() {
 function testAllRegressionFiltersAreValid() {
   console.log('Testing that all configured regression filters match real tests...');
 
-  // Extract all test names from tests/regression.mjs
-  const regressionSrc = readFileSync(join(repoRoot, 'tests/regression.mjs'), 'utf8');
-  const allTestsMatch = regressionSrc.match(/const ALL_TESTS = \[([\s\S]*?)\];/);
-  assert(allTestsMatch, 'ALL_TESTS array must exist in tests/regression.mjs');
-  const testNames = allTestsMatch[1]
+  // The names come from the registry AT RUNTIME (web-uplift-jyyq): the registry discovers the suite files
+  // and aggregates the list each suite owns, so `--list` is the authority that a filter actually selects
+  // against. Reading the source was the old check, and it quietly assumed the registry named every case.
+  const listed = spawnSync(process.execPath, [join(repoRoot, 'tests/regression.mjs'), '--list'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    timeout: 120000,
+  });
+  assert(listed.status === 0, `tests/regression.mjs --list must exit 0:\n${listed.stdout}\n${listed.stderr}`);
+  const testNames = listed.stdout
     .split('\n')
-    .map((l) => l.trim().replace(/,$/, ''))
-    .filter((l) => l && !l.startsWith('//'));
+    .map((l) => l.trim())
+    .filter((l) => /^test[A-Za-z0-9_]+$/.test(l));
 
-  assert(testNames.length >= 100, `Expected at least 100 tests in ALL_TESTS, found ${testNames.length}`);
+  assert(testNames.length >= 100, `Expected at least 100 tests in the registry, found ${testNames.length}`);
 
-  // Verify ALL_TESTS has exact set equality with declared and imported test functions (P2-B)
-  const declaredTests = new Set();
-  for (const m of regressionSrc.matchAll(/^[ \t]*(?:async[ \t]+)?function[ \t]+(test[A-Za-z0-9_]+)/gm)) {
-    declaredTests.add(m[1]);
-  }
-  for (const m of regressionSrc.matchAll(/import[ \t]*\{([^}]+)\}[ \t]*from/g)) {
-    for (const name of m[1].split(',')) {
-      const trimmed = name.trim().split(/\s+as\s+/)[0].trim();
-      if (/^test[A-Za-z0-9_]+$/.test(trimmed)) declaredTests.add(trimmed);
-    }
-  }
-
-  const registeredSet = new Set(testNames);
-  for (const dec of declaredTests) {
-    assert(registeredSet.has(dec), `Test function "${dec}" is declared/imported in regression.mjs but missing from ALL_TESTS!`);
-  }
-  for (const reg of registeredSet) {
-    assert(declaredTests.has(reg), `Test name "${reg}" in ALL_TESTS is not declared or imported in regression.mjs!`);
-  }
+  // The rule this guards (web-uplift-jyyq): adding a case must not require a registry edit, so the registry
+  // must not NAME cases - neither by importing test functions nor by listing them in an array.
+  const regressionSrc = readFileSync(join(repoRoot, 'tests/regression.mjs'), 'utf8');
+  const namedImports = [...regressionSrc.matchAll(/import[ \t]*\{([^}]*)\}[ \t]*from/g)]
+    .flatMap((m) => m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0].trim()))
+    .filter((name) => /^test[A-Za-z0-9_]+$/.test(name));
+  assert(
+    namedImports.length === 0,
+    `tests/regression.mjs imports cases by name (${namedImports.join(', ')}): each suite owns its list, so the registry must not name cases (web-uplift-jyyq)`,
+  );
+  const bareEntries = [...regressionSrc.matchAll(/^[ \t]+(test[A-Za-z0-9_]+),[ \t]*$/gm)].map((m) => m[1]);
+  assert(
+    bareEntries.length === 0,
+    `tests/regression.mjs names ${bareEntries.length} case(s) in an array (${bareEntries.slice(0, 5).join(', ')}): a new case must not need a registry edit (web-uplift-jyyq)`,
+  );
 
   // Collect every filter from SUBSYSTEMS and BASELINE_TARGETS
   const allFilters = new Set();

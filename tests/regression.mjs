@@ -8,357 +8,54 @@
 // so a harness built that way cannot observe the behaviour it exists to check. The --out
 // argument-validation tests are the exception: they exit before any browser launches, so a
 // child run with an in-process server is safe there.
-import { runSuite } from "./test-helpers.mjs";
+//
+// THE REGISTRY AGGREGATES, IT DOES NOT NAME CASES (web-uplift-jyyq). Each suite file owns its cases: it
+// exports the list it runs (the same list `npm test` executes), and this file DISCOVERS the suite files and
+// collects those lists. Adding a case therefore edits its owning suite and nothing else, and a new suite
+// file is picked up without touching this one. Until this change the registry duplicated every name as an
+// import plus an ALL_TESTS entry: 166 of 331 first-parent commits in 30 days touched this central file,
+// making it the largest git-collision surface in the repository for no coverage benefit, because `npm test`
+// runs the suite files directly and only `--only`/`--list` come through here.
+//
+// ORDER is deterministic: suite files sorted by name, each suite's own order. The old registry interleaved
+// some suites in more than one block, which whole-suite aggregation cannot reproduce; that is benign for a
+// manual `--only`/`--list` escape hatch whose cases are independent (npm test's order is per-file anyway).
+// testSuiteListsMatchRegressionRegistry holds the invariant: the union of the suite lists is exactly what
+// this file lists, every case appears once, no suite is empty, and no suite file hides a case its own list
+// does not run.
+import { readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { runSuite } from './test-helpers.mjs';
 
-import {
-  testTrackedBeadsExportHasNoSecretShapes,
-  testBeadsExportRedactionRuleCanFire,
-} from "./beads-export-redaction.mjs";
+const suiteDir = dirname(fileURLToPath(import.meta.url));
 
-import { testCensusTargetsAreTracked } from "./census-targets.mjs";
+// Discovery, not a hand-maintained list: every tests/*.test.mjs is a suite, and its ONE exported array is
+// the list of cases it runs. A suite that exports no list (or more than one) fails loudly here rather than
+// being silently absent from the registry.
+const suiteFiles = readdirSync(suiteDir)
+  .filter((name) => name.endsWith('.test.mjs'))
+  .sort();
 
-import {
-  testPreNavigationEmulation,
-  testAxePrimitiveBypassesStrictCsp,
-  testAxeKeepsPagePolicyAndDisclosesInjectionBypass,
-  testThrottlingConditions,
-  testLocaleTimezoneConditions,
-  testConsoleEvidence,
-  testConsoleEvidenceRedaction,
-  testConsoleInteractDeadlineValidation,
-} from "./evidence.test.mjs";
-import {
-  testHeadersPrimitiveFindsHeadersRegardlessOfNameCase,
-  testHeadersPrimitiveSurvivesSlowResponseUnderLoad,
-  testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase,
-  testHarRedirects,
-  testHarWaitsForPendingResponses,
-  testTrackersThirdPartySuffix,
-  testResiliencePrimitive,
-  testResilienceWaitsForLateServiceWorkerRegistration,
-} from "./evidence-network.test.mjs";
-import {
-  testEvidenceTruncationReporting,
-  testFeaturesPrimitive,
-  testDiscoverabilityHelpers,
-  testDiscoverabilityH1InRaw,
-  testDiscoverabilitySettleKeepsTheSpaDefaultAndHonoursAnExplicitWait,
-  testTargetsPrimitive,
-  testA11yTreePrimitive,
-  testAwaitCensus,
-  testNoSourceArgumentOmitsSource,
-  testAdversarialPageCannotInfluenceSource,
-  testExplicitSourceHonoursOperatorSpecifiedRoot,
-} from "./evidence-content.test.mjs";
+const ALL_TESTS = [];
+for (const file of suiteFiles) {
+  const mod = await import(`./${file}`);
+  const lists = Object.entries(mod).filter(([, value]) => Array.isArray(value));
+  if (lists.length !== 1) {
+    throw new Error(
+      `tests/${file} must export exactly one array of its cases (found ${lists.length}: ${lists.map(([k]) => k).join(', ') || 'none'}). ` +
+        'The registry aggregates that array, so a suite with two arrays or none cannot be aggregated unambiguously.',
+    );
+  }
+  const [, cases] = lists[0];
+  for (const fn of cases) {
+    if (typeof fn !== 'function' || !/^test[A-Za-z0-9_]+$/.test(fn.name)) {
+      throw new Error(`tests/${file} lists an entry that is not a test function: ${String(fn)}`);
+    }
+  }
+  ALL_TESTS.push(...cases);
+}
 
-import {
-  testRedactHeaderList,
-  testCredentialRedactionHelpers,
-  testHarCredentialRedaction,
-  testHarRedactsCredentialHeaders,
-  testSecretsScanHandlesQuotedScriptUrl,
-  testSecretsExternalScriptFetchIsCappedAndDeadlined,
-  testSecretsArtifactDoesNotPersistMatches,
-  testSecretsScanDoesNotPersistMatchCharacters,
-  testSecretsCoverageClassification,
-  testSourceTreeRedactsBeforeInlining,
-  testDomSourceArtifactIsRedacted,
-  testLogUrlRedaction,
-  testCredentialRedactorsAgree,
-} from "./redaction.test.mjs";
-
-import {
-  testCdpEndpointExposure,
-  testEndpointProbesRunConcurrently,
-  testEndpointProbeRejectionStaysFailClosed,
-  testExposureProbeFailuresDoNotLeakTheBrowser,
-  testExposureVerdictIsReadOnceInsideTheTry,
-  testUnprintableProbeNoteDoesNotFailTheLaunch,
-  testTricklingPeerIsBoundedByTheTotalDeadline,
-  testThrowingLogDoesNotLeakTheSpawnedBrowser,
-  testPreSpawnLogThrowDoesNotStrandTheProfileDir,
-  testThrowingHandlerLogDoesNotTakeTheProcessDown,
-  testOversizedBodyDoesNotEarnACleanVerdict,
-  testCdpPipeTransport,
-  testSilentPipeReadinessIsBounded,
-  testClosedPipeRejectsPendingSends,
-  testPipeReadinessThenExitFailsTheLaunch,
-  testChromeCandidateDiscovery,
-  testLaunchRetryAndDiagnostics,
-  testChromeSandboxPolicy,
-  testCdpDeadline,
-  testLaunchAttributionForHungPrimitive,
-  testOperatorLaunchAttribution,
-  testLaunchSessionLoop,
-  testNoOrphanBrowser,
-  testCommittedProbeIsInert,
-  testCommittedSiblingProbesAreInert,
-} from "./chrome-cdp.test.mjs";
-
-import {
-  testMwgDriftExtractPipe,
-  testMwgDriftBasisFloor,
-  testGuidanceUsage,
-  testGuidanceVersionPinnedInDocs,
-  testMwgCatalogRegenerateAgreement,
-  testPrinciplesMwgCatalogSyncAndChangedGuidance,
-  testMwgDriftCheckGuard,
-  testMwgArtefactGuard,
-  testMwgDriftClassifierGuard,
-  testMwgCatalogExtract,
-  testBaselineOracle,
-} from "./mwg-principles.test.mjs";
-
-import {
-  testCdpCopySyncGuard,
-  testCdpCopySyncMutationGuard,
-  testInstalledEvidenceCli,
-  testNpxCacheDoesNotAccumulate,
-  testInstalledTreeRelativeImportsResolve,
-  testUpdateDryRunReadsInstallManifest,
-  testCachedUpdateWarning,
-  testUpdateCheckIsOptInAndUntrusted,
-  testInstallSurfaceMatchesWhatInstallVendors,
-  testInstallSkipsSymlinksInVendoredSource,
-  testInstallCopyDepthGuard,
-  testInstallVendorsCompleteClosure,
-  testInstallRefusesDestinationSymlinks,
-  testInstallNormalDestinationWrites,
-  testGenerateVendoredSurfaceRefusesDestinationSymlinks,
-  testSyncRefusesCommittedSymlinkDestination,
-  testSyncRefusesEqualByteSymlinkDestination,
-  testInstallAsksTheSharedSymlinkGuard,
-  testInstallIncompleteExitControl,
-  testEveryDestinationRefusalCarriesTheMarker,
-  testMcpSkillsServerStdio,
-  testCdpCopySyncRefusesToOverwriteTrackedEdits,
-  testGenerateVendoredSurfaceLeavesTrackedEditsAlone,
-} from "./install-package.test.mjs";
-
-import {
-  testHeadlessAllowlistIsScoped,
-  testHeadlessAllowlistMatchesSkillContract,
-  testSkillWriteContractGuard,
-  testAgentChildEnvAllowlist,
-  testBatchIsolationGate,
-  testBatchDryRunUsesRetainedDirs,
-  testBatchFlowDryRun,
-  testFixSurvivesUnscoreableReports,
-  testFixRefusesPassOnIncompleteCoverage,
-  testFixRefusesContradictoryCoverageClaim,
-  testFixRejectsMalformedReports,
-  testFixWriteScopeDiffing,
-  testFixModeRefusesOutOfScopeWrites,
-  testFixModeScopeEdgeCases,
-  testFixIsolationAssertion,
-  testFixIsolatedRunPublishes,
-  testSnapshotRunStructure,
-  testSnapshotRunCopiesArtifacts,
-  testSnapshotRunMissingArtifactsBestEffort,
-  testSnapshotRunCopyErrorTolerance,
-  testBatchWriteScope,
-  testBatchResumeIsolation,
-  testWriteScopeCoversExecutedTrees,
-  testBatchIntegrityGateAbortsOnTamperedExecutedTree,
-  testFlowNormalize,
-  testFlowRecordSensitiveRedaction,
-  testFlowReplayMutationGate,
-  testFlowPierceShadowRootBrowser,
-  testAgentChildEnvProxyCredentials,
-} from "./runner-agents.test.mjs";
-
-import {
-  testSyntaxChecks,
-  testPackageRootImportIsSideEffectFree,
-  testIconSatisfiesMatrix,
-  testFirstPartyHostMatrix,
-  testPageDerivedFetchGuard,
-  testSafeFetchRedirectAndSizeGuard,
-  testSafeFetchDnsRebindingGuard,
-  testSafeFetchContentDecoding,
-  testSchemaValidation,
-  testAtomicCoverageValidator,
-  testFetchDeadlineAndRawComparison,
-  testScorecardRejectsEscapingComparisonRunIds,
-  testScorecardWithholdsScriptedFindingUrls,
-  testScorecardReservesImageBoxes,
-  testReservedImageBoxInBrowser,
-  testScorecardCspRestrictsAndFunctions,
-  testLatestPointerCannotEscapeTheRunRoot,
-  testSourceTreeSkipsSymlinkFileEscape,
-  testSourceTreeSkipsSymlinkDirEscape,
-  testSourceTreeSkipsSymlinkCycle,
-  testSourceTreeDepthGuard,
-  testCompareReportsUnconcludedChecks,
-  testScorecardScoringAndRender,
-  testScorecardArtifactContainment,
-  testCompareArtifactContainment,
-  testSuiteListsMatchRegressionRegistry,
-} from "./syntax-core.test.mjs";
-
-
-import { testFixtureSitesAreStructured, testFixtureSiteChecksRejectBrokenModules } from './fixture-sites.test.mjs';
-
-export const ALL_TESTS = [
-  testFixtureSitesAreStructured,
-  testFixtureSiteChecksRejectBrokenModules,
-  testAgentChildEnvProxyCredentials,
-  testGenerateVendoredSurfaceLeavesTrackedEditsAlone,
-  testTrackedBeadsExportHasNoSecretShapes,
-  testBeadsExportRedactionRuleCanFire,
-  testCdpCopySyncRefusesToOverwriteTrackedEdits,
-  testGenerateVendoredSurfaceRefusesDestinationSymlinks,
-  testSyncRefusesCommittedSymlinkDestination,
-  testSyncRefusesEqualByteSymlinkDestination,
-  testInstallAsksTheSharedSymlinkGuard,
-  testInstallIncompleteExitControl,
-  testEveryDestinationRefusalCarriesTheMarker,
-  testCensusTargetsAreTracked,
-  testPreNavigationEmulation,
-  testAxePrimitiveBypassesStrictCsp,
-  testAxeKeepsPagePolicyAndDisclosesInjectionBypass,
-  testThrottlingConditions,
-  testLocaleTimezoneConditions,
-  testConsoleEvidence,
-  testConsoleEvidenceRedaction,
-  testConsoleInteractDeadlineValidation,
-  testHeadersPrimitiveFindsHeadersRegardlessOfNameCase,
-  testHeadersPrimitiveSurvivesSlowResponseUnderLoad,
-  testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase,
-  testHarRedirects,
-  testHarWaitsForPendingResponses,
-  testTrackersThirdPartySuffix,
-  testEvidenceTruncationReporting,
-  testFeaturesPrimitive,
-  testDiscoverabilityHelpers,
-  testDiscoverabilityH1InRaw,
-  testDiscoverabilitySettleKeepsTheSpaDefaultAndHonoursAnExplicitWait,
-  testTargetsPrimitive,
-  testResiliencePrimitive,
-  testResilienceWaitsForLateServiceWorkerRegistration,
-  testA11yTreePrimitive,
-  testAwaitCensus,
-  testNoSourceArgumentOmitsSource,
-  testAdversarialPageCannotInfluenceSource,
-  testExplicitSourceHonoursOperatorSpecifiedRoot,
-  testRedactHeaderList,
-  testCredentialRedactionHelpers,
-  testHarCredentialRedaction,
-  testHarRedactsCredentialHeaders,
-  testSecretsScanHandlesQuotedScriptUrl,
-  testSecretsExternalScriptFetchIsCappedAndDeadlined,
-  testSecretsArtifactDoesNotPersistMatches,
-  testSecretsScanDoesNotPersistMatchCharacters,
-  testSecretsCoverageClassification,
-  testSourceTreeRedactsBeforeInlining,
-  testDomSourceArtifactIsRedacted,
-  testLogUrlRedaction,
-  testCredentialRedactorsAgree,
-  testCdpEndpointExposure,
-  testEndpointProbesRunConcurrently,
-  testEndpointProbeRejectionStaysFailClosed,
-  testExposureProbeFailuresDoNotLeakTheBrowser,
-  testExposureVerdictIsReadOnceInsideTheTry,
-  testUnprintableProbeNoteDoesNotFailTheLaunch,
-  testTricklingPeerIsBoundedByTheTotalDeadline,
-  testThrowingLogDoesNotLeakTheSpawnedBrowser,
-  testPreSpawnLogThrowDoesNotStrandTheProfileDir,
-  testThrowingHandlerLogDoesNotTakeTheProcessDown,
-  testOversizedBodyDoesNotEarnACleanVerdict,
-  testCdpPipeTransport,
-  testSilentPipeReadinessIsBounded,
-  testClosedPipeRejectsPendingSends,
-  testPipeReadinessThenExitFailsTheLaunch,
-  testChromeCandidateDiscovery,
-  testLaunchRetryAndDiagnostics,
-  testChromeSandboxPolicy,
-  testCdpDeadline,
-  testLaunchAttributionForHungPrimitive,
-  testOperatorLaunchAttribution,
-  testLaunchSessionLoop,
-  testNoOrphanBrowser,
-  testCommittedProbeIsInert,
-  testCommittedSiblingProbesAreInert,
-  testMwgDriftExtractPipe,
-  testMwgDriftBasisFloor,
-  testGuidanceUsage,
-  testGuidanceVersionPinnedInDocs,
-  testMwgCatalogRegenerateAgreement,
-  testPrinciplesMwgCatalogSyncAndChangedGuidance,
-  testMwgDriftCheckGuard,
-  testMwgArtefactGuard,
-  testMwgDriftClassifierGuard,
-  testMwgCatalogExtract,
-  testBaselineOracle,
-  testCdpCopySyncGuard,
-  testCdpCopySyncMutationGuard,
-  testInstalledEvidenceCli,
-  testNpxCacheDoesNotAccumulate,
-  testInstalledTreeRelativeImportsResolve,
-  testUpdateDryRunReadsInstallManifest,
-  testCachedUpdateWarning,
-  testUpdateCheckIsOptInAndUntrusted,
-  testInstallSurfaceMatchesWhatInstallVendors,
-  testInstallSkipsSymlinksInVendoredSource,
-  testInstallCopyDepthGuard,
-  testInstallVendorsCompleteClosure,
-  testInstallRefusesDestinationSymlinks,
-  testInstallNormalDestinationWrites,
-  testMcpSkillsServerStdio,
-  testHeadlessAllowlistIsScoped,
-  testHeadlessAllowlistMatchesSkillContract,
-  testSkillWriteContractGuard,
-  testAgentChildEnvAllowlist,
-  testBatchIsolationGate,
-  testBatchDryRunUsesRetainedDirs,
-  testBatchFlowDryRun,
-  testFixSurvivesUnscoreableReports,
-  testFixRefusesPassOnIncompleteCoverage,
-  testFixRefusesContradictoryCoverageClaim,
-  testFixRejectsMalformedReports,
-  testFixWriteScopeDiffing,
-  testFixModeRefusesOutOfScopeWrites,
-  testFixModeScopeEdgeCases,
-  testFixIsolationAssertion,
-  testFixIsolatedRunPublishes,
-  testSnapshotRunStructure,
-  testSnapshotRunCopiesArtifacts,
-  testSnapshotRunMissingArtifactsBestEffort,
-  testSnapshotRunCopyErrorTolerance,
-  testBatchWriteScope,
-  testBatchResumeIsolation,
-  testWriteScopeCoversExecutedTrees,
-  testBatchIntegrityGateAbortsOnTamperedExecutedTree,
-  testFlowNormalize,
-  testFlowRecordSensitiveRedaction,
-  testFlowReplayMutationGate,
-  testFlowPierceShadowRootBrowser,
-  testSyntaxChecks,
-  testPackageRootImportIsSideEffectFree,
-  testIconSatisfiesMatrix,
-  testFirstPartyHostMatrix,
-  testPageDerivedFetchGuard,
-  testSafeFetchRedirectAndSizeGuard,
-  testSafeFetchDnsRebindingGuard,
-  testSafeFetchContentDecoding,
-  testSchemaValidation,
-  testAtomicCoverageValidator,
-  testFetchDeadlineAndRawComparison,
-  testScorecardRejectsEscapingComparisonRunIds,
-  testScorecardWithholdsScriptedFindingUrls,
-  testScorecardReservesImageBoxes,
-  testReservedImageBoxInBrowser,
-  testScorecardCspRestrictsAndFunctions,
-  testLatestPointerCannotEscapeTheRunRoot,
-  testSourceTreeSkipsSymlinkFileEscape,
-  testSourceTreeSkipsSymlinkDirEscape,
-  testSourceTreeSkipsSymlinkCycle,
-  testSourceTreeDepthGuard,
-  testCompareReportsUnconcludedChecks,
-  testScorecardScoringAndRender,
-  testScorecardArtifactContainment,
-  testCompareArtifactContainment,
-  testSuiteListsMatchRegressionRegistry,
-];
+export { ALL_TESTS };
 
 await runSuite(ALL_TESTS, import.meta.url, { timeoutMs: 120000, concurrency: 1 });
