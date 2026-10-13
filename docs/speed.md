@@ -154,3 +154,14 @@ console entries after the `/noisy` load, and it still does. Paired measurement (
 Still to convert (the seam is in place): `testThrottlingConditions` (7 -> 1) and the other multi-`gather`
 cases. Do NOT share a browser in `testCdpDeadline` (it deliberately points Chrome at a blackhole server),
 `testNoOrphanBrowser` (it asserts teardown) or `testResiliencePrimitive` (service workers).
+
+## Syntax census child (web-uplift-epad, 2026-10-13)
+
+`testSyntaxChecks` keeps the same `listFiles(repoRoot, .mjs)` walk and parses each path independently in
+one bounded Node child. This worktree walked 139 files, including 40 generated vendored copies and five
+nested test fixtures; the earlier 99-file count was a different worktree, not a fixed allowlist. In a
+back-to-back focused run on this VM (`node tests/regression.mjs --only testSyntaxChecks`), before changing
+the parser the case took 5429ms (5.62s command wall), and after changing it plus adding source/test/nested
+invalid-syntax and shebang controls it took 230ms (0.43s command wall). Those are measured runs under a
+shared host, not a promised per-landing saving. No files or test cases were omitted, and the full suite
+still belongs to the merger.

@@ -61,11 +61,51 @@ import {
 // to a tracked path - which is what this suite is for.
 import { testCensusTargetsAreTracked } from './census-targets.mjs';
 
+// Parse each file independently in one bounded process. Strip only a leading hashbang (as node --check
+// accepts it), without executing imports; errors identify the exact file rather than hiding a miss.
+function parseModuleFiles(files, overrides = {}) {
+  return spawnSync(process.execPath, [
+    '--experimental-vm-modules', '--no-warnings', '--input-type=module', '-e', `
+      import { readFileSync } from 'node:fs';
+      import { SourceTextModule } from 'node:vm';
+      const overrides = JSON.parse(readFileSync(0, 'utf8'));
+      for (const file of process.argv.slice(1)) {
+        try {
+          const source = Object.hasOwn(overrides, file) ? overrides[file] : readFileSync(file, 'utf8');
+          // Node --check accepts hashbangs; strip only the first-line hashbang for Node 20/22 too.
+          new SourceTextModule(source.replace(/^#![^\\r\\n]*/, ''), { identifier: file });
+        } catch (error) {
+          console.error('syntax check failed for ' + file + ': ' + error.message);
+          process.exitCode = 1;
+        }
+      }
+    `, ...files,
+  ], { cwd: repoRoot, encoding: 'utf8', input: JSON.stringify(overrides), timeout: 10000 });
+}
+
 export function testSyntaxChecks() {
-  for (const file of listFiles(repoRoot, (p) => p.endsWith('.mjs'))) {
-    const result = run(process.execPath, ['--check', file]);
-    assert(result.status === 0, `syntax check failed for ${file}:\n${result.stderr || result.stdout}`);
+  const files = listFiles(repoRoot, (p) => p.endsWith('.mjs'));
+  assert(files.length > 0, 'syntax check must walk the .mjs tree, not an empty set');
+  const result = parseModuleFiles(files);
+  assert(result.status === 0, `syntax check failed for .mjs files:\n${result.error?.message || result.stderr || result.stdout}`);
+
+  // Inject invalid bytes for REAL tracked paths in memory. No shared-worktree file is mutated.
+  const invalid = [
+    'evidence/cli.mjs',
+    'tests/syntax-core.test.mjs',
+    'tests/fixtures/mwg-drift/pkg-ok/skills/modern-web-guidance/modern-web.mjs',
+  ].map((file) => join(repoRoot, file));
+  for (const file of invalid) assert(files.includes(file), `syntax walk must include ${file}`);
+  const overrides = Object.fromEntries(invalid.map((file) => [file, 'export const bad = ;\n']));
+  const failed = parseModuleFiles(invalid, overrides);
+  assert(failed.status === 1, `invalid source, test and nested fixture must fail: ${failed.stderr}`);
+  for (const file of invalid) {
+    assert(failed.stderr.includes(file), `syntax failure must identify ${file}: ${failed.stderr}`);
   }
+  const shebang = join(repoRoot, 'bin', 'web-uplift.mjs');
+  assert(files.includes(shebang), 'syntax walk must include the real shebang module');
+  const passed = parseModuleFiles([shebang]);
+  assert(passed.status === 0, `valid shebang/module syntax must parse: ${passed.stderr}`);
 }
 
 
