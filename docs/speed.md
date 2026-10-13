@@ -322,13 +322,19 @@ these two probes, not a browser or a full-suite run.
   `tests/safe-fetch.mjs`, `runner/agents.mjs`, `tests/census-targets.mjs`) is identical before and after.
 - The one cost is in the gate's own self-test target, `tests/test-fast.mjs`: 7.2s direct (tip a709eb9), 8.3s
   direct on a busy VM (tip bbb8ce0), and 11.0s in the cached merger-slot run at 11:38Z the same hour, when
-  that run's Syntax-checks target took 7.8s against 5.2s direct. It contained six bounded
-  `node` spawns at that tip (three in the refusal controls, two in the actionability/policy test, one in
-  the marker test): +2.2s over the 5.3s it took before this change. It now contains eight bounded `node` spawns:
-  the provenance control added by web-uplift-5e9s (tip c59485a) adds two `--dry-run` runs in a
-  synthetic repo, measured at 0.09-0.15s each on this VM, so the self-test's own spread dominates it
-  (5.19s and 8.03s on the same tree seconds apart, load 27). The tracked-path census inside it was 494
-  paths at that tip and measures 0.15s.
+  that run's Syntax-checks target took 7.8s against 5.2s direct. It contained six bounded `node` spawns at
+  that tip (three in the refusal controls, two in the actionability/policy test, one in the marker test):
+  +2.2s over the 5.3s it took before this change. web-uplift-igc9 added two probes to the
+  actionability/policy test and the provenance control from web-uplift-5e9s adds another two, so the
+  guarded spawn count is 10 here (bounded `node` spawns, i.e. `spawnSync(process.execPath`, in
+  `testUnmappedExecutablePathsFailClosed`, `testRefusalIsActionableAndDocumented`,
+  `testSuiteExecutionMarkers` and `testDiffProvenanceIsReported`). That number is DERIVED, not remembered:
+  `tests/test-fast.mjs` counts those call sites in its own source and fails this documentation check
+  unless this document states the count it finds (web-uplift-opyk: the old literal pin rotted to
+  six-vs-eight and then rejected the corrected value). The provenance control's two spawns are
+  `--dry-run` runs in a synthetic repo, measured at 0.09-0.15s each on this VM, so the self-test's own
+  spread dominates it (5.19s and 8.03s on the same tree seconds apart, load 27). The tracked-path census
+  inside it was 494 paths at that tip and measures 0.15s.
 - A refusal is cheaper than a run: it stops before dispatching any target.
 - Whole fast-gate samples for this branch: 13s direct, and 13-20s in the cached records (tips 8bbab61,
   1cf6e36, a709eb9, dda63b0). The 51 web-uplift fast records before 11:00Z that day have median 66s, but

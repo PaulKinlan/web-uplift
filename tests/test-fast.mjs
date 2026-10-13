@@ -798,8 +798,32 @@ function testRefusalIsActionableAndDocumented() {
     assert(OMITTED_RULES.some((rule) => rule.id === id), `docs/speed.md documents an omission rule that does not exist: ${id}`);
   }
   // The claimed cost is a number with provenance, and the spawn count is the kind of detail that rots
-  // silently when a test is added (round-3 finding P2).
-  assert(/eight bounded\s+`node` spawns/.test(docs['docs/speed.md']), 'docs/speed.md must state the measured spawn count, so adding a test forces the measurement to be updated');
+  // silently when a test is added (round-3 finding P2). web-uplift-opyk: a hand-pinned literal rotted to
+  // six while the guarded functions held eight, and the guard then REJECTED the corrected value, so a
+  // lane that fixed the number turned the gate red. The count is now DERIVED from this file's guarded
+  // test functions and the document is required to state it, so adding a probe fails here with the
+  // number to write rather than pinning a stale one.
+  const selfSource = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const guardedFunctions = [
+    'testUnmappedExecutablePathsFailClosed',
+    'testRefusalIsActionableAndDocumented',
+    'testSuiteExecutionMarkers',
+    'testDiffProvenanceIsReported',
+  ];
+  const guardedSpawns = guardedFunctions.map((name) => {
+    const start = selfSource.indexOf(`\nfunction ${name}()`);
+    assert.notEqual(start, -1, `the guarded spawn census must find ${name}`);
+    const end = selfSource.indexOf('\n}\n', start);
+    assert.notEqual(end, -1, `the guarded spawn census must find the end of ${name}`);
+    return { name, count: (selfSource.slice(start, end).match(/spawnSync\(process\.execPath/g) || []).length };
+  });
+  const guardedSpawnCount = guardedSpawns.reduce((sum, fn) => sum + fn.count, 0);
+  assert(guardedSpawns.every((fn) => fn.count > 0), `every guarded function must spawn a bounded node: ${JSON.stringify(guardedSpawns)}`);
+  const census = guardedSpawns.map((fn) => `${fn.name}=${fn.count}`).join(', ');
+  assert(
+    docs['docs/speed.md'].includes(`guarded spawn count is ${guardedSpawnCount}`),
+    `docs/speed.md must state the live guarded spawn count (${guardedSpawnCount}) derived from this file: ${census}`
+  );
   assert(/7\.2s direct/.test(docs['docs/speed.md']) && /11\.0s in the cached/.test(docs['docs/speed.md']), 'docs/speed.md must give each timing sample with its provenance');
 
   // The executable half: `--list` prints every rule and its reason from the data.
