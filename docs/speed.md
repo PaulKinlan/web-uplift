@@ -139,7 +139,17 @@ console entries after the `/noisy` load, and it still does. Paired measurement (
 | --- | --- | --- | --- | --- |
 | `testFetchDeadlineAndRawComparison` | 30949ms | 25382ms | -5.6s | 5 -> 1 |
 | `testConsoleEvidence` | 12558ms | 9673ms | -2.9s | 6 -> 1 |
+| `testThrottlingConditions` | 15840ms | 9181ms | -6.7s | 8 -> 1 |
 
-Still to convert (the seam is in place): `testThrottlingConditions` (7 -> 1) and the other multi-`gather`
-cases. Do NOT share a browser in `testCdpDeadline` (it deliberately points Chrome at a blackhole server),
+`testThrottlingConditions` converts ALL EIGHT of its `gather` calls, not the seven that do the measuring
+(web-uplift-qsqp). Its final assertion rejects an unknown network profile, and `gather` launches the browser
+before the primitive validates the option, so that call paid a full Chrome start only to throw - which is why
+this reads 8 -> 1 rather than 7 -> 1. Its assertions are also the functional check that the sharing is clean,
+and every one of them still passes under a single browser: a run with no device-metrics override reports no
+viewport, an unthrottled run carries no conditions block at all, mobile-lighthouse implies 4x CPU + 150ms
+RTT, and the slow-3g probe is really more than 1000ms slower than the plain one. The rejected call's launch
+is then removed properly by web-uplift-3mrg (the declarative conditions are validated before `launchChrome`),
+so that eighth launch costs nothing for every caller rather than only in this case.
+
+Still to convert (the seam is in place): the other multi-`gather` cases. Do NOT share a browser in `testCdpDeadline` (it deliberately points Chrome at a blackhole server),
 `testNoOrphanBrowser` (it asserts teardown) or `testResiliencePrimitive` (service workers).
