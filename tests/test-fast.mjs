@@ -26,7 +26,7 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -43,6 +43,7 @@ import {
   CODE_EXTENSIONS,
   getChangedFiles,
   getChangedRegressionTests,
+  printAutoMappings,
   repoRoot,
 } from '../scripts/test-fast.mjs';
 
@@ -516,6 +517,75 @@ function markerValues(stdout, pattern) {
     .map((m) => m[1]);
 }
 
+function testChangedSuiteAutoMap() {
+  console.log('Testing changed-suite-only auto-map and visible refusal (web-uplift-tp77)...');
+  const module = 'scripts/new-tool.mjs';
+  const suite = 'tests/syntax-core.test.mjs';
+  const otherSuite = 'tests/evidence.test.mjs';
+  const sources = {
+    [suite]: "import '../scripts/new-tool.mjs'; const fixture = 'scripts/new-tool.mjs';",
+    [otherSuite]: "const command = ['scripts/new-tool.mjs'];",
+  };
+  let reads = 0;
+  const options = { exists: () => true, readSuite: (path) => { reads++; return sources[path]; } };
+
+  const named = mapFilesToTests([module, suite], options);
+  assert.deepEqual(named.unmappedFiles, [], 'a named new executable plus changed suite must not refuse');
+  assert.deepEqual(named.autoMappedFiles, [{ path: module, suite }], 'mapping identifies its actual changed suite');
+  assert(named.targets.some((target) => target.path === suite), 'the naming suite must run');
+  assert.equal(reads, 1, 'only the changed suite source is inspected once');
+  const printed = [];
+  printAutoMappings(named, (line) => printed.push(line));
+  assert(printed.some((line) => line.includes(`auto-mapped ${module} -> ${suite}`)), 'successful auto-maps must be printed');
+  assert(printed.some((line) => line.includes('1 changed suite(s)')), 'scan boundary must be printed');
+
+  const both = mapFilesToTests([module, suite, otherSuite], options);
+  assert.deepEqual(both.autoMappedFiles, [{ path: module, suite: otherSuite }, { path: module, suite }], 'every changed naming suite is recorded');
+  const bothPrinted = [];
+  printAutoMappings(both, (line) => bothPrinted.push(line));
+  assert.equal(bothPrinted.filter((line) => line.includes(`auto-mapped ${module} ->`)).length, 2, 'print every mapping occurrence');
+  assert.equal(both.autoMapScan.suites, 2, 'only two changed suite sources are scanned');
+
+  const unnamed = mapFilesToTests(['scripts/unknown.mjs', suite], options);
+  assert.deepEqual(unnamed.unmappedFiles, ['scripts/unknown.mjs'], 'an unnamed executable must STILL refuse');
+  assert.equal(unnamed.autoMappedFiles.length, 0, 'a changed suite does not imply coverage by itself');
+  assert.deepEqual(mapFilesToTests([module], options).unmappedFiles, [module], 'an unchanged naming suite cannot auto-map');
+  const wrongPath = mapFilesToTests(['other/new-tool.mjs', suite], options);
+  assert.deepEqual(wrongPath.unmappedFiles, ['other/new-tool.mjs'], 'a basename collision must not auto-map');
+  const mixed = mapFilesToTests([module, 'scripts/unknown.mjs', suite], options);
+  const mixedPrinted = [];
+  printAutoMappings(mixed, (line) => mixedPrinted.push(line));
+  assert(mixedPrinted.some((line) => line.includes(`auto-mapped ${module} -> ${suite}`)) && mixed.unmappedFiles.includes('scripts/unknown.mjs'),
+    'a successful mapping must be printed even when another executable still refuses');
+  // Exercise the actual CLI, including a successful test run, in an isolated tiny copy of this gate.
+  // No suite or fixture is written into another lane's worktree.
+  const temp = mkdtempSync(join(tmpdir(), 'test-fast-auto-map-'));
+  try {
+    mkdirSync(join(temp, 'scripts'));
+    mkdirSync(join(temp, 'tests'));
+    copyFileSync(join(repoRoot, 'scripts', 'test-fast.mjs'), join(temp, 'scripts', 'test-fast.mjs'));
+    writeFileSync(join(temp, 'package.json'), '{"type":"module"}\n');
+    writeFileSync(join(temp, module), 'export const value = 1;\n');
+    writeFileSync(join(temp, 'scripts', 'orphan.mjs'), 'export const orphan = 1;\n');
+    writeFileSync(join(temp, 'tests', 'new-tool.test.mjs'), "import { value } from '../scripts/new-tool.mjs'; if (value !== 1) throw Error('bad');\n");
+    const fast = join(temp, 'scripts', 'test-fast.mjs');
+    const suitePath = 'tests/new-tool.test.mjs';
+    const success = spawnSync(process.execPath, [fast, module, suitePath], { cwd: temp, encoding: 'utf8', timeout: 15000 });
+    assert.equal(success.status, 0, `named module plus changed suite must pass: ${success.stderr}`);
+    assert(success.stdout.includes(`auto-mapped ${module} -> ${suitePath}`), 'successful CLI run must print the map');
+    assert(success.stdout.includes(`fast-gate: passed: ${suitePath}`), 'the naming suite must actually run');
+    const dry = spawnSync(process.execPath, [fast, '--dry-run', module, suitePath], { cwd: temp, encoding: 'utf8', timeout: 15000 });
+    assert.equal(dry.status, 0, 'dry run must accept the same named pair');
+    assert(dry.stdout.includes(`auto-mapped ${module} -> ${suitePath}`), 'dry run must print the map too');
+    const refusal = spawnSync(process.execPath, [fast, 'scripts/orphan.mjs', suitePath], { cwd: temp, encoding: 'utf8', timeout: 15000 });
+    assert.notEqual(refusal.status, 0, 'unnamed module must still refuse in a mixed diff');
+    assert(refusal.stdout.includes('fast-gate: unmapped: scripts/orphan.mjs'), 'refusal must name the unmapped path');
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+  console.log('✔ Auto-map names only changed suites, prints every occurrence, and refuses unnamed paths');
+}
+
 function testUnmappedExecutablePathsFailClosed() {
   console.log('Testing that unmapped executable paths fail closed (web-uplift-5i9a)...');
 
@@ -856,6 +926,7 @@ function runAll() {
   testFailingTargetExitsNonZero();
   testSlowTargetTimesOutWithExit124();
   testUnmappedExecutablePathsFailClosed();
+  testChangedSuiteAutoMap();
   testOmittedRulesAreNamedAndNarrow();
   testRefusalIsActionableAndDocumented();
   testSuiteExecutionMarkers();
