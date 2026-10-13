@@ -22,6 +22,7 @@
 // anything are exercised for real by the repro recorded on the beads; the rest are
 // covered here by the invariant, stated as such rather than implied.
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -74,6 +75,38 @@ export async function testLogUrlRedaction() {
   assert(redacted('<audit-url>') === '<audit-url>' && redacted('') === '' && redacted(undefined) === undefined,
     'a non-URL placeholder passes through unchanged');
 
+  // 1b. The warning for a URL the parser REJECTS (web-uplift-9lhy). The redactor's job is hardest
+  // here, because the parser it normally relies on is the thing that rejected the input, which is
+  // why this one path had grown a regex of its own: it scrubbed '[?&]name=value' only, so
+  // 'https://user:secret@invalid-host:port/path' was printed with the password intact. The runner
+  // is driven for REAL (--dry-run spawns no agent), because a re-statement of the fix in the test
+  // is not the fix.
+  const BAD_URLS = [
+    ['https://user:secret@invalid-host:port/path', 'secret'],
+    ['http://user:password@[invalid-ipv6]', 'password'],
+    ['https://x.test:99999/?api_key=LIVEKEY123&page=2', 'LIVEKEY123'],
+    ['https://ok.test:99999/', null],
+  ];
+  const batch = spawnSync(process.execPath,
+    [join(repoRoot, 'runner', 'run-batch.mjs'), '--dry-run', ...BAD_URLS.map(([u]) => u), 'https://ok.test/'],
+    { encoding: 'utf8', timeout: 60000 });
+  assert(batch.status === 0, `a batch with invalid URLs must still run: ${batch.stderr}`);
+  const printed = `${batch.stdout}\n${batch.stderr}`;
+  for (const [badUrl, secret] of BAD_URLS) {
+    if (secret) {
+      assert(!printed.includes(secret), `an invalid URL's credential must not reach the log ("${secret}" from ${badUrl} survived):\n${printed}`);
+    }
+  }
+  // Positive control: the warning still fires and still names the URL, or the assertions above
+  // would pass on a runner that simply stopped printing it. Both halves are asserted: the
+  // credential is gone AND the URL is still recognisable enough for the operator to find it.
+  assert(printed.includes('skipping invalid URL: https://[redacted]:[redacted]@invalid-host:port/path'),
+    `the skipped URL must stay readable with its credential gone:\n${printed}`);
+  // A rejected URL with nothing credential-shaped is printed as written: the redaction costs the
+  // log nothing, which is the reason this path is not simply made silent.
+  assert(printed.includes('skipping invalid URL: https://ok.test:99999/'),
+    `a rejected URL with no credential must be printed unchanged:\n${printed}`);
+
   // 2. The census. Every output line that can print a target URL must wrap it, either
   // through the URL interpolations or, when the URL rides inside a message/command, through
   // shownText/shownCommand.
@@ -92,8 +125,26 @@ export async function testLogUrlRedaction() {
   // The identifier boundary matters: `${urls.length}` and `${urlsFile}` are not a target
   // URL, and the first version of this rule flagged both (the census caught its own
   // over-reach, which is why the boundary is asserted rather than assumed).
-  const INTERPOLATES_URL = /\$\{(?:f\.url|url|auditUrl)(?![a-zA-Z0-9_$])/;
+  //
+  // `candidate` is on the list because web-uplift-9lhy landed ON a bare-looking warning line this
+  // scan could not see: collectUrls() prints the URL it rejected by interpolating `candidate`, not
+  // `url`, so the line was invisible while it printed a password in the authority. Adding the name
+  // is what makes that class censused instead of reviewed by memory.
+  const URL_VAR = '(?:f\\.url|url|auditUrl|candidate)';
+  const INTERPOLATES_URL = new RegExp(`\\$\\{${URL_VAR}(?![a-zA-Z0-9_$])`);
+  // The fix shape for the same interpolation, which the bare test above cannot see because
+  // '${shownUrl(candidate)}' starts with an 's' and not with the variable name. It is stated as the
+  // redacting call AROUND the variable, so wrapping the line reads as wrapped rather than as a leak.
+  const WRAPPED_URL = new RegExp(`\\$\\{shown(?:Url|AuditUrl)\\(\\s*${URL_VAR}\\s*\\)\\}`);
   const CONSOLE_CALL = /\bconsole\.(?:log|error|warn|info)\(/;
+  // The span rule below asks the question the bare test above cannot: is a target URL interpolated
+  // into a PRINTED line through a call the redactor list does not know? '${fallbackScrub(candidate)}'
+  // is the exact shape web-uplift-9lhy landed on, and the bare test saw neither the wrapper nor the
+  // variable, so the line was invisible while it printed a password. Stated as
+  // "url-ish identifier inside the span" plus "the span is a redacting call", so a renamed or
+  // re-implemented wrapper is reported rather than whitelisted by memory.
+  const URLISH_IN_SPAN = new RegExp(`(?<![a-zA-Z0-9_$.])${URL_VAR}(?![a-zA-Z0-9_$])`);
+  const REDACTING_CALL = /^\s*(?:shownUrl|shownAuditUrl|shownText|shownCommand)\s*\(/;
   const COMMAND_ISH = /(?<![a-zA-Z0-9_$.])(?:cliArgs|agentArgs|command|cmd|prompt)(?![a-zA-Z0-9_$])/;
   const MESSAGE_ISH = /err\.message|agentError|iterationError|validation\.detail|String\(err\)/;
   // The exemption list is asserted, not implied: each entry names the file, the text,
@@ -124,18 +175,41 @@ export async function testLogUrlRedaction() {
     const lines = readFileSync(join(repoRoot, file), 'utf8').split('\n');
     lines.forEach((ln, i) => {
       if (ln.trim().startsWith('//') || ln.trim().startsWith('*')) return;
+      // The span rule runs only on a console line, so a URL used to build a directory name
+      // (`reports/fix-${slugify(auditUrl)}`) is not mistaken for a printed URL, and it is kept for
+      // the assertion at the end of this scan.
+      const spanLeaks = [];
+      if (CONSOLE_CALL.test(ln)) {
+        for (const span of ln.matchAll(/\$\{([^{}]*)\}/g)) {
+          if (!URLISH_IN_SPAN.test(span[1]) || REDACTING_CALL.test(span[1])) continue;
+          spanLeaks.push(span[0]);
+        }
+      }
       const interpolates = INTERPOLATES_URL.test(ln);
       // `${` (or String()) must be present too: `console.log('Per-iteration command the model is\n  // driven with:')` mentions "command" in a LITERAL string and is not a command echo (the
   // first version of this rule flagged it).
   const printsCommandOrMessage = CONSOLE_CALL.test(ln) && /\$\{|String\(/.test(ln) && (COMMAND_ISH.test(ln) || MESSAGE_ISH.test(ln));
-      if (!interpolates && !printsCommandOrMessage) return;
-      // shownText/shownCommand cover a message or a command; shownUrl/shownAuditUrl cover an
+      // A line is output-relevant if it interpolates the URL, echoes a command/message, or leaks a
+      // URL through a wrapper this scan does not know. The last half is what makes the span rule
+      // below reachable: control-tested with `${fallbackScrub(candidate)}`, the shape web-uplift-9lhy
+      // landed on, which neither of the first two tests sees (the census was silent on it until this
+      // term existed).
+      if (!interpolates && !printsCommandOrMessage && spanLeaks.length === 0) return;
+      // A bare interpolation, or a command/message echo, is satisfied by a known wrapper: the
+      // redacting call around the variable covers the bare shape (WRAPPED_URL); shownText and
+      // shownCommand cover a message or a command; shownUrl and shownAuditUrl cover an
       // interpolation the line names.
-      if (WRAPPERS.test(ln) && (!interpolates || /shown(Text|Command)\(/.test(ln))) return;
+      const wrapped = WRAPPED_URL.test(ln)
+        || (WRAPPERS.test(ln) && (!interpolates || /shown(Text|Command)\(/.test(ln)));
       const text = ln.trim();
       const exempt = EXEMPT.find((e) => e.file === file && text.includes(e.match));
       if (exempt) { used.add(file + '|' + exempt.match); return; }
-      findings.push(`${file}:${i + 1}: ${text.slice(0, 120)}`);
+      if (!wrapped && (interpolates || printsCommandOrMessage)) {
+        findings.push(`${file}:${i + 1}: ${text.slice(0, 120)}`);
+      }
+      for (const span of spanLeaks) {
+        findings.push(`${file}:${i + 1}: ${text.slice(0, 120)} [${span}]`);
+      }
     });
   }
   for (const e of EXEMPT) {
@@ -143,6 +217,16 @@ export async function testLogUrlRedaction() {
       findings.push(`census: the exemption for ${e.file} ("${e.match}") matched nothing - a stale exemption hides a real leak (${e.why})`);
     }
   }
+
+  // The census's own control pair, because a scan that reports nothing and a scan that cannot
+  // report look identical from the outside: the wrapper this fix introduced is accepted, and the
+  // local regex it replaced is reported (web-uplift-9lhy).
+  assert(URLISH_IN_SPAN.test('candidate') && REDACTING_CALL.test('shownUrl(candidate)'),
+    'the census must accept the redacting call around a URL-carrying variable');
+  assert(URLISH_IN_SPAN.test('fallbackScrub(candidate)') && !REDACTING_CALL.test('fallbackScrub(candidate)'),
+    'and it must report the un-whitelisted wrapper that leaked the credential');
+  assert(!URLISH_IN_SPAN.test('candidates.length') && !URLISH_IN_SPAN.test('urlsFile'),
+    'the identifier boundary still holds: a plural or a longer name is not a target URL');
   assert(findings.length === 0,
     `log-url census: ${findings.length} output line(s) interpolate a target URL without the redacting wrapper (web-uplift-b9p/s0x). Wrap it, or add an asserted exemption with the reason:\n  ${findings.join('\n  ')}`);
 }

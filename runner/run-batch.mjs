@@ -76,14 +76,6 @@ function shownText(text, raw) {
   return typeof shown === 'string' && shown !== raw ? text.split(raw).join(shown) : text;
 }
 
-// A candidate the URL parser REJECTS is still printed (it is the operator's own input, and
-// an unparseable URL is what they need to see), but not with something that looks like a
-// credential in it. The parser is unavailable by definition here, so this is a shape-based
-// scrub of the common secret parameters.
-function fallbackScrub(text) {
-  return String(text).replace(/([?&](?:api_?key|access_?token|token|secret|password|passcode|session|code|key|csrf|pin|cvv)=)[^&\s#]*/gi, '$1%5Bredacted%5D');
-}
-
 const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
 
 // The one canonical methodology is .claude/skills/web-audit/SKILL.md. Agents
@@ -732,7 +724,14 @@ async function collectUrls() {
   }
   return candidates.filter((candidate) => {
     if (URL.canParse(candidate)) return true;
-    console.warn(`skipping invalid URL: ${fallbackScrub(candidate)}`);
+    // A candidate the URL parser REJECTS is still printed (it is the operator's own input, and an
+    // unparseable URL is what they need to see), but through the SAME redactor every other printed
+    // URL uses. redactUrlCredentialValues has an unparseable-URL path, so it redacts userinfo
+    // ('https://user:secret@invalid-host:port/path') as well as credential-named parameters; a URL
+    // with no credential in it comes back untouched. This used to be a second, local regex over
+    // '[?&]name=value' only, so a password in the authority reached stderr and the CI log verbatim
+    // (web-uplift-9lhy). One table, one answer (web-uplift-glar).
+    console.warn(`skipping invalid URL: ${shownUrl(candidate)}`);
     return false;
   });
 }
