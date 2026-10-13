@@ -59,6 +59,7 @@ import {
   UNWIRED_SHARED_MODULES,
   repoRoot,
 } from '../scripts/test-fast.mjs';
+import { parseFilterArgs } from './test-helpers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -552,6 +553,26 @@ function testRegressionFilterCli() {
   const missingArgRes = spawnSync(process.execPath, [regScript, '--only'], { encoding: 'utf8' });
   assert.notEqual(missingArgRes.status, 0, 'regression --only with missing argument must exit non-zero');
   assert(missingArgRes.stderr.includes('missing argument for filter flag'), 'must report missing argument');
+
+  // AN UNKNOWN FLAG MUST REFUSE, NOT RUN (web-uplift-rpc9). This is the control for that fix: on the
+  // unfixed implementation `--help` matched no branch, was dropped, and the aggregator started every case,
+  // so the assertion below fails on the behaviour rather than on the exit code alone. The spawns are
+  // bounded because that is what the unfixed path does: it runs until it is killed.
+  const helpRes = spawnSync(process.execPath, [regScript, '--help'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(helpRes.status, 0, '--help must print usage and exit 0, not start a run');
+  assert(/usage: node <suite-file>\.mjs/.test(helpRes.stdout), '--help must print the usage line');
+  assert(!helpRes.stdout.includes('tests OK'), '--help must not run any case');
+
+  const unknownRes = spawnSync(process.execPath, [regScript, '--definitely-not-a-flag'], { encoding: 'utf8', timeout: 10000 });
+  assert.notEqual(unknownRes.status, 0, 'an unknown flag must exit non-zero');
+  assert(
+    unknownRes.stderr.includes('unknown flag: --definitely-not-a-flag'),
+    'an unknown flag must be named on stderr (this is the assertion the unfixed implementation fails)',
+  );
+  assert(!unknownRes.stdout.includes('tests OK'), 'an unknown flag must not run cases to completion');
+
+  // The guard must not have redefined the default: no flags still selects every case rather than refusing.
+  assert.deepEqual(parseFilterArgs([]), { filters: [], list: false }, 'no flags must still mean every case');
 
   console.log('✔ tests/regression.mjs filter CLI passed');
 }
