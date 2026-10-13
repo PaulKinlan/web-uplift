@@ -162,8 +162,17 @@ export function refusedDestination(dst, rootDir) {
 // one ENOENT on .web-uplift/runner/c.mjs; reproduced independently for this change with a two-process reader
 // over a 60-module tree, 10 republishes: 336 ENOENT in 394617 reads before, 0 in 461465 reads after.
 // Every file is now moved into place with a single rename, which is
-// atomic within a filesystem, and OBSOLETE entries are removed only AFTER the new content is present, so the
-// worst a reader can observe is STALE content, never a hole.
+// atomic within a filesystem, and OBSOLETE entries are removed only AFTER the new content is present, so a
+// path the new content STILL HAS can only be observed as stale, never as absent.
+//
+// THE SCOPE OF THAT GUARANTEE, stated because the absolute version of it was wrong (web-uplift-c7pg): it is a
+// property of paths present in BOTH versions, which is what the acceptance covers. A path the source has
+// REMOVED is still a disappearance: it survives the publish phase as stale content and pruneObsoleteEntries
+// deletes it afterwards, so a reader that listed it before the prune and reads after it will see ENOENT. That
+// is reconciliation of a path that no longer exists in the source, not a hole in the surface, and it is
+// asserted as such in tests/install-copy-symlink.mjs (the obsolete entry must survive the publish phase and be
+// gone only after prune). The same applies to the type-change transitions below, which remove the old entry
+// before publishing the new one.
 //
 // This is NOT cross-file atomicity and does not claim to be: per-file rename means a reader can still observe
 // a MIX of new and old files. That is a strictly better failure mode than ENOENT, and it is the limitation.
@@ -173,11 +182,13 @@ export function refusedDestination(dst, rootDir) {
 //   - a changed source: the path goes from old bytes to new bytes in one rename, so it is never absent. A
 //     single vendored FILE is staged beside its destination and renamed for the same reason, because
 //     copyFileSync truncates its destination first.
-//   - a removed source: the destination entry is removed by pruneObsoleteEntries AFTER the new content is
-//     published, so what a reader can still see is stale rather than missing.
+//   - a removed source: the entry survives the publish phase as stale content and is deleted by
+//     pruneObsoleteEntries afterwards, so a reader that listed it can then see it disappear. See the scope
+//     note above: the no-hole property belongs to paths present in both versions.
 //   - a whole-tree mixed version: possible, and stated rather than assumed.
 //   - a type change (a source file replacing a destination directory, or the reverse): handled explicitly,
-//     because a rename cannot cross types; those two transitions remove the old entry first.
+//     because a rename cannot cross types; those two transitions remove the old entry first, so they are a
+//     disappearance for that path rather than a stale read.
 //   - a crash mid-publish: the staging tree under `.web-uplift/scratch/` can be left behind, and it is
 //     removed at the start of the next run. Nothing has been deleted from the destination at that point.
 //   - the staging tree is invisible to the syntax census because that walk skips a directory named `scratch`
