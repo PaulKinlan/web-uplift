@@ -195,6 +195,15 @@ function copilotSnippet() {
   );
 }
 
+// ONE place decides whether the run finished. An install that could not write every destination is NOT a
+// successful install (web-uplift-v167): before this, the CLI printed the refusals, printed 'Installed' and
+// exited 0, so a user or a CI script saw success for an install with files missing - the vendored sync
+// (tests/cdp-copy-sync.mjs) already refuses AND fails on the same condition, so this was the weaker contract.
+// The refusal stays loud; this adds the status rather than trading one signal for the other.
+function installIncomplete(refusedDestinationCount) {
+  return refusedDestinationCount > 0;
+}
+
 async function install(flags, { mode = 'install' } = {}) {
   const opts = parseFlags(flags, new Set(['agent', 'target']));
   if (opts.help || opts.h) {
@@ -278,6 +287,7 @@ agent session (uses your subscription).`);
   console.log(`web-uplift ${mode} -> ${projectRoot}`);
   console.log(`agents: ${selected.join(', ')}${dryRun ? '  (dry-run)' : ''}\n`);
   printExistingInstallNotice(vendorRoot, pkg);
+  let refusedDestinations = 0;
   for (const step of plan) {
     const relTo = relative(projectRoot, step.to) || step.to;
     if (dryRun) {
@@ -288,9 +298,20 @@ agent session (uses your subscription).`);
     console.log(`  ${step.action.padEnd(9)} ${relTo}   (${step.what})`);
     if (step.skippedFiles && step.skippedFiles.length > 0) {
       for (const skip of step.skippedFiles) {
+        if (skip.refused) refusedDestinations += 1;
         console.log(`    skipped ${skip.path} (${skip.reason})`);
       }
     }
+  }
+  if (!dryRun && installIncomplete(refusedDestinations)) {
+    console.error(
+      `\nFAILED: refused to write ${refusedDestinations} destination(s) that are symlinks and left them ` +
+        `untouched (listed above). The vendored tree and the agent wrappers are INCOMPLETE and this install ` +
+        `did NOT finish, so it does not report success. Remove or replace the symlink(s) and run this command ` +
+        `again.`,
+    );
+    process.exitCode = 1;
+    return;
   }
   if (!dryRun) {
     const verb = mode === 'update' ? 'Updated' : 'Installed';
@@ -471,9 +492,9 @@ function applyStep(step, projectRoot = null) {
 
   const symlinkComponent = refusedSymlinkComponent(step.to, projectRoot);
   if (symlinkComponent) {
-    step.skippedFiles.push({ path: symlinkComponent, reason: 'symlink' });
+    step.skippedFiles.push({ path: symlinkComponent, reason: 'symlink', refused: true });
     if (symlinkComponent !== step.to) {
-      step.skippedFiles.push({ path: step.to, reason: 'symlink' });
+      step.skippedFiles.push({ path: step.to, reason: 'symlink', refused: true });
     }
     return;
   }
@@ -481,29 +502,32 @@ function applyStep(step, projectRoot = null) {
   const toDir = dirname(step.to);
   const dirSymlink = refusedSymlinkComponent(toDir, projectRoot);
   if (dirSymlink) {
-    step.skippedFiles.push({ path: dirSymlink, reason: 'symlink' });
+    step.skippedFiles.push({ path: dirSymlink, reason: 'symlink', refused: true });
     if (dirSymlink !== step.to) {
-      step.skippedFiles.push({ path: step.to, reason: 'symlink' });
+      step.skippedFiles.push({ path: step.to, reason: 'symlink', refused: true });
     }
     return;
   }
 
   mkdirSync(toDir, { recursive: true });
 
+  // These three are DESTINATION refusals by construction: each safe* helper returns 'symlink' only when the
+  // destination itself is one (its leaf lstat, or O_NOFOLLOW at the write), so they count as an incomplete
+  // install exactly like the walk's refusals above (web-uplift-v167).
   if (step.action === 'copy-file') {
     const res = safeCopyFileSync(step.from, step.to);
     if (res.skipped) {
-      step.skippedFiles.push({ path: res.path, reason: res.reason });
+      step.skippedFiles.push({ path: res.path, reason: res.reason, refused: true });
     }
   } else if (step.action === 'write') {
     const res = safeWriteFileSync(step.to, step.content);
     if (res.skipped) {
-      step.skippedFiles.push({ path: res.path, reason: res.reason });
+      step.skippedFiles.push({ path: res.path, reason: res.reason, refused: true });
     }
   } else if (step.action === 'append') {
     const res = safeAppendMarker(step.to, '<!-- web-uplift:install -->', step.content);
     if (res.skipped) {
-      step.skippedFiles.push({ path: res.path, reason: res.reason });
+      step.skippedFiles.push({ path: res.path, reason: res.reason, refused: true });
     }
   }
 }
@@ -515,9 +539,9 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = 
   }
   const toSymlink = refusedSymlinkComponent(to, projectRoot);
   if (toSymlink) {
-    acc.skippedFiles.push({ path: toSymlink, reason: 'symlink' });
+    acc.skippedFiles.push({ path: toSymlink, reason: 'symlink', refused: true });
     if (toSymlink !== to) {
-      acc.skippedFiles.push({ path: to, reason: 'symlink' });
+      acc.skippedFiles.push({ path: to, reason: 'symlink', refused: true });
     }
     return acc;
   }
@@ -532,7 +556,7 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = 
     }
     const dstStat = lstatSync(dst, { throwIfNoEntry: false });
     if (dstStat?.isSymbolicLink()) {
-      acc.skippedFiles.push({ path: dst, reason: 'symlink' });
+      acc.skippedFiles.push({ path: dst, reason: 'symlink', refused: true });
       continue;
     }
     if (st.isDirectory()) copyDir(src, dst, acc, depth + 1, projectRoot);
