@@ -147,7 +147,22 @@ before sample under the same load, so no per-run speedup is claimed from that nu
    It refuses in `--dry-run` too, so a preview cannot look greener than the run.
 
 A refusal is the point: a gate that quietly ran a subset would report a pass for a change whose suite never
-ran, which is the defect class this project keeps having to correct. An unmapped **executable** path is
+ran, which is the defect class this project keeps having to correct. An unmapped executable can instead
+**auto-map only to a runnable suite changed in the same diff** when a quoted import specifier, subprocess
+argument or path string in that suite names the complete module path. The gate reads each changed suite at
+most once and prints `[test:fast] auto-mapped <path> -> <suite>` on every occurrence, including a pass or a
+mixed diff that still refuses another path. It prints the count of changed suites and source characters
+scanned; it never searches unchanged tests or guesses from the whole tree. If no changed suite names it,
+the existing refusal remains. A name is **not proof the suite executes the module**: the printed pair is
+what a reviewer checks against the suite's actual test behavior; otherwise a named-but-unused fixture
+could still yield a false green. A path under a mapped subsystem is not eligible for this fallback.
+
+Cost: a synthetic 1,000-plan comparison on this VM (2026-10-13, same tree, one changed suite source with
+one import) took 10.5ms for the suite-only plan and 15.9ms for the module-plus-suite auto-map plan; that
+5.4ms difference across 1,000 iterations includes processing the extra changed path and is **not** a
+prediction for large suites. The `tests/test-fast.mjs` focused suite measured 2.78s standalone on this tree;
+there is no paired before sample for its added CLI cases. Scope is bounded by changed test files, not the
+repo's total test count. An unmapped **executable** path is
 never omitted by a tree, doc or data rule; only a rule that sets `mayOmitExecutable` can see one, and
 exactly two do (`deleted`, `recorded-artefacts`).
 

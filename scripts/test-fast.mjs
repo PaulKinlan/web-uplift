@@ -19,8 +19,8 @@
  *   CHECK_FAST_TIMEOUT=300
  */
 
-import { existsSync, lstatSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -554,6 +554,16 @@ function targetKey(target) {
   return `${target.type}:${target.path || ''}:${target.filter || ''}:${(target.args || []).join(' ')}`;
 }
 
+/** Publish every auto-map, including successful plans and mixed plans that still refuse a path. */
+export function printAutoMappings(plan, log = console.log) {
+  if (plan.autoMapScan.suites > 0) {
+    log(`[test:fast] auto-map scan: ${plan.autoMapScan.suites} changed suite(s), ${plan.autoMapScan.bytes} source characters`);
+  }
+  for (const { path, suite } of plan.autoMappedFiles) {
+    log(`[test:fast] auto-mapped ${path} -> ${suite} (changed suite that names it; verify it exercises the path)`);
+  }
+}
+
 /**
  * Map list of changed file paths to affected test targets.
  */
@@ -562,6 +572,7 @@ export function mapFilesToTests(filePaths, options = {}) {
   const targetsByKey = new Map();
   const unmappedFiles = [];
   const omittedFiles = [];
+  const autoMappedFiles = [];
   const exists = options.exists || ((p) => pathEntryExists(p, repoRoot));
 
   for (const rawPath of filePaths) {
@@ -621,6 +632,42 @@ export function mapFilesToTests(filePaths, options = {}) {
     }
   }
 
+  // A changed executable can borrow ONLY a suite changed in this same diff that names its path.
+  // Read each changed suite once; never search an unchanged suite or the whole tests tree.
+  let autoMapScan = { suites: 0, bytes: 0 };
+  if (unmappedFiles.length > 0) {
+    const readSuite = options.readSuite || ((suite) => readFileSync(join(repoRoot, suite), 'utf8'));
+    const suites = [...new Set(filePaths.map((f) => f.startsWith('/') ? relative(repoRoot, f) : f)
+      .filter((f) => f.startsWith('tests/') && isDirectRunnableTest(f) && exists(f)))].sort();
+    const namedBy = new Map();
+    for (const suite of suites) {
+      let source;
+      try { source = readSuite(suite); } catch { continue; } // unreadable cannot prove a reference
+      autoMapScan = { suites: autoMapScan.suites + 1, bytes: autoMapScan.bytes + source.length };
+      const names = new Set();
+      for (const match of source.matchAll(/(['"`])([^'"`\r\n]+)\1/g)) {
+        const literal = match[2];
+        if (!literal.includes('/') || literal.includes('${')) continue; // static path strings only
+        names.add(posix.normalize(literal)); // repo-relative path or subprocess argument
+        names.add(posix.normalize(posix.join(posix.dirname(suite), literal))); // import specifier
+      }
+      namedBy.set(suite, names);
+    }
+    const remaining = [];
+    for (const file of unmappedFiles) {
+      if (!hasCodeExtension(file) || !exists(file)) { remaining.push(file); continue; }
+      const namingSuites = [...namedBy].filter(([, names]) => names.has(file)).map(([suite]) => suite);
+      if (namingSuites.length === 0) { remaining.push(file); continue; }
+      for (const suite of namingSuites) {
+        autoMappedFiles.push({ path: file, suite });
+        const target = { type: 'node', path: suite, label: `Direct test: ${suite}`, timeoutMs: suite.endsWith('.test.mjs') ? 240000 : 120000 };
+        targetsByKey.set(targetKey(target), target);
+      }
+    }
+    unmappedFiles.length = 0;
+    unmappedFiles.push(...remaining);
+  }
+
   // Only a diff with nothing to map at all falls back to the baseline suite. A diff that contains an
   // UNKNOWN path must not look like a baseline run: that was the false green this gate now refuses.
   const isBaseline = targetsByKey.size === 0 && unmappedFiles.length === 0;
@@ -635,6 +682,8 @@ export function mapFilesToTests(filePaths, options = {}) {
     targets: Array.from(targetsByKey.values()),
     unmappedFiles,
     omittedFiles,
+    autoMappedFiles,
+    autoMapScan,
     isBaseline,
   };
 }
@@ -814,6 +863,7 @@ Usage:
       console.log(`  - ${o.path} [${o.rule}] ${o.reason}`);
     }
   }
+  printAutoMappings(plan);
   if (plan.isBaseline) {
     console.log('[test:fast] No subsystem-specific changes; running fast baseline tests.');
   }

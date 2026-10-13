@@ -165,7 +165,11 @@ baseline pass: a green gate that never ran the suite for a changed module is a f
   `fast-gate: unmapped: <path>` per path, then `fast-gate: FAIL - N changed file(s) map to no suite:` and a
   `NEXT ACTION` block on stderr, and exits 1 before dispatching any target - in `--dry-run` too, so a
   preview cannot look greener than the run. A mixed diff fails: the mapped half never buys a green verdict
-  for the unmapped half. Unmapped executable files in fixture/demo trees are NOT exceptions:
+  for the unmapped half. One narrow widening (web-uplift-tp77): an unmapped executable named by a
+  **changed runnable test suite in the same diff** (quoted import/path/subprocess argument) selects that
+  suite. Every such auto-map prints `auto-mapped <path> -> <suite>` even on success; unchanged suites are
+  never searched. A name alone does not prove the suite exercises the module: review the printed pair
+  against the suite behavior. Unmapped executable files in fixture/demo trees are NOT exceptions:
   `playground/**/*.js` and `eval/fixtures/seeded-issues/site/**/*.js` select
   `tests/fixture-sites.test.mjs`, which checks syntax, local imports and scenario metadata.
   This is structural coverage, not browser-behaviour coverage; `.github/workflows/audit-playground.yml`
