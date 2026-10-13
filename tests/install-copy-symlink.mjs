@@ -15,11 +15,11 @@
 // This file is the fast, browser-free foreground check. Run it directly:
 //   node tests/install-copy-symlink.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { VENDORED_DEPENDENCIES, VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES } from '../install-surface.mjs';
 
@@ -648,24 +648,97 @@ export function testInstallAsksTheSharedSymlinkGuard() {
   }
 }
 
+// THE NAME THE V167 CONTROL COPY IS WRITTEN INTO, inside the shim root. It is RESERVED: the mirror step
+// refuses to link an entry of this name, which is what makes the collision impossible rather than unlikely
+// (web-uplift-lql5).
+export const V167_SCRATCH_ENTRY = '.v167-scratch';
+
+// Compares RESOLVED paths, not lexical ones. A string-prefix check on the path about to be written cannot
+// see through a symlink, and not seeing through a symlink is exactly how the first version of this fix
+// could have written into the repository: a lexical guard passed while the write traversed a link.
+function assertOutsideRepository(resolvedPath, resolvedRoot, what) {
+  assert(resolvedPath !== resolvedRoot && !resolvedPath.startsWith(resolvedRoot + sep),
+    `${what} must not resolve to a path inside the repository: a concurrent suite walking the repository root would find a transient .mjs and fail to read it (web-uplift-lql5), got ${resolvedPath} against root ${resolvedRoot}`);
+}
+
+function listTree(dir, prefix = '') {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    out.push(rel);
+    // Returns an ARRAY. It returned a joined string at first, and `...listTree(...)` then spread it one
+    // character at a time, which still compared consistently and so still passed, but made every failure
+    // message unreadable.
+    if (entry.isDirectory()) out.push(...listTree(join(dir, entry.name), rel));
+  }
+  return out;
+}
+
+// Builds the repo-shaped parent the v167 control copy needs, OUTSIDE the repository it mirrors, and returns
+// the directory the copy must be written into. The copy has to sit one level below something where
+// '../runner/agents.mjs' and '../install-surface.mjs' resolve to the real files, so the parent is a temp
+// directory whose entries are symlinks to the repository's own entries.
+//
+// WHY THE RESERVED NAME IS LOAD-BEARING: the first version of this fix mirrored EVERY top-level entry and
+// then created `<shim>/control`. On a repository containing a directory named `control`, that symlink made
+// `<shim>/control` resolve to `<repo>/control`, so mkdirSync and writeFileSync traversed it and wrote the
+// control copy INTO the repository while the lexical guard still passed and teardown then unlinked only the
+// symlink, leaving the file behind. Skipping the reserved entry removes the doorway; the resolved-path
+// guard below is the second line of defence, for the case where a link appears anyway.
+export function createControlShim(sourceRoot) {
+  const resolvedSource = realpathSync(sourceRoot);
+  const shimRoot = mkdtempSync(join(tmpdir(), 'web-uplift-v167-shim-'));
+  try {
+    for (const entry of readdirSync(sourceRoot)) {
+      if (entry === '.git' || entry === V167_SCRATCH_ENTRY) continue;
+      symlinkSync(join(sourceRoot, entry), join(shimRoot, entry));
+    }
+    const controlDir = join(shimRoot, V167_SCRATCH_ENTRY);
+    mkdirSync(controlDir, { recursive: true });
+    assertOutsideRepository(realpathSync(controlDir), resolvedSource, 'the control directory');
+    assertOutsideRepository(realpathSync(shimRoot), resolvedSource, 'the shim root');
+    return { shimRoot, controlDir };
+  } catch (error) {
+    rmSync(shimRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+// Removes a shim without any chance of touching what it points at: each symlink is unlinked first, because
+// this tree sits beside the real source and a mistake here would delete the source it mirrors.
+export function removeControlShim(shimRoot) {
+  for (const entry of readdirSync(shimRoot)) {
+    const entryPath = join(shimRoot, entry);
+    if (lstatSync(entryPath).isSymbolicLink()) rmSync(entryPath, { force: true });
+  }
+  rmSync(shimRoot, { recursive: true, force: true });
+}
+
 // Fixture 9 (web-uplift-v167): the CONTROL, on the pre-fix decision. The exit status is the half that was
 // wrong, and a test that only asserts the new status would pass just as well against code that never had the
 // defect - so this runs the SAME fixture against a copy of the CURRENT CLI with the single decision line
 // mutated back to the old answer and asserts the OLD outcome: exit 0, and 'Installed' printed over a refused
 // destination. That is what makes fixture 4's assertion discriminating rather than merely true. The copy is
-// written one level under the repo root so every '../x' import resolves to the very file the real CLI imports,
+// written one level below a shim root so every '../x' import resolves to the very file the real CLI imports,
 // and the mutation is asserted to have applied, so this control cannot quietly become a no-op if the source
 // moves.
+//
+// THE SHIM ROOT IS OUTSIDE THE REPOSITORY (web-uplift-lql5). It used to be the repository root itself:
+// this fixture wrote `.v167-control-${pid}/web-uplift.mjs` INTO repoRoot and removed it in the finally
+// below. At --test-concurrency=6 that raced tests/syntax-core.test.mjs, which walks repoRoot via listFiles
+// looking for *.mjs; the walk would find the transient file and then get ENOENT reading it once this
+// finally had removed it, failing testSyntaxChecks. A real gate went red on it. The shim root built by
+// createControlShim keeps every '../x' import resolving to the real file while never writing into the
+// repository.
 export function testInstallIncompleteExitControl() {
   const outside = mkdtempSync(join(tmpdir(), 'web-uplift-v167-control-outside-'));
   const target = mkdtempSync(join(tmpdir(), 'web-uplift-v167-control-target-'));
-  const controlDir = join(repoRoot, `.v167-control-${process.pid}`);
+  const { shimRoot, controlDir } = createControlShim(repoRoot);
   try {
     const source = readFileSync(join(repoRoot, 'bin', 'web-uplift.mjs'), 'utf8');
     const mutated = source.replace('  return refusedDestinationCount > 0;', '  return false; // PRE-FIX CONTROL');
     assert(mutated !== source,
       'the control must mutate the decision line; if the source moved, this control is a no-op and must fail loudly rather than pass vacuously');
-    mkdirSync(controlDir, { recursive: true });
     const controlCli = join(controlDir, 'web-uplift.mjs');
     writeFileSync(controlCli, mutated);
 
@@ -684,9 +757,49 @@ export function testInstallIncompleteExitControl() {
     assert(readFileSync(victim, 'utf8') === 'VICTIM-MANIFEST\n',
       'the control run must leave the victim untouched too: the refusal was never the broken half, the exit status was');
   } finally {
-    rmSync(controlDir, { recursive: true, force: true });
+    removeControlShim(shimRoot);
     rmSync(outside, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
+  }
+}
+
+// THE REGRESSION CONTROL FOR THE SHIM ITSELF (web-uplift-lql5). A guard that compares the STRING PREFIX of
+// the path it is about to write cannot see through a symlink, which is exactly how the first version of the
+// shim fix could have written into the repository it was supposed to stay out of: the mirror step linked
+// every top-level entry, so a repository directory sharing the scratch entry's name made the scratch path a
+// link back into the repository. This builds a DISPOSABLE repository root that contains such a directory,
+// runs the same construction against it, and asserts the repository gained nothing, kept everything, and
+// that teardown leaves nothing behind. It is a case rather than a note because it has to keep failing if
+// anyone reinstates the blanket mirror or a lexical guard.
+export function testV167ControlShimNeverWritesIntoTheRepository() {
+  const synthetic = mkdtempSync(join(tmpdir(), 'web-uplift-v167-synthetic-repo-'));
+  const colliding = join(synthetic, V167_SCRATCH_ENTRY);
+  mkdirSync(colliding, { recursive: true });
+  writeFileSync(join(colliding, 'sentinel.txt'), 'SENTINEL\n');
+  mkdirSync(join(synthetic, 'bin'), { recursive: true });
+  writeFileSync(join(synthetic, 'bin', 'web-uplift.mjs'), '// synthetic source\n');
+  const before = listTree(synthetic).join('\n');
+  let shimRoot = null;
+  try {
+    const shim = createControlShim(synthetic);
+    shimRoot = shim.shimRoot;
+    // The write that this fixture performs on the real repository, done here against the disposable one.
+    writeFileSync(join(shim.controlDir, 'web-uplift.mjs'), '// control copy\n');
+    assert(listTree(synthetic).join('\n') === before,
+      `the shim must not write into the repository it mirrors, even when that repository has an entry named ${V167_SCRATCH_ENTRY} (web-uplift-lql5): before=${JSON.stringify(before)} after=${JSON.stringify(listTree(synthetic).join('\n'))}`);
+    assert(readFileSync(join(colliding, 'sentinel.txt'), 'utf8') === 'SENTINEL\n',
+      'the colliding repository directory must be untouched');
+    // And the shim must still do its job: a fix that stopped mirroring would pass everything above.
+    assert(existsSync(join(shimRoot, 'bin', 'web-uplift.mjs')),
+      'the shim must still mirror the entries the control copy imports through, or the fix traded a collision for a broken control');
+    assert(!lstatSync(shim.controlDir).isSymbolicLink(), 'the scratch directory must be a real directory, not a link');
+    removeControlShim(shimRoot);
+    assert(!existsSync(shimRoot), 'teardown must remove the shim root');
+    assert(listTree(synthetic).join('\n') === before,
+      `teardown must leave the mirrored repository exactly as it was (web-uplift-lql5): before=${JSON.stringify(before)} after=${JSON.stringify(listTree(synthetic).join('\n'))}`);
+  } finally {
+    if (shimRoot && existsSync(shimRoot)) removeControlShim(shimRoot);
+    rmSync(synthetic, { recursive: true, force: true });
   }
 }
 
@@ -740,6 +853,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   testSyncRefusesEqualByteSymlinkDestination();
   testInstallAsksTheSharedSymlinkGuard();
   testInstallIncompleteExitControl();
+  testV167ControlShimNeverWritesIntoTheRepository();
   testEveryDestinationRefusalCarriesTheMarker();
   console.log('tests OK');
 }

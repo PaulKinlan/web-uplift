@@ -49,6 +49,7 @@ import {
   testSyncRefusesEqualByteSymlinkDestination,
   testInstallAsksTheSharedSymlinkGuard,
   testInstallIncompleteExitControl,
+  testV167ControlShimNeverWritesIntoTheRepository,
   testEveryDestinationRefusalCarriesTheMarker,
 } from './install-copy-symlink.mjs';
 
@@ -579,6 +580,7 @@ export const installPackageTests = [
   testSyncRefusesEqualByteSymlinkDestination,
   testInstallAsksTheSharedSymlinkGuard,
   testInstallIncompleteExitControl,
+  testV167ControlShimNeverWritesIntoTheRepository,
   testEveryDestinationRefusalCarriesTheMarker,
   testMcpSkillsServerStdio,
   // DECLARED LATER IN THIS FILE and registered here too (web-uplift-o4ec). These two used to live
@@ -600,6 +602,7 @@ export {
   testSyncRefusesEqualByteSymlinkDestination,
   testInstallAsksTheSharedSymlinkGuard,
   testInstallIncompleteExitControl,
+  testV167ControlShimNeverWritesIntoTheRepository,
   testEveryDestinationRefusalCarriesTheMarker,
 };
 
