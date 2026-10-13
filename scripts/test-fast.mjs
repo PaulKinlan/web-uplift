@@ -174,7 +174,7 @@ export const OMITTED_RULES = [
   },
   {
     id: 'fixture-and-demo-trees',
-    reason: 'non-executable file in a fixture or demo tree: no fast-tier suite of its own (executable files here are refused, not omitted - see web-uplift-5r7z)',
+    reason: 'non-executable file in a fixture or demo tree: no fast-tier suite of its own (unmapped executable files here are refused, never omitted)',
     match: (f) =>
       f.startsWith('tests/fixtures/') ||
       f.startsWith('playground/') ||
@@ -217,6 +217,12 @@ const TEST_SUPPORT_MODULES = [
  * Known subsystems and their mapped test targets.
  */
 export const SUBSYSTEMS = [
+  {
+    id: 'fixture-sites',
+    description: 'Browser demo and seeded-issue fixture JavaScript syntax, import graph, and scenario metadata',
+    match: (f) => /^playground\/.*\.js$/.test(f) || /^eval\/fixtures\/seeded-issues\/site\/.*\.js$/.test(f),
+    targets: [{ type: 'node', path: 'tests/fixture-sites.test.mjs', label: 'Fixture and demo site module checks' }],
+  },
   {
     id: 'flow',
     description: 'User flow recording, normalization, and browser replay',

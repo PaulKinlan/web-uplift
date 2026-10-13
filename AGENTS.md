@@ -148,9 +148,11 @@ baseline pass: a green gate that never ran the suite for a changed module is a f
   `fast-gate: unmapped: <path>` per path, then `fast-gate: FAIL - N changed file(s) map to no suite:` and a
   `NEXT ACTION` block on stderr, and exits 1 before dispatching any target - in `--dry-run` too, so a
   preview cannot look greener than the run. A mixed diff fails: the mapped half never buys a green verdict
-  for the unmapped half. Executable files in the fixture/demo trees are NOT exceptions:
-  `playground/**/*.js` and `eval/fixtures/**/*.js` are refused today, and mapping them is
-  web-uplift-5r7z.
+  for the unmapped half. Unmapped executable files in fixture/demo trees are NOT exceptions:
+  `playground/**/*.js` and `eval/fixtures/seeded-issues/site/**/*.js` select
+  `tests/fixture-sites.test.mjs`, which checks syntax, local imports and scenario metadata.
+  This is structural coverage, not browser-behaviour coverage; `.github/workflows/audit-playground.yml`
+  serves and probes both sites in CI. Other unmapped executable fixture/demo files remain refused.
 - **NAMES THE ESCAPE in the same block.** A lane that cannot see the way forward adds its file to an
   omission rule to make the gate green, which is the silent narrowing this bead exists to stop, so the
   refusal says what to do: extend the map (`SUBSYSTEMS` for the covering suite, `KNOWN_STANDALONE_TESTS`
