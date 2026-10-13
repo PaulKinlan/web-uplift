@@ -81,31 +81,57 @@ export async function testLogUrlRedaction() {
   // 'https://user:secret@invalid-host:port/path' was printed with the password intact. The runner
   // is driven for REAL (--dry-run spawns no agent), because a re-statement of the fix in the test
   // is not the fix.
-  const BAD_URLS = [
-    ['https://user:secret@invalid-host:port/path', 'secret'],
-    ['http://user:password@[invalid-ipv6]', 'password'],
-    ['https://x.test:99999/?api_key=LIVEKEY123&page=2', 'LIVEKEY123'],
-    ['https://ok.test:99999/', null],
+  //
+  // THREE CLASSES of rejected value, because round 2 (web-uplift-mafp) proved the first fix covered
+  // only one of them. The shared redactor's unparseable-authority sweep stops a run at a space, so a
+  // space inside the userinfo hid the credential from it and the value came back VERBATIM - the
+  // exact shape round 1 set aside as a malformed-paste curiosity. That case is now WITHHELD, a value
+  // the shared rule can render is printed redacted, and a value with nothing in it is printed as
+  // written (the positive half: a warning that names nothing is its own defect).
+  const REJECTED = [
+    // [value, the credential value that must NOT survive, the line the log must carry]
+    ['https://user:secret@invalid-host:port/path', 'secret',
+      'skipping invalid URL: https://[redacted]:[redacted]@invalid-host:port/path'],
+    ['http://user:password@[invalid-ipv6]', 'password',
+      'skipping invalid URL: http://[redacted]:[redacted]@[invalid-ipv6]'],
+    ['https://x.test:99999/?api_key=LIVEKEY123&page=2', 'LIVEKEY123',
+      'skipping invalid URL: https://x.test:99999/?api_key=%5Bredacted%5D&page=2'],
+    // The whitespace-hidden credentials (web-uplift-mafp). The value is withheld: the line states the
+    // reason and the length, and neither the raw nor the whitespace-free form is printed.
+    ['https://us er:SECRET@invalid-host:port/path', 'SECRET', 'skipping invalid URL: [withheld:'],
+    ['https://user:se cret@host:99999/', 'se cret', 'skipping invalid URL: [withheld:'],
+    // A tab is NOT hidden: the parser strips tabs, so this value's userinfo IS reachable by the
+    // shared rule and the line keeps the redacted URL (withheld is not "anything with whitespace").
+    ['https://user:secret@fail.test:99999/\tand\tmore', 'secret',
+      'skipping invalid URL: https://[redacted]:[redacted]@fail.test:99999/\tand\tmore'],
+    // Whitespace with nothing hidden behind it keeps its full diagnostic, which is what stops the
+    // withhold branch from being "refuse everything unparseable".
+    ['https://ok.test:99999/ page', null, 'skipping invalid URL: https://ok.test:99999/ page'],
+    ['https://ok.test:99999/', null, 'skipping invalid URL: https://ok.test:99999/'],
+    ['not a url at all', null, 'skipping invalid URL: not a url at all'],
   ];
   const batch = spawnSync(process.execPath,
-    [join(repoRoot, 'runner', 'run-batch.mjs'), '--dry-run', ...BAD_URLS.map(([u]) => u), 'https://ok.test/'],
+    [join(repoRoot, 'runner', 'run-batch.mjs'), '--dry-run', ...REJECTED.map(([u]) => u), 'https://ok.test/'],
     { encoding: 'utf8', timeout: 60000 });
   assert(batch.status === 0, `a batch with invalid URLs must still run: ${batch.stderr}`);
   const printed = `${batch.stdout}\n${batch.stderr}`;
-  for (const [badUrl, secret] of BAD_URLS) {
+  for (const [badUrl, secret] of REJECTED) {
     if (secret) {
       assert(!printed.includes(secret), `an invalid URL's credential must not reach the log ("${secret}" from ${badUrl} survived):\n${printed}`);
     }
   }
-  // Positive control: the warning still fires and still names the URL, or the assertions above
-  // would pass on a runner that simply stopped printing it. Both halves are asserted: the
-  // credential is gone AND the URL is still recognisable enough for the operator to find it.
-  assert(printed.includes('skipping invalid URL: https://[redacted]:[redacted]@invalid-host:port/path'),
-    `the skipped URL must stay readable with its credential gone:\n${printed}`);
-  // A rejected URL with nothing credential-shaped is printed as written: the redaction costs the
-  // log nothing, which is the reason this path is not simply made silent.
-  assert(printed.includes('skipping invalid URL: https://ok.test:99999/'),
-    `a rejected URL with no credential must be printed unchanged:\n${printed}`);
+  for (const [badUrl, , expectedLine] of REJECTED) {
+    assert(printed.includes(expectedLine),
+      `the log must carry "${expectedLine}" for ${badUrl}:\n${printed}`);
+  }
+  // The withheld form must appear exactly once per withheld value: a runner that withheld EVERY
+  // rejected URL would satisfy the credential assertions above while destroying the diagnostic.
+  const withheld = printed.split('[withheld:').length - 1;
+  assert(withheld === 2, `exactly the two whitespace-hidden values must be withheld, got ${withheld}:\n${printed}`);
+  // Positive control: the warning still fires and still names the URLs it can render, or the
+  // assertions above would pass on a runner that simply stopped printing them.
+  assert(printed.includes('skipping invalid URL: https://ok.test:99999/ page'),
+    `a rejected URL with nothing hidden must still be printed in full:\n${printed}`);
 
   // 2. The census. Every output line that can print a target URL must wrap it, either
   // through the URL interpolations or, when the URL rides inside a message/command, through
@@ -121,7 +147,7 @@ export async function testLogUrlRedaction() {
   // concatenation, a `console.log(url)` with no interpolation, `${` split across lines, and
   // a URL carried inside an arbitrary object (`console.log(step)`). Those are human review
   // and the leak's blast radius (a CI log, not an artifact), not this scan's.
-  const WRAPPERS = /shownUrl\(|shownAuditUrl\(|shownCommand\(|shownText\(/;
+  const WRAPPERS = /shownUrl\(|shownAuditUrl\(|shownCommand\(|shownText\(|shownRefusedUrl\(/;
   // The identifier boundary matters: `${urls.length}` and `${urlsFile}` are not a target
   // URL, and the first version of this rule flagged both (the census caught its own
   // over-reach, which is why the boundary is asserted rather than assumed).
@@ -144,7 +170,7 @@ export async function testLogUrlRedaction() {
   // "url-ish identifier inside the span" plus "the span is a redacting call", so a renamed or
   // re-implemented wrapper is reported rather than whitelisted by memory.
   const URLISH_IN_SPAN = new RegExp(`(?<![a-zA-Z0-9_$.])${URL_VAR}(?![a-zA-Z0-9_$])`);
-  const REDACTING_CALL = /^\s*(?:shownUrl|shownAuditUrl|shownText|shownCommand)\s*\(/;
+  const REDACTING_CALL = /^\s*(?:shownUrl|shownAuditUrl|shownText|shownCommand|shownRefusedUrl)\s*\(/;
   const COMMAND_ISH = /(?<![a-zA-Z0-9_$.])(?:cliArgs|agentArgs|command|cmd|prompt)(?![a-zA-Z0-9_$])/;
   const MESSAGE_ISH = /err\.message|agentError|iterationError|validation\.detail|String\(err\)/;
   // The exemption list is asserted, not implied: each entry names the file, the text,
@@ -221,8 +247,8 @@ export async function testLogUrlRedaction() {
   // The census's own control pair, because a scan that reports nothing and a scan that cannot
   // report look identical from the outside: the wrapper this fix introduced is accepted, and the
   // local regex it replaced is reported (web-uplift-9lhy).
-  assert(URLISH_IN_SPAN.test('candidate') && REDACTING_CALL.test('shownUrl(candidate)'),
-    'the census must accept the redacting call around a URL-carrying variable');
+  assert(URLISH_IN_SPAN.test('candidate') && REDACTING_CALL.test('shownRefusedUrl(candidate)'),
+    'the census must accept the redacting call around a URL-carrying variable, including the one that withholds');
   assert(URLISH_IN_SPAN.test('fallbackScrub(candidate)') && !REDACTING_CALL.test('fallbackScrub(candidate)'),
     'and it must report the un-whitelisted wrapper that leaked the credential');
   assert(!URLISH_IN_SPAN.test('candidates.length') && !URLISH_IN_SPAN.test('urlsFile'),
