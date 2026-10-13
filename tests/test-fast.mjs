@@ -799,7 +799,7 @@ function testRefusalIsActionableAndDocumented() {
   }
   // The claimed cost is a number with provenance, and the spawn count is the kind of detail that rots
   // silently when a test is added (round-3 finding P2).
-  assert(/six bounded\s+`node` spawns/.test(docs['docs/speed.md']), 'docs/speed.md must state the measured spawn count, so adding a test forces the measurement to be updated');
+  assert(/eight bounded\s+`node` spawns/.test(docs['docs/speed.md']), 'docs/speed.md must state the measured spawn count, so adding a test forces the measurement to be updated');
   assert(/7\.2s direct/.test(docs['docs/speed.md']) && /11\.0s in the cached/.test(docs['docs/speed.md']), 'docs/speed.md must give each timing sample with its provenance');
 
   // The executable half: `--list` prints every rule and its reason from the data.

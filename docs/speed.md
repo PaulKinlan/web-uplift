@@ -209,6 +209,31 @@ The new local-git stale-branch control adds no test target; the existing fast-ga
 7.41s standalone after the change on this VM (2026-10-13, `node tests/test-fast.mjs`), with no paired
 before sample under the same load, so no per-run speedup is claimed from that number.
 
+### The diff is reported, not implied (web-uplift-5e9s)
+
+The selection is a WORKING-TREE diff, and `fleet-check` caches a verdict under the COMMITTED tree it ran
+on, so the run now says what it compared and which of the selected paths are not in that tree:
+
+- the first line names the BASE it diffed against, the ref that base came from, and the distance:
+  `Detected 5 changed file(s) vs base 7583e22 (merge-base of master); branch 1 ahead / 1 behind master`.
+  `vs origin/master` named the one thing this comparison is not, which is why a stale branch's inflated
+  target list took a manual `git` A/B to explain (web-uplift-s3pq, web-uplift-1a6q).
+- every selected path that is not in HEAD is marked in the file list (`[uncommitted: modified]`,
+  `[uncommitted: untracked]`) and listed again in an `UNCOMMITTED (K of N)` block, followed by one line
+  stating that this run selects and executes against the WORKING TREE and its result is not a verdict for
+  HEAD alone. A clean worktree prints neither, which is the negative control pinned in
+  `tests/test-fast.mjs`.
+
+The selection itself is unchanged. The gate still tests work in progress, because dropping those paths
+would be a change to what the gate RUNS, and a green over a narrowed selection is a worse hole than a
+green whose provenance is stated; a commit-only selection is a separate decision (web-uplift-5e9s).
+
+Cost: two extra git spawns per diff run (`git status --porcelain --untracked-files=all` and one
+`git rev-list --left-right --count <ref>...HEAD`). A paired 5+5 sample, alternating both variants in one
+synthetic repo in one window (2026-10-13, tip c59485a, load ~27), measured medians of 116ms before and
+98ms after for `--dry-run`, inside the 68-170ms run-to-run spread: no cost is claimed and none was
+removed.
+
 `scripts/test-fast.mjs` maps every changed path to the suite that covers it. Two rules decide the plan:
 
 1. **A path a `SUBSYSTEMS` entry maps** (or a runnable suite, which maps to itself) selects that suite.
@@ -297,9 +322,13 @@ these two probes, not a browser or a full-suite run.
   `tests/safe-fetch.mjs`, `runner/agents.mjs`, `tests/census-targets.mjs`) is identical before and after.
 - The one cost is in the gate's own self-test target, `tests/test-fast.mjs`: 7.2s direct (tip a709eb9), 8.3s
   direct on a busy VM (tip bbb8ce0), and 11.0s in the cached merger-slot run at 11:38Z the same hour, when
-  that run's Syntax-checks target took 7.8s against 5.2s direct. It contains six bounded `node` spawns (three
-  in the refusal controls, two in the actionability/policy test, one in the marker test): +2.2s over the 5.3s
-  it took before this change. The 494-file tracked-path census inside it measures 0.15s.
+  that run's Syntax-checks target took 7.8s against 5.2s direct. It contained six bounded
+  `node` spawns at that tip (three in the refusal controls, two in the actionability/policy test, one in
+  the marker test): +2.2s over the 5.3s it took before this change. It now contains eight bounded `node` spawns:
+  the provenance control added by web-uplift-5e9s (tip c59485a) adds two `--dry-run` runs in a
+  synthetic repo, measured at 0.09-0.15s each on this VM, so the self-test's own spread dominates it
+  (5.19s and 8.03s on the same tree seconds apart, load 27). The tracked-path census inside it was 494
+  paths at that tip and measures 0.15s.
 - A refusal is cheaper than a run: it stops before dispatching any target.
 - Whole fast-gate samples for this branch: 13s direct, and 13-20s in the cached records (tips 8bbab61,
   1cf6e36, a709eb9, dda63b0). The 51 web-uplift fast records before 11:00Z that day have median 66s, but

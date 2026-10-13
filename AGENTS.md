@@ -151,7 +151,11 @@ For iteration and implementer fast gates, several selective mechanisms are provi
 4. **Automated fast test gate:** `npm run test:fast` (or `node scripts/test-fast.mjs`)
    maps changed files (via `git diff $(git merge-base HEAD origin/master)` against the working tree,
    plus untracked files, or via explicit file paths) to
-   their corresponding standalone and regression test targets.
+   their corresponding standalone and regression test targets. The run names the comparison BASE sha and
+   how far the branch is ahead/behind the ref, and names every selected path that is not in HEAD as
+   `[uncommitted: modified|untracked]` with one line saying the result describes the working tree and not
+   HEAD alone: `fleet-check` caches a verdict under the committed tree it ran on, so a selection that
+   contains uncommitted paths produces a green that sha does not describe (web-uplift-5e9s).
 
 ### Affected-only routing fails closed (web-uplift-5i9a)
 
