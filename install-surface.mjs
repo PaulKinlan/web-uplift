@@ -164,30 +164,49 @@ export function refusedDestination(dst, rootDir) {
 //
 // This is NOT cross-file atomicity and does not claim to be: per-file rename means a reader can still observe
 // a MIX of new and old files. That is a strictly better failure mode than ENOENT, and it is the limitation.
-function publishStagedTree(staged, dest) {
-  const published = new Set();
+// The two phases are exported SEPARATELY, and that is the seam the interleaving test drives step by step
+// (web-uplift-c6i1). The order is the whole property: publish first, remove obsolete entries after, so the
+// only thing a reader can see is STALE content, never a hole. A single function that did both would leave the
+// ordering untestable except by racing it, which is what the acceptance criteria rule out.
+export function publishStagedTree(staged, dest) {
+  const files = new Set();
+  const dirs = new Set(['']);
   const walk = (from, to, rel = '') => {
+    // An entry can change TYPE between two runs (a directory replaced by a file, or the reverse). The old
+    // delete-then-recopy never noticed; a rename cannot cross types. Those two transitions are the only ones
+    // that remove a destination first, and they are stated here rather than discovered as a crash.
+    if (existsSync(to) && !lstatSync(to).isDirectory()) rmSync(to, { recursive: true, force: true });
     mkdirSync(to, { recursive: true });
     for (const name of readdirSync(from)) {
       const src = join(from, name);
       const dst = join(to, name);
       const key = rel ? `${rel}/${name}` : name;
-      if (lstatSync(src).isDirectory()) walk(src, dst, key);
-      else {
+      if (lstatSync(src).isDirectory()) {
+        dirs.add(key);
+        walk(src, dst, key);
+      } else {
+        if (existsSync(dst) && lstatSync(dst).isDirectory()) rmSync(dst, { recursive: true, force: true });
         renameSync(src, dst);
-        published.add(key);
+        files.add(key);
       }
     }
   };
   walk(staged, dest);
+  return { files, dirs };
+}
+
+// Remove entries the new content does not have, and only after it is in place. A directory is removed only
+// when it is empty AND the new content does not declare it, so an empty source directory survives (the old
+// copyDir created it and kept it, and silently dropping it would be a different change from this one).
+export function pruneObsoleteEntries(dest, published) {
   const prune = (dir, rel = '') => {
     for (const name of readdirSync(dir)) {
       const full = join(dir, name);
       const key = rel ? `${rel}/${name}` : name;
       if (lstatSync(full).isDirectory()) {
         prune(full, key);
-        if (readdirSync(full).length === 0) rmSync(full, { recursive: true, force: true });
-      } else if (!published.has(key)) {
+        if (readdirSync(full).length === 0 && !published.dirs.has(key)) rmSync(full, { recursive: true, force: true });
+      } else if (!published.files.has(key)) {
         rmSync(full, { force: true });
       }
     }
@@ -230,8 +249,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     rmSync(staged, { recursive: true, force: true });
     mkdirSync(staged, { recursive: true });
     if (existsSync(src)) copyDir(src, staged);
-    if (!existsSync(dst)) mkdirSync(dst, { recursive: true });
-    publishStagedTree(staged, dst);
+    pruneObsoleteEntries(dst, publishStagedTree(staged, dst));
     rmSync(staged, { recursive: true, force: true });
   }
 

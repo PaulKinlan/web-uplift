@@ -51,6 +51,9 @@ import {
   testInstallIncompleteExitControl,
   testV167ControlShimNeverWritesIntoTheRepository,
   testEveryDestinationRefusalCarriesTheMarker,
+  testGenerateVendoredSurfaceKeepsListedPathsReadable,
+  testRepublishReaderInstrumentDetectsDeleteThenCopy,
+  testPublishOrderLeavesObsoleteEntriesUntilAfterPublish,
 } from './install-copy-symlink.mjs';
 
 // The in-tree vendored copies under .web-uplift/ must stay 100% byte-identical
@@ -601,6 +604,9 @@ export const installPackageTests = [
   // integrity guards, and a suite that cannot run as a suite is not a suite.
   testCdpCopySyncRefusesToOverwriteTrackedEdits,
   testGenerateVendoredSurfaceLeavesTrackedEditsAlone,
+  testGenerateVendoredSurfaceKeepsListedPathsReadable,
+  testRepublishReaderInstrumentDetectsDeleteThenCopy,
+  testPublishOrderLeavesObsoleteEntriesUntilAfterPublish,
 ];
 
 export {

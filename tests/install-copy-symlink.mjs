@@ -19,9 +19,10 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { VENDORED_DEPENDENCIES, VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES } from '../install-surface.mjs';
+import { VENDORED_DEPENDENCIES, VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, publishStagedTree, pruneObsoleteEntries } from '../install-surface.mjs';
+import { listFiles } from './test-helpers.mjs';
 
 const require = createRequire(import.meta.url);
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -856,4 +857,135 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   testV167ControlShimNeverWritesIntoTheRepository();
   testEveryDestinationRefusalCarriesTheMarker();
   console.log('tests OK');
+}
+
+// Fixture 7: the generator must keep every path a reader could have listed READABLE across a republish
+// (web-uplift-c6i1). The old generator deleted each destination directory whole and recopied it, so a reader
+// that listed a path and then read it - which is exactly what the syntax census does to this repository -
+// could hold a path that no longer existed. These cases use the census's OWN walk (listFiles from
+// tests/test-helpers.mjs, which skips .git/node_modules/reports/scratch) so they measure the reader's view
+// rather than an easier one, and they drive the two publish phases step by step instead of racing a timer, so
+// the result is deterministic rather than a rate.
+export function testGenerateVendoredSurfaceKeepsListedPathsReadable() {
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-republish-target-'));
+  const put = (rel, content) => {
+    mkdirSync(dirname(join(target, rel)), { recursive: true });
+    writeFileSync(join(target, rel), content);
+  };
+  try {
+    put('evidence/a.mjs', '// a1\n');
+    put('evidence/b.mjs', '// b1\n');
+    put('runner/x.mjs', '// x1\n');
+    put('knowledge/baseline.mjs', '// baseline1\n');
+
+    let run = runVendoredSurfaceGenerator(target);
+    assert(run.status === 0, `initial generation over an empty tree must succeed:\n${run.stderr || run.stdout}`);
+    const vendorRoot = join(target, '.web-uplift');
+    const listed = listFiles(vendorRoot, (p) => p.endsWith('.mjs'));
+    assert(listed.length === 4, `the census walk must see the four generated modules, saw ${listed.length}: ${listed.join(', ')}`);
+    // The staging tree must be invisible to the census's OWN walk, asserted on the walk's output rather than
+    // read off the skip list: a fix that widened the population would trade one silent change for another.
+    assert(listed.every((p) => !p.includes(`${sep}scratch${sep}`)), 'the census walk must not see the staging tree');
+
+    // One stable path changes, one stays identical, one is added, one source is removed.
+    put('evidence/a.mjs', '// a2 changed bytes\n');
+    put('evidence/c.mjs', '// c1 added\n');
+    rmSync(join(target, 'runner', 'x.mjs'));
+
+    run = runVendoredSurfaceGenerator(target);
+    assert(run.status === 0, `republishing over a populated tree must succeed:\n${run.stderr || run.stdout}`);
+
+    const lost = [];
+    for (const path of listed) {
+      if (relative(vendorRoot, path) === 'runner/x.mjs') continue; // its SOURCE was removed: reconciliation, not a hole
+      try {
+        readFileSync(path, 'utf8');
+      } catch (err) {
+        lost.push(`${relative(vendorRoot, path)} (${err.code || err.message})`);
+      }
+    }
+    assert(lost.length === 0, `a path the reader had listed must not vanish across a republish: ${lost.join(', ')}`);
+    assert(readFileSync(join(vendorRoot, 'evidence/a.mjs'), 'utf8') === '// a2 changed bytes\n', 'a stable path must hold the new bytes after publish, not stale ones');
+    assert(readFileSync(join(vendorRoot, 'evidence/b.mjs'), 'utf8') === '// b1\n', 'an unchanged path must still hold its bytes');
+    assert(existsSync(join(vendorRoot, 'evidence/c.mjs')), 'a newly added source must be published');
+    assert(!existsSync(join(vendorRoot, 'runner/x.mjs')), 'a removed source must be reconciled after the new content is present');
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+}
+
+// The control for the case above, and it stays in the suite: it reproduces the OLD algorithm's window (delete
+// the destination directory whole, then recopy it) and asserts the SAME list-then-read loop detects it.
+// Without this, a green above could mean the instrument never reads anything.
+export function testRepublishReaderInstrumentDetectsDeleteThenCopy() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-republish-control-'));
+  try {
+    const src = join(root, 'src');
+    const dst = join(root, 'dst');
+    mkdirSync(src, { recursive: true });
+    for (const name of ['a.mjs', 'b.mjs', 'c.mjs']) writeFileSync(join(src, name), `// ${name}\n`);
+    cpSync(src, dst, { recursive: true });
+    const listed = listFiles(dst, (p) => p.endsWith('.mjs'));
+    assert(listed.length === 3, `the control fixture must list its three modules, saw ${listed.length}`);
+    // The delete half and the copy half are driven SEPARATELY, because a single sequential delete-then-copy
+    // cannot be caught: the recopy restores every path before the read happens. The hole is a WINDOW, and that
+    // is exactly why the real defect needed a concurrent reader rather than a slower one.
+    rmSync(dst, { recursive: true, force: true });
+    const absent = listed.filter((p) => !existsSync(p));
+    cpSync(src, dst, { recursive: true });
+    assert(absent.length === listed.length, `the delete-then-copy window must make listed paths absent (saw ${absent.length} of ${listed.length})`);
+    assert(listed.every((p) => existsSync(p)), 'the copy half restores the paths, which is what makes the hole transient rather than a permanent loss');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// Fixture 8: the ORDER is the property, and it is driven directly here rather than raced. Publish first,
+// prune obsolete entries after, so the worst a reader can observe is stale content, never a hole
+// (web-uplift-c6i1). The two phases are exported for exactly this: a single function would leave the order
+// untestable except by racing it, which the acceptance criteria rule out.
+export function testPublishOrderLeavesObsoleteEntriesUntilAfterPublish() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-publish-order-'));
+  const put = (dir, rel, content) => {
+    mkdirSync(dirname(join(dir, rel)), { recursive: true });
+    writeFileSync(join(dir, rel), content);
+  };
+  try {
+    const staged = join(root, 'staged');
+    const dest = join(root, 'dest');
+    put(staged, 'keep.mjs', '// new\n');
+    put(staged, 'nested/added.mjs', '// added\n');
+    mkdirSync(join(staged, 'emptydir'), { recursive: true });
+    put(dest, 'keep.mjs', '// old\n');
+    put(dest, 'obsolete.mjs', '// obsolete\n');
+    put(dest, 'nested/old-only.mjs', '// old only\n');
+
+    const published = publishStagedTree(staged, dest);
+    assert(existsSync(join(dest, 'obsolete.mjs')), 'an obsolete entry must still exist after the publish phase; only prune removes it');
+    assert(existsSync(join(dest, 'nested/old-only.mjs')), 'an obsolete entry below a surviving directory must also survive publish');
+    assert(readFileSync(join(dest, 'keep.mjs'), 'utf8') === '// new\n', 'a stable path must hold the new bytes before prune runs');
+    assert(existsSync(join(dest, 'nested/added.mjs')), 'a new entry must be published');
+    assert(existsSync(join(dest, 'emptydir')), 'an empty source directory must be created, as copyDir created it');
+
+    pruneObsoleteEntries(dest, published);
+    assert(!existsSync(join(dest, 'obsolete.mjs')), 'prune must remove an obsolete file');
+    assert(!existsSync(join(dest, 'nested/old-only.mjs')), 'prune must remove an obsolete file below a surviving directory');
+    assert(existsSync(join(dest, 'keep.mjs')) && existsSync(join(dest, 'nested/added.mjs')), 'prune must not remove published content');
+    assert(existsSync(join(dest, 'emptydir')), 'prune must not remove an empty directory the new content declares');
+
+    // A destination FILE where the source now has a DIRECTORY, and the reverse. The old delete-then-recopy
+    // handled these by accident; a rename cannot cross types, so they are explicit transitions.
+    put(staged, 'swap/inner.mjs', '// inner\n');
+    writeFileSync(join(dest, 'swap'), 'was a file\n');
+    publishStagedTree(staged, dest);
+    assert(lstatSync(join(dest, 'swap')).isDirectory() && existsSync(join(dest, 'swap', 'inner.mjs')), 'a source directory replacing a destination file must be published as a directory');
+
+    put(staged, 'gone.mjs', '// now a file\n');
+    mkdirSync(join(dest, 'gone.mjs'), { recursive: true });
+    writeFileSync(join(dest, 'gone.mjs', 'inner.mjs'), '// inner\n');
+    publishStagedTree(staged, dest);
+    assert(lstatSync(join(dest, 'gone.mjs')).isFile(), 'a source file replacing a destination directory must be published as a file');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
