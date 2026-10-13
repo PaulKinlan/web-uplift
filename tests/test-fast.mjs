@@ -20,8 +20,8 @@
  *     target runs; the failure uses the fleet's anchored `fast-gate: unmapped:` marker and exit 1.
  * 13. Suite execution is published with the fleet's `fast-gate: running|passed|failed:` markers so the
  *     cached fast record can state its coverage instead of UNKNOWN.
- * 14. A refusal is actionable (the next action, a paste-able map entry, and the full-gate fallback) and
- *     the same policy is written in docs/speed.md, walked against the OMITTED_RULES data.
+ * 14. A refusal is actionable (the next action, a paste-able map entry, and the qualified full-gate escape)
+ *     and the same policy is stated in AGENTS.md and printed by --list from the OMITTED_RULES data.
  */
 
 import { strict as assert } from 'node:assert';
@@ -525,60 +525,43 @@ function testUnmappedExecutablePathsFailClosed() {
 }
 
 /**
- * A refusal must be ACTIONABLE (web-uplift-coord, the condition on this bead). Two halves: the error names
- * the ONE next action with a paste-able map entry, and the same policy plus the same action is written in
- * docs/speed.md, where a lane looks without being in an error state. This test walks the rule DATA against
- * that document so the two cannot drift, and runs the CLI to read the instruction the operator would.
+ * A refusal must be ACTIONABLE (web-uplift-coord, the condition on this bead) and the policy must be
+ * readable without running the gate. This repo keeps that in exactly two places, both of which are checked
+ * here: AGENTS.md (prose, and the escape a refused lane follows) and `--list` (executable, printing each
+ * rule AND its reason from OMITTED_RULES, the single source of truth). Coord's decision on 2026-10-13 was
+ * explicitly NOT to add a third file, because a fourth place to state the policy only drifts; so this test
+ * walks AGENTS.md against the rule DATA rather than any separate speed file.
  */
 function testRefusalIsActionableAndDocumented() {
   console.log('Testing that a refusal names the next action and that the policy is documented...');
 
-  const docPath = join(repoRoot, 'docs', 'speed.md');
-  assert(existsSync(docPath), 'docs/speed.md must exist: the routing policy has to be readable without running the gate');
+  const docPath = join(repoRoot, 'AGENTS.md');
   const doc = readFileSync(docPath, 'utf8');
-  assert(doc.includes('fast-gate: unmapped:'), 'docs/speed.md must name the marker a lane will see');
-  assert(/NEXT ACTION|one next action/i.test(doc), 'docs/speed.md must carry the one next action, not only the policy');
-  assert(doc.includes('KNOWN_STANDALONE_TESTS') && doc.includes('OMITTED_RULES'), 'docs/speed.md must name both mapping routes');
-  assert(/FLEET_CHECK_CONF=\S+\s+fleet-check/.test(doc), 'docs/speed.md must name the full-gate escape hatch with its config override');
-  // The full gate is not evidence for a path `npm test` does not run, so the fallback has to say so rather
-  // than presenting `fleet-check` alone as proof (review finding P1 on a709eb9).
+  assert(doc.includes('fast-gate: unmapped:'), 'AGENTS.md must name the marker a lane will see');
+  assert(/NEXT ACTION/.test(doc), 'AGENTS.md must carry the one next action, not only the policy');
+  assert(doc.includes('KNOWN_STANDALONE_TESTS') && doc.includes('OMITTED_RULES'), 'AGENTS.md must name both mapping routes');
+  assert(/FLEET_CHECK_CONF=\S+\s+fleet-check/.test(doc), 'AGENTS.md must name the escape with its config override');
+  // The escape must be qualified: the full gate is not evidence for a path `npm test` does not run
+  // (review finding P1 on a709eb9).
   assert(
-    /runs `tests\/\*\.test\.mjs` only/.test(doc) && /NOT evidence on its own/.test(doc),
-    'docs/speed.md must qualify the full-gate fallback: npm test only runs tests/*.test.mjs'
+    /runs `tests\/\*\.test\.mjs`\s+only/.test(doc) && /not evidence on its own/.test(doc),
+    'AGENTS.md must qualify the escape: npm test only runs tests/*.test.mjs'
   );
-  // The omission table is DATA and the document must carry every entry of it, VERBATIM: parsing the rows and
-  // comparing the reason cell to the rule data is what makes a wrong-but-plausible "why" cell fail
-  // (review finding P2 on a709eb9 - an id-presence check would have passed that).
-  const tableRows = new Map();
-  for (const line of doc.split('\n')) {
-    const parsed = line.match(/^\|\s*`([a-z-]+)`\s*\|(.*)\|\s*$/);
-    if (parsed) tableRows.set(parsed[1], parsed[2].split('|').map((cell) => cell.trim()));
-  }
+  // Every rule has to be named in AGENTS.md, and its reason must be printed by the executable source.
   for (const rule of OMITTED_RULES) {
-    assert(tableRows.has(rule.id), `docs/speed.md must have a table row for the omission rule ${rule.id}`);
-    const cells = tableRows.get(rule.id);
-    assert.equal(
-      cells[cells.length - 1],
-      rule.reason,
-      `the reason cell for ${rule.id} must be the rule's own reason string, not a paraphrase`
-    );
-    assert(cells.length === 2 && cells[0].length > 0, `the row for ${rule.id} must also say what it omits`);
+    assert(doc.includes(`\`${rule.id}\``), `AGENTS.md must name the omission rule ${rule.id}`);
   }
-  for (const id of tableRows.keys()) {
-    assert(OMITTED_RULES.some((rule) => rule.id === id), `docs/speed.md documents an omission rule that does not exist: ${id}`);
-  }
-  // The claimed cost has to be a number with its provenance, not an adjective, and the spawn count is the
-  // kind of detail that silently rots when a test is added (review finding P2 on a709eb9).
-  assert(/six bounded\s+`node` spawns/.test(doc), 'docs/speed.md must state the measured spawn count, so adding a test forces the doc to be updated');
-  assert(/7\.2s direct/.test(doc) && /11\.0s in the cached/.test(doc), 'docs/speed.md must give each timing sample with its provenance');
-  // ...and `--list` prints the same rules from the single source of truth, so a lane can read the policy
-  // from the tool rather than from prose.
   const listRes = spawnSync(process.execPath, [join(repoRoot, 'scripts', 'test-fast.mjs'), '--list'], { encoding: 'utf8' });
   assert.equal(listRes.status, 0, '--list must exit 0');
   for (const rule of OMITTED_RULES) {
     assert(listRes.stdout.includes(rule.id), `--list must print the omission rule ${rule.id}`);
     assert(listRes.stdout.includes(rule.reason), `--list must print the reason for ${rule.id}`);
   }
+  // No separate policy file: coord's decision, and a fourth place to state the policy would only drift.
+  assert(
+    !/\.speed\.md|\.omission-rules\.md/.test(doc) || /is not maintained in this repo/.test(doc),
+    'AGENTS.md must not point lanes at a second policy document'
+  );
 
   // The instruction a lane actually reads. It must name the next action, show the map entry to paste with
   // this path in it, and offer the honest route when the map cannot be extended now.
