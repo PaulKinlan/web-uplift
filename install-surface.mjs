@@ -10,7 +10,7 @@
 // so the set cannot fall behind silently (web-uplift-7mr).
 
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, lstatSync, existsSync, rmSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, isAbsolute, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -90,13 +90,71 @@ export function trackedCopyHasLocalEdits(targetRepoAbs, targetRel) {
   return { state: res.status === 1 ? 'edited' : 'clean' };
 }
 
+// Does any component of `dst`, from the target root down, already exist as a SYMLINK?
+//
+// This generator writes with copyFileSync / writeFileSync, both of which FOLLOW a destination
+// symlink (O_CREAT|O_TRUNC), and with mkdirSync(dirname(dst), { recursive: true }), which follows a
+// symlinked DIRECTORY component. A tree that pre-plants a symlink therefore had this generator write
+// outside its own root (web-uplift-7caa, measured on master before the fix):
+//   * an intermediate directory component - `.web-uplift/knowledge` -> a victim directory - put
+//     knowledge/principles.json INSIDE the victim directory;
+//   * a leaf destination - `.web-uplift/manifest.json` -> a victim file - overwrote the victim file
+//     with the generated manifest, and `.web-uplift/skill/SKILL.md` likewise with the SKILL.md copy.
+// The reachable instance is the TRACKED copy: `.pi/skills/web-audit/SKILL.md` is a destination git
+// tracks, so a branch can replace that tracked file with a symlink (this repo already tracks
+// `.codex/skills/web-audit` as one), and `npm install` (the prepare script), `npm run sync:vendored`
+// or the test suite then writes through it on a checkout of that branch.
+//
+// The question is asked of EVERY component rather than of the leaf, because an lstat of the leaf
+// cannot see an intermediate symlink, and because a DANGLING leaf symlink is reported absent by
+// existsSync while still being a symlink the write would follow. bin/web-uplift.mjs got the same
+// guard for its own install writes in web-uplift-yel3; install-surface.mjs was omitted then, which
+// is the omission this closes.
+function symlinkComponent(dst, rootDir) {
+  const root = resolve(rootDir);
+  const target = resolve(dst);
+  const rel = relative(root, target);
+  // A destination outside the root by construction is refused for the same reason: nothing this
+  // generator writes belongs there.
+  if (rel.startsWith('..') || isAbsolute(rel)) return target;
+  let current = root;
+  for (const part of rel.split(/[\\/]/).filter(Boolean)) {
+    current = join(current, part);
+    if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) return current;
+  }
+  return null;
+}
+
 export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
+  // Refusals are collected rather than thrown, so one planted symlink does not hide the rest, and so
+  // the direct run below can fail the command after reporting every one of them. The message is
+  // printed HERE rather than by a caller because `npm run prepare` imports this function and ignores
+  // its return value, so a caller-side report would be silent in the one path that runs on every
+  // `npm install` (web-uplift-7caa).
+  const skippedSymlinks = [];
+  const refusesSymlink = (dst) => {
+    const component = symlinkComponent(dst, targetRoot);
+    if (!component) return false;
+    const relPath = relative(targetRoot, dst) || dst;
+    const relComponent = relative(targetRoot, component) || component;
+    skippedSymlinks.push({ path: relPath, symlinkComponent: relComponent });
+    console.error(
+      `web-uplift: refusing to write through a symlink: ${relPath} (${relComponent} is a symlink). `
+      + 'Nothing was written for it, so the vendored surface is incomplete; remove or replace the symlink and run again.',
+    );
+    return true;
+  };
+
   const vendorRoot = join(targetRoot, '.web-uplift');
+  // The root of the whole surface: if `.web-uplift` is itself a symlink then every destination below
+  // it is one component away from escaping, so the run refuses once instead of repeating itself.
+  if (refusesSymlink(vendorRoot)) return { skippedTrackedCopies: [], skippedSymlinks };
   mkdirSync(vendorRoot, { recursive: true });
 
   for (const dir of VENDORED_DIRS) {
     const src = join(targetRoot, dir.source);
     const dst = join(vendorRoot, dir.dest);
+    if (refusesSymlink(dst)) continue;
     if (existsSync(dst)) rmSync(dst, { recursive: true, force: true });
     if (existsSync(src)) copyDir(src, dst);
   }
@@ -104,6 +162,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   for (const file of VENDORED_FILES) {
     const src = join(targetRoot, file.source);
     const dst = join(vendorRoot, file.dest);
+    if (refusesSymlink(dst)) continue;
     if (existsSync(src)) {
       mkdirSync(dirname(dst), { recursive: true });
       copyFileSync(src, dst);
@@ -118,6 +177,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   for (const file of TRACKED_COPY_FILES) {
     const src = join(targetRoot, file.source);
     const dst = join(targetRoot, file.dest);
+    if (refusesSymlink(dst)) continue;
     if (existsSync(src)) {
       if (trackedCopyHasLocalEdits(targetRoot, file.dest).state === 'edited') {
         skippedTrackedCopies.push(file.dest);
@@ -135,6 +195,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   } catch {}
 
   const manifestPath = join(vendorRoot, 'manifest.json');
+  const manifestRefused = refusesSymlink(manifestPath);
   let installedAt = new Date().toISOString();
   if (existsSync(manifestPath)) {
     try {
@@ -172,13 +233,20 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     vendoredDependencies: vendoredDeps.sort((a, b) => a.name.localeCompare(b.name)),
     updateCommand: 'npx -y web-uplift@latest update --agent all',
   };
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  if (!manifestRefused) writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 
-  return { skippedTrackedCopies };
+  return { skippedTrackedCopies, skippedSymlinks };
 }
 
 const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
-  generateVendoredSurface();
-  console.log('web-uplift: vendored surface generated under .web-uplift/');
+  const { skippedSymlinks = [] } = generateVendoredSurface();
+  if (skippedSymlinks.length > 0) {
+    // A refusal that still exited 0 would let a caller treat an incomplete surface as a generated
+    // one, which is the failure mode the refusal exists to prevent.
+    console.error(`web-uplift: ${skippedSymlinks.length} destination(s) refused because a symlink was in the way; the vendored surface was NOT generated.`);
+    process.exitCode = 1;
+  } else {
+    console.log('web-uplift: vendored surface generated under .web-uplift/');
+  }
 }

@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { VENDORED_DEPENDENCIES } from '../install-surface.mjs';
 
 const require = createRequire(import.meta.url);
@@ -279,6 +279,127 @@ export function testInstallNormalDestinationWrites() {
   }
 }
 
+// Fixture 6: generateVendoredSurface (install-surface.mjs) must refuse to write THROUGH a
+// pre-planted destination symlink (web-uplift-7caa). bin/web-uplift.mjs got this guard for its own
+// install writes in web-uplift-yel3 and install-surface.mjs was omitted, so the paths that run on
+// every install - `npm run prepare`, `npm run sync:vendored`, and the test suite's auto-generate -
+// still followed a planted link out of the tree. Measured on master before the fix, with the same
+// fixture this test builds: the manifest symlink and the SKILL.md symlink were both CLOBBERED with
+// generated content, and `.web-uplift/knowledge` -> a victim DIRECTORY received principles.json.
+//
+// The two halves coord asked to be answered separately, and both are asserted here:
+//   (a) the DESTINATION itself is a symlink (manifest.json, skill/SKILL.md, and the TRACKED copy);
+//   (b) an INTERMEDIATE DIRECTORY component is a symlink (`.web-uplift/knowledge` -> victimDir),
+//       which lstat of the leaf cannot see and which the report must name as the component.
+// The tracked copy is the reachable half: `.pi/skills/web-audit/SKILL.md` is a destination git
+// tracks, so a branch can replace that tracked file with a symlink (this repo already tracks
+// `.codex/skills/web-audit` as one) and the install paths above write through it on a checkout of
+// that branch. The fixture plants exactly that, with the tracked file replaced the way a branch
+// would replace it.
+export function testGenerateVendoredSurfaceRefusesDestinationSymlinks() {
+  const outside = mkdtempSync(join(tmpdir(), 'web-uplift-gen-dest-symlink-outside-'));
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-gen-dest-symlink-target-'));
+  const control = mkdtempSync(join(tmpdir(), 'web-uplift-gen-dest-control-'));
+  try {
+    writeVendoredSurfaceSources(target);
+    writeVendoredSurfaceSources(control);
+
+    const victimManifest = join(outside, 'victim-manifest.json');
+    const victimSkill = join(outside, 'victim-skill.md');
+    const victimTracked = join(outside, 'victim-bashrc');
+    const victimDir = join(outside, 'victim-knowledge');
+    writeFileSync(victimManifest, 'VICTIM-MANIFEST-SECRET\n');
+    writeFileSync(victimSkill, 'VICTIM-SKILL-SECRET\n');
+    writeFileSync(victimTracked, 'VICTIM-BASHRC-SECRET\n');
+    mkdirSync(victimDir);
+    writeFileSync(join(victimDir, 'safe.txt'), 'VICTIM-DIR-SECRET\n');
+
+    mkdirSync(join(target, '.web-uplift'), { recursive: true });
+    // (a) leaf destinations, one per write call the generator makes: writeFileSync (manifest) and
+    // copyFileSync (a VENDORED_FILES file), plus the TRACKED_COPY_FILES destination.
+    symlinkSync(victimManifest, join(target, '.web-uplift', 'manifest.json'));
+    mkdirSync(join(target, '.web-uplift', 'skill'), { recursive: true });
+    symlinkSync(victimSkill, join(target, '.web-uplift', 'skill', 'SKILL.md'));
+    rmSync(join(target, '.pi', 'skills', 'web-audit', 'SKILL.md'), { force: true });
+    const trackedRel = '.pi/skills/web-audit/SKILL.md';
+    symlinkSync(victimTracked, join(target, ...trackedRel.split('/')));
+    // (b) an INTERMEDIATE DIRECTORY component, on the VENDORED_FILES path (no rmSync runs before it).
+    symlinkSync(victimDir, join(target, '.web-uplift', 'knowledge'));
+
+    const run = runVendoredSurfaceGenerator(target);
+    assert(run.status === 0, `the generator must not crash on a planted symlink:\n${run.stderr}`);
+    const report = JSON.parse(run.stdout.split('REPORT=').pop().trim());
+
+    // Every victim must be byte-identical, and nothing may be created inside the victim directory.
+    assert(readFileSync(victimManifest, 'utf8') === 'VICTIM-MANIFEST-SECRET\n', 'the manifest symlink must not be written through');
+    assert(readFileSync(victimSkill, 'utf8') === 'VICTIM-SKILL-SECRET\n', 'the copy-file symlink must not be written through');
+    assert(readFileSync(victimTracked, 'utf8') === 'VICTIM-BASHRC-SECRET\n', 'the TRACKED destination symlink must not be written through');
+    assert(readFileSync(join(victimDir, 'safe.txt'), 'utf8') === 'VICTIM-DIR-SECRET\n', 'the victim directory must keep its file');
+    assert(!existsSync(join(victimDir, 'principles.json')), 'no file may be created through a symlinked directory component');
+    assert(readdirSync(victimDir).length === 1, `the victim directory must receive nothing: ${readdirSync(victimDir).join(', ')}`);
+    assert(lstatSync(join(target, ...trackedRel.split('/'))).isSymbolicLink(), 'the refusal must leave the planted symlink alone rather than replacing it');
+
+    // The refusal must be REPORTED, both as data (so a caller can fail on it) and as a message (so
+    // `npm run prepare`, which ignores the return value, is not silent).
+    const refused = new Map((report.skippedSymlinks || []).map((s) => [s.path, s.symlinkComponent]));
+    for (const [path, component] of [
+      ['.web-uplift/manifest.json', '.web-uplift/manifest.json'],
+      ['.web-uplift/skill/SKILL.md', '.web-uplift/skill/SKILL.md'],
+      [trackedRel, trackedRel],
+      // The leaf is principles.json; the offending component is its directory. Naming the component
+      // is the whole reason the walk is over components rather than the leaf.
+      ['.web-uplift/knowledge/principles.json', '.web-uplift/knowledge'],
+    ]) {
+      assert(refused.get(path) === component, `the report must name ${path} as refused at ${component}, got ${JSON.stringify([...refused])}`);
+    }
+    assert(run.stderr.includes('refusing to write through a symlink'), `the refusal must be printed for the npm prepare path, which ignores the report:\n${run.stderr}`);
+    assert(run.stderr.includes('.web-uplift/knowledge is a symlink'), `the message must name the symlinked COMPONENT:\n${run.stderr}`);
+
+    // CONTROL: without the plants the same fixture generates the whole surface and refuses nothing.
+    // Without this half, "refuse the write" could be implemented as "never write" and still pass.
+    const clean = runVendoredSurfaceGenerator(control);
+    assert(clean.status === 0, `a clean generation must succeed:\n${clean.stderr}`);
+    const cleanReport = JSON.parse(clean.stdout.split('REPORT=').pop().trim());
+    assert((cleanReport.skippedSymlinks || []).length === 0, `a clean generation must refuse nothing: ${JSON.stringify(cleanReport)}`);
+    assert(!clean.stderr.includes('refusing'), `a clean generation must not print a refusal:\n${clean.stderr}`);
+    assert(existsSync(join(control, '.web-uplift', 'manifest.json')), 'a clean generation must write the manifest');
+    assert(existsSync(join(control, '.web-uplift', 'evidence', 'cli.mjs')), 'a clean generation must copy a vendored directory');
+    assert(existsSync(join(control, '.web-uplift', 'schema', 'config.schema.json')), 'a clean generation must copy a vendored directory');
+    assert(existsSync(join(control, '.web-uplift', 'skill', 'SKILL.md')), 'a clean generation must copy a vendored file');
+    assert(existsSync(join(control, ...trackedRel.split('/'))), 'a clean generation must write the tracked copy');
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+    rmSync(control, { recursive: true, force: true });
+  }
+}
+
+// The source tree generateVendoredSurface copies FROM (it reads sources from the target root as
+// well as writing destinations into it), kept to the files this fixture's assertions need.
+function writeVendoredSurfaceSources(root) {
+  const put = (rel, content) => {
+    mkdirSync(dirname(join(root, rel)), { recursive: true });
+    writeFileSync(join(root, rel), content);
+  };
+  put('.claude/skills/web-audit/SKILL.md', '# skill\n');
+  put('.pi/skills/web-audit/SKILL.md', '# skill\n');
+  put('schema/config.schema.json', '{}\n');
+  put('knowledge/principles.json', '{}\n');
+  put('evidence/cli.mjs', '// cli\n');
+}
+
+// The REAL generator, run in its own process so the printed refusal (which is what an `npm install`
+// actually shows) is observable alongside the returned report.
+function runVendoredSurfaceGenerator(target) {
+  const driver = join(target, 'generate-driver.mjs');
+  writeFileSync(driver, [
+    `import { generateVendoredSurface } from ${JSON.stringify(pathToFileURL(join(repoRoot, 'install-surface.mjs')).href)};`,
+    `console.log('REPORT=' + JSON.stringify(generateVendoredSurface({ targetRoot: ${JSON.stringify(target)} })));`,
+    '',
+  ].join('\n'));
+  return spawnSync(process.execPath, [driver], { encoding: 'utf8' });
+}
+
 // Run directly (node tests/install-copy-symlink.mjs), not when imported by the
 // regression suite, which calls the exported functions itself.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -287,5 +408,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   testInstallVendorsCompleteClosure();
   testInstallRefusesDestinationSymlinks();
   testInstallNormalDestinationWrites();
+  testGenerateVendoredSurfaceRefusesDestinationSymlinks();
   console.log('tests OK');
 }
