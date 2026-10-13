@@ -834,7 +834,8 @@ Usage:
     }
     console.error('  * documentation/data/fixture with genuinely no suite: add an OMITTED_RULES entry carrying the reason it is skipped.');
     console.error('  * cannot extend the map right now? The full gate is NOT evidence on its own for a refused path its tests do not exercise:');
-    console.error('    npm test runs tests/*.test.mjs; an imported standalone suite is covered ONLY if those files invoke its tests. Import alone is not coverage.');
+    console.error('    npm test runs tests/*.test.mjs; the guarded standalone suites here are covered ONLY if those files invoke their tests. Import alone does not run them.');
+    console.error('    A module that registers node:test cases at import time can instead run them on import; check what the importing suite actually executes.');
     console.error('    Run the suite covering a path not exercised by those files explicitly, then run the full gate:');
     for (const f of plan.unmappedFiles) {
       if (f.startsWith('tests/') && f.endsWith('.mjs')) {
