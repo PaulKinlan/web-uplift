@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface, trackedCopyHasLocalEdits } from '../install-surface.mjs';
+import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface, refusedDestination, trackedCopyHasLocalEdits } from '../install-surface.mjs';
 
 // Paths resolve from this file, never from cwd, so the guard gives the same
 // answer whether CI or a human runs it from anywhere in the tree.
@@ -102,11 +102,24 @@ const COPY_FILES = [
 if (targetRepo === repoRoot && !existsSync(join(targetRepo, '.web-uplift'))) {
   const generated = generateVendoredSurface({ targetRoot: targetRepo }) || {};
   const skipped = generated.skippedTrackedCopies || [];
+  const skippedSymlinks = generated.skippedSymlinks || [];
   if (skipped.length > 0) {
     for (const rel of skipped) {
       console.error(`REFUSING to overwrite ${rel}: it is a tracked file with uncommitted local changes, so generating the vendored surface left it alone. Commit, stash or discard that change first.`);
     }
     console.error(`FAILED: ${skipped.length} tracked file(s) were left alone while generating .web-uplift/. Their contents are intact. The vendored tree itself was generated.`);
+    process.exit(1);
+  }
+  // A refusal for a symlinked destination is FATAL here, exactly like the tracked-edits refusal above.
+  // This block used to ignore it and carry on, so the generator's 'refusing to write through a symlink'
+  // line was printed to stderr and then this script overwrote the victim through the very link it had just
+  // refused, exiting 0 - a report that has not refused, only commented (web-uplift-sfbp). The generator's
+  // own direct run fails the command the same way, so the two entry points now agree.
+  if (skippedSymlinks.length > 0) {
+    for (const entry of skippedSymlinks) {
+      console.error(`REFUSING to generate ${entry.path}: ${entry.symlinkComponent} is a symlink, so writing the vendored surface would write through it and outside ${targetRepo}.`);
+    }
+    console.error(`FAILED: ${skippedSymlinks.length} destination(s) were refused while generating .web-uplift/. Nothing was written for those, so the vendored tree is incomplete. Remove or replace the symlink and run again.`);
     process.exit(1);
   }
 }
@@ -121,6 +134,10 @@ if (targetRepo !== repoRoot && pairs.length === 0) {
   process.exit(1);
 }
 const failures = [];
+// Destinations refused because a symlink was in the way, kept SEPARATE from `refusals` (tracked copies with
+// uncommitted edits) so each failure says which reason it was and neither message has to be read as the
+// other (web-uplift-sfbp).
+const symlinkRefusals = [];
 
 for (const pair of pairs) {
   const source = readCopy(pair.srcAbs);
@@ -200,6 +217,19 @@ if (syncMode) {
       continue;
     }
     if (sourceObj.state === 'ok') {
+      // THE guarded write path (web-uplift-sfbp). This is the check the generator has made since
+      // web-uplift-7caa, asked of the SAME helper so a fourth writer cannot reintroduce the hole by
+      // re-deriving it. Before this, `writeFileSync(targetAbs, ...)` below followed a pre-planted
+      // destination symlink: on a clone whose COMMITTED .pi/skills/web-audit/SKILL.md is a link, the drift
+      // diff above read the victim's bytes through it, judged the pair drifted, wrote through the link and
+      // exited 0. A symlinked destination is now a refusal like an edited tracked copy: nothing is written
+      // for that pair and the command FAILS, which is the half that was wrong.
+      const refused = refusedDestination(targetAbs, targetRepo);
+      if (refused) {
+        symlinkRefusals.push(refused.path);
+        console.error(`REFUSING to sync ${sourceRel} -> ${refused.path}: ${refused.reason} (${refused.symlinkComponent} is a symlink). Nothing was written for it; remove or replace the symlink and run again.`);
+        continue;
+      }
       mkdirSync(dirname(targetAbs), { recursive: true });
       writeFileSync(targetAbs, sourceObj.bytes);
       const sourceAbs = fromVendored ? pair.dstAbs : pair.srcAbs;
@@ -223,6 +253,10 @@ if (syncMode) {
   }
   if (refusals.length > 0) {
     console.error(`FAILED: refused to overwrite ${refusals.length} tracked file(s) with uncommitted local changes: ${refusals.join(', ')}. Nothing was written for those. Your edits are intact.`);
+    process.exit(1);
+  }
+  if (symlinkRefusals.length > 0) {
+    console.error(`FAILED: refused to write through ${symlinkRefusals.length} symlinked destination(s): ${symlinkRefusals.join(', ')}. Nothing was written for those, and the vendored tree is incomplete. Remove or replace the symlink and run again.`);
     process.exit(1);
   }
   console.log(`successfully synced ${syncedCount} drifted copy/copies`);

@@ -90,7 +90,13 @@ export function trackedCopyHasLocalEdits(targetRepoAbs, targetRel) {
   return { state: res.status === 1 ? 'edited' : 'clean' };
 }
 
-// Does any component of `dst`, from the target root down, already exist as a SYMLINK?
+// Does any component of `dst`, from the target root down, already exist as a SYMLINK? Returns the
+// offending component, or null when the whole path is symlink-free.
+//
+// The WALK is private and asked through refusedDestination below, so every writer makes the same
+// question rather than repeating it: tests/cdp-copy-sync.mjs - which IS `npm run sync:vendored` and the
+// first half of both `npm test` and `npm run test:fast` - had no check of its own because this was not
+// exported (web-uplift-sfbp).
 //
 // This generator writes with copyFileSync / writeFileSync, both of which FOLLOW a destination
 // symlink (O_CREAT|O_TRUNC), and with mkdirSync(dirname(dst), { recursive: true }), which follows a
@@ -125,6 +131,29 @@ function symlinkComponent(dst, rootDir) {
   return null;
 }
 
+// THE guarded-destination check, and the ONLY name every writer of a vendored destination calls.
+//
+// EXPORTED for web-uplift-sfbp: this walk used to be private to this module, so the other writer -
+// tests/cdp-copy-sync.mjs, which IS `npm run sync:vendored` and the first half of both `npm test` and
+// `npm run test:fast` - could not reuse it and had no check of its own. With a symlink planted at the
+// TRACKED destination `.pi/skills/web-audit/SKILL.md` and committed, the sync read the drift diff
+// THROUGH the link, judged the pair drifted, wrote through it and clobbered an outside-root victim
+// with exit 0 - on a fresh clone, on `npm test`. The vector is PR-reachable: `.web-uplift/` is
+// gitignored, but that destination is a tracked file a branch can replace with a link.
+//
+// Returns null when the destination is safe, or { path, symlinkComponent, reason } describing the
+// refusal in root-relative terms, so both writers report the same two facts and neither re-derives
+// them (a second spelling of a refusal is how the two would drift apart again).
+export function refusedDestination(dst, rootDir) {
+  const component = symlinkComponent(dst, rootDir);
+  if (!component) return null;
+  return {
+    path: relative(resolve(rootDir), resolve(dst)) || dst,
+    symlinkComponent: relative(resolve(rootDir), resolve(component)) || component,
+    reason: 'refusing to write through a symlink',
+  };
+}
+
 export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   // Refusals are collected rather than thrown, so one planted symlink does not hide the rest, and so
   // the direct run below can fail the command after reporting every one of them. The message is
@@ -133,13 +162,11 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   // `npm install` (web-uplift-7caa).
   const skippedSymlinks = [];
   const refusesSymlink = (dst) => {
-    const component = symlinkComponent(dst, targetRoot);
-    if (!component) return false;
-    const relPath = relative(targetRoot, dst) || dst;
-    const relComponent = relative(targetRoot, component) || component;
-    skippedSymlinks.push({ path: relPath, symlinkComponent: relComponent });
+    const refused = refusedDestination(dst, targetRoot);
+    if (!refused) return false;
+    skippedSymlinks.push({ path: refused.path, symlinkComponent: refused.symlinkComponent });
     console.error(
-      `web-uplift: refusing to write through a symlink: ${relPath} (${relComponent} is a symlink). `
+      `web-uplift: ${refused.reason}: ${refused.path} (${refused.symlinkComponent} is a symlink). `
       + 'Nothing was written for it, so the vendored surface is incomplete; remove or replace the symlink and run again.',
     );
     return true;
