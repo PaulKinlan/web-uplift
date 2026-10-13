@@ -171,8 +171,14 @@ function readJsonObject(path, what) {
 }
 
 function readRuleSources() {
-  const ruleBasis = readJsonObject(join(repoRoot, 'knowledge', 'mwg-rule-basis.json'), 'the applied rule basis');
-  const principles = readJsonObject(join(repoRoot, 'knowledge', 'principles.json'), 'the principles file');
+  const ruleBasisPath = process.env.MWG_RULE_BASIS
+    ? resolve(process.cwd(), process.env.MWG_RULE_BASIS)
+    : join(repoRoot, 'knowledge', 'mwg-rule-basis.json');
+  const principlesPath = process.env.MWG_PRINCIPLES
+    ? resolve(process.cwd(), process.env.MWG_PRINCIPLES)
+    : join(repoRoot, 'knowledge', 'principles.json');
+  const ruleBasis = readJsonObject(ruleBasisPath, 'the applied rule basis');
+  const principles = readJsonObject(principlesPath, 'the principles file');
   const declared = principles.guidanceCatalogVersion;
   const principlesVersion = typeof declared === 'string' && declared.includes('@')
     ? declared.slice(declared.lastIndexOf('@') + 1)
