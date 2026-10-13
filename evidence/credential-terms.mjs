@@ -288,6 +288,21 @@ export function carriesAuthorityUserinfo(raw) {
   return runCarriesUserinfo(raw) || leadingRunCarriesUserinfo(raw);
 }
 
+// The question BOTH routes ask, in one place: is there a USERNAME or a PASSWORD? Userinfo is
+// 'user[:password]', so the halves are the text before and after the FIRST ':'. An ALL-EMPTY userinfo
+// ('', or a bare ':') is not a credential - that is what the parsed route already answers
+// (Boolean(u.username || u.password)) and what the sweep does in effect: it replaces each empty half with
+// nothing, so a value carrying only '' or ':' comes back BYTE-IDENTICAL from redactUrlCredentialValues.
+// Asking whether the prefix was non-empty instead counted a bare ':' as a credential here while the parsed
+// route called the same shape credential-free, and it is also what let the leading run's scheme be read as
+// a username (web-uplift-i5f4). Same question on both routes, or the two halves of this module disagree
+// about a shape that carries nothing - which is the defect that was filed.
+function userinfoCarriesCredential(prefix) {
+  const colon = prefix.indexOf(':');
+  if (colon === -1) return prefix !== '';
+  return prefix.slice(0, colon) !== '' || prefix.slice(colon + 1) !== '';
+}
+
 // The rule the sanitiser's deleted regex implied, and the reason it was not simply redundant: with no
 // scheme to mark where an authority starts, the run from offset 0 is the candidate, up to the first
 // whitespace. This closes the gap between the parser's answer and the sweep's - the sweep only looks for an
@@ -298,11 +313,20 @@ function leadingRunCarriesUserinfo(raw) {
   while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
   const run = raw.slice(0, end);
   const at = run.lastIndexOf('@');
-  return at !== -1 && run.slice(0, at) !== '';
+  if (at === -1 || !userinfoCarriesCredential(run.slice(0, at))) return false;
+  // ...but only when the text before that '@' is not itself an authority marker. With one, the prefix is
+  // the scheme and its slashes rather than a username, and the value belongs to runCarriesUserinfo above,
+  // measured FROM the marker. Counting the scheme here made 'https://@host:99999' - an EMPTY userinfo -
+  // answer true while the parsed route and the sweep both answer false (web-uplift-i5f4). The marker is
+  // compared POSITIONALLY rather than searched for anywhere, because a scheme-less credential can legitimately
+  // sit in front of a later '//x' ('user:pw@host//x'), which no other route would catch.
+  const marker = authorityStartRegex().exec(run);
+  return marker === null || marker.index >= at;
 }
 
 // The sweep's question, isolated: is there a NON-EMPTY userinfo before the LAST '@' in any authority run?
-// Empty userinfo is not a credential and the sweep makes the same distinction (it replaces it with nothing).
+// Empty userinfo is not a credential and the sweep makes the same distinction (it replaces it with nothing),
+// so both routes ask it of the same helper above rather than each deciding what "non-empty" means.
 function runCarriesUserinfo(raw) {
   const runs = authorityStartRegex();
   for (;;) {
@@ -312,7 +336,7 @@ function runCarriesUserinfo(raw) {
     while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
     const run = raw.slice(match.index + match[0].length, end);
     const at = run.lastIndexOf('@');
-    if (at !== -1 && run.slice(0, at) !== '') return true;
+    if (at !== -1 && userinfoCarriesCredential(run.slice(0, at))) return true;
     runs.lastIndex = end; // the cursor never moves backwards, as in the sweep
   }
 }

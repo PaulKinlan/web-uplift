@@ -398,6 +398,10 @@ const DELEGATION_SHAPES = [
   // assertion below caught me): this value has no terminator at all, so a narrow detector takes the WHOLE
   // value as the authority, finds the '@', and gets this shape right.
   ['a malformed proxy the narrow rule also gets right', 'proxy.invalid:8080@attacker.invalid'],
+  // The shape web-uplift-i5f4 fixed, kept in the delegation table because it is the branch that CHANGED: an
+  // empty userinfo on a value the parser rejects now passes through, and the general loop below asserts that
+  // this is the SHARED rule's answer (the probe records the call) rather than a local one.
+  ['an unparseable proxy with an EMPTY userinfo', 'https://@host:99999'],
 ];
 
 function runDelegationProbe() {
@@ -487,6 +491,47 @@ export async function testCredentialRedactorsAgree() {
     'an unparseable value whose run contains @ reads as userinfo to the sweep, and this must agree with it');
   assert(terms.carriesAuthorityUserinfo('https://x.test:8080/a/b@2x.png') === false,
     'but a PATH @ on a value the parser ACCEPTS is not userinfo');
+  // The EMPTY-userinfo family on the route the parser REJECTS (web-uplift-i5f4). This route counted the text
+  // before the '@' by LENGTH, so the scheme itself ('https://') read as a username and every value below came
+  // back true - while the parsed route, pinned two assertions above, already called the same shape
+  // credential-free, and the sweep effectively does too (it replaces each empty half with nothing, leaving
+  // these values BYTE-IDENTICAL). Each row asserts the answer AND that the two halves of the module now
+  // agree, because the DISAGREEMENT, not the direction of the answer, is what was filed.
+  for (const [value, why] of [
+    ['https://@host:99999', 'the scheme before the @ is not a username'],
+    ['http://@host:99999', 'and the same for http'],
+    ['https://@[bad', 'a value that is not even an authority'],
+    ['https://@host:99999/', 'with a path'],
+    ['https://:@host:99999', 'an all-empty userinfo written with its colon'],
+    ['//:@host:99999', 'and the protocol-relative spelling'],
+  ]) {
+    assert(terms.carriesAuthorityUserinfo(value) === false,
+      `an EMPTY userinfo is not a credential on the unparseable route either (${why}): ${value}`);
+    assert(terms.redactUrlCredentialValues(value) === value,
+      `and the redactor must have nothing to do to it, or the predicate is contradicting the sweep: ${value}`);
+  }
+  // THE PRODUCT, which is what two consecutive rounds on the caller's sibling change each missed by testing one
+  // axis at a time: scheme x userinfo x host, the answer decided by the userinfo cell, asserted on BOTH routes
+  // (a parseable host answers through the parsed authority, a rejected port through the run rule). The
+  // invariant is asserted in BOTH directions - credential-bearing IF AND ONLY IF the redactor changes the
+  // value - so a route that drifts either way fails here rather than in a caller.
+  for (const [userinfoName, userinfo, carries] of [
+    ['an empty userinfo', '', false],
+    ['an all-empty userinfo with a colon', ':', false],
+    ['a username only', 'user', true],
+    ['a username and password', 'user:pw', true],
+    ['a password with no username', ':pw', true],
+  ]) {
+    for (const scheme of ['http://', 'https://']) {
+      for (const host of ['host:8080', 'host:99999', '[bad']) {
+        const value = `${scheme}${userinfo}@${host}`;
+        assert(terms.carriesAuthorityUserinfo(value) === carries,
+          `${userinfoName} at ${host} must read as ${carries ? 'a credential' : 'NO credential'}: ${value}`);
+        assert((terms.redactUrlCredentialValues(value) !== value) === carries,
+          `the two routes must agree about ${userinfoName} at ${host}, and the redactor's own verdict is the second half: ${value}`);
+      }
+    }
+  }
   const agentsSource = readFileSync(new URL('../runner/agents.mjs', import.meta.url), 'utf8');
   const agentsScan = scanAgentSource(agentsSource);
   assert(importsSharedRule(agentsScan),
