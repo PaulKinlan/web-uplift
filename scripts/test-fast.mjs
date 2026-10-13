@@ -827,9 +827,9 @@ Usage:
       }
     }
     console.error('  * documentation/data/fixture with genuinely no suite: add an OMITTED_RULES entry carrying the reason it is skipped.');
-    console.error('  * cannot extend the map right now? The full gate is NOT evidence on its own for a refused path:');
-    console.error('    npm test runs tests/*.test.mjs only, so a path that no such suite covers is not run by it either.');
-    console.error('    Run the suite that covers the path explicitly, then run the full gate:');
+    console.error('  * cannot extend the map right now? The full gate is NOT evidence on its own for an unimported refused path:');
+    console.error('    npm test runs tests/*.test.mjs and suites they import (directly or transitively); an imported suite IS covered, but an unimported suite is not.');
+    console.error('    Run the suite that covers an unimported path explicitly, then run the full gate:');
     for (const f of plan.unmappedFiles) {
       if (f.startsWith('tests/') && f.endsWith('.mjs')) {
         console.error(`      node ${f}   # the refused path is itself a runnable suite`);

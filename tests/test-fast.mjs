@@ -547,11 +547,13 @@ function testRefusalIsActionableAndDocumented() {
     assert(/NEXT ACTION/.test(doc), `${name} must carry the one next action, not only the policy`);
     assert(doc.includes('KNOWN_STANDALONE_TESTS') && doc.includes('OMITTED_RULES'), `${name} must name both mapping routes`);
     assert(/FLEET_CHECK_CONF=\S+\s+fleet-check/.test(doc), `${name} must name the escape with its config override`);
-    // The escape must be qualified: the full gate is not evidence for a path `npm test` does not run
-    // (round-3 finding P1).
+    // The full gate includes imported suites, but not unimported paths (f2er).
+    const normalizedDoc = doc.replace(/\s+/g, ' ');
     assert(
-      /runs `tests\/\*\.test\.mjs`\s+only/.test(doc) && /not evidence on its own/i.test(doc),
-      `${name} must qualify the escape: npm test only runs tests/*.test.mjs`
+      /`npm test` runs `tests\/\*\.test\.mjs` and suites they import \(directly or transitively\)/.test(normalizedDoc)
+        && /imported standalone suite/i.test(normalizedDoc) && /unimported/i.test(normalizedDoc)
+        && /not evidence on its own/i.test(normalizedDoc),
+      `${name} must distinguish imported suites covered by npm test from unimported paths`
     );
     for (const rule of OMITTED_RULES) {
       assert(doc.includes(`\`${rule.id}\``), `${name} must name the omission rule ${rule.id}`);
@@ -608,8 +610,8 @@ function testRefusalIsActionableAndDocumented() {
     assert(res.stderr.includes('KNOWN_STANDALONE_TESTS'), 'the refusal must name the standalone-suite route');
     assert(res.stderr.includes('OMITTED_RULES'), 'the refusal must name the declared-omission route');
     assert(
-      res.stderr.includes('npm test runs tests/*.test.mjs only'),
-      'the refusal must qualify the full gate: it does not run a path no tests/*.test.mjs suite covers'
+      res.stderr.includes('npm test runs tests/*.test.mjs and suites they import (directly or transitively); an imported suite IS covered, but an unimported suite is not.'),
+      'the refusal must distinguish imported suites covered by npm test from unimported suites'
     );
     assert(
       /FLEET_CHECK_CONF=\S+ fleet-check/.test(res.stderr),
