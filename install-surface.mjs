@@ -261,6 +261,58 @@ export function pruneObsoleteEntries(dest, published) {
   prune(dest);
 }
 
+// A CRASHED RUN LEAVES ITS STAGED TREE BEHIND FOR GOOD (web-uplift-8fus). The staged path is keyed by pid
+// (`.stage-<pid>-<dest>`), so the only cleanup a later run performs is for its OWN pid, and an orphan from a
+// dead run is never matched again: nothing else sweeps `.web-uplift/scratch/`. This removes the orphans whose
+// pid is not alive and leaves everything else alone.
+//
+// It deliberately does NOT remove every `.stage-*` entry. A CONCURRENT run in the same tree stages under its
+// own pid, and deleting that tree mid-publish is exactly the interleaving the acceptance criteria forbid, so
+// liveness is checked per entry: `process.kill(pid, 0)` succeeds for a live process we may signal, throws
+// EPERM for a live process we may not (still alive, so still left alone), and throws ESRCH only for a dead
+// one. A pid that has been recycled keeps an orphan for another round, which is the safe direction.
+export function sweepOrphanedStages(scratchRoot) {
+  const removed = [];
+  let entries;
+  try {
+    entries = readdirSync(scratchRoot);
+  } catch {
+    return removed;
+  }
+  for (const name of entries) {
+    const match = /^\.stage-(\d+)-/.exec(name);
+    if (!match) {
+      // AGREED WITH COORD (web-uplift-8fus): a name this version did not write is judged by AGE, not by shape,
+      // so a run that is mid-write keeps its staging tree even if a later version spells the name differently.
+      // The conservative direction is a RECYCLED pid, which makes a genuinely stale stage look live: it leaks
+      // one directory rather than deleting a live run's work, which is the right way to be wrong.
+      if (!name.startsWith('.stage-')) continue;
+      let ageMs = null;
+      try {
+        ageMs = Date.now() - lstatSync(join(scratchRoot, name)).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (ageMs <= 60 * 60 * 1000) continue;
+      rmSync(join(scratchRoot, name), { recursive: true, force: true });
+      removed.push(name);
+      continue;
+    }
+    const pid = Number(match[1]);
+    if (pid === process.pid) continue;
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      alive = error.code === 'EPERM';
+    }
+    if (alive) continue;
+    rmSync(join(scratchRoot, name), { recursive: true, force: true });
+    removed.push(name);
+  }
+  return removed;
+}
+
 export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   // Refusals are collected rather than thrown, so one planted symlink does not hide the rest, and so
   // the direct run below can fail the command after reporting every one of them. The message is
@@ -282,8 +334,11 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   const vendorRoot = join(targetRoot, '.web-uplift');
   // The root of the whole surface: if `.web-uplift` is itself a symlink then every destination below
   // it is one component away from escaping, so the run refuses once instead of repeating itself.
-  if (refusesSymlink(vendorRoot)) return { skippedTrackedCopies: [], skippedIdentical: [], skippedSymlinks };
+  if (refusesSymlink(vendorRoot)) return { skippedTrackedCopies: [], skippedIdentical: [], skippedSymlinks, sweptOrphans: [] };
   mkdirSync(vendorRoot, { recursive: true });
+  // Before anything is staged: a run that crashed earlier left its staged tree behind, and this is the only
+  // place that can clear it (web-uplift-8fus).
+  const sweptOrphans = sweepOrphanedStages(join(vendorRoot, 'scratch'));
 
   for (const dir of VENDORED_DIRS) {
     const src = join(targetRoot, dir.source);
@@ -397,7 +452,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   };
   if (!manifestRefused) writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 
-  return { skippedTrackedCopies, skippedIdentical, skippedSymlinks };
+  return { skippedTrackedCopies, skippedIdentical, skippedSymlinks, sweptOrphans };
 }
 
 const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

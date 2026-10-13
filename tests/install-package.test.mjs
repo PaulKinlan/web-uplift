@@ -56,6 +56,9 @@ import {
   testRepublishReaderInstrumentDetectsDeleteThenCopy,
   testPublishOrderLeavesObsoleteEntriesUntilAfterPublish,
   testRepublishKeepsListedPathsReadableForAConcurrentReader,
+  testCrashLeftStagedTreeIsSweptByTheNextRun,
+  testSweepLeavesALiveRunsStagedTreeAlone,
+  testSweepRemovesAMalformedStageNameOnlyWhenItIsOld,
 } from './install-copy-symlink.mjs';
 
 // The in-tree vendored copies under .web-uplift/ must stay 100% byte-identical
@@ -578,6 +581,9 @@ export async function testMcpSkillsServerStdio() {
 
 
 export const installPackageTests = [
+  testCrashLeftStagedTreeIsSweptByTheNextRun,
+  testSweepLeavesALiveRunsStagedTreeAlone,
+  testSweepRemovesAMalformedStageNameOnlyWhenItIsOld,
   testCdpCopySyncGuard,
   testCdpCopySyncMutationGuard,
   testInstalledEvidenceCli,
