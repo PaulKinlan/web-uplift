@@ -308,20 +308,30 @@ function userinfoCarriesCredential(prefix) {
 // whitespace. This closes the gap between the parser's answer and the sweep's - the sweep only looks for an
 // authority start after a special scheme or '//', so a scheme-less 'user:pass@host' has no authority start
 // for it either, and nothing else would read the '@'. One place answers it, not a detector in the caller.
+//
+// A marker only counts as a scheme when it STARTS the run, because that is what a scheme is; the userinfo
+// boundary is then the FIRST '@' still in the run. The version before web-uplift-q76w asked the question of
+// the LAST '@' and abandoned the whole run whenever ANY marker sat before that '@', which conflates 'the
+// marker is this prefix's scheme' (the i5f4 shape 'https://@host:99999', whose userinfo is empty and must
+// stay false) with 'a marker sits somewhere inside the userinfo-ish text'. Both of these are that second
+// shape, and both went unread and reached the child with their credential text intact:
+//   'user:pw@https://@host:99999'   (marker between two @s)
+//   'user:p//@host'                (marker between the credential and the only @)
+// They are two of ONE HUNDRED such values in a measured product of (credential text) x (marker) x (marker
+// position relative to the @s) x (tail), 99 of which buildAgentEnv handed to the child byte-unchanged before
+// this change (web-uplift-q76w). Crossing those axes rather than testing them apart is what found the class:
+// each axis alone looked correct to the previous two rounds. Generalising paid for itself - over that grid
+// this rule flips 100 rows to credential-bearing, flips NONE back (the i5f4 shape still answers false), and
+// leaves the redactor's output byte-identical, so the shared sweep and the HAR, console-prose and flow
+// readers that use it are untouched by this fix.
 function leadingRunCarriesUserinfo(raw) {
   let end = 0;
   while (end < raw.length && !SWEEP_RUN_BREAKS.has(raw[end])) end += 1;
-  const run = raw.slice(0, end);
-  const at = run.lastIndexOf('@');
-  if (at === -1 || !userinfoCarriesCredential(run.slice(0, at))) return false;
-  // ...but only when the text before that '@' is not itself an authority marker. With one, the prefix is
-  // the scheme and its slashes rather than a username, and the value belongs to runCarriesUserinfo above,
-  // measured FROM the marker. Counting the scheme here made 'https://@host:99999' - an EMPTY userinfo -
-  // answer true while the parsed route and the sweep both answer false (web-uplift-i5f4). The marker is
-  // compared POSITIONALLY rather than searched for anywhere, because a scheme-less credential can legitimately
-  // sit in front of a later '//x' ('user:pw@host//x'), which no other route would catch.
-  const marker = authorityStartRegex().exec(run);
-  return marker === null || marker.index >= at;
+  let run = raw.slice(0, end);
+  const scheme = authorityStartRegex().exec(run);
+  if (scheme !== null && scheme.index === 0) run = run.slice(scheme[0].length);
+  const at = run.indexOf('@');
+  return at !== -1 && userinfoCarriesCredential(run.slice(0, at));
 }
 
 // The sweep's question, isolated: is there a NON-EMPTY userinfo before the LAST '@' in any authority run?
