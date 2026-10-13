@@ -19,7 +19,7 @@
  *   CHECK_FAST_TIMEOUT=300
  */
 
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -211,6 +211,69 @@ const TEST_SUPPORT_MODULES = [
   { file: 'tests/cdp-pipe-transport.mjs', consumer: 'tests/chrome-cdp.test.mjs' },
   { file: 'tests/console-evidence-redaction.mjs', consumer: 'tests/evidence-console.test.mjs' },
   { file: 'tests/evidence-cli-source-containment.mjs', consumer: 'tests/evidence-content.test.mjs' },
+  // Both of these are imported only by the redaction suite, so the fast tier can cover them exactly
+  // (web-uplift-5y2w; each previously selected only the gate's own self-tests).
+  { file: 'tests/log-redaction.mjs', consumer: 'tests/redaction.test.mjs' },
+  { file: 'tests/credential-redaction.mjs', consumer: 'tests/redaction.test.mjs' },
+  // These two selected NOTHING at all before 5y2w's control found them: no target, no subsystem and no
+  // refusal, so a change fell to the baseline suite while the suite that imports them never ran.
+  { file: 'tests/beads-export-redaction.mjs', consumer: 'tests/redaction.test.mjs' },
+  { file: 'tests/census-targets.mjs', consumer: 'tests/syntax-core.test.mjs' },
+];
+
+/**
+ * Shared modules whose consumers are MOST of the fast tier. There is no honest subset for these: running
+ * everything that imports one of them is the full gate wearing the fast gate's name, and picking a
+ * representative fraction is a false green with extra steps. So the gate REFUSES, names the importing
+ * suites it can see in the tree, and gives one next action instead of choosing for the author.
+ *
+ * This exists because tests/test-helpers.mjs was mapped to `fast-gate-self`: a change to a helper that ~15
+ * files and 8 suites import ran the gate's own two self-tests, and the verdict was PASS (web-uplift-5y2w).
+ * The list is deliberately short - a refusal is a tax on every lane that touches the path.
+ */
+export const FULL_GATE_ONLY_MODULES = ['tests/test-helpers.mjs'];
+
+/**
+ * The suites under tests/ that name a module, computed from the tree rather than declared, so a refusal
+ * cannot go stale as suites are added or renamed. Only direct-runnable suites count: a shared module is
+ * not its own consumer.
+ */
+export function importingSuitesOf(modulePath, repo = repoRoot) {
+  const dir = join(repo, 'tests');
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const base = posix.basename(modulePath);
+  const needle = new RegExp(`['"\`][^'"\`]*${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]`);
+  const suites = [];
+  for (const entry of [...entries].sort()) {
+    if (!entry.endsWith('.mjs')) continue;
+    const rel = `tests/${entry}`;
+    if (rel === modulePath || !isDirectRunnableTest(rel)) continue;
+    let source;
+    try {
+      source = readFileSync(join(dir, entry), 'utf8');
+    } catch {
+      continue;
+    }
+    if (needle.test(source)) suites.push(rel);
+  }
+  return suites;
+}
+
+/**
+ * Shared modules the control CAN see are not honestly covered, declared with the reason and the tracking
+ * bead so the gap is visible rather than skipped (web-uplift-ev2u). The control asserts each entry is
+ * STILL unwired, so wiring one without removing the exemption fails the gate instead of silently passing.
+ */
+export const UNWIRED_SHARED_MODULES = [
+  { file: 'tests/mwg-drift-basis-floor.mjs', reason: 'imported by tests/mwg-principles.test.mjs; selects three mwg checks that do not import it (web-uplift-ev2u)' },
+  { file: 'tests/mwg-drift-check.mjs', reason: 'imported by tests/mwg-principles.test.mjs; selects three mwg checks that do not import it (web-uplift-ev2u)' },
+  { file: 'tests/mwg-drift-classify.mjs', reason: 'imported by tests/mwg-principles.test.mjs; selects three mwg checks that do not import it (web-uplift-ev2u)' },
+  { file: 'tests/mwg-drift-extract-pipe.mjs', reason: 'imported by tests/mwg-principles.test.mjs; selects three mwg checks that do not import it (web-uplift-ev2u)' },
 ];
 
 /**
@@ -428,7 +491,6 @@ export const SUBSYSTEMS = [
     match: (f) =>
       f === 'scripts/test-fast.mjs' ||
       f === 'tests/test-fast.mjs' ||
-      f === 'tests/test-helpers.mjs' ||
       f === 'tests/regression.mjs',
     targets: [
       { type: 'node', path: 'tests/test-fast.mjs', label: 'Fast gate unit and integration tests' },
@@ -626,11 +688,19 @@ export function mapFilesToTests(filePaths, options = {}) {
   const targetsByKey = new Map();
   const unmappedFiles = [];
   const omittedFiles = [];
+  const refusedFiles = [];
   const autoMappedFiles = [];
   const exists = options.exists || ((p) => pathEntryExists(p, repoRoot));
 
   for (const rawPath of filePaths) {
     const normalized = rawPath.startsWith('/') ? relative(repoRoot, rawPath) : rawPath;
+
+    // A declared full-gate-only module refuses before any subsystem can claim it, so the verdict cannot
+    // be a subset that reads as coverage (web-uplift-5y2w).
+    if (FULL_GATE_ONLY_MODULES.includes(normalized)) {
+      refusedFiles.push({ path: normalized, consumers: importingSuitesOf(normalized, repoRoot) });
+      continue;
+    }
 
     let matched = false;
 
@@ -724,7 +794,7 @@ export function mapFilesToTests(filePaths, options = {}) {
 
   // Only a diff with nothing to map at all falls back to the baseline suite. A diff that contains an
   // UNKNOWN path must not look like a baseline run: that was the false green this gate now refuses.
-  const isBaseline = targetsByKey.size === 0 && unmappedFiles.length === 0;
+  const isBaseline = targetsByKey.size === 0 && unmappedFiles.length === 0 && refusedFiles.length === 0;
   if (isBaseline) {
     for (const t of BASELINE_TARGETS) {
       targetsByKey.set(targetKey(t), t);
@@ -736,6 +806,7 @@ export function mapFilesToTests(filePaths, options = {}) {
     targets: Array.from(targetsByKey.values()),
     unmappedFiles,
     omittedFiles,
+    refusedFiles,
     autoMappedFiles,
     autoMapScan,
     isBaseline,
@@ -953,6 +1024,25 @@ Usage:
   // condition for this bead), and both of those are a false green. The same instruction is in
   // docs/speed.md under "When the fast gate refuses", which is where a lane looks without reading an
   // error, and per-path skeletons are printed here because the map entry is the fix.
+  // A full-gate-only module (web-uplift-5y2w) refuses for the opposite reason to an unmapped path: the
+  // suite that should run it exists, and running all of it is the full gate. Naming the importing suites
+  // and one command keeps the choice with the author instead of hiding it behind a fast-tier subset.
+  if (plan.refusedFiles.length > 0) {
+    for (const f of plan.refusedFiles) {
+      console.log(`fast-gate: refused: ${f.path} (${f.consumers.length} importing suite(s))`);
+    }
+    console.error(`fast-gate: FAIL - ${plan.refusedFiles.length} changed file(s) need the full gate, not a fast-tier subset:`);
+    for (const f of plan.refusedFiles) {
+      console.error(`  ${f.path}: a shared module whose consumers are most of the fast tier.`);
+      console.error(`    imported by ${f.consumers.length} suite(s): ${f.consumers.join(', ') || 'none found in the tree'}`);
+    }
+    console.error('[test:fast] NEXT ACTION: run the full gate for this change, which runs every suite:');
+    console.error('    npm test');
+    console.error('  The fast tier has no honest subset for a shared helper: a subset would either be the whole');
+    console.error('  gate or a green run of cases that do not exercise the change (web-uplift-5y2w).');
+    process.exit(1);
+  }
+
   if (plan.unmappedFiles.length > 0) {
     for (const f of plan.unmappedFiles) {
       console.log(`fast-gate: unmapped: ${f}`);
