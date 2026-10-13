@@ -190,10 +190,12 @@ export function refusedDestination(dst, rootDir) {
 //   - a type change (a source file replacing a destination directory, or the reverse): handled explicitly,
 //     because a rename cannot cross types; those two transitions remove the old entry first, so they are a
 //     disappearance for that path rather than a stale read.
-//   - a crash mid-publish: the staging tree under `.web-uplift/scratch/` can be left behind, and it is
-//     removed only AFTER the prune, at the start of the next run (the staged tree is published, then the
-//     obsolete entries are pruned, then the staged tree is removed), so a crash anywhere between its
-//     creation and that removal strands it, and a crash DURING the prune strands it too (web-uplift-x7ym).
+//   - a crash mid-publish: the staging tree under `.web-uplift/scratch/` can be left behind. On a run that
+//     finishes it is removed after the prune, in that same run; after a crash it is normally NOT removed at
+//     all, because the path is keyed by pid (`.stage-<pid>-<dest>`) and the only cleanup a later run performs
+//     is the removal of that same key for its OWN pid, so an orphaned `.stage-*` directory stays in
+//     `.web-uplift/scratch/` until a later run happens to reuse the pid. Nothing sweeps it (web-uplift-x7ym),
+//     and it is invisible to the syntax census because that walk skips a directory named `scratch`.
 //     What the destination has lost by then depends on which paths were already published: the create and
 //     rename paths have deleted nothing, while a path whose type changed has had its old entry removed
 //     already, and that removal is not undone.
