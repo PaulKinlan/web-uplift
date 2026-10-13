@@ -82,7 +82,12 @@ loaded merger run). Both were split into per-subject files, with the cases moved
 | `tests/evidence-network.test.mjs` (8 cases) | `evidence-network-headers` (2), `evidence-network-har` (3), `evidence-network-resilience` (3) |
 
 Nothing was dropped, relaxed or reordered: the union of the suite lists is byte-identical before and after
-(160 case names, diffed), and `testSuiteListsMatchRegressionRegistry` pins it at 14 suite files. The split
+(160 case names, diffed), and `testSuiteListsMatchRegressionRegistry` pins the population absolutely: 14
+suite files and 161 cases, asserted as numbers, on top of its relative check that the registry equals the
+union of the suite lists. Before web-uplift-ougd only the relative check existed, and because
+`tests/regression.mjs` discovers the suite files rather than naming them, deleting a whole suite file
+shrank both sides and the control still reported agreement: `git rm tests/fixture-sites.test.mjs` printed
+"gate parity OK: 158 case(s) agree between 13 suite file(s)" and exited 0. The split
 changed no case. The count is 161 on master because web-uplift-lql5 later added one regression case to
 `tests/install-package.test.mjs`; that is a different change, and the numbers above are the split's own.
 `tests/evidence.test.mjs` was also a real collision hotspot, at 12 of the 30-day `--first-parent` changes
