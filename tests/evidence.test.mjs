@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assert, run, runAsync, tmp, runSuite } from './test-helpers.mjs';
 import { gather, waitForInteractEvidence } from '../evidence/cli.mjs';
+import { launchChrome } from '../evidence/cdp.mjs';
 import { testConsoleEvidenceRedaction } from './console-evidence-redaction.mjs';
 export async function testPreNavigationEmulation() {
   const html =
@@ -314,11 +315,18 @@ export async function testConsoleEvidence() {
   });
 
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  // One browser for the six console loads this case drives (web-uplift-t2mr): the console collector is
+  // attached per SESSION, so a fresh session/target per gather keeps console events isolated between them,
+  // and no load here depends on a fresh profile - the pages come from this case's own server, whose content
+  // differs per path. The "a page that logs nothing reports zeroes" assertion is the functional check that
+  // nothing leaked from the noisy load into the clean ones.
+  let browser = null;
   try {
+    browser = await launchChrome({ log: () => {} });
     const { port } = server.address();
     const base = `http://127.0.0.1:${port}`;
 
-    const result = await gather('console', `${base}/noisy`, { quiet: true, wait: 500 });
+    const result = await gather('console', `${base}/noisy`, { quiet: true, wait: 500, browser });
     const block = result.console;
     assert(
       block.exceptionCount === 1 && block.entries.some((e) => e.kind === 'exception' && e.text.includes('fixture uncaught exception')),
@@ -358,7 +366,7 @@ export async function testConsoleEvidence() {
 
     // A page that logs nothing reports zeroes: the empty block is the evidence
     // that the check can pass, not the absence of evidence.
-    const cleanResult = await gather('console', `${base}/clean`, { quiet: true, wait: 400 });
+    const cleanResult = await gather('console', `${base}/clean`, { quiet: true, wait: 400, browser });
     assert(
       cleanResult.console.entryCount === 0 && cleanResult.console.hasErrors === false && cleanResult.console.entries.length === 0,
       `console: a page that logs nothing must report zeroes: ${JSON.stringify(cleanResult.console)}`,
@@ -368,6 +376,7 @@ export async function testConsoleEvidence() {
     // clicked, which is exactly the error class a post-load probe cannot see.
     const interactResult = await gather('console', `${base}/clean`, {
       quiet: true,
+      browser,
       wait: 400,
       // An explicit deadline: under load the zero-delay click's exception can
       // cross the old fixed 250ms window, which was the 7kl flake.
@@ -389,6 +398,7 @@ export async function testConsoleEvidence() {
     // window is what catches it.
     const mixedResult = await gather('console', `${base}/clean`, {
       quiet: true,
+      browser,
       wait: 400,
       interactDeadlineMs: 2000,
       interact:
@@ -408,7 +418,7 @@ export async function testConsoleEvidence() {
 
     // AC2: a quiet interaction costs the default settle, not the hard deadline,
     // and is not reported as a pending failure.
-    const quietResult = await gather('console', `${base}/clean`, { quiet: true, wait: 400, interact: 'void 0' });
+    const quietResult = await gather('console', `${base}/clean`, { quiet: true, wait: 400, interact: 'void 0', browser });
     assert(
       quietResult.interactObserved === false && quietResult.interactEvidencePending === false,
       `console: a quiet interact must not report observed or pending evidence: ${JSON.stringify({ observed: quietResult.interactObserved, pending: quietResult.interactEvidencePending })}`,
@@ -422,6 +432,7 @@ export async function testConsoleEvidence() {
     // is still captured, and the reported wait reflects it.
     const delayedResult = await gather('console', `${base}/clean`, {
       quiet: true,
+      browser,
       wait: 400,
       interactDeadlineMs: 2000,
       interact: "setTimeout(() => document.querySelector('#boom').click(), 700)",
@@ -453,6 +464,7 @@ export async function testConsoleEvidence() {
       );
     }
   } finally {
+    if (browser) await browser.close();
     await new Promise((resolveClose) => server.close(resolveClose));
   }
 }

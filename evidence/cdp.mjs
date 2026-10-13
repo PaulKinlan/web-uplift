@@ -1484,7 +1484,7 @@ export async function launchChrome({
 // Best-effort by contract: attribution must never break evidence gathering,
 // so an unwritable file is silently skipped, and a missing env var simply
 // turns the record off (direct CLI use without the runner opts out).
-export function recordLaunch({ primitive, url, chrome, launchesFile = process.env.WEB_UPLIFT_LAUNCH_LOG } = {}) {
+export function recordLaunch({ primitive, url, chrome, shared = false, launchesFile = process.env.WEB_UPLIFT_LAUNCH_LOG } = {}) {
   if (!launchesFile || !chrome) return;
   try {
     appendFileSync(
@@ -1494,6 +1494,9 @@ export function recordLaunch({ primitive, url, chrome, launchesFile = process.en
         outcome: 'launched',
         primitive,
         url,
+        // `shared` marks a call that reused a browser the caller launched (web-uplift-t2mr): the marker is
+        // still the per-primitive attribution it always was, it just does not claim a launch it did not do.
+        ...(shared ? { shared: true } : {}),
         pid: chrome.proc?.pid ?? null,
         profileDir: chrome.userDataDir ?? null,
         launcherPid: process.pid,

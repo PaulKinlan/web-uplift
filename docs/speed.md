@@ -107,3 +107,27 @@ module was tested.
   `UNKNOWN` (fleet docs/speed.md R15). The eleven web-uplift fast records before this change all read
   `UNKNOWN`, `coverage_verified: false`, `suites: 0`. It is the MARKERS ALONE that fix that; the
   `FLEET_CHECK_CONF` override is only about running this project's command on a shared VM.
+
+## Measured cost of sharing one browser per case (2026-10-13, web-uplift-t2mr)
+
+`gather()` used to launch and close a browser per call; it now takes an optional `browser` the caller owns and
+does not close, so a case that drives several primitives pays one launch instead of N. The default path is
+unchanged (no `browser` supplied = launch and close as before), and every call still creates its own
+session/target, so per-target CDP state (emulated network, CPU rate, viewport, locale, timezone) cannot leak
+between primitives. Browser-PROFILE state (cookies, storage, service workers, HTTP cache) is shared, so a case
+only opts in when it does not depend on a fresh profile: a launch is ~0.45s on an idle VM but 0.6-1.4s inside
+the gate, and the CPU it costs is the reason this matters (the fleet's scarcest resource), not just the wall.
+
+NOTHING IS MEASURED LESS. Every assertion is unchanged, and the two converted cases carry their own
+functional check that the sharing is clean: `testConsoleEvidence` asserts the `/clean` load reports zero
+console entries after the `/noisy` load, and it still does. Paired measurement (same VM, same command,
+`tests/regression.mjs --only`, one browser per call vs one per case):
+
+| case | before | after | saved | launches |
+| --- | --- | --- | --- | --- |
+| `testFetchDeadlineAndRawComparison` | 30949ms | 25382ms | -5.6s | 5 -> 1 |
+| `testConsoleEvidence` | 12558ms | 9673ms | -2.9s | 6 -> 1 |
+
+Still to convert (the seam is in place): `testThrottlingConditions` (7 -> 1) and the other multi-`gather`
+cases. Do NOT share a browser in `testCdpDeadline` (it deliberately points Chrome at a blackhole server),
+`testNoOrphanBrowser` (it asserts teardown) or `testResiliencePrimitive` (service workers).
