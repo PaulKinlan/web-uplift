@@ -140,12 +140,22 @@ export async function testThrottlingConditions() {
     res.end(html);
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  // Question-first (web-uplift-qsqp): does this case depend on a fresh browser PROFILE, and does per-call
+  // session/target isolation already cover the emulation it relies on? No and yes - it drives one constant
+  // local page on one origin with no cookies, storage, service workers or JS-disabled emulation, and each
+  // gather still creates its own session/target, which is where CDP's network/CPU/device-metrics emulation
+  // lives (applyConditions runs per gather). The case's own assertions are the functional check that the
+  // sharing is clean: a run with no device-metrics override must report no viewport, an unthrottled run must
+  // carry no conditions block at all, and the slow-3g probe must really be ~2000ms slower than the plain one.
+  let browser = null;
   try {
+    browser = await launchChrome({ log: () => {} });
     const base = `http://127.0.0.1:${server.address().port}/`;
 
     // The conditions a run was measured under are recorded in the output.
     const shaped = await gather('layout', base, {
       quiet: true,
+      browser,
       wait: 100,
       network: 'fast-3g',
       cpuThrottle: 4,
@@ -170,6 +180,7 @@ export async function testThrottlingConditions() {
     // desktop profile, so the recorded value cannot be a constant.
     const desktopProfile = await gather('layout', base, {
       quiet: true,
+      browser,
       wait: 100,
       viewport: { w: 360, h: 800 },
       viewportMobile: false,
@@ -183,14 +194,14 @@ export async function testThrottlingConditions() {
 
     // ...and a run with no device-metrics override must not claim one: an unemulated
     // run carries no viewport record rather than an invented profile.
-    const noViewport = await gather('layout', base, { quiet: true, wait: 100 });
+    const noViewport = await gather('layout', base, { quiet: true, wait: 100, browser });
     assert(
       !noViewport.conditions || noViewport.conditions.viewport === undefined,
       `conditions: a run with no device-metrics override must not report an emulated profile: ${JSON.stringify(noViewport.conditions)}`,
     );
 
     // mobile-lighthouse applies its 4x CPU slowdown without a separate flag.
-    const mobile = await gather('layout', base, { quiet: true, wait: 100, network: 'mobile-lighthouse' });
+    const mobile = await gather('layout', base, { quiet: true, wait: 100, network: 'mobile-lighthouse', browser });
     assert(mobile.conditions.cpuThrottleRate === 4 && mobile.conditions.network.latencyMs === 150,
       `throttle: mobile-lighthouse must imply 4x CPU + 150ms RTT: ${JSON.stringify(mobile.conditions)}`);
 
@@ -198,25 +209,28 @@ export async function testThrottlingConditions() {
     // shows up in a fetch the page makes (warm up the socket first so cold-start
     // socket setup on a loaded VM does not inflate plain latency).
     const probe = { quiet: true, wait: 100, expr: '(async()=>{await fetch("/p"); const t=performance.now(); await fetch("/p"); return performance.now()-t;})()' };
-    const plain = await gather('evaluate', base, probe);
-    const throttled = await gather('evaluate', base, { ...probe, network: 'slow-3g' });
+    const plain = await gather('evaluate', base, { ...probe, browser });
+    const throttled = await gather('evaluate', base, { ...probe, network: 'slow-3g', browser });
     assert(throttled > plain + 1000,
       `throttle: slow-3g should add ~2000ms RTT, got plain=${Math.round(plain)}ms shaped=${Math.round(throttled)}ms`);
 
     // An unthrottled run carries no conditions block at all (not an empty one).
-    const unthrottled = await gather('layout', base, { quiet: true, wait: 100 });
+    const unthrottled = await gather('layout', base, { quiet: true, wait: 100, browser });
     assert(!('conditions' in unthrottled),
       `throttle: an unthrottled run must not claim conditions: ${JSON.stringify(unthrottled.conditions)}`);
 
     // Unknown profiles fail loudly, never silently fall back to unshaped.
     let rejected = false;
     try {
-      await gather('layout', base, { quiet: true, wait: 100, network: 'dial-up' });
+      // The rejected call also gets the shared browser: gather launches BEFORE the primitive validates the
+      // profile, so an unconverted call here pays a whole Chrome start only to throw (web-uplift-qsqp).
+      await gather('layout', base, { quiet: true, wait: 100, network: 'dial-up', browser });
     } catch (err) {
       rejected = /Unknown network profile/.test(err.message);
     }
     assert(rejected, 'throttle: an unknown profile must be rejected by name');
   } finally {
+    if (browser) await browser.close();
     server.close();
   }
 }
