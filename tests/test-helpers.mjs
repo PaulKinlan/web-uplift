@@ -70,20 +70,48 @@ export function validateJson(ajv, schema, path) {
   }
 }
 
-// Walks `dir` and returns the paths the predicate accepts. SYMLINKS ARE NOT FOLLOWED (web-uplift-lql5),
-// for two reasons that both bit this repository in one day: a directory symlink cycle inside the tree
-// makes the walk recurse until the filesystem returns ELOOP, and any suite that creates a transient entry
-// in the repository root while this walk runs is a race whatever else is done about it. The walk is for
-// the repository's own source files, which are real files in real directories. Measured on the 14-suite
-// set: following symlinks and not following them reach the same 143 .mjs files, so this costs no coverage.
-export function listFiles(dir, predicate, out = []) {
+// Walks `dir` and returns the paths the predicate accepts. This FOLLOWS symlinks and bounds recursion by
+// DIRECTORY IDENTITY (web-uplift-k63b): a cycle is by definition a directory reached twice on the same
+// path, so identity is what bounds it, and a legitimately symlinked directory is still traversed. It
+// replaces a version that skipped symlinks outright (web-uplift-lql5), which removed the ELOOP crash but
+// traded one silent coverage loss for another - a symlinked directory containing .mjs would have been
+// dropped from the census without a word. A link whose target cannot be resolved at all - dangling, or one
+// the kernel refuses - is skipped, because there is no target to walk.
+//
+// PRECONDITION, because following links has a consequence the skipping version did not: a link pointing
+// OUTSIDE the walk root is followed out of it. The repository has one such link today,
+// schema/install-symlink-escape.txt, and it is not .mjs so the syntax census is unaffected; a symlinked
+// directory containing .mjs outside the repository would be pulled INTO the census, which is the price of
+// preferring reachability to confinement and is stated rather than discovered later.
+const directoryIdentity = (path) => {
+  const st = statSync(path);
+  return `${st.dev}:${st.ino}`;
+};
+
+export function listFiles(dir, predicate, out = [], path = new Set([directoryIdentity(dir)])) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;
     const full = join(dir, name);
     const st = lstatSync(full);
-    if (st.isSymbolicLink()) continue;
-    if (st.isDirectory()) listFiles(full, predicate, out);
-    else if (predicate(full)) out.push(full);
+    if (st.isSymbolicLink()) {
+      let target;
+      try {
+        target = statSync(full);
+      } catch {
+        continue;
+      }
+      const key = `${target.dev}:${target.ino}`;
+      if (target.isDirectory()) {
+        if (path.has(key)) continue;
+        listFiles(full, predicate, out, new Set([...path, key]));
+      } else if (predicate(full)) {
+        out.push(full);
+      }
+    } else if (st.isDirectory()) {
+      listFiles(full, predicate, out, new Set([...path, directoryIdentity(full)]));
+    } else if (predicate(full)) {
+      out.push(full);
+    }
   }
   return out;
 }
