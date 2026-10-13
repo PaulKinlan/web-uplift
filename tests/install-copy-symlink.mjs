@@ -464,60 +464,110 @@ function git(fixture, args) {
   return run;
 }
 
-export function testSyncRefusesCommittedSymlinkDestination() {
+// One fixture for the symlink-destination cases below: the real (sampled) vendored surface in a COMMITTED git
+// repository, with the tracked destination replaced by a mode-120000 symlink pointing at an OUTSIDE victim.
+// Committing it is what makes this the PR-reachable vector rather than a local edit - the assertion below
+// reads the mode back out of the index - and it is also what makes the tracked-copy edit protection read
+// 'clean', so the run reaches the destination question instead of stopping at that one.
+function committedSymlinkFixture({ withGeneratedSurface, victimContent }) {
   const tracked = TRACKED_COPY_FILES[0];
   assert(tracked, 'the tracked-copy list must name a destination for this fixture to plant a link at');
+  const victimDir = mkdtempSync(join(tmpdir(), 'web-uplift-sync-victim-'));
+  const fixture = buildSyncFixture();
+  const victim = join(victimDir, 'victim-skill.md');
+  writeFileSync(victim, victimContent);
+  if (withGeneratedSurface) {
+    runVendoredSurfaceGenerator(fixture);
+    rmSync(join(fixture, 'generate-driver.mjs'), { force: true });
+  }
+  const destAbs = join(fixture, tracked.dest);
+  rmSync(destAbs, { force: true });
+  mkdirSync(dirname(destAbs), { recursive: true });
+  symlinkSync(victim, destAbs);
+  git(fixture, ['init', '-q']);
+  git(fixture, ['add', '-A']);
+  git(fixture, ['-c', 'user.email=fixture@test.invalid', '-c', 'user.name=fixture', 'commit', '-qm', 'fixture']);
+  const lsFiles = spawnSync('git', ['ls-files', '-s', tracked.dest], { cwd: fixture, encoding: 'utf8' });
+  assert(lsFiles.stdout.startsWith('120000'),
+    `the fixture must commit the symlink as a tracked link, else it is not the PR-reachable vector: ${lsFiles.stdout}`);
+  return { fixture, victimDir, victim, destAbs, victimContent };
+}
+
+function dropSyncFixture({ fixture, victimDir }) {
+  rmSync(fixture, { recursive: true, force: true });
+  rmSync(victimDir, { recursive: true, force: true });
+}
+
+// Run the REAL sync over such a fixture and assert the whole contract: the command FAILS, the victim outside
+// the root is byte-identical, the destination is still a symlink, and the tracked copy is never reported as
+// synced. Returns the output so a case can additionally assert what the refusal said.
+function assertSyncRefusesSymlinkDestination({ fixture, victim, destAbs, victimContent }, label) {
+  const tracked = TRACKED_COPY_FILES[0];
+  const run = spawnSync(process.execPath, [join(fixture, 'tests/cdp-copy-sync.mjs'), '--sync'], { cwd: fixture, encoding: 'utf8', timeout: 120000 });
+  const output = `${run.stdout}${run.stderr}`;
+  assert(run.status !== 0,
+    `sync:vendored over a committed symlink destination must FAIL, not exit 0 (${label} case), got ${run.status}: ${output}`);
+  assert(output.includes('refusing to write through a symlink'),
+    `the refusal must say what it refused (${label} case): ${output}`);
+  assert(output.includes(tracked.dest),
+    `the refusal must name the destination it refused (${label} case): ${output}`);
+  assert(readFileSync(victim, 'utf8') === victimContent,
+    `the victim outside the root must be byte-identical after the run (${label} case)`);
+  assert(lstatSync(destAbs).isSymbolicLink(),
+    `the destination must still be the symlink, not a regular file written over it (${label} case)`);
+  assert(!output.includes(`synced: ${tracked.source} -> ${tracked.dest}`),
+    `the tracked copy must not be reported as synced through the link (${label} case): ${output}`);
+  return output;
+}
+
+// Fixture 6: the SYNC writer's destination guard (web-uplift-sfbp). tests/cdp-copy-sync.mjs IS
+// `npm run sync:vendored` and the first half of BOTH `npm test` and `npm run test:fast`, and it kept its own
+// bare writeFileSync with no symlink check: the walk was private to install-surface.mjs so it could not be
+// reused even though it existed, and its auto-generate block read skippedTrackedCopies but ignored
+// skippedSymlinks. With a link planted at the TRACKED destination `.pi/skills/web-audit/SKILL.md` and
+// COMMITTED - the vector a pull request can carry, since .web-uplift/ is gitignored while that destination is
+// a tracked path - the sync read the drift diff THROUGH the link, wrote through it and clobbered an
+// outside-root victim with exit 0.
+//
+// Both readers of the refusal are exercised on this one fixture, and the EXIT STATUS is asserted in both,
+// because the status is the half that was wrong: the fresh-clone case (no .web-uplift/, so the auto-generate
+// block runs) and the already-generated case (the write path itself, with the block skipped entirely).
+export function testSyncRefusesCommittedSymlinkDestination() {
   const victimContent = 'VICTIM-SKILL-CONTENT that the vendored SKILL.md must never replace\n';
   for (const withGeneratedSurface of [false, true]) {
-    const victimDir = mkdtempSync(join(tmpdir(), 'web-uplift-sync-victim-'));
-    const fixture = buildSyncFixture();
+    const fixtureCase = committedSymlinkFixture({ withGeneratedSurface, victimContent });
     try {
-      const victim = join(victimDir, 'victim-skill.md');
-      writeFileSync(victim, victimContent);
-      // The already-generated case starts from a surface the REAL generator wrote, so its pairs are
-      // identical; the fresh case starts without .web-uplift/ so the auto-generate block runs.
-      if (withGeneratedSurface) {
-        runVendoredSurfaceGenerator(fixture);
-        rmSync(join(fixture, 'generate-driver.mjs'), { force: true });
-      }
-      const destAbs = join(fixture, tracked.dest);
-      rmSync(destAbs, { force: true });
-      mkdirSync(dirname(destAbs), { recursive: true });
-      symlinkSync(victim, destAbs);
-      git(fixture, ['init', '-q']);
-      git(fixture, ['add', '-A']);
-      git(fixture, ['-c', 'user.email=fixture@test.invalid', '-c', 'user.name=fixture', 'commit', '-qm', 'fixture']);
-      // A COMMITTED link (mode 120000) is the vector: it survives a clone and arrives through a branch, so
-      // this is not the local-write primitive that a gitignored destination would be.
-      const lsFiles = spawnSync('git', ['ls-files', '-s', tracked.dest], { cwd: fixture, encoding: 'utf8' });
-      assert(lsFiles.stdout.startsWith('120000'),
-        `the fixture must commit the symlink as a tracked link, else it is not the PR-reachable vector: ${lsFiles.stdout}`);
-
-      const run = spawnSync(process.execPath, [join(fixture, 'tests/cdp-copy-sync.mjs'), '--sync'], { cwd: fixture, encoding: 'utf8', timeout: 120000 });
-      const output = `${run.stdout}${run.stderr}`;
-      const label = withGeneratedSurface ? 'already-generated' : 'fresh-clone';
-      assert(run.status !== 0,
-        `sync:vendored over a committed symlink destination must FAIL, not exit 0 (${label} case), got ${run.status}: ${output}`);
-      assert(output.includes('refusing to write through a symlink'),
-        `the refusal must say what it refused (${label} case): ${output}`);
-      assert(output.includes(tracked.dest),
-        `the refusal must name the destination it refused (${label} case): ${output}`);
-      assert(readFileSync(victim, 'utf8') === victimContent,
-        `the victim outside the root must be byte-identical after the run (${label} case)`);
-      assert(lstatSync(destAbs).isSymbolicLink(),
-        `the destination must still be the symlink, not a regular file written over it (${label} case)`);
-      assert(!output.includes(`synced: ${tracked.source} -> ${tracked.dest}`),
-        `the tracked copy must not be reported as synced through the link (${label} case): ${output}`);
+      const output = assertSyncRefusesSymlinkDestination(fixtureCase, withGeneratedSurface ? 'already-generated' : 'fresh-clone');
       if (!withGeneratedSurface) {
         // The refusal is TARGETED: the run got through generation and failed on the link, which is what stops
         // this passing for the wrong reason (an early crash would also exit non-zero).
-        assert(existsSync(join(fixture, '.web-uplift', 'schema')),
+        assert(existsSync(join(fixtureCase.fixture, '.web-uplift', 'schema')),
           `the rest of the surface must still have been generated before the refusal (fresh-clone case): ${output}`);
       }
     } finally {
-      rmSync(fixture, { recursive: true, force: true });
-      rmSync(victimDir, { recursive: true, force: true });
+      dropSyncFixture(fixtureCase);
     }
+  }
+}
+
+// Fixture 7: the case that BYPASSED the guard (web-uplift-rt1y). Same fixture, but the victim holds EXACTLY
+// the bytes of the tracked copy's source, so the pair compares EQUAL: the sync's equality fast path printed
+// 'copies identical' and the command exited 0 while the destination was a symlink, so the agreed contract - a
+// symlinked destination is refused and the command fails - did not hold on the path that writes nothing. The
+// victim was not clobbered in that case, which is exactly why the TEST has to assert the exit status: the
+// protection was absent exactly where it looked present, and only the status shows that.
+export function testSyncRefusesEqualByteSymlinkDestination() {
+  const tracked = TRACKED_COPY_FILES[0];
+  const sourceBytes = readFileSync(join(repoRoot, tracked.source), 'utf8');
+  const fixtureCase = committedSymlinkFixture({ withGeneratedSurface: true, victimContent: sourceBytes });
+  try {
+    const output = assertSyncRefusesSymlinkDestination(fixtureCase, 'equal-byte');
+    // The bypass's own signature, asserted so a regression cannot pass by merely printing something: with
+    // equal bytes the old code reported THIS pair as identical.
+    assert(!output.includes(`copies identical: ${tracked.source} == ${tracked.dest}`),
+      `the equal-byte pair must be refused BEFORE the equality fast path, so it must not be reported as identical: ${output}`);
+  } finally {
+    dropSyncFixture(fixtureCase);
   }
 }
 
@@ -531,5 +581,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   testInstallNormalDestinationWrites();
   testGenerateVendoredSurfaceRefusesDestinationSymlinks();
   testSyncRefusesCommittedSymlinkDestination();
+  testSyncRefusesEqualByteSymlinkDestination();
   console.log('tests OK');
 }

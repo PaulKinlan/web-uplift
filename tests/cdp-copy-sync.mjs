@@ -136,10 +136,26 @@ if (targetRepo !== repoRoot && pairs.length === 0) {
 const failures = [];
 // Destinations refused because a symlink was in the way, kept SEPARATE from `refusals` (tracked copies with
 // uncommitted edits) so each failure says which reason it was and neither message has to be read as the
-// other (web-uplift-sfbp).
+// other (web-uplift-sfbp). Collected at the TOP of the pair loop (web-uplift-rt1y), so the answer exists on
+// every path, including the ones that write nothing.
 const symlinkRefusals = [];
 
 for (const pair of pairs) {
+  // THE destination question, asked ONCE per pair and BEFORE any shortcut (web-uplift-rt1y). It used to be
+  // asked in the write path, which only DRIFTED pairs reach: a symlinked destination whose target happened to
+  // hold the SAME bytes hit the equality fast path just below, printed 'copies identical' and let the command
+  // exit 0 with no refusal at all - the protection was absent exactly where it looked present. Asking it here
+  // means a fast path added later cannot shadow it, because the guard is reached before every one of them: a
+  // guard that can only be reached after a fast path is one the next fast path bypasses.
+  const destAbs = fromVendored ? pair.srcAbs : pair.dstAbs;
+  // A pair with no destination path at all (an empty copy-dir on our own tree) has nothing to ask about or
+  // write to; asking refusedDestination about null would throw where the old code merely compared nothing.
+  const refused = destAbs ? refusedDestination(destAbs, targetRepo) : null;
+  if (refused) {
+    symlinkRefusals.push(refused.path);
+    console.error(`web-uplift sync: ${refused.reason}: ${refused.path} (${refused.symlinkComponent} is a symlink). Nothing was written for it; remove or replace the symlink and run again.`);
+    continue;
+  }
   const source = readCopy(pair.srcAbs);
   const vendored = readCopy(pair.dstAbs);
 
@@ -180,9 +196,19 @@ for (const pair of pairs) {
   for (const line of lines) console.error(`FAIL: ${line}`);
 }
 
-if (failures.length === 0) {
+if (failures.length === 0 && symlinkRefusals.length === 0) {
   console.log(`all ${pairs.length} vendored copies identical`);
   process.exit(0);
+}
+
+// A symlinked destination fails the command in EVERY mode, including a check-only run that would have written
+// nothing: the contract is that such a destination is REFUSED, not that it is refused once something else has
+// already gone wrong. This is the single failure point for it - the write path below no longer asks again,
+// because a pair that reaches it was already answered here (web-uplift-rt1y).
+if (symlinkRefusals.length > 0) {
+  const unique = [...new Set(symlinkRefusals)];
+  console.error(`FAILED: refused to write through ${unique.length} symlinked destination(s): ${unique.join(', ')}. Nothing was written for those, and the vendored tree is incomplete. Remove or replace the symlink and run again.`);
+  process.exit(1);
 }
 
 if (syncMode) {
@@ -217,19 +243,9 @@ if (syncMode) {
       continue;
     }
     if (sourceObj.state === 'ok') {
-      // THE guarded write path (web-uplift-sfbp). This is the check the generator has made since
-      // web-uplift-7caa, asked of the SAME helper so a fourth writer cannot reintroduce the hole by
-      // re-deriving it. Before this, `writeFileSync(targetAbs, ...)` below followed a pre-planted
-      // destination symlink: on a clone whose COMMITTED .pi/skills/web-audit/SKILL.md is a link, the drift
-      // diff above read the victim's bytes through it, judged the pair drifted, wrote through the link and
-      // exited 0. A symlinked destination is now a refusal like an edited tracked copy: nothing is written
-      // for that pair and the command FAILS, which is the half that was wrong.
-      const refused = refusedDestination(targetAbs, targetRepo);
-      if (refused) {
-        symlinkRefusals.push(refused.path);
-        console.error(`REFUSING to sync ${sourceRel} -> ${refused.path}: ${refused.reason} (${refused.symlinkComponent} is a symlink). Nothing was written for it; remove or replace the symlink and run again.`);
-        continue;
-      }
+      // No destination question here any more: the pair loop answered it before any shortcut, so a pair that
+      // reaches this write has already been checked (web-uplift-rt1y). Keeping a second call here is how the
+      // two would drift apart again.
       mkdirSync(dirname(targetAbs), { recursive: true });
       writeFileSync(targetAbs, sourceObj.bytes);
       const sourceAbs = fromVendored ? pair.dstAbs : pair.srcAbs;
@@ -253,10 +269,6 @@ if (syncMode) {
   }
   if (refusals.length > 0) {
     console.error(`FAILED: refused to overwrite ${refusals.length} tracked file(s) with uncommitted local changes: ${refusals.join(', ')}. Nothing was written for those. Your edits are intact.`);
-    process.exit(1);
-  }
-  if (symlinkRefusals.length > 0) {
-    console.error(`FAILED: refused to write through ${symlinkRefusals.length} symlinked destination(s): ${symlinkRefusals.join(', ')}. Nothing was written for those, and the vendored tree is incomplete. Remove or replace the symlink and run again.`);
     process.exit(1);
   }
   console.log(`successfully synced ${syncedCount} drifted copy/copies`);
