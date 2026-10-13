@@ -9,7 +9,7 @@
 // a real dry-run install and asserts the destinations match what is declared here,
 // so the set cannot fall behind silently (web-uplift-7mr).
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, lstatSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, lstatSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join, relative, isAbsolute, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -154,6 +154,47 @@ export function refusedDestination(dst, rootDir) {
   };
 }
 
+// Publish a staged tree into place WITHOUT ever leaving a destination path absent (web-uplift-c6i1). This
+// generator used to delete each destination directory whole and recopy it, so a reader that listed a path and
+// then read it - which is exactly what the syntax census does to this repository - could hold a path that no
+// longer existed. Measured before this change, over a republished tree: 5407 list-then-read cycles produced
+// one ENOENT on .web-uplift/runner/c.mjs. Every file is now moved into place with a single rename, which is
+// atomic within a filesystem, and OBSOLETE entries are removed only AFTER the new content is present, so the
+// worst a reader can observe is STALE content, never a hole.
+//
+// This is NOT cross-file atomicity and does not claim to be: per-file rename means a reader can still observe
+// a MIX of new and old files. That is a strictly better failure mode than ENOENT, and it is the limitation.
+function publishStagedTree(staged, dest) {
+  const published = new Set();
+  const walk = (from, to, rel = '') => {
+    mkdirSync(to, { recursive: true });
+    for (const name of readdirSync(from)) {
+      const src = join(from, name);
+      const dst = join(to, name);
+      const key = rel ? `${rel}/${name}` : name;
+      if (lstatSync(src).isDirectory()) walk(src, dst, key);
+      else {
+        renameSync(src, dst);
+        published.add(key);
+      }
+    }
+  };
+  walk(staged, dest);
+  const prune = (dir, rel = '') => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      const key = rel ? `${rel}/${name}` : name;
+      if (lstatSync(full).isDirectory()) {
+        prune(full, key);
+        if (readdirSync(full).length === 0) rmSync(full, { recursive: true, force: true });
+      } else if (!published.has(key)) {
+        rmSync(full, { force: true });
+      }
+    }
+  };
+  prune(dest);
+}
+
 export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   // Refusals are collected rather than thrown, so one planted symlink does not hide the rest, and so
   // the direct run below can fail the command after reporting every one of them. The message is
@@ -182,8 +223,16 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     const src = join(targetRoot, dir.source);
     const dst = join(vendorRoot, dir.dest);
     if (refusesSymlink(dst)) continue;
-    if (existsSync(dst)) rmSync(dst, { recursive: true, force: true });
-    if (existsSync(src)) copyDir(src, dst);
+    // Staged OUTSIDE everything a repository walk can see: the staging directory is named `scratch`, which the
+    // walk skips by name anywhere in the tree, so a census running concurrently cannot observe the staged copy
+    // as an extra set of source files (web-uplift-c6i1).
+    const staged = join(vendorRoot, 'scratch', `.stage-${process.pid}-${dir.dest}`);
+    rmSync(staged, { recursive: true, force: true });
+    mkdirSync(staged, { recursive: true });
+    if (existsSync(src)) copyDir(src, staged);
+    if (!existsSync(dst)) mkdirSync(dst, { recursive: true });
+    publishStagedTree(staged, dst);
+    rmSync(staged, { recursive: true, force: true });
   }
 
   for (const file of VENDORED_FILES) {
@@ -192,7 +241,12 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     if (refusesSymlink(dst)) continue;
     if (existsSync(src)) {
       mkdirSync(dirname(dst), { recursive: true });
-      copyFileSync(src, dst);
+      // A single file is published by rename too: copyFileSync truncates the destination first, so a reader
+      // could see a partially written module. Renamed from a sibling temp name in the same directory, which
+      // keeps it on one filesystem (web-uplift-c6i1).
+      const temp = `${dst}.tmp-${process.pid}`;
+      copyFileSync(src, temp);
+      renameSync(temp, dst);
     }
   }
 
