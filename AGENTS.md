@@ -175,15 +175,15 @@ baseline pass: a green gate that never ran the suite for a changed module is a f
   its coverage instead of `UNKNOWN` (fleet docs/speed.md R15).
 
 The budget is a median under 60s (the fleet's `docs/speed.md` R2) for the fast gate, and the full gate runs
-once per landing; measured whole-gate samples for this work are 13s direct and 14-20s in the busy cached
-runs, and the only target whose cost moved is this gate's own self-test (`tests/test-fast.mjs`, +2.2s for six
-bounded spawns). Measurements with their provenance live on the bead. This repo deliberately keeps no
-separate speed file: the policy is executable in two places (`--list` and the `OMITTED_RULES` reasons) and
-prose in this one, and a fourth place would only drift.
+once per landing. `docs/speed.md` in this repo is the readable record: the routing policy, the omission
+rules with their reasons, the escape, and the measurements with their provenance. It is not a fourth place
+to drift - `tests/test-fast.mjs` parses its rule table and compares every reason cell to `OMITTED_RULES`,
+specifically so a wrong-but-plausible reason with a right rule id fails.
 
 `tests/test-fast.mjs` pins each of these, including that NO AUTHORED executable tracked path is omitted by
 a rule while every non-executable tracked path is mapped or omitted, that the refusal names the escape, and
-that this file states every rule id. `npm test` remains the merger's full union gate and is unchanged.
+that AGENTS.md and `docs/speed.md` both state the rule ids. `npm test` remains the merger's full union gate
+and is unchanged.
 
 ### Fleet configuration (~/.fleet/check.conf)
 
@@ -208,9 +208,10 @@ wrapper at a config this project owns instead:
 FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check --fast
 ```
 
-`docs/speed.md` is not maintained in this repo (see "Affected-only routing fails closed" above): the
-routing policy and its reasons are executable via `node scripts/test-fast.mjs --list`, and the budget and
-measurements are on the bead.
+`docs/speed.md` is this project's speed record: gate budgets, the affected-only routing policy, the named
+omission rules with the reason each path is skipped, the escape when the fast gate refuses a change, and the
+measurements with their provenance. The policy is also executable - `node scripts/test-fast.mjs --list`
+prints each rule and its reason from `OMITTED_RULES` - and the test suite walks both against that data.
 
 ## Releases & versioning
 

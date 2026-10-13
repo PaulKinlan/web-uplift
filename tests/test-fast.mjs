@@ -20,8 +20,9 @@
  *     target runs; the failure uses the fleet's anchored `fast-gate: unmapped:` marker and exit 1.
  * 13. Suite execution is published with the fleet's `fast-gate: running|passed|failed:` markers so the
  *     cached fast record can state its coverage instead of UNKNOWN.
- * 14. A refusal is actionable (the next action, a paste-able map entry, and the qualified full-gate escape)
- *     and the same policy is stated in AGENTS.md and printed by --list from the OMITTED_RULES data.
+ * 14. A refusal is actionable (the next action, a paste-able map entry, and the qualified full-gate escape);
+ *     AGENTS.md names the escape and the rules, docs/speed.md's omission table is parsed and compared to
+ *     the OMITTED_RULES reasons verbatim, and --list prints each rule with its reason from that data.
  */
 
 import { strict as assert } from 'node:assert';
@@ -526,42 +527,69 @@ function testUnmappedExecutablePathsFailClosed() {
 
 /**
  * A refusal must be ACTIONABLE (web-uplift-coord, the condition on this bead) and the policy must be
- * readable without running the gate. This repo keeps that in exactly two places, both of which are checked
- * here: AGENTS.md (prose, and the escape a refused lane follows) and `--list` (executable, printing each
- * rule AND its reason from OMITTED_RULES, the single source of truth). Coord's decision on 2026-10-13 was
- * explicitly NOT to add a third file, because a fourth place to state the policy only drifts; so this test
- * walks AGENTS.md against the rule DATA rather than any separate speed file.
+ * readable without running the gate and checked against the code. Three artefacts, all walked here:
+ *   - AGENTS.md: where a lane looks first, and it must name the ESCAPE as well as the rules (a lane that
+ *     cannot see the way forward adds an omission rule to make the gate green);
+ *   - docs/speed.md: the readable record, whose omission table is PARSED and compared to OMITTED_RULES
+ *     verbatim, so a wrong-but-plausible reason with a right rule id fails (round-3 finding P2 - an
+ *     id-presence check would have passed exactly that);
+ *   - `--list`: the executable half, printing each rule AND its reason from the single source of truth.
  */
 function testRefusalIsActionableAndDocumented() {
   console.log('Testing that a refusal names the next action and that the policy is documented...');
 
-  const docPath = join(repoRoot, 'AGENTS.md');
-  const doc = readFileSync(docPath, 'utf8');
-  assert(doc.includes('fast-gate: unmapped:'), 'AGENTS.md must name the marker a lane will see');
-  assert(/NEXT ACTION/.test(doc), 'AGENTS.md must carry the one next action, not only the policy');
-  assert(doc.includes('KNOWN_STANDALONE_TESTS') && doc.includes('OMITTED_RULES'), 'AGENTS.md must name both mapping routes');
-  assert(/FLEET_CHECK_CONF=\S+\s+fleet-check/.test(doc), 'AGENTS.md must name the escape with its config override');
-  // The escape must be qualified: the full gate is not evidence for a path `npm test` does not run
-  // (review finding P1 on a709eb9).
-  assert(
-    /runs `tests\/\*\.test\.mjs`\s+only/.test(doc) && /not evidence on its own/.test(doc),
-    'AGENTS.md must qualify the escape: npm test only runs tests/*.test.mjs'
-  );
-  // Every rule has to be named in AGENTS.md, and its reason must be printed by the executable source.
-  for (const rule of OMITTED_RULES) {
-    assert(doc.includes(`\`${rule.id}\``), `AGENTS.md must name the omission rule ${rule.id}`);
+  const docs = {
+    'AGENTS.md': readFileSync(join(repoRoot, 'AGENTS.md'), 'utf8'),
+    'docs/speed.md': readFileSync(join(repoRoot, 'docs', 'speed.md'), 'utf8'),
+  };
+  for (const [name, doc] of Object.entries(docs)) {
+    assert(doc.includes('fast-gate: unmapped:'), `${name} must name the marker a lane will see`);
+    assert(/NEXT ACTION/.test(doc), `${name} must carry the one next action, not only the policy`);
+    assert(doc.includes('KNOWN_STANDALONE_TESTS') && doc.includes('OMITTED_RULES'), `${name} must name both mapping routes`);
+    assert(/FLEET_CHECK_CONF=\S+\s+fleet-check/.test(doc), `${name} must name the escape with its config override`);
+    // The escape must be qualified: the full gate is not evidence for a path `npm test` does not run
+    // (round-3 finding P1).
+    assert(
+      /runs `tests\/\*\.test\.mjs`\s+only/.test(doc) && /not evidence on its own/i.test(doc),
+      `${name} must qualify the escape: npm test only runs tests/*.test.mjs`
+    );
+    for (const rule of OMITTED_RULES) {
+      assert(doc.includes(`\`${rule.id}\``), `${name} must name the omission rule ${rule.id}`);
+    }
   }
+
+  // The readable record's table is DATA: parse the rows and compare the reason cell to the rule's own reason
+  // string, and fail on a row for a rule that no longer exists.
+  const tableRows = new Map();
+  for (const line of docs['docs/speed.md'].split('\n')) {
+    const parsed = line.match(/^\|\s*`([a-z-]+)`\s*\|(.*)\|\s*$/);
+    if (parsed) tableRows.set(parsed[1], parsed[2].split('|').map((cell) => cell.trim()));
+  }
+  for (const rule of OMITTED_RULES) {
+    assert(tableRows.has(rule.id), `docs/speed.md must have a table row for the omission rule ${rule.id}`);
+    const cells = tableRows.get(rule.id);
+    assert.equal(
+      cells[cells.length - 1],
+      rule.reason,
+      `the reason cell for ${rule.id} must be the rule's own reason string, not a paraphrase`
+    );
+    assert(cells.length === 2 && cells[0].length > 0, `the row for ${rule.id} must also say what it omits`);
+  }
+  for (const id of tableRows.keys()) {
+    assert(OMITTED_RULES.some((rule) => rule.id === id), `docs/speed.md documents an omission rule that does not exist: ${id}`);
+  }
+  // The claimed cost is a number with provenance, and the spawn count is the kind of detail that rots
+  // silently when a test is added (round-3 finding P2).
+  assert(/six bounded\s+`node` spawns/.test(docs['docs/speed.md']), 'docs/speed.md must state the measured spawn count, so adding a test forces the measurement to be updated');
+  assert(/7\.2s direct/.test(docs['docs/speed.md']) && /11\.0s in the cached/.test(docs['docs/speed.md']), 'docs/speed.md must give each timing sample with its provenance');
+
+  // The executable half: `--list` prints every rule and its reason from the data.
   const listRes = spawnSync(process.execPath, [join(repoRoot, 'scripts', 'test-fast.mjs'), '--list'], { encoding: 'utf8' });
   assert.equal(listRes.status, 0, '--list must exit 0');
   for (const rule of OMITTED_RULES) {
     assert(listRes.stdout.includes(rule.id), `--list must print the omission rule ${rule.id}`);
     assert(listRes.stdout.includes(rule.reason), `--list must print the reason for ${rule.id}`);
   }
-  // No separate policy file: coord's decision, and a fourth place to state the policy would only drift.
-  assert(
-    !/\.speed\.md|\.omission-rules\.md/.test(doc) || /is not maintained in this repo/.test(doc),
-    'AGENTS.md must not point lanes at a second policy document'
-  );
 
   // The instruction a lane actually reads. It must name the next action, show the map entry to paste with
   // this path in it, and offer the honest route when the map cannot be extended now.
