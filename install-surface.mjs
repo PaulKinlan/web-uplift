@@ -191,9 +191,12 @@ export function refusedDestination(dst, rootDir) {
 //     because a rename cannot cross types; those two transitions remove the old entry first, so they are a
 //     disappearance for that path rather than a stale read.
 //   - a crash mid-publish: the staging tree under `.web-uplift/scratch/` can be left behind, and it is
-//     removed at the start of the next run. Nothing is deleted from the destination DURING the publish
-//     phase, which is where this crash has to happen for the staging tree to be left behind; a crash
-//     later, inside the prune, has already removed the obsolete entries it processed.
+//     removed only AFTER the prune, at the start of the next run (the staged tree is published, then the
+//     obsolete entries are pruned, then the staged tree is removed), so a crash anywhere between its
+//     creation and that removal strands it, and a crash DURING the prune strands it too (web-uplift-x7ym).
+//     What the destination has lost by then depends on which paths were already published: the create and
+//     rename paths have deleted nothing, while a path whose type changed has had its old entry removed
+//     already, and that removal is not undone.
 //   - the staging tree is invisible to the syntax census because that walk skips a directory named `scratch`
 //     (tests/test-helpers.mjs SKIP_DIRS). That coupling is asserted from the test side too: the fixture walks
 //     with the census's own listFiles and fails if a staged path becomes visible.
@@ -204,7 +207,9 @@ export function refusedDestination(dst, rootDir) {
 //
 // The two phases are exported SEPARATELY, and that is the seam the interleaving test drives step by step
 // (web-uplift-c6i1). The order is the whole property: publish first, remove obsolete entries after, so for a
-// path the new content STILL HAS the only thing a reader can see is STALE content, never a hole. A path the
+// path the new content STILL HAS, whose TYPE it also still has, the only thing a reader can see is STALE
+// content, never a hole - a path whose type changed is removed during publish instead, so it can be absent
+// for that moment (web-uplift-x7ym). A path the
 // source REMOVED is reconciled away by the prune, so a reader that listed it can see it disappear; the full
 // scope note sits with the publish/remove bullets above. A single function that did both would leave the
 // ordering untestable except by racing it, which is what the acceptance criteria rule out.
