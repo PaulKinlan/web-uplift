@@ -273,10 +273,10 @@ export function importingSuitesOf(modulePath, repo = repoRoot) {
  * STILL unwired, so wiring one without removing the exemption fails the gate instead of silently passing.
  */
 export const UNWIRED_SHARED_MODULES = [
-  { file: 'tests/mwg-drift-basis-floor.mjs', reason: 'imported by tests/mwg-principles.test.mjs; selects three mwg checks that do not import it (web-uplift-ev2u)' },
-  { file: 'tests/mwg-drift-check.mjs', reason: 'imported by tests/mwg-principles.test.mjs; selects three mwg checks that do not import it (web-uplift-ev2u)' },
-  { file: 'tests/mwg-drift-classify.mjs', reason: 'imported by tests/mwg-principles.test.mjs; selects three mwg checks that do not import it (web-uplift-ev2u)' },
-  { file: 'tests/mwg-drift-extract-pipe.mjs', reason: 'imported by tests/mwg-principles.test.mjs; selects three mwg checks that do not import it (web-uplift-ev2u)' },
+  // Emptied by web-uplift-ev2u: the four tests/mwg-drift-*.mjs helpers used to sit here because the
+  // mwg subsystem selected three checks that do not import them. The subsystem now also names their
+  // only importer (tests/mwg-principles.test.mjs), so they are honestly wired and the declarations
+  // were removed rather than left stale - which is exactly what the control below enforces.
 ];
 
 /**
@@ -358,6 +358,10 @@ export const SUBSYSTEMS = [
       { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
       { type: 'node', path: 'tests/mwg-artefact.mjs', args: ['verify'], label: 'MWG artifact verification' },
       { type: 'node', path: 'tests/mwg-catalog-extract.mjs', label: 'MWG catalog extract test' },
+      // The drift helpers under tests/mwg-drift-*.mjs are imported ONLY by this suite. Without it the
+      // plan selected three mwg checks that cannot fail for a change to them, which is why the four
+      // were declared unwired (web-uplift-ev2u). Naming the importer makes the coverage honest.
+      { type: 'node', path: 'tests/mwg-principles.test.mjs', label: 'MWG principles and drift unit tests' },
       { type: 'regression', filter: 'Mwg', label: 'Regression: MWG catalog and drift tests' },
       { type: 'regression', filter: 'Principles', label: 'Regression: Principles sync tests' },
       { type: 'regression', filter: 'Guidance', label: 'Regression: Guidance usage tests' },
