@@ -1,6 +1,6 @@
 # ADR 0003: Preserve source-test fidelity and make generated-tree updates readable
 
-- **Status**: Proposed (architect decision; implementation pending)
+- **Status**: Accepted; the `nz68` half is implemented in `install-surface.mjs` (web-uplift-c6i1), the other two in their fixture writers
 - **Date**: 2026-10-13
 - **Related beads**: `web-uplift-qmku` (decision), `web-uplift-c6i1` (implementation proposal), `web-uplift-nz68`, `web-uplift-lql5`, `web-uplift-vubz`
 - **Scope**: Tests and tooling sharing one worktree; no gate-selection or concurrency change.

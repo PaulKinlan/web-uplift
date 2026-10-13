@@ -154,7 +154,8 @@ export function refusedDestination(dst, rootDir) {
   };
 }
 
-// Publish a staged tree into place WITHOUT ever leaving a destination path absent (web-uplift-c6i1). This
+// Publish a staged tree into place WITHOUT ever leaving a destination path absent (web-uplift-c6i1, the
+// `nz68` half of docs/adr-0003-mutable-repository-root.md). This
 // generator used to delete each destination directory whole and recopy it, so a reader that listed a path and
 // then read it - which is exactly what the syntax census does to this repository - could hold a path that no
 // longer existed. Measured before this change, over a republished tree: 5407 list-then-read cycles produced
