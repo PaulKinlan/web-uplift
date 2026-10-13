@@ -34,7 +34,12 @@ export const PROJECT_COMMANDS = ['npm run test:fast', 'npm test'];
 /** The git COMMON dir, i.e. project identity. Two worktrees of one repository share it. */
 export function gitCommonDir(path) {
   try {
-    return realpathSync(execFileSync('git', ['-C', path, 'rev-parse', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().replace(/^\.git$/, path));
+    const out = execFileSync('git', ['-C', path, 'rev-parse', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // --git-common-dir prints a RELATIVE '.git' in the canonical checkout and an ABSOLUTE path in a linked
+    // worktree. Resolving it against the queried path is what makes the canonical checkout and its worktrees
+    // compare EQUAL; substituting the path for '.git' made the canonical checkout look like another project
+    // (web-uplift-3skp).
+    return realpathSync(resolve(path, out));
   } catch {
     return null;
   }
@@ -55,16 +60,27 @@ export function judgeVerdict(record, { repo = repoRoot, thisCommonDir = gitCommo
       recorded,
     };
   }
+  const otherCommon = recordedRepo ? gitCommonDir(recordedRepo) : null;
   if (recordedRepo) {
-    const otherCommon = gitCommonDir(recordedRepo);
     if (otherCommon && thisCommonDir && otherCommon !== thisCommonDir) {
       return { ok: false, why: `produced by cmd '${cmd}' in a different project (${recordedRepo})`, recorded };
     }
   }
-  const caveat = recordedRepo
-    ? ''
-    : ' (the record carries no repo, so the project was not checked - only the command was)';
-  return { ok: true, why: `produced by cmd '${cmd}'${recordedRepo ? ` in ${recordedRepo}` : ''}${caveat}`, recorded };
+  if (recordedRepo) {
+    if (!otherCommon) {
+      // A retired worktree, or a path that no longer resolves: the command is ours but the project could NOT
+      // be checked, and the message has to say that rather than imply a comparison that never happened
+      // (web-uplift-exa6 - the contract was always "fall back to the command and SAY the path was
+      // unavailable").
+      return {
+        ok: true,
+        why: `produced by cmd '${cmd}'; its recorded repo '${recordedRepo}' could not be resolved (a retired worktree, for example), so the project was not checked - only the command was`,
+        recorded,
+      };
+    }
+    return { ok: true, why: `produced by cmd '${cmd}' in ${recordedRepo}`, recorded };
+  }
+  return { ok: true, why: `produced by cmd '${cmd}' (the record carries no repo, so the project was not checked - only the command was)`, recorded };
 }
 
 /** Newest record, or the one for a tree. */

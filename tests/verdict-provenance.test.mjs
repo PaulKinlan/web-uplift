@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runSuite } from './test-helpers.mjs';
-import { judgeVerdict, findRecord, PROJECT_COMMANDS } from '../scripts/check-verdict.mjs';
+import { judgeVerdict, findRecord, gitCommonDir, PROJECT_COMMANDS } from '../scripts/check-verdict.mjs';
 
 const repoRoot = process.cwd();
 const scratch = () => mkdtempSync(join(tmpdir(), 'ebvj-verdict-'));
@@ -59,21 +59,41 @@ function testForeignProjectIsRefused() {
   }
 }
 
-function testAnotherWorktreeOfThisProjectIsAccepted() {
-  // Coord's trap: six worktrees of this repository exist on this VM, and a PATH-keyed refusal would refuse
-  // the merger's legitimate verdict. A second worktree of THIS repo must be accepted.
-  const wt = scratch();
+function testAnotherWorktreeOfTheSameProjectIsAccepted() {
+  // Coord's trap: six worktrees of this repository exist here, and a PATH-keyed refusal would refuse the
+  // merger's legitimate verdict. The pair is built in a TEMP repo, not in this checkout: a real
+  // `git worktree add` here runs the repository's post-checkout hook (which a reviewer lane is refused) and
+  // leaks prunable entries into .git/worktrees (web-uplift-9wp7). The same property is pinned without
+  // touching the host: two checkouts sharing one common dir are ONE project.
+  const base = scratch();
+  const main = join(base, 'main');
+  const wt = join(base, 'wt');
   try {
-    execFileSync('git', ['worktree', 'add', '-q', '--detach', wt, 'HEAD'], { cwd: repoRoot, stdio: 'ignore' });
-    const verdict = judgeVerdict(record({ cmd: 'npm run test:fast', repo: wt }));
-    assert.equal(verdict.ok, true, `another worktree of this project must be accepted, not refused by path (got: ${verdict.why})`);
-    console.log(`✔ accepted a verdict from another worktree of this project: ${verdict.why}`);
+    mkdirSync(main, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: main, stdio: 'ignore' });
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: main, stdio: 'ignore' });
+    execFileSync('git', ['worktree', 'add', '-q', '--detach', wt, 'HEAD'], { cwd: main, stdio: 'ignore' });
+    const mainCommon = gitCommonDir(main);
+    assert(mainCommon, 'the temp main repo must resolve a common dir');
+    assert.equal(gitCommonDir(wt), mainCommon,
+      `a linked worktree must resolve to the SAME common dir as its main checkout; --git-common-dir prints a relative '.git' in the main checkout and an absolute path in a worktree, so resolving it against the queried path is the whole point (web-uplift-3skp)`);
+    const verdict = judgeVerdict(record({ cmd: 'npm run test:fast', repo: wt }), { thisCommonDir: mainCommon });
+    assert.equal(verdict.ok, true, `another worktree of the same project must be accepted, not refused by path (got: ${verdict.why})`);
+    console.log(`✔ another worktree of the same project is accepted: ${verdict.why}`);
   } finally {
-    try {
-      execFileSync('git', ['worktree', 'remove', '--force', wt], { cwd: repoRoot, stdio: 'ignore' });
-    } catch { /* already gone */ }
-    rmSync(wt, { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true });
   }
+}
+
+function testUnresolvableRepoPathIsAcceptedWithACaveat() {
+  // A retired worktree, or any path that no longer resolves: the command is ours but the project could not be
+  // checked, so the message must SAY that instead of implying a comparison (web-uplift-exa6).
+  const gone = join(tmpdir(), `ebvj-retired-${process.pid}-${Date.now()}`);
+  const verdict = judgeVerdict(record({ cmd: 'npm run test:fast', repo: gone }));
+  assert.equal(verdict.ok, true, `an unresolvable repo must not refuse on its own (got: ${verdict.why})`);
+  assert(verdict.why.includes('could not be resolved'), `the message must say the path was unavailable (got: ${verdict.why})`);
+  assert(verdict.why.includes('not checked'), `the message must say the project was NOT checked (got: ${verdict.why})`);
+  console.log(`✔ an unresolvable repo path is accepted with the caveat: ${verdict.why}`);
 }
 
 function testRecordWithNoRepoIsAcceptedWithTheCaveat() {
@@ -114,7 +134,8 @@ export const verdictProvenanceTests = [
   testThisProjectsVerdictIsAccepted,
   testForeignCommandIsRefused,
   testForeignProjectIsRefused,
-  testAnotherWorktreeOfThisProjectIsAccepted,
+  testAnotherWorktreeOfTheSameProjectIsAccepted,
+  testUnresolvableRepoPathIsAcceptedWithACaveat,
   testRecordWithNoRepoIsAcceptedWithTheCaveat,
   testRecordWithNoCommandIsRefused,
   testFindRecordMatchesTheRealCacheNaming,
@@ -124,7 +145,8 @@ export {
   testThisProjectsVerdictIsAccepted,
   testForeignCommandIsRefused,
   testForeignProjectIsRefused,
-  testAnotherWorktreeOfThisProjectIsAccepted,
+  testAnotherWorktreeOfTheSameProjectIsAccepted,
+  testUnresolvableRepoPathIsAcceptedWithACaveat,
   testRecordWithNoRepoIsAcceptedWithTheCaveat,
   testRecordWithNoCommandIsRefused,
   testFindRecordMatchesTheRealCacheNaming,
