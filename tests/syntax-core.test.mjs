@@ -1924,7 +1924,10 @@ export function testSuiteListsMatchRegressionRegistry() {
   // population changed without saying so. When a case or a suite file is added or removed deliberately,
   // update the number in the same commit and say why in the message.
   const EXPECTED_SUITE_FILES = 14;
-  const EXPECTED_CASES = 163;
+  // 163 was k63b's landing (161 + 2); web-uplift-c6i1 adds 4 cases to tests/install-package.test.mjs (the
+  // kept-readable generator case, the delete-then-copy control, the publish-order case, and the concurrent
+  // republish), so the declared population is 167 - measured from this control's own count on the union.
+  const EXPECTED_CASES = 167;
   assert(
     suiteFiles.length === EXPECTED_SUITE_FILES,
     `the gate now runs ${suiteFiles.length} suite file(s) and this control is pinned at ${EXPECTED_SUITE_FILES}. If a suite file was added or removed on purpose, update EXPECTED_SUITE_FILES and EXPECTED_CASES in the same commit; if it was not, a suite has silently stopped running (web-uplift-ougd).`,
