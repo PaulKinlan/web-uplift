@@ -144,13 +144,27 @@ the gate, and the CPU it costs is the reason this matters (the fleet's scarcest 
 NOTHING IS MEASURED LESS. Every assertion is unchanged, and the two converted cases carry their own
 functional check that the sharing is clean: `testConsoleEvidence` asserts the `/clean` load reports zero
 console entries after the `/noisy` load, and it still does. Paired measurement (same VM, same command,
-`tests/regression.mjs --only`, one browser per call vs one per case):
+`tests/regression.mjs --only`, one browser per call vs one per case), each pair measured back-to-back on
+the conversion's own branch before it landed - the throttling pair on base `8588171`, not on this tip's base -
+one figure with its context, rather than a range across runs:
 
 | case | before | after | saved | launches |
 | --- | --- | --- | --- | --- |
 | `testFetchDeadlineAndRawComparison` | 30949ms | 25382ms | -5.6s | 5 -> 1 |
 | `testConsoleEvidence` | 12558ms | 9673ms | -2.9s | 6 -> 1 |
+| `testThrottlingConditions` | 15840ms | 9181ms | -6.7s | 8 -> 1 |
 
-Still to convert (the seam is in place): `testThrottlingConditions` (7 -> 1) and the other multi-`gather`
-cases. Do NOT share a browser in `testCdpDeadline` (it deliberately points Chrome at a blackhole server),
+`testThrottlingConditions` converts ALL EIGHT of its `gather` calls, not the seven that do the measuring
+(web-uplift-qsqp). Its final assertion rejects an unknown network profile, and `gather` launches the browser
+before the primitive validates the option, so that call paid a full Chrome start only to throw - which is why
+this reads 8 -> 1 rather than 7 -> 1. Its assertions are also the functional check that the sharing is clean,
+and every one of them still passes under a single browser: a run with no device-metrics override reports no
+viewport, an unthrottled run carries no conditions block at all, mobile-lighthouse implies 4x CPU + 150ms
+RTT, and the slow-3g probe is really more than 1000ms slower than the plain one. The rejected call's launch is
+removed separately and NOT yet landed: web-uplift-3mrg validates the declarative conditions before
+`launchChrome`, which makes that eighth launch cost nothing for every caller rather than only in this case.
+That branch is awaiting its clearance, so read this as the direction of travel, not as a landed fact; what is
+landed and measured here is the row above.
+
+Still to convert (the seam is in place): the other multi-`gather` cases. Do NOT share a browser in `testCdpDeadline` (it deliberately points Chrome at a blackhole server),
 `testNoOrphanBrowser` (it asserts teardown) or `testResiliencePrimitive` (service workers).
