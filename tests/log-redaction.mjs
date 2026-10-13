@@ -75,63 +75,76 @@ export async function testLogUrlRedaction() {
   assert(redacted('<audit-url>') === '<audit-url>' && redacted('') === '' && redacted(undefined) === undefined,
     'a non-URL placeholder passes through unchanged');
 
-  // 1b. The warning for a URL the parser REJECTS (web-uplift-9lhy). The redactor's job is hardest
-  // here, because the parser it normally relies on is the thing that rejected the input, which is
-  // why this one path had grown a regex of its own: it scrubbed '[?&]name=value' only, so
-  // 'https://user:secret@invalid-host:port/path' was printed with the password intact. The runner
-  // is driven for REAL (--dry-run spawns no agent), because a re-statement of the fix in the test
-  // is not the fix.
+  // 1b. The warning for a URL the parser REJECTS (web-uplift-9lhy, web-uplift-mafp). The redactor's
+  // job is hardest here, because the parser it normally relies on is the thing that rejected the
+  // input, which is why this one path had grown a regex of its own: it scrubbed '[?&]name=value' only,
+  // so 'https://user:secret@invalid-host:port/path' was printed with the password intact. The runner
+  // is driven for REAL (--dry-run spawns no agent), because a re-statement of the fix in the test is
+  // not the fix.
   //
-  // THREE CLASSES of rejected value, because round 2 (web-uplift-mafp) proved the first fix covered
-  // only one of them. The shared redactor's unparseable-authority sweep stops a run at a space, so a
-  // space inside the userinfo hid the credential from it and the value came back VERBATIM - the
-  // exact shape round 1 set aside as a malformed-paste curiosity. That case is now WITHHELD, a value
-  // the shared rule can render is printed redacted, and a value with nothing in it is printed as
-  // written (the positive half: a warning that names nothing is its own defect).
+  // The class of each row is decided by the value's SHAPE: 'withheld' when the shared rule recognises
+  // a credential in the value as written OR in its whitespace-free form, 'printed' only when it
+  // recognises none in either. The COMPOSITION rows are the ones two rounds of review found missing:
+  // a whitespace-hidden credential AND a credential the shared rule can see, in the SAME value, in
+  // both orders, with the visible one buried among benign parameters and with it in the fragment.
+  // Round 2's guard returned as soon as the visible question was true, so exactly those rows printed
+  // the redacted query credential alongside the whitespace-hidden password (web-uplift-mafp round 3).
   const REJECTED = [
-    // [value, the credential value that must NOT survive, the line the log must carry]
-    ['https://user:secret@invalid-host:port/path', 'secret',
-      'skipping invalid URL: https://[redacted]:[redacted]@invalid-host:port/path'],
-    ['http://user:password@[invalid-ipv6]', 'password',
-      'skipping invalid URL: http://[redacted]:[redacted]@[invalid-ipv6]'],
-    ['https://x.test:99999/?api_key=LIVEKEY123&page=2', 'LIVEKEY123',
-      'skipping invalid URL: https://x.test:99999/?api_key=%5Bredacted%5D&page=2'],
-    // The whitespace-hidden credentials (web-uplift-mafp). The value is withheld: the line states the
-    // reason and the length, and neither the raw nor the whitespace-free form is printed.
-    ['https://us er:SECRET@invalid-host:port/path', 'SECRET', 'skipping invalid URL: [withheld:'],
-    ['https://user:se cret@host:99999/', 'se cret', 'skipping invalid URL: [withheld:'],
-    // A tab is NOT hidden: the parser strips tabs, so this value's userinfo IS reachable by the
-    // shared rule and the line keeps the redacted URL (withheld is not "anything with whitespace").
-    ['https://user:secret@fail.test:99999/\tand\tmore', 'secret',
-      'skipping invalid URL: https://[redacted]:[redacted]@fail.test:99999/\tand\tmore'],
-    // Whitespace with nothing hidden behind it keeps its full diagnostic, which is what stops the
-    // withhold branch from being "refuse everything unparseable".
-    ['https://ok.test:99999/ page', null, 'skipping invalid URL: https://ok.test:99999/ page'],
-    ['https://ok.test:99999/', null, 'skipping invalid URL: https://ok.test:99999/'],
-    ['not a url at all', null, 'skipping invalid URL: not a url at all'],
+    // [class, value, credential values that must NOT survive, the line the log must carry]
+    ['withheld', 'https://user:secret@invalid-host:port/path', ['secret'], 'skipping invalid URL: [withheld:'],
+    ['withheld', 'http://user:password@[invalid-ipv6]', ['password'], 'skipping invalid URL: [withheld:'],
+    ['withheld', 'https://x.test:99999/?api_key=LIVEKEY123&page=2', ['LIVEKEY123'], 'skipping invalid URL: [withheld:'],
+    ['withheld', 'https://us er:SECRET@invalid-host:port/path', ['SECRET'], 'skipping invalid URL: [withheld:'],
+    ['withheld', 'https://user:se cret@host:99999/', ['se cret'], 'skipping invalid URL: [withheld:'],
+    // A tab inside the userinfo is NOT hidden (the parser strips tabs, so the shared rule reaches it),
+    // but the value still carries a credential and is withheld all the same: the decision is the shape
+    // of the value, not which mechanism found it.
+    ['withheld', 'https://user:secret@fail.test:99999/\tand\tmore', ['secret'], 'skipping invalid URL: [withheld:'],
+    // COMPOSITION: the hidden credential first, then a visible query credential - the exact row round
+    // 2 disclosed.
+    ['withheld', 'https://us er:SECRET@invalid-host:port/path?api_key=OTHER', ['SECRET', 'OTHER'], 'skipping invalid URL: [withheld:'],
+    // COMPOSITION: the other order, visible credential first and the hidden one in a second URL.
+    ['withheld', 'https://x.test:99999/a?api_key=OTHER&next=https://us er:SECRET@h.test:99999/', ['SECRET', 'OTHER'], 'skipping invalid URL: [withheld:'],
+    // COMPOSITION: the visible credential behind other parameters, so an early exit on it is reached
+    // only after the value has been partly rendered.
+    ['withheld', 'https://us er:SECRET@invalid-host:port/path?page=2&api_key=OTHER&lang=en', ['SECRET', 'OTHER'], 'skipping invalid URL: [withheld:'],
+    // COMPOSITION: the visible credential in the FRAGMENT rather than the query.
+    ['withheld', 'https://us er:SECRET@invalid-host:port/path#access_token=OTHER', ['SECRET', 'OTHER'], 'skipping invalid URL: [withheld:'],
+    // Nothing credential-shaped in either form: the diagnostic is kept in full, whitespace included,
+    // which is what stops the withhold rule from becoming "refuse every unparseable URL".
+    ['printed', 'https://ok.test:99999/ page', [], 'skipping invalid URL: https://ok.test:99999/ page'],
+    ['printed', 'https://ok.test:99999/', [], 'skipping invalid URL: https://ok.test:99999/'],
+    ['printed', 'not a url at all', [], 'skipping invalid URL: not a url at all'],
+    // Whitespace where the joined-up name is a WEAK word that is not a credential (sort key, postal
+    // code): the over-redaction this must NOT do, asserted rather than assumed.
+    ['printed', 'https://ok.test:99999/page?sort key=1', [], 'skipping invalid URL: https://ok.test:99999/page?sort key=1'],
+    ['printed', 'https://ok.test:99999/page?postal code=90210', [], 'skipping invalid URL: https://ok.test:99999/page?postal code=90210'],
   ];
   const batch = spawnSync(process.execPath,
-    [join(repoRoot, 'runner', 'run-batch.mjs'), '--dry-run', ...REJECTED.map(([u]) => u), 'https://ok.test/'],
+    [join(repoRoot, 'runner', 'run-batch.mjs'), '--dry-run', ...REJECTED.map(([, u]) => u), 'https://ok.test/'],
     { encoding: 'utf8', timeout: 60000 });
   assert(batch.status === 0, `a batch with invalid URLs must still run: ${batch.stderr}`);
   const printed = `${batch.stdout}\n${batch.stderr}`;
-  for (const [badUrl, secret] of REJECTED) {
-    if (secret) {
-      assert(!printed.includes(secret), `an invalid URL's credential must not reach the log ("${secret}" from ${badUrl} survived):\n${printed}`);
+  for (const [kind, badUrl, secrets, expectedLine] of REJECTED) {
+    for (const secret of secrets) {
+      assert(!printed.includes(secret), `a rejected URL's credential must not reach the log ("${secret}" from ${badUrl} survived):\n${printed}`);
+    }
+    assert(printed.includes(expectedLine), `the log must carry "${expectedLine}" for ${badUrl}:\n${printed}`);
+    // A withheld value is withheld WHOLE: not the raw form and not a partly rendered one.
+    if (kind === 'withheld') {
+      assert(!printed.includes(badUrl), `the withheld value must not appear at all: ${badUrl}\n${printed}`);
     }
   }
-  for (const [badUrl, , expectedLine] of REJECTED) {
-    assert(printed.includes(expectedLine),
-      `the log must carry "${expectedLine}" for ${badUrl}:\n${printed}`);
-  }
-  // The withheld form must appear exactly once per withheld value: a runner that withheld EVERY
-  // rejected URL would satisfy the credential assertions above while destroying the diagnostic.
-  const withheld = printed.split('[withheld:').length - 1;
-  assert(withheld === 2, `exactly the two whitespace-hidden values must be withheld, got ${withheld}:\n${printed}`);
-  // Positive control: the warning still fires and still names the URLs it can render, or the
-  // assertions above would pass on a runner that simply stopped printing them.
-  assert(printed.includes('skipping invalid URL: https://ok.test:99999/ page'),
-    `a rejected URL with nothing hidden must still be printed in full:\n${printed}`);
+  // Exactly the withheld-class values are withheld, DERIVED from the table rather than fixed at a
+  // number so that adding a legitimate case cannot be accommodated by tuning this line. It still
+  // fails both failure modes: "withhold nothing" leaves credentials in the log, and "withhold
+  // everything" fails the printed rows, which can only appear in full if their values are printed.
+  const withheldCount = printed.split('[withheld:').length - 1;
+  const expectedWithheld = REJECTED.filter(([kind]) => kind === 'withheld').length;
+  assert(withheldCount === expectedWithheld,
+    `exactly the ${expectedWithheld} credential-bearing values must be withheld, got ${withheldCount}:\n${printed}`);
+  assert(expectedWithheld > 0 && REJECTED.some(([kind]) => kind === 'printed'),
+    'the table must exercise both classes, or one of the assertions above is vacuous');
 
   // 2. The census. Every output line that can print a target URL must wrap it, either
   // through the URL interpolations or, when the URL rides inside a message/command, through

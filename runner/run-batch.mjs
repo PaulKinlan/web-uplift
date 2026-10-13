@@ -78,17 +78,22 @@ function shownText(text, raw) {
 
 // The runner-level policy for a candidate the URL parser REJECTED (web-uplift-9lhy, web-uplift-mafp).
 //
-// Whether the VALUE is printed at all is a decision the shared redactor gets to make, because a
-// rejected value is the one case where the tool knows least about the shape:
-//   * the shared rule renders it and something changed: print that render (round 1's fix);
-//   * the shared rule renders it and NOTHING changed: ask it once more about the same value with the
-//     whitespace taken out. Whitespace is where its unparseable-authority sweep stops looking, so
-//     'https://us er:SECRET@invalid-host:port/path' came back untouched with the password in it
-//     while the space-free form of that same value IS redacted by the sweep. A difference there is
-//     the shared rule saying the value carries a credential it could not reach in place, so the value
-//     is WITHHELD and only the reason and its length are logged;
-//   * no difference either way: print the value as written, so an ordinary rejected URL keeps its
-//     diagnostic instead of the log line saying nothing, which is its own defect.
+// ONE analysis of the value, then ONE decision. Both questions are asked, of the shared redactor,
+// before anything is decided:
+//   * VISIBLE: does it redact the value AS WRITTEN?
+//   * HIDDEN: does it redact the value only once the whitespace is gone? Whitespace is where its
+//     unparseable-authority sweep stops looking, so 'https://us er:SECRET@host:port/' is untouched as
+//     written and redacted once the space is removed.
+// The value is printed only when BOTH are false. If either is true the value is withheld, because a
+// recognised credential anywhere in a rejected value is evidence that the value carries one, and that
+// sweep is shape-based rather than a proof about what it did not find.
+//
+// ASKING BOTH BEFORE DECIDING IS THE POINT, not a refinement. Round 2 asked the visible question first
+// and returned on it, so 'https://us er:SECRET@invalid-host:port/path?api_key=OTHER' printed the query
+// credential REDACTED and the whitespace-hidden password in the clear: the case where the value DID
+// change is evidence that something else was found, not evidence that nothing was hidden. A sequence
+// of early exits produced a disclosure twice, so the decision is computed from the shape of the value
+// in one pass and neither question can shadow the other.
 //
 // Withholding here, rather than widening the shared sweep's run break set, is deliberate: that sweep
 // is shared with the HAR artifact, the console prose scanner and the flow recorder, and dropping ' '
@@ -98,15 +103,13 @@ function shownText(text, raw) {
 // The runner's own log line is the narrower surface, so the stricter policy belongs here.
 function shownRefusedUrl(candidate) {
   const raw = String(candidate);
-  const rendered = redactUrlCredentialValues(raw);
-  if (rendered !== raw) return rendered;
-  // The whitespace-free form is asked as a QUESTION and never printed: if the shared rule redacts it,
-  // the value on the line is withheld rather than shown in either form.
   const tightened = raw.replace(/\s+/g, '');
-  if (tightened !== raw && redactUrlCredentialValues(tightened) !== tightened) {
-    return `[withheld: ${raw.length} characters, and whitespace in it hides a credential that cannot be redacted in place; remove the whitespace and re-run to see it redacted]`;
-  }
-  return rendered;
+  const rendersVisible = redactUrlCredentialValues(raw) !== raw;
+  const rendersHidden = tightened !== raw && redactUrlCredentialValues(tightened) !== tightened;
+  // Neither form carries anything the shared rule recognises: the value is the operator's own input
+  // and an unparseable URL is what they need to see, so the diagnostic is kept in full.
+  if (!rendersVisible && !rendersHidden) return raw;
+  return `[withheld: ${raw.length} characters; the value carries a credential and this diagnostic does not print a value it cannot redact in place]`;
 }
 
 const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
