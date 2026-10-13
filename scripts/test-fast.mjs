@@ -64,6 +64,119 @@ export function isDirectRunnableTest(relPath) {
 }
 
 /**
+ * Extensions that make a changed path EXECUTABLE. This mirrors the fleet's coverage checker
+ * (fleet remote/check-coverage.py, `code_exts`), so the project gate and the hub's published
+ * coverage block agree about which changed files must be covered by a suite. A changed path with one
+ * of these extensions that no subsystem maps is a FAILURE, never a baseline-only pass.
+ */
+export const CODE_EXTENSIONS = new Set([
+  '.py',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.mts',
+  '.cts',
+  '.rs',
+  '.go',
+  '.c',
+  '.cpp',
+  '.sh',
+  '.bash',
+]);
+
+/**
+ * Named omission rules (web-uplift-5i9a). A changed path that no subsystem maps may only be left out
+ * of the plan when one of these rules names it, and the rule's reason is printed with the path. This
+ * is the other half of "fail closed": the gate refuses to guess about an executable path, and it also
+ * refuses to omit one silently. Ordered, first match wins.
+ *
+ * Rationale for the rule set: it mirrors the exemptions the fleet's own coverage checker already uses
+ * (remote/check-coverage.py: `exempt_prefixes = docs/, .fleet/, .beads/, .github/, systemd/` and
+ * `exempt_exts` for documentation, data and media), so `fast-gate: unmapped:` means the same thing in
+ * this repo's log as it does in the hub's record. `deleted` is separate because a path that is gone has
+ * nothing left to run: the deleted suite is the thing that would have covered it, and runTarget already
+ * skips a mapped target whose file no longer exists (P2-3).
+ */
+export const OMITTED_RULES = [
+  {
+    id: 'deleted',
+    reason: 'deleted by this change: there is no file left in the tree to run',
+    match: (f, ctx) => !ctx.exists(f),
+  },
+  {
+    id: 'docs',
+    reason: 'documentation or prose: no executable behaviour to test',
+    match: (f) => /\.(md|txt)$/.test(f) || /^(LICENSE|NOTICE|AUTHORS)$/.test(f),
+  },
+  {
+    id: 'media-and-markup',
+    reason: 'media or markup asset, not a module',
+    match: (f) => /\.(png|jpe?g|gif|svg|webp|mp4|webm|har|css|html|ico|woff2?)$/.test(f),
+  },
+  {
+    id: 'data-and-config',
+    reason: 'data or config file, not a module',
+    match: (f) => /\.(json|jsonl|ya?ml|toml|conf|lock|keep|gitkeep|gitignore)$/.test(f),
+  },
+  {
+    id: 'recorded-artefacts',
+    reason: 'recorded run artefact: an audit or agent output, not an input to a suite',
+    match: (f) => f.startsWith('evidence-out/') || f.startsWith('.pi-subagents/'),
+  },
+  {
+    id: 'agent-and-ci-config',
+    reason: 'agent or CI tooling config: the workflow or agent that consumes it is the check',
+    match: (f) =>
+      f.startsWith('.beads/') ||
+      f.startsWith('.github/') ||
+      f.startsWith('.gemini/') ||
+      f.startsWith('.claude-plugin/') ||
+      f === '.mcp.json' ||
+      f === 'opencode.json',
+  },
+  {
+    id: 'fixture-and-demo-trees',
+    reason: 'fixture or demo tree: no fast-tier suite of its own, the suites that read it are selected by their own source maps and the full gate reads it too',
+    match: (f) =>
+      f.startsWith('tests/fixtures/') ||
+      f.startsWith('playground/') ||
+      f.startsWith('eval/') ||
+      f.startsWith('examples/'),
+  },
+];
+
+/**
+ * Classify a changed path that no subsystem mapped. Returns exactly one of:
+ *   { omitted: { path, rule, reason } } - a named rule covers it, nothing runs for it, exit stays 0
+ *   { unknown: path }                   - an executable path with no rule, which FAILS the gate
+ */
+export function classifyUnmappedPath(relPath, repo = repoRoot, exists = (p) => existsSync(join(repo, p))) {
+  const ctx = { exists };
+  for (const rule of OMITTED_RULES) {
+    if (rule.match(relPath, ctx)) {
+      return { omitted: { path: relPath, rule: rule.id, reason: rule.reason } };
+    }
+  }
+  return { unknown: relPath };
+}
+
+/**
+ * Test-support modules and the suite that IMPORTS each one. A module imported by a suite is covered by
+ * that suite, so a change to it must run the consumer; before this table existed a change to one of
+ * these selected no test target at all (it fell through to the baseline), which is the same silent
+ * green the unmapped-path rule now refuses.
+ */
+const TEST_SUPPORT_MODULES = [
+  { file: 'tests/cdp-endpoint-exposure.mjs', consumer: 'tests/chrome-cdp.test.mjs' },
+  { file: 'tests/cdp-pipe-transport.mjs', consumer: 'tests/chrome-cdp.test.mjs' },
+  { file: 'tests/console-evidence-redaction.mjs', consumer: 'tests/evidence.test.mjs' },
+  { file: 'tests/evidence-cli-source-containment.mjs', consumer: 'tests/evidence-content.test.mjs' },
+];
+
+/**
  * Known subsystems and their mapped test targets.
  */
 export const SUBSYSTEMS = [
@@ -279,6 +392,28 @@ export const SUBSYSTEMS = [
       { type: 'regression', filter: 'testSyntaxChecks', label: 'Regression: Syntax checks' },
     ],
   },
+  {
+    id: 'package-root',
+    description: 'The package root barrel (index.mjs), covered by the side-effect-free import guard',
+    // Name the FILE: index.mjs is in package.json `files` and `exports['.']`, and its only guard is the
+    // root-import regression test. Before this entry a change to it selected the baseline four instead of
+    // that guard, so a green fast gate never ran the one test that reads it.
+    match: (f) => f === 'index.mjs',
+    targets: [
+      { type: 'regression', filter: 'testPackageRootImportIsSideEffectFree', label: 'Regression: Package root import' },
+    ],
+  },
+  // One entry per test-support module, generated from the table above: a change to the module selects the
+  // consumer suite, and nothing else. A directory- or prefix-wide match here would pull a browser suite
+  // into every tests/ change.
+  ...TEST_SUPPORT_MODULES.map(({ file, consumer }) => ({
+    id: `test-support-${file.replace(/^tests\//, '').replace(/\.mjs$/, '')}`,
+    description: `Test-support module ${file} (imported by ${consumer})`,
+    match: (f) => f === file,
+    targets: [
+      { type: 'node', path: consumer, timeoutMs: 240000, label: `Consumer of ${file}: ${consumer}` },
+    ],
+  })),
 ];
 
 /**
@@ -371,6 +506,8 @@ export function mapFilesToTests(filePaths, options = {}) {
   const matchedSubsystems = new Set();
   const targetsByKey = new Map();
   const unmappedFiles = [];
+  const omittedFiles = [];
+  const exists = options.exists || ((p) => existsSync(join(repoRoot, p)));
 
   for (const rawPath of filePaths) {
     const normalized = rawPath.startsWith('/') ? relative(repoRoot, rawPath) : rawPath;
@@ -415,12 +552,20 @@ export function mapFilesToTests(filePaths, options = {}) {
     }
 
     if (!matched) {
-      unmappedFiles.push(normalized);
+      // Fail closed (web-uplift-5i9a): an unmapped path is either named by an omission rule (nothing
+      // runs, and the log says so) or it is UNKNOWN, which the CLI refuses to run to a green verdict.
+      const decision = classifyUnmappedPath(normalized, repoRoot, exists);
+      if (decision.omitted) {
+        omittedFiles.push(decision.omitted);
+      } else {
+        unmappedFiles.push(normalized);
+      }
     }
   }
 
-  // If no files or only unmapped files, include baseline targets
-  const isBaseline = targetsByKey.size === 0;
+  // Only a diff with nothing to map at all falls back to the baseline suite. A diff that contains an
+  // UNKNOWN path must not look like a baseline run: that was the false green this gate now refuses.
+  const isBaseline = targetsByKey.size === 0 && unmappedFiles.length === 0;
   if (isBaseline) {
     for (const t of BASELINE_TARGETS) {
       targetsByKey.set(targetKey(t), t);
@@ -431,6 +576,7 @@ export function mapFilesToTests(filePaths, options = {}) {
     matchedSubsystems: Array.from(matchedSubsystems),
     targets: Array.from(targetsByKey.values()),
     unmappedFiles,
+    omittedFiles,
     isBaseline,
   };
 }
@@ -460,6 +606,14 @@ export function runTarget(target, repo = repoRoot) {
   console.log(`\n▶ [test:fast] RUNNING: ${target.label}`);
   console.log(`  $ ${cmd} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`);
 
+  // The suite is named with the fleet's anchored marker vocabulary (fleet remote/check-coverage.py
+  // accepts ^fast-gate:\s*(?:running|ran|passed|completed|failed):\s*(.*)$), which is what lets the
+  // cached fast record carry a coverage block instead of UNKNOWN. The value is the suite FILE, because
+  // that is the unit the hub matches against the diff; for a regression target the named filter is in the
+  // human lines around this one.
+  const suiteName = target.type === 'node' ? target.path : 'tests/regression.mjs';
+  console.log(`fast-gate: running: ${suiteName}`);
+
   const envTimeout = process.env.TEST_FAST_TARGET_TIMEOUT_MS ? Number(process.env.TEST_FAST_TARGET_TIMEOUT_MS) : null;
   const targetTimeoutMs = envTimeout || target.timeoutMs || 120000;
   const startTime = Date.now();
@@ -467,14 +621,17 @@ export function runTarget(target, repo = repoRoot) {
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
   if (res.error?.code === 'ETIMEDOUT') {
+    console.log(`fast-gate: failed: ${suiteName}`);
     console.error(`✖ [test:fast] TIMED OUT (exceeded ${targetTimeoutMs}ms): ${target.label} (${duration}s)`);
     return { ok: false, status: 124, duration };
   }
 
   if (res.status === 0) {
+    console.log(`fast-gate: passed: ${suiteName}`);
     console.log(`✔ [test:fast] PASSED: ${target.label} (${duration}s)`);
     return { ok: true, duration };
   } else {
+    console.log(`fast-gate: failed: ${suiteName}`);
     console.error(`✖ [test:fast] FAILED (exit ${res.status}): ${target.label} (${duration}s)`);
     return { ok: false, status: res.status ?? 1, duration };
   }
@@ -537,6 +694,11 @@ Usage:
         console.log(`  - ${t.label} (${t.type}: ${t.path || t.filter})`);
       }
     }
+    console.log('\nChanged paths omitted by a named rule (no suite runs for these):');
+    for (const rule of OMITTED_RULES) {
+      console.log(`  • ${rule.id}: ${rule.reason}`);
+    }
+    console.log('\nAny other changed path with an executable extension that no subsystem maps FAILS the gate.');
     process.exit(0);
   }
 
@@ -588,11 +750,34 @@ Usage:
   if (plan.matchedSubsystems.length > 0) {
     console.log(`[test:fast] Matched subsystem(s): ${plan.matchedSubsystems.join(', ')}`);
   }
-  if (plan.unmappedFiles.length > 0) {
-    console.log(`[test:fast] Unmapped / broad file(s): ${plan.unmappedFiles.join(', ')}`);
+  if (plan.omittedFiles.length > 0) {
+    console.log(`[test:fast] Omitted ${plan.omittedFiles.length} changed file(s) by named rule (no suite runs for them):`);
+    for (const o of plan.omittedFiles) {
+      console.log(`  - ${o.path} [${o.rule}] ${o.reason}`);
+    }
   }
   if (plan.isBaseline) {
     console.log('[test:fast] No subsystem-specific changes; running fast baseline tests.');
+  }
+
+  // FAIL CLOSED (web-uplift-5i9a). An executable changed path that no rule names means the plan cannot
+  // cover the diff, so NOTHING is run and the run is a FAILURE: a green verdict here would be a record
+  // that a change was tested when no suite for it ran (fleet docs/speed.md R5 and R14). This is checked
+  // before any target starts, including in --dry-run, so a preview cannot look greener than the run.
+  if (plan.unmappedFiles.length > 0) {
+    for (const f of plan.unmappedFiles) {
+      console.log(`fast-gate: unmapped: ${f}`);
+    }
+    console.error(`fast-gate: FAIL - ${plan.unmappedFiles.length} changed file(s) map to no suite:`);
+    for (const f of plan.unmappedFiles) {
+      console.error(`  ${f}`);
+    }
+    console.error('[test:fast] No test target was executed. Fix the map in scripts/test-fast.mjs, then re-run:');
+    console.error('  * a module with a suite: add the path to the SUBSYSTEMS entry for that suite;');
+    console.error('  * a runnable suite: add it to KNOWN_STANDALONE_TESTS so it maps to itself;');
+    console.error('  * documentation/data with no suite: add a named OMITTED_RULES entry carrying the reason.');
+    console.error('[test:fast] npm test remains the merger\'s full union gate; it is not a substitute for this check.');
+    process.exit(1);
   }
 
   console.log(`[test:fast] Selected ${plan.targets.length} test target(s):`);

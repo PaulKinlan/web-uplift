@@ -136,6 +136,34 @@ For iteration and implementer fast gates, several selective mechanisms are provi
    maps changed files (via `git diff origin/master` or explicit file paths) to
    their corresponding standalone and regression test targets.
 
+### Affected-only routing fails closed (web-uplift-5i9a)
+
+The fast gate is affected-only, so a changed file that no suite maps is a **failure**, not a silent
+baseline pass: a green gate that never ran the suite for a changed module is a false green. Concretely,
+`node scripts/test-fast.mjs`:
+
+- **FAILS** (exit 1, before running anything) on any changed path with an executable extension
+  (`CODE_EXTENSIONS`: `.mjs`, `.js`, `.cjs`, `.ts`, `.tsx`, `.jsx`, `.mts`, `.cts`, `.py`, `.sh`, `.bash`,
+  plus the C/Go/Rust extensions the fleet's own coverage checker treats as code) that no `SUBSYSTEMS`
+  entry maps. It prints one `fast-gate: unmapped: <path>` per path, then `fast-gate: FAIL - N changed
+  file(s) map to no suite:` with the paths and the three ways to fix it (add a `SUBSYSTEMS` entry, add the
+  file to `KNOWN_STANDALONE_TESTS`, or add a named `OMITTED_RULES` entry). A mixed diff fails: the mapped
+  half never buys a green verdict for the unmapped half.
+- **OMITS, by a named rule with its reason printed**, a changed path that no suite maps but that is not
+  executable: documentation and prose, media and markup, data and config, `evidence-out/` and
+  `.pi-subagents/` artefacts, `.beads/`, `.github/`, `.gemini/`, `.claude-plugin/` tooling config, the
+  fixture/demo trees (`tests/fixtures/`, `playground/`, `eval/`, `examples/`), and paths deleted by the
+  change. `node scripts/test-fast.mjs --list` prints the rules and their reasons. A documentation-only or
+  deletion-only diff still runs the baseline four.
+- **PUBLISHES what ran** with the fleet's anchored markers: `fast-gate: running: <suite>`, then
+  `fast-gate: passed: <suite>` or `fast-gate: failed: <suite>`. The suite is named by file, because that is
+  what `fleet remote/check-coverage.py` matches against the diff; the record for a fast run can then state
+  its coverage instead of `UNKNOWN` (fleet docs/speed.md R15).
+
+`tests/test-fast.mjs` pins each of these, including that EVERY tracked file is either mapped or omitted by
+one of the named rules, so the rule list cannot rot silently. `npm test` remains the merger's full union
+gate and is unchanged.
+
 ### Fleet configuration (~/.fleet/check.conf)
 
 To enable `fleet-check --fast` for this project across fleet lanes, configure
