@@ -29,10 +29,13 @@
  * 16. Paths survive Git's own quoting (web-uplift-4bqu): a non-ASCII or otherwise quotable path is
  *     recorded literally by every source, so it is marked as uncommitted like any other and a rename is
  *     reported at its destination rather than losing its source.
+ * 17. Every shared module under tests/ that a suite imports either runs a suite that imports it or is
+ *     REFUSED with its importing suites named - the control that would have caught tests/test-helpers.mjs
+ *     running only the gate's own self-tests while 8 consumer suites were omitted (web-uplift-5y2w).
  */
 
 import { strict as assert } from 'node:assert';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -52,6 +55,8 @@ import {
   getDiffDistance,
   getUncommittedChanges,
   printAutoMappings,
+  importingSuitesOf,
+  UNWIRED_SHARED_MODULES,
   repoRoot,
 } from '../scripts/test-fast.mjs';
 
@@ -1078,6 +1083,95 @@ function testSuiteExecutionMarkers() {
   console.log('✔ Coverage markers passed');
 }
 
+function testSharedModulesAreWiredOrRefused() {
+  console.log('Testing that a shared test module cannot select only the gate\'s self-tests...');
+
+  // COMPUTED FROM THE TREE, not from the declarations in the gate: the point of this control is that it
+  // fails when a module a suite imports is wired to something that cannot exercise it, which is exactly
+  // what tests/test-helpers.mjs did while running only the gate's own self-tests (web-uplift-5y2w).
+  const suitesDir = join(repoRoot, 'tests');
+  const sharedModules = readdirSync(suitesDir)
+    .filter((entry) => entry.endsWith('.mjs'))
+    .map((entry) => `tests/${entry}`)
+    .filter((rel) => rel !== 'tests/regression.mjs' && !isDirectRunnableTest(rel))
+    .filter((rel) => importingSuitesOf(rel).length > 0)
+    .sort();
+
+  assert(sharedModules.length >= 8,
+    `this control must see the shared modules it is meant to police (found ${sharedModules.length}: ${sharedModules.join(', ')})`);
+
+  const problems = [];
+  // A target covers a module when it IS the module, when it is a suite that imports it, or when its own
+  // source imports it - a runnable check that imports the changed module can fail for it, which is the
+  // property the wiring is for. Compared against the tree, so this cannot pass by agreeing with itself.
+  const reaches = (targetPath, module) => {
+    if (targetPath === module) return true;
+    let source;
+    try {
+      source = readFileSync(join(repoRoot, targetPath), 'utf8');
+    } catch {
+      return false;
+    }
+    return source.includes(module.split('/').pop());
+  };
+  for (const module of sharedModules) {
+    const consumers = importingSuitesOf(module);
+    const plan = mapFilesToTests([module], { exists: () => true });
+    const selected = plan.targets.map((t) => t.path).filter(Boolean);
+    const wired = plan.refusedFiles.length === 1 || selected.some((p) => p === module || consumers.includes(p) || reaches(p, module));
+
+    const exempt = UNWIRED_SHARED_MODULES.find((entry) => entry.file === module);
+    if (exempt) {
+      // A declared exemption must stay TRUE: wiring one without removing it would leave the declaration
+      // lying about the map, which is the failure this whole control exists to catch (web-uplift-ev2u).
+      assert(!wired,
+        `${module} is declared unwired (${exempt.reason}) but now reaches a target that can fail for it - remove the exemption instead of leaving the declaration stale`);
+      continue;
+    }
+
+    if (plan.refusedFiles.length === 1) {
+      // A refusal is a valid answer ONLY with its consumers named: an unexplained refusal is the same
+      // invisible basis this control exists to prevent.
+      const named = plan.refusedFiles[0].consumers;
+      const missing = consumers.filter((c) => !named.includes(c));
+      if (missing.length > 0) {
+        problems.push(`${module}: refuses but does not name ${missing.join(', ')} (named: ${named.join(', ') || 'nothing'})`);
+      }
+      continue;
+    }
+    if (!wired) {
+      problems.push(`${module}: imported by ${consumers.join(', ')} but selects ${selected.join(', ') || 'nothing'}`);
+    }
+  }
+  assert(problems.length === 0,
+    `a shared module must run a suite that imports it, or refuse and name its consumers:\n  ${problems.join('\n  ')}`);
+
+  // The exemptions are policed INDEPENDENTLY of the derived list: a declaration about the map must not
+  // become stale just because a text scan stopped seeing the module's import (web-uplift-ev2u).
+  for (const exempt of UNWIRED_SHARED_MODULES) {
+    const consumers = importingSuitesOf(exempt.file);
+    const plan = mapFilesToTests([exempt.file], { exists: () => true });
+    const selected = plan.targets.map((t) => t.path).filter(Boolean);
+    const nowWired = plan.refusedFiles.length === 1 || selected.some((p) => p === exempt.file || consumers.includes(p) || reaches(p, exempt.file));
+    assert(!nowWired,
+      `${exempt.file} is declared unwired (${exempt.reason}) but its plan now reaches a target that can fail for it - remove the exemption`);
+  }
+
+  // The two shapes this bead had to fix, pinned by name so a future rewiring cannot quietly undo them.
+  const helperPlan = mapFilesToTests(['tests/test-helpers.mjs'], { exists: () => true });
+  assert(helperPlan.refusedFiles.length === 1,
+    'tests/test-helpers.mjs must REFUSE: its 8 consumer suites are most of the fast tier, so a subset would read as coverage');
+  assert(helperPlan.refusedFiles[0].consumers.includes('tests/runner-agents.test.mjs'),
+    `the refusal must name the suites that import it (named: ${helperPlan.refusedFiles[0].consumers.join(', ')})`);
+  for (const module of ['tests/log-redaction.mjs', 'tests/credential-redaction.mjs']) {
+    const plan = mapFilesToTests([module], { exists: () => true });
+    const paths = plan.targets.map((t) => t.path);
+    assert(paths.includes('tests/redaction.test.mjs') && plan.refusedFiles.length === 0,
+      `${module} must select its one consumer suite tests/redaction.test.mjs instead of refusing (selected: ${paths.join(', ') || 'nothing'})`);
+  }
+  console.log(`✔ ${sharedModules.length} shared module(s) either run an importing suite or refuse with their consumers named`);
+}
+
 function runAll() {
   testSubsystemMappings();
   testNonTestExclusion();
@@ -1095,6 +1189,7 @@ function runAll() {
   testOmittedRulesAreNamedAndNarrow();
   testRefusalIsActionableAndDocumented();
   testSuiteExecutionMarkers();
+  testSharedModulesAreWiredOrRefused();
   console.log('\nAll fast gate unit and integration tests passed successfully.');
 }
 
