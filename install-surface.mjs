@@ -154,7 +154,8 @@ export function refusedDestination(dst, rootDir) {
   };
 }
 
-// Publish a staged tree into place WITHOUT ever leaving a destination path absent (web-uplift-c6i1, the
+// Publish a staged tree into place WITHOUT ever leaving a path the new content STILL HAS absent
+// (web-uplift-c6i1, the
 // `nz68` half of docs/adr-0003-mutable-repository-root.md). This
 // generator used to delete each destination directory whole and recopy it, so a reader that listed a path and
 // then read it - which is exactly what the syntax census does to this repository - could hold a path that no
@@ -190,7 +191,9 @@ export function refusedDestination(dst, rootDir) {
 //     because a rename cannot cross types; those two transitions remove the old entry first, so they are a
 //     disappearance for that path rather than a stale read.
 //   - a crash mid-publish: the staging tree under `.web-uplift/scratch/` can be left behind, and it is
-//     removed at the start of the next run. Nothing has been deleted from the destination at that point.
+//     removed at the start of the next run. Nothing is deleted from the destination DURING the publish
+//     phase, which is where this crash has to happen for the staging tree to be left behind; a crash
+//     later, inside the prune, has already removed the obsolete entries it processed.
 //   - the staging tree is invisible to the syntax census because that walk skips a directory named `scratch`
 //     (tests/test-helpers.mjs SKIP_DIRS). That coupling is asserted from the test side too: the fixture walks
 //     with the census's own listFiles and fails if a staged path becomes visible.
@@ -200,8 +203,10 @@ export function refusedDestination(dst, rootDir) {
 //     per prepare against a gate budget measured in tens of seconds.
 //
 // The two phases are exported SEPARATELY, and that is the seam the interleaving test drives step by step
-// (web-uplift-c6i1). The order is the whole property: publish first, remove obsolete entries after, so the
-// only thing a reader can see is STALE content, never a hole. A single function that did both would leave the
+// (web-uplift-c6i1). The order is the whole property: publish first, remove obsolete entries after, so for a
+// path the new content STILL HAS the only thing a reader can see is STALE content, never a hole. A path the
+// source REMOVED is reconciled away by the prune, so a reader that listed it can see it disappear; the full
+// scope note sits with the publish/remove bullets above. A single function that did both would leave the
 // ordering untestable except by racing it, which is what the acceptance criteria rule out.
 export function publishStagedTree(staged, dest) {
   const files = new Set();
