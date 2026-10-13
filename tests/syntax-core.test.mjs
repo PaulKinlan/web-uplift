@@ -99,18 +99,60 @@ function parseModuleFiles(files, overrides = {}) {
 // THE INSTRUMENT'S BLIND SPOT, stated rather than discovered later: git does not know about an UNTRACKED
 // .mjs that a symlinked directory hides, so this control cannot see that case either. Its coverage is
 // "every .mjs the repository tracks", which is checkable; it is not "every .mjs on disk".
-const DECLARED_TRACKED_CENSUS = 105;
+// web-uplift-rkcs: the population is DECLARED BY NAME, not by a count. A count cannot tell an addition in
+// one place from a removal in another: the reviewer added a case and dropped a preexisting one and a global
+// floor still passed (web-uplift-j3go). Every .mjs the walk must reach outside the generated .web-uplift/
+// surface is therefore listed, and the checks below are membership tests in BOTH directions - each declared
+// path must be reached by the walk AND tracked by git. A removal is a MISSING NAME, so no addition can mask
+// it, and an addition needs no edit here at all because it is not the missing name.
+const DECLARED_TRACKED_MODULES = [
+  'aggregate/aggregate.mjs', 'aggregate/artifact-path.mjs', 'aggregate/compare.mjs',
+  'aggregate/scorecard.mjs', 'bin/web-uplift.mjs', 'evidence-out/fb6-stuck/fb6-probe.mjs',
+  'evidence-out/h6g-invoker/mw-invoker-probe.mjs', 'evidence-out/i5q-closedby/i5q-probe.mjs', 'evidence-out/omh-view-transition/omh-probe.mjs',
+  'evidence-out/web-uplift-7tj/ab-probe.mjs', 'evidence-out/yh6-axis-labels/yh6-probe.mjs', 'evidence/cdp.mjs',
+  'evidence/cli.mjs', 'evidence/common.mjs', 'evidence/credential-terms.mjs',
+  'evidence/fetch.mjs', 'evidence/html-text.mjs', 'evidence/primitives/a11ytree.mjs',
+  'evidence/primitives/axe.mjs', 'evidence/primitives/console.mjs', 'evidence/primitives/cookies.mjs',
+  'evidence/primitives/discoverability.mjs', 'evidence/primitives/dom.mjs', 'evidence/primitives/evaluate.mjs',
+  'evidence/primitives/features.mjs', 'evidence/primitives/har.mjs', 'evidence/primitives/headers.mjs',
+  'evidence/primitives/heap.mjs', 'evidence/primitives/images.mjs', 'evidence/primitives/layout.mjs',
+  'evidence/primitives/resilience.mjs', 'evidence/primitives/screenshot.mjs', 'evidence/primitives/secrets.mjs',
+  'evidence/primitives/targets.mjs', 'evidence/primitives/trace.mjs', 'evidence/primitives/trackers.mjs',
+  'evidence/primitives/video.mjs', 'evidence/redaction.mjs', 'fixer/fix.mjs',
+  'index.mjs', 'install-surface.mjs', 'knowledge/baseline.mjs',
+  'mcp/skills-server.mjs', 'runner/agents.mjs', 'runner/flow-record.mjs',
+  'runner/flow.mjs', 'runner/remaining-work.mjs', 'runner/run-batch.mjs',
+  'runner/run-history.mjs', 'runner/write-scope.mjs', 'schema/validate-report.mjs',
+  'scripts/beads-export.mjs', 'scripts/check-verdict.mjs', 'scripts/test-fast.mjs',
+  'tests/batch-resume-isolation.mjs', 'tests/beads-export-redaction.mjs', 'tests/cdp-copy-sync.mjs',
+  'tests/cdp-endpoint-exposure.mjs', 'tests/cdp-pipe-transport.mjs', 'tests/census-targets.mjs',
+  'tests/changelog-version-check.mjs', 'tests/chrome-cdp.test.mjs', 'tests/console-evidence-redaction.mjs',
+  'tests/credential-redaction.mjs', 'tests/evidence-axe.test.mjs', 'tests/evidence-cli-source-containment.mjs',
+  'tests/evidence-conditions.test.mjs', 'tests/evidence-console.test.mjs', 'tests/evidence-content.test.mjs',
+  'tests/evidence-network-har.test.mjs', 'tests/evidence-network-headers.test.mjs', 'tests/evidence-network-resilience.test.mjs',
+  'tests/fixture-sites.test.mjs', 'tests/fixtures/mwg-catalog/evil/skills/modern-web-guidance/modern-web.mjs', 'tests/fixtures/mwg-catalog/ok/skills/modern-web-guidance/modern-web.mjs',
+  'tests/fixtures/mwg-catalog/traversal/skills/modern-web-guidance/modern-web.mjs', 'tests/fixtures/mwg-drift/pkg-evil/skills/modern-web-guidance/modern-web.mjs', 'tests/fixtures/mwg-drift/pkg-ok/skills/modern-web-guidance/modern-web.mjs',
+  'tests/flow-shadow-browser.mjs', 'tests/flow.mjs', 'tests/install-copy-symlink.mjs',
+  'tests/install-package.test.mjs', 'tests/launch-loop.mjs', 'tests/log-redaction.mjs',
+  'tests/mwg-artefact.mjs', 'tests/mwg-catalog-extract.mjs', 'tests/mwg-catalog.mjs',
+  'tests/mwg-drift-basis-floor.mjs', 'tests/mwg-drift-check.mjs', 'tests/mwg-drift-classify.mjs',
+  'tests/mwg-drift-extract-pipe.mjs', 'tests/mwg-principles.test.mjs', 'tests/no-orphan-browser.mjs',
+  'tests/redaction.test.mjs', 'tests/regression.mjs', 'tests/runner-agents.test.mjs',
+  'tests/safe-fetch.mjs', 'tests/secrets-coverage.mjs', 'tests/skill-write-contract.mjs',
+  'tests/snapshot-run.mjs', 'tests/source-tree-symlink.mjs', 'tests/syntax-core.test.mjs',
+  'tests/test-fast.mjs', 'tests/test-helpers.mjs', 'tests/verdict-provenance.test.mjs',
+];
 const DECLARED_EXCLUDED_BY_RULE = 5;
 
-// The census's own declared population, which is the number this bead exists for: the .mjs files the WALK
-// must reach outside the generated .web-uplift/ surface, which sync:vendored writes and a fresh clone does
-// not have. This is the assertion that makes the symlink residual LOUD - if the walk stops reaching a file,
-// or starts reaching one it did not (the pre-lql5 walk followed links and would have pulled in files behind
-// schema/install-symlink-escape.txt), the number moves and this fails naming the number that moved.
-// It is deliberately a second, INDEPENDENT route to the same population as DECLARED_TRACKED_CENSUS: one
-// counts what the walk returned, the other counts what the repository says it tracks. If the two ever
-// disagree, the walk and git disagree about the repository, and that is worth a failure on its own.
-const DECLARED_RECURSIVE_CENSUS = 105;
+// The census's own declared population, which is what this control exists for: the .mjs files the WALK must
+// reach outside the generated .web-uplift/ surface, which sync:vendored writes and a fresh clone does not
+// have. This is deliberately a second, INDEPENDENT route to the same population as DECLARED_TRACKED_MODULES:
+// one asks git what it tracks, the other asks the walk what it reached, and both are membership tests against
+// the names above. If the two ever disagree, the walk and git disagree about the repository, which is worth a
+// failure on its own. It is a membership test rather than a count for the j3go reason: a file that STOPS
+// being reached is a missing name, and a file that starts being reached is not one of the names, so no
+// addition can hide a removal (pre-lql5 the walk followed links and would have pulled in files behind
+// schema/install-symlink-escape.txt).
 
 // Returns the reason a population is unacceptable, or null when it is acceptable, so the control can drive it
 // with a synthetic list instead of writing into the repository, which is what web-uplift-lql5 was about.
@@ -127,8 +169,18 @@ export function censusPopulationProblem(files, { trackable = null } = {}) {
   if (unreachable.length > 0) {
     return `${unreachable.length} tracked source file(s) exist in the repository and are NOT reachable by the syntax census, so nothing checks their syntax: ${unreachable.slice(0, 5).join(', ')}. The walk skips symlinks and skips these directory names anywhere in the tree (${[...SKIP_DIRS].join(', ')}), so a symlinked directory or a newly skipped name containing .mjs is the first thing to check (web-uplift-k63b).`;
   }
-  if (required.length !== DECLARED_TRACKED_CENSUS) {
-    return `the census DECLARES ${DECLARED_TRACKED_CENSUS} tracked .mjs file(s) outside the walk's skip rules and the repository tracks ${required.length}, so the population changed without saying so. If a source file was added or removed deliberately, update DECLARED_TRACKED_CENSUS in the same commit (web-uplift-k63b).`;
+  const trackedSet = new Set(tracked);
+  const missing = DECLARED_TRACKED_MODULES.filter((file) => !trackedSet.has(file));
+  if (missing.length > 0) {
+    return `${missing.length} declared source file(s) are no longer tracked by git: ${missing.slice(0, 5).join(', ')}. A declared file was REMOVED (or untracked), which is exactly the drop this control exists to catch, and no addition elsewhere can mask it because an added file is not the missing name. If the removal is deliberate, delete the name from DECLARED_TRACKED_MODULES in the same commit and say why (web-uplift-k63b, rkcs).`;
+  }
+  // Paths here are already repo-relative (the prefix was stripped above), so the generated surface is matched
+  // by SEGMENT, not by the '/.web-uplift/' substring an absolute path would contain. This is the escape half:
+  // a file the walk REACHES that git does not track is the lql5 shape, and it is named rather than counted.
+  const insideGenerated = (file) => file.split('/').includes('.web-uplift');
+  const escaped = [...walked].filter((file) => !insideGenerated(file) && !trackedSet.has(file));
+  if (escaped.length > 0) {
+    return `the walk reached ${escaped.length} .mjs file(s) outside the generated .web-uplift/ surface that git does NOT track: ${escaped.slice(0, 5).join(', ')}. A symlinked directory out of the repository is the first thing to check, because the walk must reach exactly what the repository contains (web-uplift-lql5, rkcs).`;
   }
   if (excluded.length !== DECLARED_EXCLUDED_BY_RULE) {
     return `${excluded.length} tracked .mjs file(s) sit under a directory the walk skips BY NAME and this control declares ${DECLARED_EXCLUDED_BY_RULE}. A change here is a real change in what the census cannot see, so update DECLARED_EXCLUDED_BY_RULE deliberately rather than letting it drift: ${excluded.slice(0, 5).join(', ')} (web-uplift-k63b).`;
@@ -141,9 +193,11 @@ export function testSyntaxChecks() {
   const populationProblem = censusPopulationProblem(files);
   assert(populationProblem === null, `syntax census population: ${populationProblem}`);
   const outsideGenerated = files.filter((file) => !file.includes('/.web-uplift/'));
+  const outsideNames = new Set(outsideGenerated.map((file) => file.replace(`${repoRoot}/`, '')));
+  const unreached = DECLARED_TRACKED_MODULES.filter((file) => !outsideNames.has(file));
   assert(
-    outsideGenerated.length === DECLARED_RECURSIVE_CENSUS,
-    `the walk reached ${outsideGenerated.length} .mjs file(s) outside the generated .web-uplift/ surface and this census DECLARES ${DECLARED_RECURSIVE_CENSUS}. A drop means a source file stopped being reachable - the walk skips symlinks, so a symlinked directory containing .mjs is the first thing to check - and a rise means the walk started reaching something it should not, which is the pre-web-uplift-lql5 behaviour of following a link out of the repository. If the change is deliberate, update DECLARED_RECURSIVE_CENSUS in the same commit (web-uplift-k63b).`,
+    unreached.length === 0,
+    `the walk stopped reaching ${unreached.length} declared .mjs file(s) outside the generated .web-uplift/ surface: ${unreached.slice(0, 5).join(', ')}. A declared file that is no longer reached has stopped being syntax-checked, and the walk skips symlinks, so a symlinked directory containing .mjs is the first thing to check. This is a membership test rather than a count (web-uplift-rkcs): the name is what is missing, so an added file cannot mask the loss. If the drop is deliberate, remove the name from DECLARED_TRACKED_MODULES in the same commit and say why (web-uplift-k63b).`,
   );
   assert(files.length > 0, 'syntax check must walk the .mjs tree, not an empty set');
   const result = parseModuleFiles(files);
@@ -1924,22 +1978,118 @@ export function testSuiteListsMatchRegressionRegistry() {
   // population changed without saying so. When a case or a suite file is added or removed deliberately,
   // update the number in the same commit and say why in the message.
   const EXPECTED_SUITE_FILES = 15;
-  // 163 was k63b's landing (161 + 2); web-uplift-c6i1 adds 4 cases to tests/install-package.test.mjs (the
-  // kept-readable generator case, the delete-then-copy control, the publish-order case, and the concurrent
-  // republish), and web-uplift-ebvj took the declared population to 175 across 15 suite files.
-  // web-uplift-qx4i adds ONE case (the leftover-tolerance control) inside tests/install-package.test.mjs,
-  // so it changes the case count only - never EXPECTED_SUITE_FILES and never the census.
-  // web-uplift-8fus adds the two cases above this line's file: an orphaned staged tree is swept by the next
-  // run, and a LIVE run's staged tree is left alone. Both are registered in tests/install-package.test.mjs.
-  const EXPECTED_CASES = 179;   // 178 plus the malformed-stage age case (web-uplift-8fus)
+  // web-uplift-rkcs: the case population is DECLARED BY NAME PER SUITE FILE, for the web-uplift-j3go
+  // reason. A count cannot tell an addition in one file from a removal in another, and the reviewer showed a
+  // global floor still passing after exactly that pair of edits (add a case, drop a preexisting one). Every
+  // declared name must still be listed by its own suite file, so a removed case is a MISSING NAME that no
+  // addition anywhere can supply, an added case needs no edit here at all, and two branches adding cases
+  // never touch the same declaration. Only a deliberate REMOVAL edits this block, and it says which.
+  const DECLARED_SUITE_CASES = {
+    'tests/chrome-cdp.test.mjs': [
+      'testCdpEndpointExposure', 'testEndpointProbesRunConcurrently', 'testEndpointProbeRejectionStaysFailClosed', 'testExposureProbeFailuresDoNotLeakTheBrowser',
+      'testExposureVerdictIsReadOnceInsideTheTry', 'testUnprintableProbeNoteDoesNotFailTheLaunch', 'testTricklingPeerIsBoundedByTheTotalDeadline', 'testThrowingLogDoesNotLeakTheSpawnedBrowser',
+      'testPreSpawnLogThrowDoesNotStrandTheProfileDir', 'testThrowingHandlerLogDoesNotTakeTheProcessDown', 'testOversizedBodyDoesNotEarnACleanVerdict', 'testCdpPipeTransport',
+      'testSilentPipeReadinessIsBounded', 'testClosedPipeRejectsPendingSends', 'testPipeReadinessThenExitFailsTheLaunch', 'testChromeCandidateDiscovery',
+      'testLaunchRetryAndDiagnostics', 'testChromeSandboxPolicy', 'testCdpDeadline', 'testLaunchAttributionForHungPrimitive',
+      'testOperatorLaunchAttribution', 'testLaunchSessionLoop', 'testNoOrphanBrowser', 'testCommittedProbeIsInert',
+      'testCommittedSiblingProbesAreInert',
+    ],
+    'tests/evidence-axe.test.mjs': [
+      'testAxePrimitiveBypassesStrictCsp', 'testAxeKeepsPagePolicyAndDisclosesInjectionBypass',
+    ],
+    'tests/evidence-conditions.test.mjs': [
+      'testPreNavigationEmulation', 'testThrottlingConditions', 'testLocaleTimezoneConditions', 'testRejectedConditionsNeverLaunchABrowser',
+    ],
+    'tests/evidence-console.test.mjs': [
+      'testConsoleEvidence', 'testConsoleEvidenceRedaction', 'testConsoleInteractDeadlineValidation',
+    ],
+    'tests/evidence-content.test.mjs': [
+      'testEvidenceTruncationReporting', 'testFeaturesPrimitive', 'testDiscoverabilityHelpers', 'testDiscoverabilityH1InRaw',
+      'testDiscoverabilitySettleKeepsTheSpaDefaultAndHonoursAnExplicitWait', 'testTargetsPrimitive', 'testA11yTreePrimitive', 'testAwaitCensus',
+      'testNoSourceArgumentOmitsSource', 'testAdversarialPageCannotInfluenceSource', 'testExplicitSourceHonoursOperatorSpecifiedRoot',
+    ],
+    'tests/evidence-network-har.test.mjs': [
+      'testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase', 'testHarRedirects', 'testHarWaitsForPendingResponses',
+    ],
+    'tests/evidence-network-headers.test.mjs': [
+      'testHeadersPrimitiveFindsHeadersRegardlessOfNameCase', 'testHeadersPrimitiveSurvivesSlowResponseUnderLoad',
+    ],
+    'tests/evidence-network-resilience.test.mjs': [
+      'testTrackersThirdPartySuffix', 'testResiliencePrimitive', 'testResilienceWaitsForLateServiceWorkerRegistration',
+    ],
+    'tests/fixture-sites.test.mjs': [
+      'testFixtureSitesAreStructured', 'testFixtureSiteChecksRejectBrokenModules',
+    ],
+    'tests/install-package.test.mjs': [
+      'testCrashLeftStagedTreeIsSweptByTheNextRun', 'testSweepLeavesALiveRunsStagedTreeAlone', 'testSweepRemovesAMalformedStageNameOnlyWhenItIsOld', 'testCdpCopySyncGuard',
+      'testCdpCopySyncMutationGuard', 'testInstalledEvidenceCli', 'testNpxCacheDoesNotAccumulate', 'testInstalledTreeRelativeImportsResolve',
+      'testUpdateDryRunReadsInstallManifest', 'testCachedUpdateWarning', 'testUpdateCheckIsOptInAndUntrusted', 'testInstallSurfaceMatchesWhatInstallVendors',
+      'testInstallSkipsSymlinksInVendoredSource', 'testInstallFixturesTolerateLeftoversFromAKilledRun', 'testInstallCopyDepthGuard', 'testInstallVendorsCompleteClosure',
+      'testInstallRefusesDestinationSymlinks', 'testInstallNormalDestinationWrites', 'testGenerateVendoredSurfaceRefusesDestinationSymlinks', 'testSyncRefusesCommittedSymlinkDestination',
+      'testSyncRefusesEqualByteSymlinkDestination', 'testInstallAsksTheSharedSymlinkGuard', 'testInstallIncompleteExitControl', 'testV167ControlShimNeverWritesIntoTheRepository',
+      'testEveryDestinationRefusalCarriesTheMarker', 'testMcpSkillsServerStdio', 'testCdpCopySyncRefusesToOverwriteTrackedEdits', 'testGenerateVendoredSurfaceLeavesTrackedEditsAlone',
+      'testGenerateVendoredSurfaceKeepsListedPathsReadable', 'testRepublishReaderInstrumentDetectsDeleteThenCopy', 'testPublishOrderLeavesObsoleteEntriesUntilAfterPublish', 'testRepublishKeepsListedPathsReadableForAConcurrentReader',
+    ],
+    'tests/mwg-principles.test.mjs': [
+      'testMwgDriftExtractPipe', 'testMwgDriftBasisFloor', 'testGuidanceUsage', 'testGuidanceVersionPinnedInDocs',
+      'testMwgCatalogRegenerateAgreement', 'testPrinciplesMwgCatalogSyncAndChangedGuidance', 'testMwgDriftCheckGuard', 'testMwgArtefactGuard',
+      'testMwgDriftClassifierGuard', 'testMwgCatalogExtract', 'testBaselineOracle',
+    ],
+    'tests/redaction.test.mjs': [
+      'testRedactHeaderList', 'testCredentialRedactionHelpers', 'testHarCredentialRedaction', 'testHarRedactsCredentialHeaders',
+      'testSecretsScanHandlesQuotedScriptUrl', 'testSecretsExternalScriptFetchIsCappedAndDeadlined', 'testSecretsArtifactDoesNotPersistMatches', 'testSecretsScanDoesNotPersistMatchCharacters',
+      'testSecretsCoverageClassification', 'testSourceTreeRedactsBeforeInlining', 'testDomSourceArtifactIsRedacted', 'testLogUrlRedaction',
+      'testCredentialRedactorsAgree', 'testTrackedBeadsExportHasNoSecretShapes', 'testBeadsExportRedactionRuleCanFire',
+    ],
+    'tests/runner-agents.test.mjs': [
+      'testAgentChildEnvProxyCredentials', 'testHeadlessAllowlistIsScoped', 'testHeadlessAllowlistMatchesSkillContract', 'testSkillWriteContractGuard',
+      'testAgentChildEnvAllowlist', 'testBatchIsolationGate', 'testBatchDryRunUsesRetainedDirs', 'testBatchFlowDryRun',
+      'testFixSurvivesUnscoreableReports', 'testFixRefusesPassOnIncompleteCoverage', 'testFixRefusesContradictoryCoverageClaim', 'testFixRejectsMalformedReports',
+      'testFixWriteScopeDiffing', 'testFixModeRefusesOutOfScopeWrites', 'testFixModeScopeEdgeCases', 'testFixIsolationAssertion',
+      'testFixIsolatedRunPublishes', 'testSnapshotRunStructure', 'testSnapshotRunCopiesArtifacts', 'testSnapshotRunMissingArtifactsBestEffort',
+      'testSnapshotRunCopyErrorTolerance', 'testBatchWriteScope', 'testBatchResumeIsolation', 'testWriteScopeCoversExecutedTrees',
+      'testBatchIntegrityGateAbortsOnTamperedExecutedTree', 'testFlowNormalize', 'testFlowRecordSensitiveRedaction', 'testFlowReplayMutationGate',
+      'testFlowPierceShadowRootBrowser',
+    ],
+    'tests/syntax-core.test.mjs': [
+      'testSyntaxChecks', 'testCensusDeclaredPopulationNamesATrackedFileItCannotReach', 'testWalkTraversesASymlinkedDirectoryAndBoundsACycle', 'testPackageRootImportIsSideEffectFree',
+      'testIconSatisfiesMatrix', 'testFirstPartyHostMatrix', 'testPageDerivedFetchGuard', 'testSafeFetchRedirectAndSizeGuard',
+      'testSafeFetchDnsRebindingGuard', 'testSafeFetchContentDecoding', 'testSchemaValidation', 'testAtomicCoverageValidator',
+      'testFetchDeadlineAndRawComparison', 'testScorecardRejectsEscapingComparisonRunIds', 'testScorecardWithholdsScriptedFindingUrls', 'testScorecardReservesImageBoxes',
+      'testReservedImageBoxInBrowser', 'testScorecardCspRestrictsAndFunctions', 'testLatestPointerCannotEscapeTheRunRoot', 'testSourceTreeSkipsSymlinkFileEscape',
+      'testSourceTreeSkipsSymlinkDirEscape', 'testSourceTreeSkipsSymlinkCycle', 'testSourceTreeDepthGuard', 'testCompareReportsUnconcludedChecks',
+      'testScorecardScoringAndRender', 'testScorecardArtifactContainment', 'testCompareArtifactContainment', 'testCensusTargetsAreTracked',
+      'testSuiteListsMatchRegressionRegistry',
+    ],
+    'tests/verdict-provenance.test.mjs': [
+      'testThisProjectsVerdictIsAccepted', 'testForeignCommandIsRefused', 'testForeignProjectIsRefused', 'testAnotherWorktreeOfTheSameProjectIsAccepted',
+      'testUnresolvableRepoPathIsAcceptedWithACaveat', 'testRecordWithNoRepoIsAcceptedWithTheCaveat', 'testRecordWithNoCommandIsRefused', 'testFindRecordMatchesTheRealCacheNaming',
+    ],
+  };
   assert(
     suiteFiles.length === EXPECTED_SUITE_FILES,
-    `the gate now runs ${suiteFiles.length} suite file(s) and this control is pinned at ${EXPECTED_SUITE_FILES}. If a suite file was added or removed on purpose, update EXPECTED_SUITE_FILES and EXPECTED_CASES in the same commit; if it was not, a suite has silently stopped running (web-uplift-ougd).`,
+    `the gate now runs ${suiteFiles.length} suite file(s) and this control is pinned at ${EXPECTED_SUITE_FILES}. If a suite file was added or removed on purpose, update EXPECTED_SUITE_FILES in the same commit; if it was not, a suite has silently stopped running (web-uplift-ougd).`,
   );
+  // COMPLETENESS, which the review brief names as a declared list's real weakness: an INCOMPLETE declaration
+  // guards nothing for the file it omits, while still looking deliberate. EXPECTED_SUITE_FILES catches a
+  // change in the NUMBER of suite files, not a swap of one for another, so every suite file the gate runs must
+  // be declared BY NAME (web-uplift-rkcs).
+  const undeclaredSuites = suiteFiles.filter((file) => !(`tests/${file}` in DECLARED_SUITE_CASES));
   assert(
-    byName.size === EXPECTED_CASES,
-    `the suite files now list ${byName.size} case(s) and this control is pinned at ${EXPECTED_CASES}. If a case was added or removed on purpose, update EXPECTED_CASES in the same commit; if it was not, cases have silently stopped running (web-uplift-ougd).`,
+    undeclaredSuites.length === 0,
+    `${undeclaredSuites.length} suite file(s) the gate runs have no entry in DECLARED_SUITE_CASES, so every case in them is unguarded even though the map above looks complete: ${undeclaredSuites.join(', ')}. Add each one with the case names it must keep listing (web-uplift-rkcs).`,
   );
+  for (const [file, declared] of Object.entries(DECLARED_SUITE_CASES)) {
+    assert(
+      suiteFiles.includes(file.replace(/^tests\//, '')),
+      `${file} is declared here but the gate does not run it, so its declared cases are not running at all. If the suite file was renamed or removed deliberately, update DECLARED_SUITE_CASES in the same commit (web-uplift-rkcs).`,
+    );
+    const gone = declared.filter((name) => byName.get(name) !== file);
+    assert(
+      gone.length === 0,
+      `${gone.length} case(s) declared as ${file} are no longer listed by it: ${gone.slice(0, 5).join(', ')}. A case that stops being listed stops running, and this is the drop web-uplift-rkcs is about, so it fails by NAME rather than against a count. If a case was moved to another suite file, declare it there instead; if it was removed deliberately, delete the name from DECLARED_SUITE_CASES in the same commit and say why (web-uplift-ougd).`,
+    );
+  }
 
   const registry = listOf([join(repoRoot, 'tests', 'regression.mjs'), '--list']);
 
@@ -1995,15 +2145,18 @@ export function testCensusDeclaredPopulationNamesATrackedFileItCannotReach() {
     `the failure must NAME the file the census could not reach, or a reader cannot act on it: ${problem}`,
   );
 
-  // The declared count must also reject a population that GREW silently, which the reachability check alone
-  // cannot see because nothing is unreachable when something extra appears.
-  // The count rule has to be exercised on its OWN, with a reachable file, or the reachability rule fires
-  // first and this would be testing the other branch. A single real tracked file is reachable and is not
-  // 103 of them, so only the declared-count rule can reject it.
-  const miscounted = censusPopulationProblem(files, { trackable: ['tests/fixture-sites.test.mjs'] });
+  // The count rule is gone (web-uplift-rkcs), so the drop direction is exercised against the DECLARED NAMES
+  // instead: a tracked list MISSING one declared module must fail and name it, which is the same shape the
+  // reviewer used against the old floor.
+  const trackedNames = execFileSync('git', ['ls-files', '*.mjs'], { cwd: repoRoot, encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean);
+  const miscounted = censusPopulationProblem(files, {
+    trackable: trackedNames.filter((file) => file !== DECLARED_TRACKED_MODULES[0]),
+  });
   assert(
-    miscounted !== null && miscounted.includes('DECLARES'),
-    `a tracked population that no longer matches the declared number must fail on the count rule: ${miscounted}`,
+    miscounted !== null && miscounted.includes(DECLARED_TRACKED_MODULES[0]),
+    `a tracked population missing a declared module must fail and NAME it, because the name is what a removal takes away: ${miscounted}`,
   );
 }
 
