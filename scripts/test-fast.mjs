@@ -7,7 +7,7 @@
  * to a few seconds for focused changes.
  *
  * Usage:
- *   node scripts/test-fast.mjs                     # diff against origin/master
+ *   node scripts/test-fast.mjs                     # diff from the merge-base with origin/master
  *   node scripts/test-fast.mjs --diff <ref>        # diff against specific ref
  *   node scripts/test-fast.mjs <file...>           # test affected by explicit files
  *   node scripts/test-fast.mjs --all               # run all fast test targets
@@ -494,6 +494,45 @@ export function resolveDiffBase(repo = repoRoot, diffRef = 'origin/master') {
 }
 
 /**
+ * Working-tree changes that are NOT in HEAD, keyed by path: 'untracked' or 'modified'.
+ *
+ * The changed-file selection is a WORKING-TREE diff (base -> worktree) plus untracked files, while a
+ * cached verdict from fleet-check is keyed to the COMMITTED tree it ran on. Those two sets can differ,
+ * so the gate names the paths that are in one and not the other instead of letting a green be filed
+ * under a sha whose tree does not contain them (web-uplift-5e9s (1)).
+ */
+export function getUncommittedChanges(repo = repoRoot) {
+  const res = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' });
+  const kinds = new Map();
+  if (res.status !== 0 || !res.stdout) return kinds;
+  for (const line of res.stdout.split('\n')) {
+    if (line.trim().length < 3) continue;
+    const code = line.slice(0, 2);
+    let path = line.slice(3).trim();
+    if (code.includes('R') || code.includes('C')) {
+      const arrow = path.lastIndexOf(' -> ');
+      if (arrow !== -1) path = path.slice(arrow + 4).trim();
+    }
+    path = path.replace(/^"(.*)"$/, '$1');
+    if (path) kinds.set(path, code === '??' ? 'untracked' : 'modified');
+  }
+  return kinds;
+}
+
+/**
+ * How far HEAD and the comparison ref have diverged: `behind` counts commits the ref has that HEAD does
+ * not, `ahead` counts commits HEAD has that the ref does not. Printed beside the base so the size of a
+ * diff is attributable to the comparison point rather than to the branch (web-uplift-5e9s (2)).
+ */
+export function getDiffDistance(repo = repoRoot, ref) {
+  if (!ref) return { ahead: null, behind: null };
+  const res = spawnSync('git', ['rev-list', '--left-right', '--count', `${ref}...HEAD`], { cwd: repo, encoding: 'utf8' });
+  if (res.status !== 0 || !res.stdout.trim()) return { ahead: null, behind: null };
+  const [behind, ahead] = res.stdout.trim().split(/\s+/);
+  return { ahead: Number(ahead), behind: Number(behind) };
+}
+
+/**
  * Get changed files using git diff from the merge-base to the working tree, plus untracked status.
  */
 export function getChangedFiles(repo = repoRoot, diffRef = 'origin/master') {
@@ -519,7 +558,13 @@ export function getChangedFiles(repo = repoRoot, diffRef = 'origin/master') {
     }
   }
 
-  return { files: Array.from(files), resolvedRef, base };
+  // Which of those paths exist only in the working tree, not in HEAD (see getUncommittedChanges).
+  const uncommittedKinds = getUncommittedChanges(repo);
+  const uncommitted = Array.from(files)
+    .filter((path) => uncommittedKinds.has(path))
+    .map((path) => ({ path, kind: uncommittedKinds.get(path) }));
+
+  return { files: Array.from(files), resolvedRef, base, uncommitted };
 }
 
 /**
@@ -842,10 +887,31 @@ Usage:
     const changed = getChangedFiles(repoRoot, diffRef);
     filesToTest = changed.files;
     resolvedRefLabel = changed.resolvedRef || diffRef;
-    console.log(`[test:fast] Detected ${filesToTest.length} changed file(s) vs ${resolvedRefLabel}`);
+    // Name the comparison BASE and the distance behind the ref, not just the ref: the base decides how
+    // large the diff is, and 'vs origin/master' named the one thing this does not compare against
+    // (web-uplift-5e9s (2), web-uplift-1a6q).
+    const baseShort = changed.base ? changed.base.slice(0, 7) : 'unknown';
+    const distance = getDiffDistance(repoRoot, changed.resolvedRef);
+    const distanceLabel =
+      distance.ahead === null ? '' : `; branch ${distance.ahead} ahead / ${distance.behind} behind ${resolvedRefLabel}`;
+    console.log(
+      `[test:fast] Detected ${filesToTest.length} changed file(s) vs base ${baseShort} (merge-base of ${resolvedRefLabel})${distanceLabel}`
+    );
+    const uncommittedKinds = new Map(changed.uncommitted.map((u) => [u.path, u.kind]));
     if (filesToTest.length > 0) {
-      for (const f of filesToTest.slice(0, 10)) console.log(`  • ${f}`);
+      for (const f of filesToTest.slice(0, 10)) {
+        console.log(`  • ${f}${uncommittedKinds.has(f) ? `  [uncommitted: ${uncommittedKinds.get(f)}]` : ''}`);
+      }
       if (filesToTest.length > 10) console.log(`  ... and ${filesToTest.length - 10} more`);
+    }
+    if (changed.uncommitted.length > 0) {
+      console.log(
+        `[test:fast] UNCOMMITTED (${changed.uncommitted.length} of ${filesToTest.length}) - not in HEAD, so not in the committed tree a cached verdict is keyed to:`
+      );
+      for (const u of changed.uncommitted) console.log(`  - ${u.path} [${u.kind}]`);
+      console.log(
+        '[test:fast] This run selects and executes against the WORKING TREE. Its result is not a verdict for HEAD alone: commit these paths and re-run to gate the committed tree.'
+      );
     }
   } else {
     console.log(`[test:fast] Testing affected targets for ${filesToTest.length} explicit file(s):`);

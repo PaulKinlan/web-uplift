@@ -23,6 +23,9 @@
  * 14. A refusal is actionable (the next action, a paste-able map entry, and the qualified full-gate escape);
  *     AGENTS.md names the escape and the rules, docs/speed.md's omission table is parsed and compared to
  *     the OMITTED_RULES reasons verbatim, and --list prints each rule with its reason from that data.
+ * 15. The diff provenance is reported, not implied (web-uplift-5e9s): the run names the comparison BASE
+ *     and how far the branch is ahead/behind the ref, names every UNCOMMITTED path it selected with why
+ *     it is not in HEAD, and prints no uncommitted block on a clean worktree (the negative control).
  */
 
 import { strict as assert } from 'node:assert';
@@ -43,6 +46,8 @@ import {
   CODE_EXTENSIONS,
   getChangedFiles,
   getChangedRegressionTests,
+  getDiffDistance,
+  getUncommittedChanges,
   printAutoMappings,
   repoRoot,
 } from '../scripts/test-fast.mjs';
@@ -340,16 +345,102 @@ function testChangedFilesUseMergeBase() {
     assert.equal(changed.base, base, 'compare against the common ancestor, not master tip');
     assert.deepEqual(changed.files.sort(), ['feature.txt', 'tests/regression.mjs']);
     assert.deepEqual(getChangedRegressionTests(repo, 'master'), ['testFeature'], 'master-only regression cases must not be selected');
+    // A CLEAN worktree has nothing to disclaim, and the distance is stated so a large diff can be
+    // attributed to the comparison point rather than to the branch (web-uplift-5e9s (2)).
+    assert.deepEqual(changed.uncommitted, [], 'a clean worktree must report no uncommitted paths');
+    assert.deepEqual(getDiffDistance(repo, 'master'), { ahead: 1, behind: 1 }, 'the distance must count each side of the fork');
 
     writeFileSync(join(repo, 'base.txt'), 'base\nuncommitted\n');
     writeFileSync(join(repo, 'untracked.txt'), 'untracked\n');
     const local = getChangedFiles(repo, 'master');
     assert(local.files.includes('base.txt') && local.files.includes('untracked.txt'), 'tracked edits and untracked files must still count');
+    // WHAT THE RUN SELECTS vs WHAT A COMMITTED-TREE VERDICT COVERS (web-uplift-5e9s (1)): the working-tree
+    // paths are still selected, and they are named with why they are not in HEAD.
+    assert.deepEqual(
+      local.uncommitted,
+      [
+        { path: 'base.txt', kind: 'modified' },
+        { path: 'untracked.txt', kind: 'untracked' },
+      ],
+      'every selected path that is not in HEAD must be named with its kind'
+    );
+    assert(!local.uncommitted.some((u) => u.path === 'feature.txt'), 'a committed branch path is not uncommitted');
+    assert.equal(getUncommittedChanges(repo).get('tests/regression.mjs'), undefined, 'an untouched committed path has no status entry');
     assert(getChangedFiles(repo, 'HEAD~1').files.includes('feature.txt'), 'an ancestor --diff ref must still select feature changes');
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
   console.log('✔ Stale branch selects only feature changes, plus working-tree edits');
+}
+
+/**
+ * The diff provenance a lane READS: base sha, distance, and the uncommitted paths the run selected. The
+ * unit-level classification is pinned in testChangedFilesUseMergeBase; this is the printed form, in an
+ * isolated copy of the gate with its own git repo, so no lane's worktree is touched. The clean second run
+ * is the negative control: the block must not appear when there is nothing to disclaim.
+ */
+function testDiffProvenanceIsReported() {
+  console.log('Testing that the diff provenance names the base, the distance and the uncommitted paths...');
+  const temp = mkdtempSync(join(tmpdir(), 'test-fast-provenance-'));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: temp, encoding: 'utf8' });
+    assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  try {
+    mkdirSync(join(temp, 'scripts'));
+    copyFileSync(join(repoRoot, 'scripts', 'test-fast.mjs'), join(temp, 'scripts', 'test-fast.mjs'));
+    writeFileSync(join(temp, 'package.json'), '{"type":"module"}\n');
+    git('init', '-q', '-b', 'master');
+    git('config', 'user.email', 'gate@test.invalid');
+    git('config', 'user.name', 'gate');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(temp, 'base.txt'), 'base\n');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    const fork = git('rev-parse', '--short', 'HEAD');
+
+    git('checkout', '-q', '-b', 'feature');
+    writeFileSync(join(temp, 'feature.txt'), 'feature\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature');
+    git('checkout', '-q', 'master');
+    writeFileSync(join(temp, 'master-only.txt'), 'master\n');
+    git('add', '.');
+    git('commit', '-qm', 'master');
+    git('checkout', '-q', 'feature');
+
+    writeFileSync(join(temp, 'base.txt'), 'base\nuncommitted\n');
+    writeFileSync(join(temp, 'untracked.txt'), 'untracked\n');
+
+    const fast = join(temp, 'scripts', 'test-fast.mjs');
+    const dirty = spawnSync(process.execPath, [fast, '--dry-run'], { cwd: temp, encoding: 'utf8', timeout: 20000 });
+    assert.equal(dirty.status, 0, `a dirty-tree dry run must succeed: ${dirty.stderr}`);
+    assert(
+      dirty.stdout.includes(`vs base ${fork} (merge-base of master); branch 1 ahead / 1 behind master`),
+      `the run must name the BASE it compared against and the distance, not the ref alone:\n${dirty.stdout}`
+    );
+    assert(dirty.stdout.includes('base.txt  [uncommitted: modified]'), 'a modified working-tree path must be marked in the file list');
+    assert(dirty.stdout.includes('untracked.txt  [uncommitted: untracked]'), 'an untracked selected path must be marked too');
+    assert(dirty.stdout.includes('UNCOMMITTED (2 of 3)'), 'the block must count the uncommitted share of the selection');
+    assert(dirty.stdout.includes('base.txt [modified]') && dirty.stdout.includes('untracked.txt [untracked]'), 'the block must list each path and kind');
+    assert(
+      dirty.stdout.includes('This run selects and executes against the WORKING TREE. Its result is not a verdict for HEAD alone'),
+      'the run must state that a committed-tree verdict does not describe this selection'
+    );
+
+    // NEGATIVE CONTROL: nothing uncommitted -> no block, and the same honest base line.
+    git('checkout', '-q', '--', 'base.txt');
+    rmSync(join(temp, 'untracked.txt'));
+    const clean = spawnSync(process.execPath, [fast, '--dry-run'], { cwd: temp, encoding: 'utf8', timeout: 20000 });
+    assert.equal(clean.status, 0, `a clean-tree dry run must succeed: ${clean.stderr}`);
+    assert(clean.stdout.includes(`vs base ${fork} (merge-base of master); branch 1 ahead / 1 behind master`), 'the base and distance must be stated on a clean tree too');
+    assert(!clean.stdout.includes('UNCOMMITTED'), 'a clean worktree must not print an uncommitted block');
+    assert(!clean.stdout.includes('[uncommitted:'), 'a clean worktree must mark no path as uncommitted');
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+  console.log('✔ Base, distance and uncommitted paths are reported, and the clean control stays quiet');
 }
 
 function testCliDryRunAndListAndAll() {
@@ -920,6 +1011,7 @@ function runAll() {
   testAllRegressionFiltersAreValid();
   testDeduplicationAndFallback();
   testChangedFilesUseMergeBase();
+  testDiffProvenanceIsReported();
   testCliDryRunAndListAndAll();
   testRegressionFilterCli();
   testMissingTargetSkippedCleanly();
