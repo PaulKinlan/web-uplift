@@ -571,6 +571,71 @@ export function testSyncRefusesEqualByteSymlinkDestination() {
   }
 }
 
+// Fixture 8 (web-uplift-o7et): the CLI must ASK the shared guard rather than keep its own copy of the walk.
+// A source scan cannot prove that - a differently named private walk passes any scan - so this OBSERVES it: a
+// module load hook serves a wrapper for install-surface.mjs that records every refusedDestination call to a
+// log file, and the real CLI is then driven over a target with a planted destination symlink. The assertion is
+// that the guard was INVOKED for the planted path, not merely that a refusal was reported: the harness in
+// fixture 4 would still pass if the CLI answered the question locally, which is exactly the defect this bead
+// removes. The source scan is the belt, kept because it names the shape that must not come back.
+export function testInstallAsksTheSharedSymlinkGuard() {
+  const outside = mkdtempSync(join(tmpdir(), 'web-uplift-guard-probe-outside-'));
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-guard-probe-target-'));
+  const probeDir = mkdtempSync(join(tmpdir(), 'web-uplift-guard-probe-hook-'));
+  try {
+    const victim = join(outside, 'victim-manifest.json');
+    writeFileSync(victim, 'VICTIM-MANIFEST\n');
+    mkdirSync(join(target, '.web-uplift'), { recursive: true });
+    const planted = join(target, '.web-uplift', 'manifest.json');
+    symlinkSync(victim, planted);
+
+    const log = join(probeDir, 'guard-calls.log');
+    const sharedUrl = pathToFileURL(join(repoRoot, 'install-surface.mjs')).href;
+    writeFileSync(join(probeDir, 'wrapper.mjs'), [
+      `export * from ${JSON.stringify(`${sharedUrl}?probe=1`)};`,
+      `import { refusedDestination as real } from ${JSON.stringify(`${sharedUrl}?probe=1`)};`,
+      "import { appendFileSync } from 'node:fs';",
+      'export function refusedDestination(dst, rootDir) { try { appendFileSync(' + JSON.stringify(log) + ', String(dst) + String.fromCharCode(10)); } catch {} return real(dst, rootDir); }',
+      '',
+    ].join('\n'));
+    writeFileSync(join(probeDir, 'bootstrap.mjs'), [
+      "import { registerHooks } from 'node:module';",
+      "import { readFileSync } from 'node:fs';",
+      `const REAL = ${JSON.stringify(sharedUrl)};`,
+      `const WRAPPER = readFileSync(${JSON.stringify(join(probeDir, 'wrapper.mjs'))}, 'utf8');`,
+      'registerHooks({ load(url, context, nextLoad) { if (url === REAL) return { format: "module", source: WRAPPER, shortCircuit: true }; return nextLoad(url, context); } });',
+      '',
+    ].join('\n'));
+
+    const run = spawnSync(process.execPath, [
+      '--import', pathToFileURL(join(probeDir, 'bootstrap.mjs')).href,
+      join(repoRoot, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', target,
+    ], { encoding: 'utf8', cwd: repoRoot, timeout: 120000 });
+    assert(run.status === 0, `the install must still succeed while a destination is refused: ${run.stdout}${run.stderr}`);
+    const calls = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
+    assert(calls.includes(planted),
+      `the CLI must ASK the shared guard about the planted destination (${planted}), and the probe recorded ${calls.length} call(s): ${JSON.stringify(calls.slice(0, 6))}\n${run.stdout}`);
+    assert(run.stdout.includes('manifest.json (symlink)'),
+      `the refusal must still be reported to the operator, and reported by the plan rather than swallowed: ${run.stdout}`);
+    assert(readFileSync(victim, 'utf8') === 'VICTIM-MANIFEST\n', 'the victim must stay untouched in the probe run');
+
+    const cliSource = readFileSync(join(repoRoot, 'bin/web-uplift.mjs'), 'utf8');
+    // Scan the CODE, not the prose: the comment above the adapter deliberately names the walk this bead
+    // deleted, and a belt that a comment can trip is a belt that reports the wrong thing - the same lesson
+    // the authority-detector guard in tests/credential-redaction.mjs records.
+    const cliCode = cliSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    assert(!cliCode.includes('findSymlinkComponent'),
+      'the CLI must not define the private component walk again: one implementation, in install-surface.mjs (web-uplift-o7et)');
+    assert(!/rel\.split\(\/\[/i.test(cliCode),
+      'the CLI must not carry its own component-walk loop: it must ask refusedDestination');
+    assert(/refusedDestination/.test(cliCode), 'the CLI must import and call the shared guard');
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+    rmSync(probeDir, { recursive: true, force: true });
+  }
+}
+
 // Run directly (node tests/install-copy-symlink.mjs), not when imported by the
 // regression suite, which calls the exported functions itself.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -582,5 +647,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   testGenerateVendoredSurfaceRefusesDestinationSymlinks();
   testSyncRefusesCommittedSymlinkDestination();
   testSyncRefusesEqualByteSymlinkDestination();
+  testInstallAsksTheSharedSymlinkGuard();
   console.log('tests OK');
 }

@@ -43,7 +43,7 @@ import {
   constants,
 } from 'node:fs';
 import { AGENT_NAMES } from '../runner/agents.mjs';
-import { VENDORED_DIRS, VENDORED_FILES, VENDORED_DEPENDENCIES } from '../install-surface.mjs';
+import { VENDORED_DIRS, VENDORED_FILES, VENDORED_DEPENDENCIES, refusedDestination } from '../install-surface.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -347,27 +347,22 @@ function printExistingInstallNotice(vendorRoot, pkg) {
   }
 }
 
-function findSymlinkComponent(targetPath, rootDir) {
-  if (!rootDir) {
-    const st = lstatSync(targetPath, { throwIfNoEntry: false });
-    return st?.isSymbolicLink() ? targetPath : null;
-  }
-  const root = resolve(rootDir);
-  const target = resolve(targetPath);
-  const rel = relative(root, target);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    return target;
-  }
-  const parts = rel.split(/[\\/]/).filter(Boolean);
-  let current = root;
-  for (const part of parts) {
-    current = join(current, part);
-    const st = lstatSync(current, { throwIfNoEntry: false });
-    if (st?.isSymbolicLink()) {
-      return current;
-    }
-  }
-  return null;
+// The every-component destination-symlink question is answered by install-surface.mjs, exported as
+// refusedDestination and asked by the generator and the sync writer as well. This file used to keep its OWN
+// copy of that walk (findSymlinkComponent, web-uplift-yel3); web-uplift-o7et deletes it, because a guard in
+// two places gets fixed in one and stays broken in the other - which is exactly how the cdp-copy-sync writer
+// slipped past the first round of the same fix (web-uplift-sfbp).
+//
+// What remains here is an ADAPTER, not a check: the CLI reports the ABSOLUTE offending component in
+// skippedFiles (it prints those lines to the operator), while the shared guard reports root-relative facts, so
+// this resolves one into the other and keeps the reported shape exactly as it was. The decision - which
+// component, and whether the destination is refused at all - is not re-made here.
+function refusedSymlinkComponent(dst, projectRoot) {
+  const refused = refusedDestination(dst, projectRoot);
+  if (!refused) return null;
+  return isAbsolute(refused.symlinkComponent)
+    ? refused.symlinkComponent
+    : resolve(projectRoot, refused.symlinkComponent);
 }
 
 function safeCopyFileSync(src, dst) {
@@ -474,7 +469,7 @@ function applyStep(step, projectRoot = null) {
     return;
   }
 
-  const symlinkComponent = findSymlinkComponent(step.to, projectRoot);
+  const symlinkComponent = refusedSymlinkComponent(step.to, projectRoot);
   if (symlinkComponent) {
     step.skippedFiles.push({ path: symlinkComponent, reason: 'symlink' });
     if (symlinkComponent !== step.to) {
@@ -484,7 +479,7 @@ function applyStep(step, projectRoot = null) {
   }
 
   const toDir = dirname(step.to);
-  const dirSymlink = findSymlinkComponent(toDir, projectRoot);
+  const dirSymlink = refusedSymlinkComponent(toDir, projectRoot);
   if (dirSymlink) {
     step.skippedFiles.push({ path: dirSymlink, reason: 'symlink' });
     if (dirSymlink !== step.to) {
@@ -518,7 +513,7 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = 
     acc.skippedFiles.push({ path: from, reason: 'depth-limit' });
     return acc;
   }
-  const toSymlink = findSymlinkComponent(to, projectRoot);
+  const toSymlink = refusedSymlinkComponent(to, projectRoot);
   if (toSymlink) {
     acc.skippedFiles.push({ path: toSymlink, reason: 'symlink' });
     if (toSymlink !== to) {
