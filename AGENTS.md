@@ -136,6 +136,55 @@ For iteration and implementer fast gates, several selective mechanisms are provi
    maps changed files (via `git diff origin/master` or explicit file paths) to
    their corresponding standalone and regression test targets.
 
+### Affected-only routing fails closed (web-uplift-5i9a)
+
+The fast gate is affected-only, so a changed file that no suite maps is a **failure**, not a silent
+baseline pass: a green gate that never ran the suite for a changed module is a false green. Concretely,
+`node scripts/test-fast.mjs`:
+
+- **REFUSES, before running anything** (exit 1), any changed path with an executable extension
+  (`CODE_EXTENSIONS`, identical to the fleet's own `code_exts`: `.mjs`, `.js`, `.cjs`, `.ts`, `.tsx`,
+  `.jsx`, `.py`, `.sh`, `.rs`, `.go`, `.c`, `.cpp`) that no `SUBSYSTEMS` entry maps. It prints one
+  `fast-gate: unmapped: <path>` per path, then `fast-gate: FAIL - N changed file(s) map to no suite:` and a
+  `NEXT ACTION` block on stderr, and exits 1 before dispatching any target - in `--dry-run` too, so a
+  preview cannot look greener than the run. A mixed diff fails: the mapped half never buys a green verdict
+  for the unmapped half. Executable files in the fixture/demo trees are NOT exceptions:
+  `playground/**/*.js` and `eval/fixtures/**/*.js` are refused today, and mapping them is
+  web-uplift-5r7z.
+- **NAMES THE ESCAPE in the same block.** A lane that cannot see the way forward adds its file to an
+  omission rule to make the gate green, which is the silent narrowing this bead exists to stop, so the
+  refusal says what to do: extend the map (`SUBSYSTEMS` for the covering suite, `KNOWN_STANDALONE_TESTS`
+  for a suite that runs with no arguments), or declare the path in `OMITTED_RULES` with a reason. If the map
+  cannot be extended now, the full gate is **not evidence on its own** - `npm test` runs `tests/*.test.mjs`
+  only, so a path that no such suite covers is not run by it either - so run the covering suite explicitly
+  (for a refused `tests/*.mjs`, `node <path>`), then
+  `FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check`, and name the evidence command
+  in the hand-off. Only a path with genuinely no suite belongs in an omission rule.
+- **OMITS, by a named rule whose reason is printed**, a NON-EXECUTABLE changed path that no suite maps. The
+  rules are `deleted`, `docs`, `media-and-markup`, `data-and-config`, `recorded-artefacts`,
+  `agent-and-ci-config` and `fixture-and-demo-trees`. `node scripts/test-fast.mjs --list` prints each one
+  with its reason, and that reason lives in `OMITTED_RULES` in `scripts/test-fast.mjs`. A rule only sees an
+  executable path when it sets `mayOmitExecutable`, and exactly two do (`deleted`, `recorded-artefacts`:
+  outputs of a run that no suite imports), so a tree, doc or data rule can never be the reason a changed
+  module went untested. A diff whose changed paths are all omitted by a rule (documentation-only, or a
+  deleted path that no subsystem maps) still runs the baseline four; a deleted file that a subsystem DOES
+  map selects that subsystem's targets, and `runTarget` skips the missing file (P2-3).
+- **PUBLISHES what ran** with the fleet's anchored markers: `fast-gate: running: <suite>`, then
+  `fast-gate: passed: <suite>` or `fast-gate: failed: <suite>`. The suite is named by file, because that is
+  what `fleet remote/check-coverage.py` matches against the diff; the record for a fast run can then state
+  its coverage instead of `UNKNOWN` (fleet docs/speed.md R15).
+
+The budget is a median under 60s (the fleet's `docs/speed.md` R2) for the fast gate, and the full gate runs
+once per landing. `docs/speed.md` in this repo is the readable record: the routing policy, the omission
+rules with their reasons, the escape, and the measurements with their provenance. It is not a fourth place
+to drift - `tests/test-fast.mjs` parses its rule table and compares every reason cell to `OMITTED_RULES`,
+specifically so a wrong-but-plausible reason with a right rule id fails.
+
+`tests/test-fast.mjs` pins each of these, including that NO AUTHORED executable tracked path is omitted by
+a rule while every non-executable tracked path is mapped or omitted, that the refusal names the escape, and
+that AGENTS.md and `docs/speed.md` both state the rule ids. `npm test` remains the merger's full union gate
+and is unchanged.
+
 ### Fleet configuration (~/.fleet/check.conf)
 
 To enable `fleet-check --fast` for this project across fleet lanes, configure
@@ -150,6 +199,19 @@ CHECK_FAST_TIMEOUT=300
 
 `fleet-check --fast` then runs the affected subsystem tests in seconds and
 records the cached verdict in `~/.fleet/checks/<tree>.fast.json`.
+
+`~/.fleet/check.conf` is MACHINE-GLOBAL: on a shared VM an installer from another checkout can overwrite it
+(web-uplift-ebvj, 2026-10-13), and a bare `fleet-check` would then run another project's command. Point the
+wrapper at a config this project owns instead:
+
+```bash
+FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check --fast
+```
+
+`docs/speed.md` is this project's speed record: gate budgets, the affected-only routing policy, the named
+omission rules with the reason each path is skipped, the escape when the fast gate refuses a change, and the
+measurements with their provenance. The policy is also executable - `node scripts/test-fast.mjs --list`
+prints each rule and its reason from `OMITTED_RULES` - and the test suite walks both against that data.
 
 ## Releases & versioning
 

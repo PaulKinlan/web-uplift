@@ -7,27 +7,40 @@
  * 2. Non-test files (tests/fixtures/**) and CLI helper tools (tests/mwg-catalog.mjs, etc.) are never direct-run (P1-1).
  * 3. Self-testing: scripts/test-fast.mjs maps to tests/test-fast.mjs (P2-6).
  * 4. Deduplication ensures targets are not run redundantly when multiple files change in the same subsystem.
- * 5. Unknown or empty file lists safely fall back to the fast baseline test suite.
+ * 5. A documentation/data-only or deleted-file diff is omitted by a NAMED rule and still falls back to
+ *    the fast baseline suite; an unmapped EXECUTABLE path fails the gate before any target runs
+ *    (web-uplift-5i9a), and an executable path is never omitted by a tree, doc or data rule.
  * 6. Every configured regression filter matches at least one declared test in tests/regression.mjs.
  * 7. Missing/deleted mapped files are skipped cleanly in runTarget rather than failing (P2-3).
  * 8. The fast gate exits non-zero when an affected test fails.
  * 9. CLI flags (--dry-run, --list, --all, --diff) operate as specified.
  * 10. tests/regression.mjs supports --only, --filter, --list, and fails when --only is missing an argument (P2-8).
  * 11. Slow/hanging targets are bounded and exit 124 on timeout rather than hanging.
+ * 12. An executable changed path that no subsystem maps FAILS the gate, in a mixed diff too, before any
+ *     target runs; the failure uses the fleet's anchored `fast-gate: unmapped:` marker and exit 1.
+ * 13. Suite execution is published with the fleet's `fast-gate: running|passed|failed:` markers so the
+ *     cached fast record can state its coverage instead of UNKNOWN.
+ * 14. A refusal is actionable (the next action, a paste-able map entry, and the qualified full-gate escape);
+ *     AGENTS.md names the escape and the rules, docs/speed.md's omission table is parsed and compared to
+ *     the OMITTED_RULES reasons verbatim, and --list prints each rule with its reason from that data.
  */
 
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   mapFilesToTests,
   isDirectRunnableTest,
+  classifyUnmappedPath,
+  hasCodeExtension,
+  pathEntryExists,
   runTarget,
   SUBSYSTEMS,
   BASELINE_TARGETS,
+  OMITTED_RULES,
+  CODE_EXTENSIONS,
   repoRoot,
 } from '../scripts/test-fast.mjs';
 
@@ -271,10 +284,15 @@ function testDeduplicationAndFallback() {
   assert(emptyPlan.isBaseline, 'empty file list must trigger baseline');
   assert.equal(emptyPlan.targets.length, BASELINE_TARGETS.length, 'baseline targets count must match');
 
-  // Unknown file falls back to baseline
-  const unknownPlan = mapFilesToTests(['unknown-doc.txt']);
-  assert(unknownPlan.isBaseline, 'unknown file must trigger baseline');
-  assert(unknownPlan.unmappedFiles.includes('unknown-doc.txt'), 'unknown file recorded in unmappedFiles');
+  // A changed path that no suite maps is only allowed to be left out of the plan when a NAMED rule
+  // covers it (web-uplift-5i9a). 'unknown-doc.txt' is documentation, so it is omitted with the docs
+  // rule and the plan still falls back to the baseline; an unmapped EXECUTABLE path is a failure.
+  // `exists: () => true` states the intent directly: this is a changed file, not a deletion.
+  const unknownPlan = mapFilesToTests(['unknown-doc.txt'], { exists: () => true });
+  assert(unknownPlan.isBaseline, 'a documentation-only diff must still trigger the baseline');
+  assert.deepEqual(unknownPlan.unmappedFiles, [], 'documentation must never be reported as unmapped');
+  assert.equal(unknownPlan.omittedFiles.length, 1, 'the documentation path must be recorded as omitted');
+  assert.equal(unknownPlan.omittedFiles[0].rule, 'docs', 'the omission must name the docs rule');
 
   console.log('✔ Deduplication and fallback passed');
 }
@@ -375,6 +393,10 @@ function testFailingTargetExitsNonZero() {
       runRes.stderr.includes('STOPPED') || runRes.stderr.includes('FAILED') || runRes.stdout.includes('FAILED'),
       'Output must indicate test failure'
     );
+    assert(
+      runRes.stdout.includes(`fast-gate: failed: ${failingTestPath}`),
+      'a suite that ran and failed must be published with the fleet failed marker'
+    );
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -386,7 +408,11 @@ function testSlowTargetTimesOutWithExit124() {
   console.log('Testing that slow targets time out with exit 124 rather than hanging...');
 
   const tmp = mkdtempSync(join(tmpdir(), 'test-fast-timeout-'));
-  const hangingTestPath = join(tmp, 'hanging-test.mjs');
+  // Named *.test.mjs so the CLI maps it to itself and actually dispatches it. As `hanging-test.mjs` it
+  // mapped to nothing, so the CLI half of this test used to pass because the forced 200ms timeout killed a
+  // BASELINE target instead of the hanging one (web-uplift-5i9a: with the unmapped path now failing closed,
+  // the old name exited 1 and exposed that the assertion had never exercised the target under test).
+  const hangingTestPath = join(tmp, 'hanging-test.test.mjs');
 
   try {
     writeFileSync(
@@ -420,6 +446,340 @@ function testSlowTargetTimesOutWithExit124() {
   console.log('✔ Slow target timeout test passed');
 }
 
+/**
+ * The fleet's marker contract, copied from fleet remote/check-coverage.py so this test fails if the gate
+ * starts emitting a marker the consumer cannot read (R15: a producer outside the vocabulary reads
+ * UNKNOWN, never zero).
+ */
+const FLEET_SUITE_MARKER = /^fast-gate:\s*(?:running|ran|passed|completed|failed):\s*(.*)$/;
+const FLEET_UNMAPPED_MARKER = /^fast-gate:\s*unmapped:\s*(.*)$/;
+
+function markerValues(stdout, pattern) {
+  return stdout
+    .split('\n')
+    .map((line) => line.match(pattern))
+    .filter(Boolean)
+    .map((m) => m[1]);
+}
+
+function testUnmappedExecutablePathsFailClosed() {
+  console.log('Testing that unmapped executable paths fail closed (web-uplift-5i9a)...');
+
+  // Pure mapping, with every path stated to exist so the assertion is about the MAP, not about whether
+  // the file happens to be on disk. An unmapped executable path is UNKNOWN, never a baseline pass.
+  const existsAlways = { exists: () => true };
+
+  const unknownOnly = mapFilesToTests(['scripts/brand-new-tool.mjs'], existsAlways);
+  assert.deepEqual(unknownOnly.unmappedFiles, ['scripts/brand-new-tool.mjs'], 'an unmapped executable path must be reported as unmapped');
+  assert.equal(unknownOnly.isBaseline, false, 'an unmapped executable path must NOT fall back to the baseline');
+  assert.equal(unknownOnly.targets.length, 0, 'an unmapped executable path selects no target');
+
+  // The exact defect this bead names: a MIXED diff. Before the fix this returned the evidence targets
+  // with the unknown path recorded in unmappedFiles and the process still exited 0.
+  const mixed = mapFilesToTests(['evidence/cdp.mjs', 'scripts/brand-new-tool.mjs'], existsAlways);
+  assert(mixed.targets.length > 0, 'the known half of a mixed diff must still select its targets');
+  assert.deepEqual(mixed.unmappedFiles, ['scripts/brand-new-tool.mjs'], 'the unknown half of a mixed diff must be reported');
+  assert.equal(mixed.isBaseline, false, 'a mixed diff must never fall back to the baseline');
+
+  // Fails closed by DEFAULT: the omission list is a set of NAMED trees and rules, so a code path outside
+  // every one of them is unmapped. This is the control that stops a rule from becoming a blanket.
+  for (const codePath of [
+    'scripts/brand-new-tool.mjs',
+    'tests/new-support-module.mjs',
+    'bin/other-cli.mjs',
+  ]) {
+    assert(
+      mapFilesToTests([codePath], existsAlways).unmappedFiles.includes(codePath),
+      `${codePath} must fail closed: it is executable and no rule names it`
+    );
+  }
+
+  // CLI, end to end. The probe is an absolute path in a temp dir: it exists (so it is not a deletion),
+  // it is executable, and no subsystem maps it.
+  const fastScript = join(repoRoot, 'scripts/test-fast.mjs');
+  const probeDir = mkdtempSync(join(tmpdir(), 'test-fast-unmapped-'));
+  const probePath = join(probeDir, 'unmapped-probe.mjs');
+  try {
+    writeFileSync(probePath, '#!/usr/bin/env node\nconsole.log("probe");\n', { mode: 0o755 });
+
+    const res = spawnSync(process.execPath, [fastScript, probePath], { encoding: 'utf8' });
+    assert.notEqual(res.status, 0, 'the gate must exit non-zero for an unmapped executable path');
+    assert.equal(markerValues(res.stdout, FLEET_UNMAPPED_MARKER).length, 1, 'the gate must print exactly one fleet unmapped marker');
+    assert(res.stderr.includes('map to no suite'), 'the gate must say why on stderr');
+    assert(res.stderr.includes('SUBSYSTEMS'), 'the failure must tell the author where to add the mapping');
+    assert(!res.stdout.includes('PASSED'), 'no target may be reported as passing when the plan is unmapped');
+    // A --dry-run preview must show the same refusal: a preview that looks green while the real run
+    // fails is the trap this check exists to close.
+    const dry = spawnSync(process.execPath, [fastScript, '--dry-run', probePath], { encoding: 'utf8' });
+    assert.notEqual(dry.status, 0, '--dry-run must report an unmapped plan as a failure, not a green preview');
+    assert(dry.stdout.includes('fast-gate: unmapped:'), '--dry-run must print the unmapped marker');
+
+    // Mixed diff through the CLI: the mapped half must not buy a green verdict for the unmapped half.
+    const mixedRes = spawnSync(process.execPath, [fastScript, 'evidence/cdp.mjs', probePath], { encoding: 'utf8' });
+    assert.notEqual(mixedRes.status, 0, 'a mixed known+unknown diff must exit non-zero');
+    assert.equal(markerValues(mixedRes.stdout, FLEET_UNMAPPED_MARKER).length, 1, 'the unknown half must be published as unmapped');
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+  }
+
+  console.log('✔ Unmapped executable paths fail closed');
+}
+
+/**
+ * A refusal must be ACTIONABLE (web-uplift-coord, the condition on this bead) and the policy must be
+ * readable without running the gate and checked against the code. Three artefacts, all walked here:
+ *   - AGENTS.md: where a lane looks first, and it must name the ESCAPE as well as the rules (a lane that
+ *     cannot see the way forward adds an omission rule to make the gate green);
+ *   - docs/speed.md: the readable record, whose omission table is PARSED and compared to OMITTED_RULES
+ *     verbatim, so a wrong-but-plausible reason with a right rule id fails (round-3 finding P2 - an
+ *     id-presence check would have passed exactly that);
+ *   - `--list`: the executable half, printing each rule AND its reason from the single source of truth.
+ */
+function testRefusalIsActionableAndDocumented() {
+  console.log('Testing that a refusal names the next action and that the policy is documented...');
+
+  const docs = {
+    'AGENTS.md': readFileSync(join(repoRoot, 'AGENTS.md'), 'utf8'),
+    'docs/speed.md': readFileSync(join(repoRoot, 'docs', 'speed.md'), 'utf8'),
+  };
+  for (const [name, doc] of Object.entries(docs)) {
+    assert(doc.includes('fast-gate: unmapped:'), `${name} must name the marker a lane will see`);
+    assert(/NEXT ACTION/.test(doc), `${name} must carry the one next action, not only the policy`);
+    assert(doc.includes('KNOWN_STANDALONE_TESTS') && doc.includes('OMITTED_RULES'), `${name} must name both mapping routes`);
+    assert(/FLEET_CHECK_CONF=\S+\s+fleet-check/.test(doc), `${name} must name the escape with its config override`);
+    // The escape must be qualified: the full gate is not evidence for a path `npm test` does not run
+    // (round-3 finding P1).
+    assert(
+      /runs `tests\/\*\.test\.mjs`\s+only/.test(doc) && /not evidence on its own/i.test(doc),
+      `${name} must qualify the escape: npm test only runs tests/*.test.mjs`
+    );
+    for (const rule of OMITTED_RULES) {
+      assert(doc.includes(`\`${rule.id}\``), `${name} must name the omission rule ${rule.id}`);
+    }
+  }
+
+  // The readable record's table is DATA: parse the rows and compare the reason cell to the rule's own reason
+  // string, and fail on a row for a rule that no longer exists.
+  const tableRows = new Map();
+  for (const line of docs['docs/speed.md'].split('\n')) {
+    const parsed = line.match(/^\|\s*`([a-z-]+)`\s*\|(.*)\|\s*$/);
+    if (parsed) tableRows.set(parsed[1], parsed[2].split('|').map((cell) => cell.trim()));
+  }
+  for (const rule of OMITTED_RULES) {
+    assert(tableRows.has(rule.id), `docs/speed.md must have a table row for the omission rule ${rule.id}`);
+    const cells = tableRows.get(rule.id);
+    assert.equal(
+      cells[cells.length - 1],
+      rule.reason,
+      `the reason cell for ${rule.id} must be the rule's own reason string, not a paraphrase`
+    );
+    assert(cells.length === 2 && cells[0].length > 0, `the row for ${rule.id} must also say what it omits`);
+  }
+  for (const id of tableRows.keys()) {
+    assert(OMITTED_RULES.some((rule) => rule.id === id), `docs/speed.md documents an omission rule that does not exist: ${id}`);
+  }
+  // The claimed cost is a number with provenance, and the spawn count is the kind of detail that rots
+  // silently when a test is added (round-3 finding P2).
+  assert(/six bounded\s+`node` spawns/.test(docs['docs/speed.md']), 'docs/speed.md must state the measured spawn count, so adding a test forces the measurement to be updated');
+  assert(/7\.2s direct/.test(docs['docs/speed.md']) && /11\.0s in the cached/.test(docs['docs/speed.md']), 'docs/speed.md must give each timing sample with its provenance');
+
+  // The executable half: `--list` prints every rule and its reason from the data.
+  const listRes = spawnSync(process.execPath, [join(repoRoot, 'scripts', 'test-fast.mjs'), '--list'], { encoding: 'utf8' });
+  assert.equal(listRes.status, 0, '--list must exit 0');
+  for (const rule of OMITTED_RULES) {
+    assert(listRes.stdout.includes(rule.id), `--list must print the omission rule ${rule.id}`);
+    assert(listRes.stdout.includes(rule.reason), `--list must print the reason for ${rule.id}`);
+  }
+
+  // The instruction a lane actually reads. It must name the next action, show the map entry to paste with
+  // this path in it, and offer the honest route when the map cannot be extended now.
+  const fastScript = join(repoRoot, 'scripts', 'test-fast.mjs');
+  const probeDir = mkdtempSync(join(tmpdir(), 'test-fast-actionable-'));
+  const probePath = join(probeDir, 'brand-new-module.mjs');
+  try {
+    writeFileSync(probePath, '#!/usr/bin/env node\n', { mode: 0o755 });
+    const res = spawnSync(process.execPath, [fastScript, probePath], { encoding: 'utf8' });
+    assert.notEqual(res.status, 0, 'the gate must still refuse');
+    assert(res.stderr.includes('NEXT ACTION'), 'the refusal must lead with the next action');
+    assert(
+      res.stderr.includes(`candidate === '${relative(repoRoot, probePath)}'`),
+      'the refusal must print a paste-able SUBSYSTEMS entry for THIS path, not a generic instruction'
+    );
+    assert(res.stderr.includes('KNOWN_STANDALONE_TESTS'), 'the refusal must name the standalone-suite route');
+    assert(res.stderr.includes('OMITTED_RULES'), 'the refusal must name the declared-omission route');
+    assert(
+      res.stderr.includes('npm test runs tests/*.test.mjs only'),
+      'the refusal must qualify the full gate: it does not run a path no tests/*.test.mjs suite covers'
+    );
+    assert(
+      /FLEET_CHECK_CONF=\S+ fleet-check/.test(res.stderr),
+      'the refusal must still give the full-gate command, after the qualification'
+    );
+    assert(
+      res.stderr.includes('baseline run is not evidence'),
+      'the refusal must say why pointing the path at the baseline is not a fix'
+    );
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+  }
+
+  console.log('✔ Refusal is actionable and documented');
+}
+
+function testOmittedRulesAreNamedAndNarrow() {
+  console.log('Testing that omitted paths are named by a rule and cannot rot silently...');
+
+  const existsAlways = { exists: () => true };
+
+  // Every rule states a reason, which is what makes an omission readable instead of an absence.
+  for (const rule of OMITTED_RULES) {
+    assert(rule.id && rule.reason && typeof rule.match === 'function', `omission rule ${rule.id} must name itself and its reason`);
+  }
+
+  const docOnly = mapFilesToTests(
+    ['README.md', 'AGENTS.md', 'docs/adr-0001-test-and-evidence-decomposition.md', 'examples/playground-report.md'],
+    existsAlways
+  );
+  assert.deepEqual(docOnly.unmappedFiles, [], 'documentation must not be reported as unmapped');
+  assert.equal(docOnly.omittedFiles.length, 4, 'each documentation path must be recorded as omitted');
+  assert(docOnly.omittedFiles.every((o) => o.rule === 'docs'), 'the documentation paths must be omitted by the docs rule');
+  assert(docOnly.isBaseline, 'a documentation-only diff still runs the baseline suite');
+
+  // An EXECUTABLE file inside a named fixture/demo tree is NOT omitted: the tree rules only see
+  // non-executable paths, so playground/app.js is refused like any other unmapped executable. This is
+  // the review finding (P1) on the first version of this change, which omitted it and thereby skipped a
+  // changed module; mapping those trees is filed as web-uplift-5r7z. The non-executable files beside it
+  // are still omitted, by their own rules.
+  const fixture = mapFilesToTests(
+    ['playground/app.js', 'playground/README.md', 'playground/expected-findings.json'],
+    existsAlways
+  );
+  assert.deepEqual(
+    fixture.unmappedFiles,
+    ['playground/app.js'],
+    'an executable file in a fixture/demo tree must be REFUSED, not omitted: a tree rule may not skip a changed module'
+  );
+  assert.equal(fixture.omittedFiles.length, 2, 'the non-executable files beside it are omitted');
+  assert(
+    fixture.omittedFiles.every((o) => o.rule === 'docs' || o.rule === 'data-and-config'),
+    'those omissions must be named by the doc/data rules that cover them'
+  );
+  // The other direction: no rule that omits an executable path may exist without saying so. Exactly two
+  // do (deleted, recorded-artefacts), and each carries the flag that makes it explicit.
+  const executableOmitters = OMITTED_RULES.filter((rule) => rule.mayOmitExecutable === true).map((rule) => rule.id);
+  assert.deepEqual(
+    executableOmitters.sort(),
+    ['deleted', 'recorded-artefacts'],
+    'only the deletion and recorded-artefact rules may omit an executable path; adding a third must be a deliberate, reviewed change'
+  );
+  // The declared exception, exercised: a probe script recorded by a run is omitted, with its rule named.
+  const recordedProbe = mapFilesToTests(['evidence-out/fb6-stuck/fb6-probe.mjs'], existsAlways);
+  assert.deepEqual(recordedProbe.unmappedFiles, [], 'a recorded artefact probe is the declared exception, not a failure');
+  assert.equal(recordedProbe.omittedFiles[0].rule, 'recorded-artefacts', 'the record rule must be the one that omitted it');
+
+  // A deleted path has nothing left to run, so it is OMITTED with its own rule rather than reported as an
+  // unmapped executable (runTarget already skips a mapped target whose file is gone, P2-3). "Deleted" means
+  // the tree has no entry there, which is NOT the same as existsSync returning false: a dangling symlink is
+  // a present entry and must be refused, not read as a deletion (review finding P2 on 1cf6e36).
+  const deleted = mapFilesToTests(['scripts/removed-tool.mjs'], { exists: () => false });
+  assert.deepEqual(deleted.unmappedFiles, [], 'a deleted path is not an unmapped executable');
+  assert.equal(deleted.omittedFiles.length, 1, 'a deleted path must be recorded as omitted');
+  assert.equal(deleted.omittedFiles[0].rule, 'deleted', 'a deleted path must be omitted by the deleted rule');
+  assert(deleted.isBaseline, 'an unmatched deleted path falls back to the baseline');
+  // A deleted path a SUBSYSTEM maps is not baseline: the subsystem wins and runTarget skips the missing
+  // file, which is why the baseline claim has to be about UNMAPPED deletions only (review finding P2).
+  const deletedMapped = mapFilesToTests(['tests/flow.mjs'], { exists: () => false });
+  assert(
+    deletedMapped.matchedSubsystems.includes('flow') && !deletedMapped.isBaseline,
+    'a deleted file that a subsystem maps selects that subsystem, not the baseline'
+  );
+  assert(classifyUnmappedPath('docs/gone.md', repoRoot, () => false).omitted.rule === 'deleted', 'classifyUnmappedPath must expose the same decision');
+
+  // The default predicate both halves of that decision rest on: an absent entry is gone, a present entry is
+  // not - INCLUDING a dangling symlink, which existsSync calls absent.
+  const linkDir = mkdtempSync(join(tmpdir(), 'test-fast-lstat-'));
+  try {
+    symlinkSync(join(linkDir, 'missing-target.mjs'), join(linkDir, 'dangling.mjs'));
+    writeFileSync(join(linkDir, 'present.mjs'), '#!/usr/bin/env node\n');
+    assert.equal(pathEntryExists('dangling.mjs', linkDir), true, 'a dangling symlink is a PRESENT entry, not a deleted path');
+    assert.equal(pathEntryExists('present.mjs', linkDir), true, 'a real file is a present entry');
+    assert.equal(pathEntryExists('absent.mjs', linkDir), false, 'a path with no entry is deleted');
+  } finally {
+    rmSync(linkDir, { recursive: true, force: true });
+  }
+
+  // The invariants that keep the rule list honest. The gate refuses an unmapped executable path at run
+  // time; these pin the two ways a rule could quietly defeat that:
+  //   1. NO AUTHORED executable tracked path may be omitted by a rule (the record trees and deletions are
+  //      the declared exceptions), and
+  //   2. every NON-EXECUTABLE tracked path must be mapped or omitted, so nothing is dropped silently.
+  // Unmapped tracked executables are allowed only in the two trees whose mapping is filed as
+  // web-uplift-5r7z, so a new unmapped module anywhere else fails this test as well as the gate.
+  const tracked = spawnSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  assert(tracked.length > 100, `expected a real tracked-file list, got ${tracked.length}`);
+  const plans = tracked.map((f) => [f, mapFilesToTests([f])]);
+  const recordTrees = ['evidence-out/', '.pi-subagents/'];
+  const omittedExecutables = plans
+    .filter(([f, p]) => hasCodeExtension(f) && p.omittedFiles.length > 0)
+    .map(([f, p]) => `${f} [${p.omittedFiles[0].rule}]`);
+  assert.deepEqual(
+    omittedExecutables.filter((s) => !recordTrees.some((t) => s.startsWith(t))),
+    [],
+    'no authored executable path may be omitted by a rule: a tree rule that skips a changed module is the silent narrowing this bead forbids'
+  );
+  const droppedNonExecutables = plans.filter(([f, p]) => !hasCodeExtension(f) && p.unmappedFiles.length > 0).map(([f]) => f);
+  assert.deepEqual(droppedNonExecutables, [], 'every non-executable tracked path must be mapped or omitted by a named rule');
+  const unmappedExecutables = plans.filter(([, p]) => p.unmappedFiles.length > 0).map(([f]) => f);
+  assert.deepEqual(
+    unmappedExecutables.filter((f) => !f.startsWith('playground/') && !f.startsWith('eval/')),
+    [],
+    'only the trees whose consumer mapping is filed as web-uplift-5r7z may currently be unmapped; anything else must be mapped or covered by a named rule'
+  );
+  assert(CODE_EXTENSIONS.has('.mjs'), 'the executable-extension set must describe this repo\'s modules');
+
+  console.log(
+    `✔ ${OMITTED_RULES.length} named omission rules; ${tracked.length} tracked paths classified (${unmappedExecutables.length} refused pending web-uplift-5r7z, ${omittedExecutables.length} recorded-artefact executables declared)`
+  );
+}
+
+function testSuiteExecutionMarkers() {
+  console.log('Testing that suite execution is published with the fleet coverage markers...');
+
+  const fastScript = join(repoRoot, 'scripts/test-fast.mjs');
+  const tmp = mkdtempSync(join(tmpdir(), 'test-fast-markers-'));
+  const passPath = join(tmp, 'marker-pass.test.mjs');
+  try {
+    writeFileSync(passPath, '#!/usr/bin/env node\nconsole.log("ok");\n', { mode: 0o755 });
+
+    // THE ORDINARY NEW FILE CONTROL (the likeliest real-world unmapped path): a fresh suite named
+    // *.test.mjs maps to ITSELF and simply runs, so fail-closed must not block ordinary work. If this
+    // assertion ever needs relaxing, the design question goes back to coord rather than into the gate.
+    const plan = mapFilesToTests([passPath]);
+    assert.deepEqual(plan.unmappedFiles, [], 'a fresh tests/*.test.mjs must not be refused: it is its own suite');
+    assert.equal(plan.targets.length, 1, 'a fresh suite must select exactly itself');
+
+    const res = spawnSync(process.execPath, [fastScript, passPath], { encoding: 'utf8' });
+    assert.equal(res.status, 0, 'a passing target must exit 0');
+    assert.deepEqual(
+      markerValues(res.stdout, FLEET_SUITE_MARKER),
+      [passPath, passPath],
+      'the suite must be announced (running) and then published (passed), both inside the fleet vocabulary'
+    );
+    assert(
+      res.stdout.includes(`fast-gate: running: ${passPath}`),
+      'a dispatched suite must be announced with the fleet running marker'
+    );
+    assert(
+      res.stdout.includes(`fast-gate: passed: ${passPath}`),
+      'a suite that executed and passed must be published with the fleet passed marker'
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+
+  console.log('✔ Coverage markers passed');
+}
+
 function runAll() {
   testSubsystemMappings();
   testNonTestExclusion();
@@ -430,6 +790,10 @@ function runAll() {
   testMissingTargetSkippedCleanly();
   testFailingTargetExitsNonZero();
   testSlowTargetTimesOutWithExit124();
+  testUnmappedExecutablePathsFailClosed();
+  testOmittedRulesAreNamedAndNarrow();
+  testRefusalIsActionableAndDocumented();
+  testSuiteExecutionMarkers();
   console.log('\nAll fast gate unit and integration tests passed successfully.');
 }
 
