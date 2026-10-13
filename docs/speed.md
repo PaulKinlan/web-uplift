@@ -133,8 +133,9 @@ the gate, and the CPU it costs is the reason this matters (the fleet's scarcest 
 NOTHING IS MEASURED LESS. Every assertion is unchanged, and the two converted cases carry their own
 functional check that the sharing is clean: `testConsoleEvidence` asserts the `/clean` load reports zero
 console entries after the `/noisy` load, and it still does. Paired measurement (same VM, same command,
-`tests/regression.mjs --only`, one browser per call vs one per case), measured back-to-back on this branch's
-landing base - one figure with its context, rather than a range across runs:
+`tests/regression.mjs --only`, one browser per call vs one per case), each pair measured back-to-back on
+the conversion's own branch before it landed - the throttling pair on base `8588171`, not on this tip's base -
+one figure with its context, rather than a range across runs:
 
 | case | before | after | saved | launches |
 | --- | --- | --- | --- | --- |
