@@ -267,6 +267,33 @@ repo's total test count. An unmapped **executable** path is
 never omitted by a tree, doc or data rule; only a rule that sets `mayOmitExecutable` can see one, and
 exactly two do (`deleted`, `recorded-artefacts`).
 
+### A rebase that moves a reviewed tip supplies a range-diff (web-uplift-glh9)
+
+A clearance (`cleared:<sha>`) names a SHA, so anything that moves the tip it was given for invalidates
+it, including a rebase that changes none of the author's own work. The move is made checkable, rather
+than a matter of trust, by the author supplying one command's output:
+
+    git range-diff <old-base>..<old-tip> <new-base>..<new-tip>
+
+Worked example, from this project's own branch (web-uplift-5e9s, rebased onto a moved master):
+`c59485a=5aad669`, `1a64587=d7e370a`, `d56ffb7=3aadd8b`. Three commits unchanged, the only difference
+between the two deltas being master's own work carried in by the rebase. A reviewer handed that can
+re-pin the clearance at the new sha with evidence instead of re-deriving the whole review; without it a
+reviewer cannot tell a clean rebase from a rewrite, and a clean rebase says nothing about whether the
+reviewed bytes are the landed bytes.
+
+The converse, because this is not a prohibition:
+
+- a rebase **before** the first review is free, since there is no clearance to invalidate;
+- a rebase **after** a review invalidates the clearance, and the old clearance must not be re-used on the
+  new tip;
+- the range-diff is what makes the second case safe rather than forbidden: one command, no test run.
+
+Two keys with different invalidation rules are involved, which is why the pair is easy to mix up: a gate
+cache is keyed by TREE, a clearance by SHA. An amend that rewrites a tip's message and sha but not its
+tree therefore keeps a cached verdict valid while invalidating a clearance, and a queue label travels
+with the new pin rather than staying behind on the old one.
+
 ### The omission rules (data, with the reason each path is skipped)
 
 | rule | what it omits | reason |
