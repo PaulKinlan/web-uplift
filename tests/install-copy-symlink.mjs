@@ -96,6 +96,11 @@ export function testInstallSkipsSymlinksInVendoredSource() {
   const fileLink = join(SCHEMA_DIR, 'install-symlink-escape.txt');
   const cycleDir = join(SCHEMA_DIR, 'install-symlink-cycle');
   try {
+    // Purge BEFORE building, not only in the finally: a killed run (reaper, timeout, preempted heavy
+    // slot) never reaches finally, and the leftovers then make the FIRST non-recursive mkdir/symlink
+    // below throw EEXIST, poisoning every later run in the same worktree (web-uplift-qx4i).
+    rmSync(fileLink, { recursive: true, force: true });
+    rmSync(cycleDir, { recursive: true, force: true });
     const secret = 'AKIA' + 'INSTALLSYMLINKFILEESCAPE';
     const outsideSecret = join(outside, 'id_rsa');
     writeFileSync(outsideSecret, secret);
@@ -127,6 +132,11 @@ export function testInstallCopyDepthGuard() {
   const target = mkdtempSync(join(tmpdir(), 'web-uplift-install-depth-target-'));
   const fixture = join(SCHEMA_DIR, 'install-depth-fixture');
   try {
+    // Same start-of-run purge as fixture 1, and for the same reason: the descent below uses a
+    // NON-recursive mkdir, so an `install-depth-fixture/d` left by a killed run makes this throw
+    // EEXIST before it tests anything (web-uplift-qx4i). The fixture must stay under SCHEMA_DIR -
+    // that is what makes the install walk it and hit the depth guard - so it cannot be a tmpdir.
+    rmSync(fixture, { recursive: true, force: true });
     let dir = fixture;
     mkdirSync(dir, { recursive: true });
     for (let i = 0; i < 70; i++) {
@@ -148,6 +158,30 @@ export function testInstallCopyDepthGuard() {
     rmSync(fixture, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
   }
+}
+
+// Control for web-uplift-qx4i: both fixtures above must pass WITH the leftovers a killed run leaves
+// behind already on disk. Without the start-of-run purges this fails with EEXIST on the first
+// non-recursive mkdir/symlink, which is precisely how the merger's union gate was poisoned by an
+// unrelated change. The leftovers are created here rather than assumed, so the control cannot pass
+// because the paths happened to be clean.
+export function testInstallFixturesTolerateLeftoversFromAKilledRun() {
+  const fileLink = join(SCHEMA_DIR, 'install-symlink-escape.txt');
+  const cycleDir = join(SCHEMA_DIR, 'install-symlink-cycle');
+  const fixture = join(SCHEMA_DIR, 'install-depth-fixture');
+  rmSync(fileLink, { recursive: true, force: true });
+  rmSync(cycleDir, { recursive: true, force: true });
+  rmSync(fixture, { recursive: true, force: true });
+  mkdirSync(join(cycleDir, 'loop'), { recursive: true });
+  writeFileSync(fileLink, 'leftover\n');
+  mkdirSync(join(fixture, 'd', 'd'), { recursive: true });
+  writeFileSync(join(fixture, 'd', 'd', 'leaf.txt'), 'leftover leaf\n');
+
+  assert(existsSync(join(cycleDir, 'loop')), 'the control must create the cycle leftover before testing');
+  assert(existsSync(join(fixture, 'd')), 'the control must create the depth leftover before testing');
+
+  testInstallSkipsSymlinksInVendoredSource();
+  testInstallCopyDepthGuard();
 }
 
 // Fixture 3: the vendored dependency closure is complete. There is no lockfile

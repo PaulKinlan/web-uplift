@@ -40,6 +40,7 @@ import {
 } from './test-helpers.mjs';
 import {
   testInstallSkipsSymlinksInVendoredSource,
+  testInstallFixturesTolerateLeftoversFromAKilledRun,
   testInstallCopyDepthGuard,
   testInstallVendorsCompleteClosure,
   testInstallRefusesDestinationSymlinks,
@@ -587,6 +588,7 @@ export const installPackageTests = [
   testUpdateCheckIsOptInAndUntrusted,
   testInstallSurfaceMatchesWhatInstallVendors,
   testInstallSkipsSymlinksInVendoredSource,
+  testInstallFixturesTolerateLeftoversFromAKilledRun,
   testInstallCopyDepthGuard,
   testInstallVendorsCompleteClosure,
   testInstallRefusesDestinationSymlinks,
@@ -613,6 +615,7 @@ export const installPackageTests = [
 
 export {
   testInstallSkipsSymlinksInVendoredSource,
+  testInstallFixturesTolerateLeftoversFromAKilledRun,
   testInstallCopyDepthGuard,
   testInstallVendorsCompleteClosure,
   testInstallRefusesDestinationSymlinks,
