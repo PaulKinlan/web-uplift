@@ -690,6 +690,43 @@ export function testInstallIncompleteExitControl() {
   }
 }
 
+// Fixture 10 (web-uplift-arpp): every DESTINATION refusal carries the marker the exit decision counts, and the
+// only pushes that do not are the two skips that are NOT refusals.
+//
+// THIS TEST IS STRUCTURAL, NOT BEHAVIOURAL, and that is stated here so no reviewer mistakes it for end-to-end
+// evidence. The site it pins - copyDir's copy of a file whose destination is swapped for a symlink between
+// copyDir's own lstat and safeCopyFileSync's re-lstat/open - is race-only and cannot be driven from outside the
+// process without inventing a production seam for the test's benefit, which is a worse trade than an honest
+// structural assertion. The non-race path is covered end-to-end by fixture 4, which plants five destination
+// symlinks and asserts the non-zero status, the absence of the success line and byte-identical victims.
+//
+// The invariant is the CLASS rather than the one line: a push that records "a destination was refused" must be
+// marked, and the only unmarked pushes must be the two that are legitimately not refusals - a source symlink
+// (the vendored tree simply has no symlinked sources, so skipping one is normal) and the source-tree depth
+// limit. That is what catches a new unmarked site, which is precisely how web-uplift-arpp was filed.
+export function testEveryDestinationRefusalCarriesTheMarker() {
+  const cliSource = readFileSync(join(repoRoot, 'bin', 'web-uplift.mjs'), 'utf8');
+  const pushes = [...cliSource.matchAll(/skippedFiles\.push\(\{([^}]*)\}\)/g)].map((m) => m[1].trim());
+  assert(pushes.length >= 10, `the scan expected the CLI's skip pushes and found ${pushes.length}: it must be reading the file it thinks it is`);
+
+  const unmarked = pushes.filter((body) => !body.includes('refused: true'));
+  assert(unmarked.length === 2,
+    `exactly two skip pushes may omit refused: true - a source symlink and the depth limit - and ${unmarked.length} do: ${JSON.stringify(unmarked)}. An unmarked DESTINATION refusal makes the CLI exit 0 with 'Installed' over a destination it refused (web-uplift-arpp)`);
+  assert(unmarked.some((b) => /reason: 'depth-limit'/.test(b)),
+    `the depth limit is a source-tree property rather than a destination refusal, so it must stay unmarked: ${JSON.stringify(unmarked)}`);
+  assert(unmarked.some((b) => /path: src\b/.test(b) && /reason: 'symlink'/.test(b)),
+    `a skipped SOURCE symlink is normal and must stay unmarked, or an ordinary install would fail: ${JSON.stringify(unmarked)}`);
+
+  // Every safe* result is a destination refusal by construction (each returns 'symlink' only when the
+  // destination is one), so every push of one must be marked - the rule the one gap violated.
+  const resultPushes = pushes.filter((body) => body.includes('reason: res.reason'));
+  assert(resultPushes.length >= 4, `expected the four safe* result pushes (three in applyStep, one in copyDir), found ${resultPushes.length}`);
+  for (const body of resultPushes) {
+    assert(body.includes('refused: true'),
+      `a safe* refusal is a refused DESTINATION and must be counted: ${body}`);
+  }
+}
+
 // Run directly (node tests/install-copy-symlink.mjs), not when imported by the
 // regression suite, which calls the exported functions itself.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -703,5 +740,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   testSyncRefusesEqualByteSymlinkDestination();
   testInstallAsksTheSharedSymlinkGuard();
   testInstallIncompleteExitControl();
+  testEveryDestinationRefusalCarriesTheMarker();
   console.log('tests OK');
 }

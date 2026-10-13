@@ -563,7 +563,13 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = 
     else {
       const res = safeCopyFileSync(src, dst);
       if (res.skipped) {
-        acc.skippedFiles.push({ path: res.path, reason: res.reason });
+        // refused: true for the same reason as every other destination refusal. This site is the one the v167
+        // marker missed (web-uplift-arpp): the window is race-only - copyDir lstats dst and sees a regular file,
+        // then safeCopyFileSync re-lstats and opens with O_NOFOLLOW, so a swap between the two (or EMLINK on the
+        // open) returns 'symlink' HERE, and without the marker the skip printed, refusedDestinations stayed 0
+        // and the CLI exited 0 with 'Installed' over a destination it had just refused. Same reason string as
+        // the other sites, so the count and the FAILED line behave identically on this path.
+        acc.skippedFiles.push({ path: res.path, reason: res.reason, refused: true });
       }
     }
   }
