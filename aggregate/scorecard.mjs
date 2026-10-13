@@ -424,6 +424,45 @@ const METRIC_META = {
   'lh-seo': { label: 'Lighthouse SEO', unit: '', lowerBetter: false },
 };
 
+// A finding's url is untrusted report input: the findings schema types it as a
+// string and nothing more, and findingDialog() emits it as an <a href>. esc()
+// neutralises attribute breakout but not the scheme, so a javascript: URI
+// survives escaping intact and runs when the reader clicks the link
+// (web-uplift-6fno). Only http:, https: and scheme-less relative references may
+// become hrefs; everything else renders as plain escaped text so the value stays
+// readable without being clickable.
+//
+// The scheme is read from the string AFTER normalising it the way the browser's
+// URL parser will: leading/trailing C0 controls and space are dropped, and
+// tab/newline/CR are dropped ANYWHERE, because `jav\tascript:...` IS
+// `javascript:...` to that parser, while a scheme test on the raw string would
+// see no scheme at all and wave it through. esc() already guarantees
+// the attribute cannot be broken out of, so the only question left is what the
+// browser does with the value it lands in.
+const HREF_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
+function isSafeFindingHref(raw) {
+  const s = String(raw ?? '')
+    .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '')
+    .replace(/[\t\n\r]/g, '');
+  if (!s) return false;
+  if (HREF_SCHEME.test(s)) {
+    // A scheme is present, so the string is an absolute URL; only http(s) may be
+    // emitted as a link. Node's URL parser normalises case and lowercases the
+    // protocol, so the comparison sees what the browser would act on.
+    try {
+      const protocol = new URL(s).protocol;
+      return protocol === 'http:' || protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }
+  // No scheme: a relative reference (/x, ./x, ?q, #frag, //host). It resolves
+  // against the scorecard's own origin, and a scheme the string never carried
+  // cannot appear by resolution - so it is not a script execution vector.
+  return true;
+}
+
 function findingDialog(report, dir, f) {
   const arts = (report.artifacts ?? []).filter((a) => (a.findingIds ?? []).includes(f.id));
   const media = arts
@@ -449,7 +488,7 @@ function findingDialog(report, dir, f) {
     <button class="x" aria-label="Close" value="close">${ICON.close}</button>
   </form>
   <h3>${esc(f.summary)}</h3>
-  <p class="meta">${esc(f.principleId)}${f.guidanceId ? ` &middot; guidance: ${esc(f.guidanceId)}` : ''}${f.url ? ` &middot; <a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.url)}</a>` : ''}</p>
+  <p class="meta">${esc(f.principleId)}${f.guidanceId ? ` &middot; guidance: ${esc(f.guidanceId)}` : ''}${f.url ? ` &middot; ${isSafeFindingHref(f.url) ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.url)}</a>` : `<span class="muted" title="link withheld: finding url is not http(s)">${esc(f.url)}</span>`}` : ''}</p>
   ${f.evidence ? `<h4>Evidence</h4><p>${esc(f.evidence)}</p>` : ''}
   ${f.suggestedFix ? `<h4>Suggested fix</h4><p>${esc(f.suggestedFix)}</p>` : ''}
   ${media ? `<h4>Captured evidence</h4><div class="media">${media}</div>` : ''}
