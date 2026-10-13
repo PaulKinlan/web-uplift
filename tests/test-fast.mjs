@@ -26,7 +26,7 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -41,6 +41,8 @@ import {
   BASELINE_TARGETS,
   OMITTED_RULES,
   CODE_EXTENSIONS,
+  getChangedFiles,
+  getChangedRegressionTests,
   repoRoot,
 } from '../scripts/test-fast.mjs';
 
@@ -296,6 +298,57 @@ function testDeduplicationAndFallback() {
   assert.equal(unknownPlan.omittedFiles[0].rule, 'docs', 'the omission must name the docs rule');
 
   console.log('✔ Deduplication and fallback passed');
+}
+
+function testChangedFilesUseMergeBase() {
+  console.log('Testing stale-branch merge-base changed-file selection...');
+  const repo = mkdtempSync(join(tmpdir(), 'test-fast-merge-base-'));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  try {
+    git('init', '-q', '-b', 'master');
+    git('config', 'user.email', 'gate@test.invalid');
+    git('config', 'user.name', 'gate');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    const base = git('rev-parse', 'HEAD');
+
+    git('checkout', '-q', '-b', 'feature');
+    writeFileSync(join(repo, 'feature.txt'), 'feature\n');
+    // Both branches touch the registry; the feature's test names must not include master's additions.
+    const regression = join(repo, 'tests', 'regression.mjs');
+    mkdirSync(join(repo, 'tests'));
+    writeFileSync(regression, 'function testFeature() {}\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature');
+
+    git('checkout', '-q', 'master');
+    writeFileSync(join(repo, 'master-only.txt'), 'master\n');
+    mkdirSync(join(repo, 'tests'));
+    writeFileSync(regression, 'function testMaster() {}\n');
+    git('add', '.');
+    git('commit', '-qm', 'master');
+    git('checkout', '-q', 'feature');
+
+    const changed = getChangedFiles(repo, 'master');
+    assert.equal(changed.base, base, 'compare against the common ancestor, not master tip');
+    assert.deepEqual(changed.files.sort(), ['feature.txt', 'tests/regression.mjs']);
+    assert.deepEqual(getChangedRegressionTests(repo, 'master'), ['testFeature'], 'master-only regression cases must not be selected');
+
+    writeFileSync(join(repo, 'base.txt'), 'base\nuncommitted\n');
+    writeFileSync(join(repo, 'untracked.txt'), 'untracked\n');
+    const local = getChangedFiles(repo, 'master');
+    assert(local.files.includes('base.txt') && local.files.includes('untracked.txt'), 'tracked edits and untracked files must still count');
+    assert(getChangedFiles(repo, 'HEAD~1').files.includes('feature.txt'), 'an ancestor --diff ref must still select feature changes');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+  console.log('✔ Stale branch selects only feature changes, plus working-tree edits');
 }
 
 function testCliDryRunAndListAndAll() {
@@ -796,6 +849,7 @@ function runAll() {
   testNonTestExclusion();
   testAllRegressionFiltersAreValid();
   testDeduplicationAndFallback();
+  testChangedFilesUseMergeBase();
   testCliDryRunAndListAndAll();
   testRegressionFilterCli();
   testMissingTargetSkippedCleanly();

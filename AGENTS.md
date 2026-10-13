@@ -133,7 +133,8 @@ For iteration and implementer fast gates, several selective mechanisms are provi
    `--only SafeFetch`, `--only Symlink`), `--list` enumerates all available tests,
    and multiple `--only` flags can be combined.
 4. **Automated fast test gate:** `npm run test:fast` (or `node scripts/test-fast.mjs`)
-   maps changed files (via `git diff origin/master` or explicit file paths) to
+   maps changed files (via `git diff $(git merge-base HEAD origin/master)` against the working tree,
+   plus untracked files, or via explicit file paths) to
    their corresponding standalone and regression test targets.
 
 ### Affected-only routing fails closed (web-uplift-5i9a)
