@@ -1146,6 +1146,17 @@ function testSharedModulesAreWiredOrRefused() {
   assert(problems.length === 0,
     `a shared module must run a suite that imports it, or refuse and name its consumers:\n  ${problems.join('\n  ')}`);
 
+  // The exemptions are policed INDEPENDENTLY of the derived list: a declaration about the map must not
+  // become stale just because a text scan stopped seeing the module's import (web-uplift-ev2u).
+  for (const exempt of UNWIRED_SHARED_MODULES) {
+    const consumers = importingSuitesOf(exempt.file);
+    const plan = mapFilesToTests([exempt.file], { exists: () => true });
+    const selected = plan.targets.map((t) => t.path).filter(Boolean);
+    const nowWired = plan.refusedFiles.length === 1 || selected.some((p) => p === exempt.file || consumers.includes(p) || reaches(p, exempt.file));
+    assert(!nowWired,
+      `${exempt.file} is declared unwired (${exempt.reason}) but its plan now reaches a target that can fail for it - remove the exemption`);
+  }
+
   // The two shapes this bead had to fix, pinned by name so a future rewiring cannot quietly undo them.
   const helperPlan = mapFilesToTests(['tests/test-helpers.mjs'], { exists: () => true });
   assert(helperPlan.refusedFiles.length === 1,
