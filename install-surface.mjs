@@ -148,7 +148,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   const vendorRoot = join(targetRoot, '.web-uplift');
   // The root of the whole surface: if `.web-uplift` is itself a symlink then every destination below
   // it is one component away from escaping, so the run refuses once instead of repeating itself.
-  if (refusesSymlink(vendorRoot)) return { skippedTrackedCopies: [], skippedSymlinks };
+  if (refusesSymlink(vendorRoot)) return { skippedTrackedCopies: [], skippedIdentical: [], skippedSymlinks };
   mkdirSync(vendorRoot, { recursive: true });
 
   for (const dir of VENDORED_DIRS) {
@@ -174,6 +174,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   // reported success - the hazard web-uplift-xym1 records, found by the 0zcd review. The copy is
   // skipped and reported instead; callers decide whether that is fatal.
   const skippedTrackedCopies = [];
+  const skippedIdentical = [];
   for (const file of TRACKED_COPY_FILES) {
     const src = join(targetRoot, file.source);
     const dst = join(targetRoot, file.dest);
@@ -181,6 +182,21 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     if (existsSync(src)) {
       if (trackedCopyHasLocalEdits(targetRoot, file.dest).state === 'edited') {
         skippedTrackedCopies.push(file.dest);
+        continue;
+      }
+      // A destination whose bytes ALREADY match the source is not rewritten. The write would change
+      // nothing but the file's ctime, and this destination is one git TRACKS, so rewriting it on
+      // every `npm run prepare` - which `npm pack` runs, and which the installer tests run through
+      // npm pack - churns the working tree of every checkout. That churn is not cosmetic: it moves
+      // the fast gate's worktree witness, which fingerprints `stat %n %s %z` for every tracked file,
+      // so the gate recorded STALE on a tree nobody had edited and a change whose targets include
+      // the installer tests could never obtain a PASS (web-uplift-7caa, measured: `npm run prepare`
+      // on a copy that already matched advanced .pi/skills/web-audit/SKILL.md's nanosecond ctime with
+      // identical content). A destination that genuinely differs is still refreshed, which is the
+      // behaviour web-uplift-xym1's control pins.
+      const dstStat = lstatSync(dst, { throwIfNoEntry: false });
+      if (dstStat?.isFile() && readFileSync(src).equals(readFileSync(dst))) {
+        skippedIdentical.push(file.dest);
         continue;
       }
       mkdirSync(dirname(dst), { recursive: true });
@@ -235,7 +251,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   };
   if (!manifestRefused) writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 
-  return { skippedTrackedCopies, skippedSymlinks };
+  return { skippedTrackedCopies, skippedIdentical, skippedSymlinks };
 }
 
 const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

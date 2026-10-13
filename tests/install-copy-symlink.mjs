@@ -366,7 +366,22 @@ export function testGenerateVendoredSurfaceRefusesDestinationSymlinks() {
     assert(existsSync(join(control, '.web-uplift', 'evidence', 'cli.mjs')), 'a clean generation must copy a vendored directory');
     assert(existsSync(join(control, '.web-uplift', 'schema', 'config.schema.json')), 'a clean generation must copy a vendored directory');
     assert(existsSync(join(control, '.web-uplift', 'skill', 'SKILL.md')), 'a clean generation must copy a vendored file');
-    assert(existsSync(join(control, ...trackedRel.split('/'))), 'a clean generation must write the tracked copy');
+    const trackedAbs = join(control, ...trackedRel.split('/'));
+    assert(existsSync(trackedAbs), 'a clean generation must write the tracked copy');
+    // The write is not merely content-correct, it is ABSENT when the bytes already match: an
+    // identical rewrite changes only the ctime, and a tracked file whose ctime moves is what made
+    // fleet-check record this tree STALE on a run nobody had edited (its witness fingerprints
+    // `stat %n %s %z` for every tracked file). Asserted on the ctime itself, because content is
+    // identical either way and cannot distinguish "wrote the same bytes" from "did not write".
+    const ctimeBefore = lstatSync(trackedAbs, { bigint: true }).ctimeNs;
+    const second = runVendoredSurfaceGenerator(control);
+    assert(second.status === 0, `a second generation must succeed:\n${second.stderr}`);
+    const secondReport = JSON.parse(second.stdout.split('REPORT=').pop().trim());
+    assert((secondReport.skippedSymlinks || []).length === 0, `a second generation must refuse nothing: ${JSON.stringify(secondReport)}`);
+    assert((secondReport.skippedIdentical || []).includes(trackedRel),
+      `the second generation must report the identical tracked copy as unwritten: ${JSON.stringify(secondReport)}`);
+    assert(lstatSync(trackedAbs, { bigint: true }).ctimeNs === ctimeBefore,
+      'an identical tracked copy must not be rewritten: the write changes only its ctime, and that is what turned the fast gate STALE');
   } finally {
     rmSync(outside, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
