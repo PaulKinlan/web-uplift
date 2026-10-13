@@ -219,6 +219,16 @@ const TEST_SUPPORT_MODULES = [
   // refusal, so a change fell to the baseline suite while the suite that imports them never ran.
   { file: 'tests/beads-export-redaction.mjs', consumer: 'tests/redaction.test.mjs' },
   { file: 'tests/census-targets.mjs', consumer: 'tests/syntax-core.test.mjs' },
+  // web-uplift-yvc4: an authored tracked executable the map covered with NOTHING, so the gate's own control
+  // (tests/test-fast.mjs:1061, 'every authored tracked executable must be mapped or covered by a named rule')
+  // was failing on main. It landed green inside web-uplift-ebvj only because tp77's auto-map covers a changed
+  // executable named by a CHANGED suite - true in that branch, false on main when the suite is not what you
+  // are changing - and that control only runs when tests/test-fast.mjs itself changes. Folded here rather than
+  // in its own branch because this branch already edits this map for tests/filter-args.mjs.
+  { file: 'scripts/check-verdict.mjs', consumer: 'tests/verdict-provenance.test.mjs' },
+  // web-uplift-dipf: the parser's own module, covered by the suite that now tests it directly, so a
+  // flag change selects that suite rather than refusing on tests/test-helpers.mjs (FULL-GATE-ONLY).
+  { file: 'tests/filter-args.mjs', consumer: 'tests/filter-args.test.mjs' },
 ];
 
 /**
