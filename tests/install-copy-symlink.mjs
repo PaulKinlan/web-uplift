@@ -16,7 +16,7 @@
 //   node tests/install-copy-symlink.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -1123,6 +1123,58 @@ export async function testRepublishKeepsListedPathsReadableForAConcurrentReader(
   } finally {
     clearTimeout(readyTimer);
     if (worker) await worker.terminate();
+    rmSync(target, { recursive: true, force: true });
+  }
+}
+
+// web-uplift-8fus: a run that CRASHES leaves its staged tree behind, and until now nothing removed it - the
+// staged path is keyed by pid, so a later run only ever clears its own key, and an orphan from a dead run was
+// matched by no code at all. Reverting the sweep must make this fail with the orphan printed.
+export function testCrashLeftStagedTreeIsSweptByTheNextRun() {
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-orphan-stage-'));
+  try {
+    const scratch = join(target, '.web-uplift', 'scratch');
+    const dead = spawnSync(process.execPath, ['-e', '']);
+    const orphan = join(scratch, `.stage-${dead.pid}-evidence`);
+    mkdirSync(orphan, { recursive: true });
+    writeFileSync(join(orphan, 'leftover.mjs'), '// orphaned by a crash\n');
+    assert(existsSync(orphan), 'the case must plant the orphan before it can claim anything about it');
+
+    const report = generateVendoredSurface({ targetRoot: target });
+    assert(
+      !existsSync(orphan),
+      'a staged tree left by a DEAD run must be removed by the next run, because nothing else sweeps it (web-uplift-8fus)',
+    );
+    assert(
+      report.sweptOrphans.includes(`.stage-${dead.pid}-evidence`),
+      `the run must report the orphan it removed, not sweep silently: ${JSON.stringify(report.sweptOrphans)}`,
+    );
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+}
+
+// The other half, which a "remove every .stage-* entry" shortcut would pass the case above and fail here: a
+// CONCURRENT run's staged tree belongs to a LIVE pid and must be left exactly where it is.
+export function testSweepLeavesALiveRunsStagedTreeAlone() {
+  const target = mkdtempSync(join(tmpdir(), 'web-uplift-live-stage-'));
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+  try {
+    const live = join(target, '.web-uplift', 'scratch', `.stage-${child.pid}-evidence`);
+    mkdirSync(live, { recursive: true });
+    writeFileSync(join(live, 'in-flight.mjs'), '// another run is publishing this\n');
+
+    const report = generateVendoredSurface({ targetRoot: target });
+    assert(
+      existsSync(live),
+      'the staged tree of a LIVE run must be left alone: removing it would break the interleaving the acceptance criteria forbid',
+    );
+    assert(
+      !report.sweptOrphans.includes(`.stage-${child.pid}-evidence`),
+      `a live run's staged tree must not appear in the swept list: ${JSON.stringify(report.sweptOrphans)}`,
+    );
+  } finally {
+    child.kill('SIGKILL');
     rmSync(target, { recursive: true, force: true });
   }
 }
