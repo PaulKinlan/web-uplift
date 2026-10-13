@@ -15,7 +15,7 @@ code does.
 
 | gate | command | who runs it | budget |
 | --- | --- | --- | --- |
-| full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=3 tests/*.test.mjs`, 9 suites) | the merger, once per landing on the merged union | 282s measured; the full gate runs once |
+| full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=6 tests/*.test.mjs`, 14 suites) | the merger, once per landing on the merged union | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below |
 | affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a) |
 
 Neither gate is run without naming this project's own command on a shared VM, because
@@ -31,6 +31,99 @@ here are covered only when those files invoke their tests (directly or transitiv
 run these guarded tests. A module registering `node:test` cases at import time can instead run them on
 import. A path not exercised by the full-gate tests, including an unimported standalone suite or one
 imported only for helpers, is not covered even if the fast gate does not map it.
+
+## What the gate's wall time is made of (2026-10-13, web-uplift-f5mb)
+
+`npm test` runs each `tests/*.test.mjs` in its own `node:test` process and runs at most
+`--test-concurrency=N` of those processes at once. Two consequences decide the wall time:
+
+1. A **file** is the unit of parallelism. The cases inside one file run serially, so one case-heavy file
+   is a critical-path block that no number of extra slots can shorten.
+2. **`node --test` sorts the file list alphabetically and ignores the order the paths are given in.**
+   Verified on this VM: passing `c.test.mjs a.test.mjs b.test.mjs` runs a, b, c, and passing a
+   much-smaller alphabetically-first file with a much-larger alphabetically-later one still runs the
+   small one first, so it is a path sort rather than a size sort. The schedule is deterministic, and a
+   heavy suite that happens to sort late starts late.
+
+### The per-suite measurement the shape was chosen from
+
+Measured serially on a quiet VM, one file at a time, before the split
+(`node --test --test-concurrency=1 <file>`, 2026-10-13):
+
+| suite | cases | wall |
+| --- | --- | --- |
+| `tests/evidence-network.test.mjs` | 8 | 36.9s |
+| `tests/evidence.test.mjs` | 9 | 31.7s |
+| `tests/chrome-cdp.test.mjs` | 25 | 31.2s |
+| `tests/syntax-core.test.mjs` | 27 | 26.2s |
+| `tests/evidence-content.test.mjs` | 11 | 23.5s |
+| `tests/redaction.test.mjs` | 15 | 12.3s |
+| `tests/runner-agents.test.mjs` | 29 | 11.8s |
+| `tests/install-package.test.mjs` | 23 | 11.3s |
+| `tests/mwg-principles.test.mjs` | 11 | 6.7s |
+| `tests/fixture-sites.test.mjs` | 2 | 0.2s |
+| **total work W** | **160** | **191.8s** |
+
+At concurrency 3 the floor is W/3 = 63.9s and the alphabetical schedule reached 75.6s on those numbers,
+about 12s of tail: the slot that frees first (chrome-cdp, 31.2s, alphabetically first) then serially eats
+the whole remaining queue. A longest-first order would reach 66.5s, but there is no supported way to set
+it, and renaming suites to game the sort is a trap that breaks the next time a suite's cost changes. The
+mechanism that would take the tail is sharding, tracked as `web-uplift-jgkj`; it is not claimed here.
+
+### What was split
+
+Two suites carried most of that serial block, and `tests/evidence.test.mjs` additionally held the three
+heaviest single cases in the whole gate (console 47.6s, throttling 42.4s, locale-timezone 34.8s in a
+loaded merger run). Both were split into per-subject files, with the cases moved unchanged:
+
+| before | after |
+| --- | --- |
+| `tests/evidence.test.mjs` (9 cases) | `evidence-axe` (2), `evidence-conditions` (4), `evidence-console` (3) |
+| `tests/evidence-network.test.mjs` (8 cases) | `evidence-network-headers` (2), `evidence-network-har` (3), `evidence-network-resilience` (3) |
+
+Nothing was dropped, relaxed or reordered: the union of the suite lists is byte-identical before and after
+(160 case names, diffed), and `testSuiteListsMatchRegressionRegistry` pins it at 14 suite files.
+`tests/evidence.test.mjs` was also a real collision hotspot, at 12 of the 30-day `--first-parent` changes
+under `tests/`, so the split reduces the file every evidence change has to edit as well as the critical path.
+
+### The paired measurement, and the setting it chose
+
+Every arm sampled run by run in ONE window, load recorded beside every run, 3 samples per arm, each arm
+in its own tree. This is the authority; the model above is not.
+
+| arm | median | runs | failed runs | peak job-tree RSS | load at start |
+| --- | --- | --- | --- | --- | --- |
+| 10 files, concurrency 3 (before the split) | 99.1s | 105.1, 99.1, 96.4 | 0/3 | 490-530 MB | 12.96, 14.58, 13.51 |
+| 14 files, concurrency 3 | 82.6s | 82.6, 96.0, 80.6 | 0/3 | 497-708 MB | 10.43, 9.07, 7.74 |
+| 14 files, concurrency 6 | **66.2s** | 67.9, 60.8, 66.2 | 0/3 | 863-914 MB | 9.86, 8.74, 19.83 |
+| 14 files, concurrency 8 | 74.3s | 74.3, 56.5, 80.8 | **2/3** | 961-1033 MB | 13.75, 13.42, 19.08 |
+
+`npm test` therefore runs at **concurrency 6**: 33.0s (33%) below the 99.1s it was, and 16.4s below the
+split tree at concurrency 3. Concurrency 8 is rejected on BOTH counts: slower than 6, and 2 of its 3 runs
+failed on `testOversizedBodyDoesNotEarnACleanVerdict` (`web-uplift-wo80`, a case that asserts on the
+reader's scheduling by relying on two socket writes not coalescing). The extra slots buy nothing and cost
+a flake.
+
+The model predicted 3 -> 76s, 6 -> 45s, 8 -> 37s and the measurements were 82.6s, 66.2s, 74.3s, which is
+the useful lesson: per-file wall times do NOT survive N-way contention on browser-and-parser-bound
+suites, so a list-schedule is a hypothesis and paired runs are the evidence.
+
+The ceiling that matters for the reaper is the JOB TREE's RSS, not the host's: 863-914 MB at concurrency
+6 against the reaper's 3 GB limb, with `MemAvailable` never below 12.6 GB. Memory was never the binding
+constraint at any setting tried.
+
+`docs/adr-0002` records this as superseding ADR 0001 decision 3's `--test-concurrency=1` mandate, whose
+2-vCPU premise is not this host.
+
+### The fast gate did not move
+
+`scripts/test-fast.mjs` dispatches its targets in a serial loop (`runTarget` inside a `for`), and the
+`evidence` subsystem's targets are `--only` REGRESSION FILTERS rather than whole suite files, so splitting
+a suite file changes neither the target set nor its order, and `npm test`'s concurrency is not read by
+`npm run test:fast` at all. The one edit is that `TEST_SUPPORT_MODULES` names
+`tests/evidence-console.test.mjs` as the consumer of `tests/console-evidence-redaction.mjs`, because that
+is the file that imports and uses it after the split; the target it selects is smaller than the one it
+replaced.
 
 ## The fast gate routes by changed path, and refuses what it cannot route
 

@@ -209,7 +209,7 @@ export function classifyUnmappedPath(relPath, repo = repoRoot, exists = (p) => p
 const TEST_SUPPORT_MODULES = [
   { file: 'tests/cdp-endpoint-exposure.mjs', consumer: 'tests/chrome-cdp.test.mjs' },
   { file: 'tests/cdp-pipe-transport.mjs', consumer: 'tests/chrome-cdp.test.mjs' },
-  { file: 'tests/console-evidence-redaction.mjs', consumer: 'tests/evidence.test.mjs' },
+  { file: 'tests/console-evidence-redaction.mjs', consumer: 'tests/evidence-console.test.mjs' },
   { file: 'tests/evidence-cli-source-containment.mjs', consumer: 'tests/evidence-content.test.mjs' },
 ];
 
