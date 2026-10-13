@@ -99,7 +99,7 @@ function parseModuleFiles(files, overrides = {}) {
 // THE INSTRUMENT'S BLIND SPOT, stated rather than discovered later: git does not know about an UNTRACKED
 // .mjs that a symlinked directory hides, so this control cannot see that case either. Its coverage is
 // "every .mjs the repository tracks", which is checkable; it is not "every .mjs on disk".
-const DECLARED_TRACKED_CENSUS = 103;
+const DECLARED_TRACKED_CENSUS = 105;
 const DECLARED_EXCLUDED_BY_RULE = 5;
 
 // The census's own declared population, which is the number this bead exists for: the .mjs files the WALK
@@ -110,7 +110,7 @@ const DECLARED_EXCLUDED_BY_RULE = 5;
 // It is deliberately a second, INDEPENDENT route to the same population as DECLARED_TRACKED_CENSUS: one
 // counts what the walk returned, the other counts what the repository says it tracks. If the two ever
 // disagree, the walk and git disagree about the repository, and that is worth a failure on its own.
-const DECLARED_RECURSIVE_CENSUS = 103;
+const DECLARED_RECURSIVE_CENSUS = 105;
 
 // Returns the reason a population is unacceptable, or null when it is acceptable, so the control can drive it
 // with a synthetic list instead of writing into the repository, which is what web-uplift-lql5 was about.
@@ -1923,11 +1923,11 @@ export function testSuiteListsMatchRegressionRegistry() {
   // These two numbers ARE the pin. A failure here does not mean the tree is broken; it means the gate's
   // population changed without saying so. When a case or a suite file is added or removed deliberately,
   // update the number in the same commit and say why in the message.
-  const EXPECTED_SUITE_FILES = 14;
+  const EXPECTED_SUITE_FILES = 15;
   // 163 was k63b's landing (161 + 2); web-uplift-c6i1 adds 4 cases to tests/install-package.test.mjs (the
   // kept-readable generator case, the delete-then-copy control, the publish-order case, and the concurrent
   // republish), so the declared population is 167 - measured from this control's own count on the union.
-  const EXPECTED_CASES = 167;
+  const EXPECTED_CASES = 175;
   assert(
     suiteFiles.length === EXPECTED_SUITE_FILES,
     `the gate now runs ${suiteFiles.length} suite file(s) and this control is pinned at ${EXPECTED_SUITE_FILES}. If a suite file was added or removed on purpose, update EXPECTED_SUITE_FILES and EXPECTED_CASES in the same commit; if it was not, a suite has silently stopped running (web-uplift-ougd).`,

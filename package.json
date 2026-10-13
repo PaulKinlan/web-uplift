@@ -73,7 +73,8 @@
     "audit": "node runner/run-batch.mjs",
     "batch": "node runner/run-batch.mjs",
     "fix": "node fixer/fix.mjs",
-    "aggregate": "node aggregate/aggregate.mjs"
+    "aggregate": "node aggregate/aggregate.mjs",
+    "check:verdict": "node scripts/check-verdict.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
