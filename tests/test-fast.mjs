@@ -26,6 +26,9 @@
  * 15. The diff provenance is reported, not implied (web-uplift-5e9s): the run names the comparison BASE
  *     and how far the branch is ahead/behind the ref, names every UNCOMMITTED path it selected with why
  *     it is not in HEAD, and prints no uncommitted block on a clean worktree (the negative control).
+ * 16. Paths survive Git's own quoting (web-uplift-4bqu): a non-ASCII or otherwise quotable path is
+ *     recorded literally by every source, so it is marked as uncommitted like any other and a rename is
+ *     reported at its destination rather than losing its source.
  */
 
 import { strict as assert } from 'node:assert';
@@ -366,6 +369,40 @@ function testChangedFilesUseMergeBase() {
     );
     assert(!local.uncommitted.some((u) => u.path === 'feature.txt'), 'a committed branch path is not uncommitted');
     assert.equal(getUncommittedChanges(repo).get('tests/regression.mjs'), undefined, 'an untouched committed path has no status entry');
+
+    // GIT'S DEFAULT C-QUOTING MUST NOT HIDE A PATH (web-uplift-4bqu). With core.quotePath at its default,
+    // `git status --porcelain` escaped this name as \303\251 space.txt while `git diff --name-only`
+    // escaped it differently, so the two sources disagreed, the uncommitted set came out EMPTY and the
+    // provenance warning never printed for a path the run had selected. Every source now reads -z output,
+    // where paths are raw and byte-identical.
+    const unicodeName = 'é space.txt';
+    writeFileSync(join(repo, unicodeName), 'unicode\n');
+    const quoted = getChangedFiles(repo, 'master');
+    assert(
+      quoted.files.includes(unicodeName),
+      `a non-ASCII path must be selected literally, not C-quoted: ${JSON.stringify(quoted.files)}`
+    );
+    assert.deepEqual(
+      quoted.uncommitted.find((u) => u.path === unicodeName),
+      { path: unicodeName, kind: 'untracked' },
+      'a non-ASCII untracked path must still be named as uncommitted (web-uplift-4bqu)'
+    );
+    assert(
+      !quoted.files.some((p) => p.includes('\\303') || p.startsWith('"')),
+      `no selected path may retain a C-quote or C-escape: ${JSON.stringify(quoted.files)}`
+    );
+
+    git('mv', 'base.txt', 'renamed.txt');
+    const renamed = getChangedFiles(repo, 'master');
+    assert.deepEqual(
+      renamed.uncommitted.find((u) => u.path === 'renamed.txt'),
+      { path: 'renamed.txt', kind: 'modified' },
+      'a rename must be reported at its destination path'
+    );
+    assert(
+      !renamed.uncommitted.some((u) => u.path === 'base.txt'),
+      'the rename SOURCE is a field of the status entry, not a second uncommitted path'
+    );
     assert(getChangedFiles(repo, 'HEAD~1').files.includes('feature.txt'), 'an ancestor --diff ref must still select feature changes');
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -412,6 +449,9 @@ function testDiffProvenanceIsReported() {
 
     writeFileSync(join(temp, 'base.txt'), 'base\nuncommitted\n');
     writeFileSync(join(temp, 'untracked.txt'), 'untracked\n');
+    // A quotable path (Git's default core.quotePath escapes this one) must be reported like any other:
+    // before web-uplift-4bqu it was selected but silently absent from the uncommitted block.
+    writeFileSync(join(temp, 'é space.txt'), 'unicode\n');
 
     const fast = join(temp, 'scripts', 'test-fast.mjs');
     const dirty = spawnSync(process.execPath, [fast, '--dry-run'], { cwd: temp, encoding: 'utf8', timeout: 20000 });
@@ -422,8 +462,16 @@ function testDiffProvenanceIsReported() {
     );
     assert(dirty.stdout.includes('base.txt  [uncommitted: modified]'), 'a modified working-tree path must be marked in the file list');
     assert(dirty.stdout.includes('untracked.txt  [uncommitted: untracked]'), 'an untracked selected path must be marked too');
-    assert(dirty.stdout.includes('UNCOMMITTED (2 of 3)'), 'the block must count the uncommitted share of the selection');
-    assert(dirty.stdout.includes('base.txt [modified]') && dirty.stdout.includes('untracked.txt [untracked]'), 'the block must list each path and kind');
+    assert(
+      dirty.stdout.includes('é space.txt  [uncommitted: untracked]'),
+      'a quotable non-ASCII path must be marked like any other (web-uplift-4bqu)'
+    );
+    assert(dirty.stdout.includes('UNCOMMITTED (3 of 4)'), 'the block must count the uncommitted share of the selection');
+    assert(
+      dirty.stdout.includes('base.txt [modified]') && dirty.stdout.includes('untracked.txt [untracked]'),
+      'the block must list each path and kind'
+    );
+    assert(dirty.stdout.includes('é space.txt [untracked]'), 'the block must list the quotable path too');
     assert(
       dirty.stdout.includes('This run selects and executes against the WORKING TREE. Its result is not a verdict for HEAD alone'),
       'the run must state that a committed-tree verdict does not describe this selection'
@@ -432,6 +480,7 @@ function testDiffProvenanceIsReported() {
     // NEGATIVE CONTROL: nothing uncommitted -> no block, and the same honest base line.
     git('checkout', '-q', '--', 'base.txt');
     rmSync(join(temp, 'untracked.txt'));
+    rmSync(join(temp, 'é space.txt'));
     const clean = spawnSync(process.execPath, [fast, '--dry-run'], { cwd: temp, encoding: 'utf8', timeout: 20000 });
     assert.equal(clean.status, 0, `a clean-tree dry run must succeed: ${clean.stderr}`);
     assert(clean.stdout.includes(`vs base ${fork} (merge-base of master); branch 1 ahead / 1 behind master`), 'the base and distance must be stated on a clean tree too');

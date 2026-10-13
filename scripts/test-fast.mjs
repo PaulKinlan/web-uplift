@@ -494,6 +494,20 @@ export function resolveDiffBase(repo = repoRoot, diffRef = 'origin/master') {
 }
 
 /**
+ * Split NUL-delimited `git -z` output into raw paths. `-z` is used for every path listing because the
+ * default C-quoting is not comparable across commands: with the default `core.quotePath`, `git status
+ * --porcelain` returned `\303\251 space.txt` while `git diff --name-only` returned `"\303\251 space.txt"`,
+ * so the two sources silently disagreed, the uncommitted set came out empty and the provenance warning
+ * vanished for a selected path (web-uplift-4bqu). `-z` never quotes and never escapes, so the paths from
+ * every source are byte-identical, including names containing spaces, quotes, control characters or
+ * non-ASCII characters.
+ */
+function splitGitPaths(stdout) {
+  if (!stdout) return [];
+  return stdout.split('\0').filter((path) => path.length > 0);
+}
+
+/**
  * Working-tree changes that are NOT in HEAD, keyed by path: 'untracked' or 'modified'.
  *
  * The changed-file selection is a WORKING-TREE diff (base -> worktree) plus untracked files, while a
@@ -502,19 +516,20 @@ export function resolveDiffBase(repo = repoRoot, diffRef = 'origin/master') {
  * under a sha whose tree does not contain them (web-uplift-5e9s (1)).
  */
 export function getUncommittedChanges(repo = repoRoot) {
-  const res = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' });
+  const res = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' });
   const kinds = new Map();
   if (res.status !== 0 || !res.stdout) return kinds;
-  for (const line of res.stdout.split('\n')) {
-    if (line.trim().length < 3) continue;
-    const code = line.slice(0, 2);
-    let path = line.slice(3).trim();
-    if (code.includes('R') || code.includes('C')) {
-      const arrow = path.lastIndexOf(' -> ');
-      if (arrow !== -1) path = path.slice(arrow + 4).trim();
-    }
-    path = path.replace(/^"(.*)"$/, '$1');
-    if (path) kinds.set(path, code === '??' ? 'untracked' : 'modified');
+  const fields = splitGitPaths(res.stdout);
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    if (field.length < 3) continue;
+    const code = field.slice(0, 2);
+    const path = field.slice(3);
+    if (!path) continue;
+    kinds.set(path, code === '??' ? 'untracked' : 'modified');
+    // In -z output a rename/copy entry is followed by its SOURCE path as a separate NUL field. The
+    // destination is the changed path; the source is not part of this porcelain line.
+    if (code.includes('R') || code.includes('C')) i += 1;
   }
   return kinds;
 }
@@ -540,22 +555,16 @@ export function getChangedFiles(repo = repoRoot, diffRef = 'origin/master') {
   const files = new Set();
 
   if (resolvedRef) {
-    const diff = spawnSync('git', ['diff', '--name-only', base], { cwd: repo, encoding: 'utf8' });
+    const diff = spawnSync('git', ['diff', '--name-only', '-z', base], { cwd: repo, encoding: 'utf8' });
     if (diff.status === 0 && diff.stdout) {
-      for (const line of diff.stdout.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed) files.add(trimmed);
-      }
+      for (const path of splitGitPaths(diff.stdout)) files.add(path);
     }
   }
 
   // Untracked new files
-  const untracked = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: repo, encoding: 'utf8' });
+  const untracked = spawnSync('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: repo, encoding: 'utf8' });
   if (untracked.status === 0 && untracked.stdout) {
-    for (const line of untracked.stdout.split('\n')) {
-      const trimmed = line.trim();
-      if (trimmed) files.add(trimmed);
-    }
+    for (const path of splitGitPaths(untracked.stdout)) files.add(path);
   }
 
   // Which of those paths exist only in the working tree, not in HEAD (see getUncommittedChanges).
