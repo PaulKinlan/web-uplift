@@ -133,7 +133,8 @@ the gate, and the CPU it costs is the reason this matters (the fleet's scarcest 
 NOTHING IS MEASURED LESS. Every assertion is unchanged, and the two converted cases carry their own
 functional check that the sharing is clean: `testConsoleEvidence` asserts the `/clean` load reports zero
 console entries after the `/noisy` load, and it still does. Paired measurement (same VM, same command,
-`tests/regression.mjs --only`, one browser per call vs one per case):
+`tests/regression.mjs --only`, one browser per call vs one per case), measured back-to-back on this branch's
+landing base - one figure with its context, rather than a range across runs:
 
 | case | before | after | saved | launches |
 | --- | --- | --- | --- | --- |
@@ -147,9 +148,11 @@ before the primitive validates the option, so that call paid a full Chrome start
 this reads 8 -> 1 rather than 7 -> 1. Its assertions are also the functional check that the sharing is clean,
 and every one of them still passes under a single browser: a run with no device-metrics override reports no
 viewport, an unthrottled run carries no conditions block at all, mobile-lighthouse implies 4x CPU + 150ms
-RTT, and the slow-3g probe is really more than 1000ms slower than the plain one. The rejected call's launch
-is then removed properly by web-uplift-3mrg (the declarative conditions are validated before `launchChrome`),
-so that eighth launch costs nothing for every caller rather than only in this case.
+RTT, and the slow-3g probe is really more than 1000ms slower than the plain one. The rejected call's launch is
+removed separately and NOT yet landed: web-uplift-3mrg validates the declarative conditions before
+`launchChrome`, which makes that eighth launch cost nothing for every caller rather than only in this case.
+That branch is awaiting its clearance, so read this as the direction of travel, not as a landed fact; what is
+landed and measured here is the row above.
 
 Still to convert (the seam is in place): the other multi-`gather` cases. Do NOT share a browser in `testCdpDeadline` (it deliberately points Chrome at a blackhole server),
 `testNoOrphanBrowser` (it asserts teardown) or `testResiliencePrimitive` (service workers).
