@@ -767,7 +767,10 @@ export async function testCredentialRedactorsAgree() {
   // 3. The table itself: credential membership, the weak class, and the compound
   // and plural rules the previous two tables had each implemented differently.
   for (const name of ['csrf', 'pin', 'cvv', 'passcode', 'code', 'key', 'apiKey', 'accessToken', 'clientSecret', 'secrets',
-    'auth_code', 'verifyCode', 'otpCode', 'deviceCode', 'smsCode']) {
+    'auth_code', 'verifyCode', 'otpCode', 'deviceCode', 'smsCode',
+    // web-uplift-yb2a: the compound spellings the weak class could not see. They belong in the SAME loop as the
+    // canonical spellings, because the assertion is that the CLI redactor and the shared table agree.
+    'db_pass', 'proxy_pass', 'user_pass', 'database_pass', 'userpass', 'dbpass', 'dbpassword']) {
     assert(terms.isCredentialName(name), `"${name}" must be a credential name`);
   }
   for (const name of ['postalCode', 'countryCode', 'sortKey', 'sortKeyName', 'businessKey', 'primaryKey',
@@ -1229,4 +1232,53 @@ export async function testCredentialRedactorsAgree() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await testCredentialRedactorsAgree();
   console.log('tests OK');
+}
+
+// web-uplift-yb2a: the weak word 'pass' matched the WHOLE name only, so db_pass / proxy_pass / user_pass /
+// database_pass / userpass were not credential-classified and reached the untrusted agent child verbatim.
+//
+// ASSERTED END TO END ON PURPOSE. A classifier test would have passed on a table that is right while the
+// redactor that consumes it is not; what matters is that the VALUE is gone from the child's view, so the
+// marker and the absence of the secret are both checked, through BOTH redactors, and the innocent compound
+// names are checked in the same case so the fix cannot have been bought by widening the match.
+export async function testCompoundCredentialSpellingsAreClassified() {
+  const cli = await import('../evidence/cli.mjs');
+  const flow = await import('../runner/flow-record.mjs');
+  const terms = await import('../evidence/credential-terms.mjs');
+
+  console.log('Testing that compound password spellings are classified and redacted end to end (P1)...');
+
+  // What the pristine tree did (measured before this change): every one of these was forwarded verbatim by
+  // both redactors, while the canonical spelling was already redacted - a filter that misses spellings and
+  // forwards the value is worse with age, which is why the case covers the family and not one name.
+  const compoundCredentials = [
+    ['db_pass', 'hunter2'],
+    ['proxy_pass', 's3cret'],
+    ['user_pass', 'pw123'],
+    ['database_pass', 'dbpw'],
+    ['userpass', 'joined'],
+    ['dbpass', 'joineddb'],
+    ['dbpassword', 'joinedstrong'],
+  ];
+  for (const [name, secret] of compoundCredentials) {
+    assert(terms.isCredentialName(name), `"${name}" must be a credential name (it was forwarded verbatim before web-uplift-yb2a)`);
+    const url = `https://example.com/x?${name}=${secret}`;
+    for (const [label, redact] of [['cli', cli.redactUrlCredentialValues], ['flow', flow.sanitizeNavUrl]]) {
+      const out = redact(url);
+      assert(!out.includes(secret), `the ${label} redactor must not forward the value of ?${name} (got: ${out})`);
+      assert(REDACTED.test(out), `the ${label} redactor must mark ?${name} as redacted (got: ${out})`);
+    }
+  }
+
+  // The same case keeps the boundary: the compound names the weak class exists to protect must still pass
+  // through untouched, and a bare code/key/pass is still a credential only as the whole name.
+  for (const [name, value] of [['postalCode', '90210'], ['countryCode', 'GB'], ['sortKey', 'name'], ['page', '2']]) {
+    const url = `https://example.com/x?${name}=${value}`;
+    assert(cli.redactUrlCredentialValues(url) === url, `?${name} must be preserved verbatim by the cli redactor`);
+    assert(flow.sanitizeNavUrl(url) === url, `?${name} must be preserved verbatim by the flow redactor`);
+  }
+  assert(terms.isCredentialName('pass') && !terms.isCredentialName('passenger') && !terms.isCredentialName('bypass'),
+    'a bare weak word stays a credential while an innocent word that merely contains it does not');
+
+  console.log('✔ compound password spellings are classified and redacted end to end');
 }

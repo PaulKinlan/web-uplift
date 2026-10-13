@@ -44,7 +44,7 @@ import {
   readSourceTree,
 } from '../evidence/cli.mjs';
 import { testLogUrlRedaction } from './log-redaction.mjs';
-import { testCredentialRedactorsAgree } from './credential-redaction.mjs';
+import { testCompoundCredentialSpellingsAreClassified, testCredentialRedactorsAgree } from './credential-redaction.mjs';
 import { testSecretsCoverageClassification } from './secrets-coverage.mjs';
 // web-uplift-o4ec: these two guards existed only in tests/regression.mjs's ALL_TESTS, so a
 // per-suite run omitted them. The tracked passive export must carry no provider-secret shapes, and
@@ -830,6 +830,7 @@ export async function testDomSourceArtifactIsRedacted() {
 
 
 export const redactionTests = [
+  testCompoundCredentialSpellingsAreClassified,
   testRedactHeaderList,
   testCredentialRedactionHelpers,
   testHarCredentialRedaction,
