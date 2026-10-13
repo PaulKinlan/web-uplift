@@ -1852,6 +1852,28 @@ export function testSuiteListsMatchRegressionRegistry() {
     );
   }
 
+  // THE POPULATION IS PINNED ABSOLUTELY, not only relatively (web-uplift-ougd). Every check above this
+  // point compares two DERIVED sets: the union of the suite files' own lists against the registry's list.
+  // Because tests/regression.mjs DISCOVERS the suite files rather than naming them, deleting a whole suite
+  // file shrinks BOTH sides and the agreement still holds - measured on this tree, `git rm
+  // tests/fixture-sites.test.mjs` printed "gate parity OK: 158 case(s) agree between 13 suite file(s)" and
+  // exited 0. So the relative comparison cannot see a population that shrank quietly, which is precisely
+  // the failure this control exists to prevent, and it is the reason the check is not enough on its own.
+  //
+  // These two numbers ARE the pin. A failure here does not mean the tree is broken; it means the gate's
+  // population changed without saying so. When a case or a suite file is added or removed deliberately,
+  // update the number in the same commit and say why in the message.
+  const EXPECTED_SUITE_FILES = 14;
+  const EXPECTED_CASES = 161;
+  assert(
+    suiteFiles.length === EXPECTED_SUITE_FILES,
+    `the gate now runs ${suiteFiles.length} suite file(s) and this control is pinned at ${EXPECTED_SUITE_FILES}. If a suite file was added or removed on purpose, update EXPECTED_SUITE_FILES and EXPECTED_CASES in the same commit; if it was not, a suite has silently stopped running (web-uplift-ougd).`,
+  );
+  assert(
+    byName.size === EXPECTED_CASES,
+    `the suite files now list ${byName.size} case(s) and this control is pinned at ${EXPECTED_CASES}. If a case was added or removed on purpose, update EXPECTED_CASES in the same commit; if it was not, cases have silently stopped running (web-uplift-ougd).`,
+  );
+
   const registry = listOf([join(repoRoot, 'tests', 'regression.mjs'), '--list']);
 
   // Multiplicity, not membership (web-uplift-bgcr): taking a Set of the registry's names erased duplicates, so
