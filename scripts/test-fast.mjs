@@ -201,8 +201,8 @@ export function classifyUnmappedPath(relPath, repo = repoRoot, exists = (p) => p
 }
 
 /**
- * Test-support modules and the suite that IMPORTS each one. A module imported by a suite is covered by
- * that suite, so a change to it must run the consumer; before this table existed a change to one of
+ * Test-support modules and the suite that IMPORTS AND USES each one. The consumer must actually
+ * exercise the imported code for coverage; before this table existed a change to one of
  * these selected no test target at all (it fell through to the baseline), which is the same silent
  * green the unmapped-path rule now refuses.
  */
@@ -833,9 +833,10 @@ Usage:
       }
     }
     console.error('  * documentation/data/fixture with genuinely no suite: add an OMITTED_RULES entry carrying the reason it is skipped.');
-    console.error('  * cannot extend the map right now? The full gate is NOT evidence on its own for an unimported refused path:');
-    console.error('    npm test runs tests/*.test.mjs and suites they import (directly or transitively); an imported suite IS covered, but an unimported suite is not.');
-    console.error('    Run the suite that covers an unimported path explicitly, then run the full gate:');
+    console.error('  * cannot extend the map right now? The full gate is NOT evidence on its own for a refused path its tests do not exercise:');
+    console.error('    npm test runs tests/*.test.mjs; the guarded standalone suites here are covered ONLY if those files invoke their tests. Import alone does not run them.');
+    console.error('    A module that registers node:test cases at import time can instead run them on import; check what the importing suite actually executes.');
+    console.error('    Run the suite covering a path not exercised by those files explicitly, then run the full gate:');
     for (const f of plan.unmappedFiles) {
       if (f.startsWith('tests/') && f.endsWith('.mjs')) {
         console.error(`      node ${f}   # the refused path is itself a runnable suite`);

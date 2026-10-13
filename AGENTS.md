@@ -157,10 +157,13 @@ baseline pass: a green gate that never ran the suite for a changed module is a f
   omission rule to make the gate green, which is the silent narrowing this bead exists to stop, so the
   refusal says what to do: extend the map (`SUBSYSTEMS` for the covering suite, `KNOWN_STANDALONE_TESTS`
   for a suite that runs with no arguments), or declare the path in `OMITTED_RULES` with a reason. If the map
-  cannot be extended now, the full gate is **not evidence on its own** for an unimported refused path -
-  `npm test` runs `tests/*.test.mjs` and suites they import (directly or transitively), so an imported
-  standalone suite **is** covered but an unimported one is not. Run the suite covering an unimported path
-  explicitly (for a refused `tests/*.mjs`, `node <path>`), then
+  cannot be extended now, the full gate is **not evidence on its own** for a refused path its tests do not
+  exercise. `npm test` runs `tests/*.test.mjs`; the guarded standalone suites here are covered **only if**
+  those files invoke their tests (directly or transitively). Import alone does not run these guarded tests;
+  a module registering `node:test` cases at import time can instead run them on import. An unimported suite
+  is likewise not covered. Check what actually executes, then run a suite covering a path not exercised by
+  those files explicitly (for a
+  refused `tests/*.mjs`, `node <path>`), then
   `FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check`, and name the evidence command
   in the hand-off. Only a path with genuinely no suite belongs in an omission rule.
 - **OMITS, by a named rule whose reason is printed**, a NON-EXECUTABLE changed path that no suite maps. The

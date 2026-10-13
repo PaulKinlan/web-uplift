@@ -547,13 +547,15 @@ function testRefusalIsActionableAndDocumented() {
     assert(/NEXT ACTION/.test(doc), `${name} must carry the one next action, not only the policy`);
     assert(doc.includes('KNOWN_STANDALONE_TESTS') && doc.includes('OMITTED_RULES'), `${name} must name both mapping routes`);
     assert(/FLEET_CHECK_CONF=\S+\s+fleet-check/.test(doc), `${name} must name the escape with its config override`);
-    // The full gate includes imported suites, but not unimported paths (f2er).
+    // Import alone does not execute a guarded standalone suite: its importer must invoke its tests.
     const normalizedDoc = doc.replace(/\s+/g, ' ');
     assert(
-      /`npm test` runs `tests\/\*\.test\.mjs` and suites they import \(directly or transitively\)/.test(normalizedDoc)
-        && /imported standalone suite/i.test(normalizedDoc) && /unimported/i.test(normalizedDoc)
+      /`npm test` runs `tests\/\*\.test\.mjs`/.test(normalizedDoc)
+        && /guarded standalone suites/i.test(normalizedDoc) && /unimported/i.test(normalizedDoc)
+        && /only (?:if|when)(?:\*\*)? .*invoke/i.test(normalizedDoc)
+        && /import alone/i.test(normalizedDoc) && /registering `node:test` cases at import time/i.test(normalizedDoc)
         && /not evidence on its own/i.test(normalizedDoc),
-      `${name} must distinguish imported suites covered by npm test from unimported paths`
+      `${name} must qualify coverage on invocation, not merely import, and distinguish unimported paths`
     );
     for (const rule of OMITTED_RULES) {
       assert(doc.includes(`\`${rule.id}\``), `${name} must name the omission rule ${rule.id}`);
@@ -610,8 +612,9 @@ function testRefusalIsActionableAndDocumented() {
     assert(res.stderr.includes('KNOWN_STANDALONE_TESTS'), 'the refusal must name the standalone-suite route');
     assert(res.stderr.includes('OMITTED_RULES'), 'the refusal must name the declared-omission route');
     assert(
-      res.stderr.includes('npm test runs tests/*.test.mjs and suites they import (directly or transitively); an imported suite IS covered, but an unimported suite is not.'),
-      'the refusal must distinguish imported suites covered by npm test from unimported suites'
+      res.stderr.includes('the guarded standalone suites here are covered ONLY if those files invoke their tests. Import alone does not run them.')
+        && res.stderr.includes('A module that registers node:test cases at import time can instead run them on import'),
+      'the refusal must qualify guarded coverage on invocation and acknowledge import-time registration'
     );
     assert(
       /FLEET_CHECK_CONF=\S+ fleet-check/.test(res.stderr),
@@ -624,6 +627,19 @@ function testRefusalIsActionableAndDocumented() {
   } finally {
     rmSync(probeDir, { recursive: true, force: true });
   }
+
+  // The actual guarded standalone module does no test work when imported. Its exported function
+  // produces the observable census result only when the importing process invokes it.
+  const guardedSuite = join(repoRoot, 'tests', 'census-targets.mjs');
+  const importOnly = spawnSync(process.execPath, ['--input-type=module', '-e',
+    'await import(process.argv[2])', 'importer', guardedSuite], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(importOnly.status, 0, `guarded import should succeed: ${importOnly.stderr}`);
+  assert.equal(importOnly.stdout, '', 'importing the guarded standalone suite alone must not run its tests');
+  const invoked = spawnSync(process.execPath, ['--input-type=module', '-e',
+    'const suite = await import(process.argv[2]); await suite.testCensusTargetsAreTracked()', 'importer', guardedSuite],
+  { encoding: 'utf8', timeout: 10000 });
+  assert.equal(invoked.status, 0, `invoked guarded test should pass: ${invoked.stderr}`);
+  assert.match(invoked.stdout, /census targets OK:/, 'invoking the exported test must produce the census verdict');
 
   console.log('✔ Refusal is actionable and documented');
 }

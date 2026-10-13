@@ -26,10 +26,11 @@ Neither gate is run without naming this project's own command on a shared VM, be
 FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check --fast
 ```
 
-Note what the full gate does NOT run: `npm test` runs `tests/*.test.mjs` and suites they import (directly
-or transitively). An imported standalone suite is covered, even if the fast gate does not map it; a path
-no such suite covers, including an unimported standalone suite, is not exercised by the full gate, so that
-gate is not evidence for that path on its own.
+Note what the full gate does NOT run: `npm test` runs `tests/*.test.mjs`. The guarded standalone suites
+here are covered only when those files invoke their tests (directly or transitively); import alone does not
+run these guarded tests. A module registering `node:test` cases at import time can instead run them on
+import. A path not exercised by the full-gate tests, including an unimported standalone suite or one
+imported only for helpers, is not covered even if the fast gate does not map it.
 
 ## The fast gate routes by changed path, and refuses what it cannot route
 
@@ -85,15 +86,19 @@ Extend the map in `scripts/test-fast.mjs`, then re-run `npm run test:fast`. Whic
 - **documentation, data or a fixture with genuinely no suite**: add an `OMITTED_RULES` entry with the
   reason it is skipped, so the next reader can see the policy rather than infer it. Do not add an entry
   whose only purpose is to make the gate green.
-- **if the map cannot be extended right now**: the full gate is NOT evidence on its own for an unimported
-  refused path. `npm test` runs `tests/*.test.mjs` and suites they import (directly or transitively): an
-  imported standalone suite IS covered, but an unimported one is not. Run the suite covering an unimported
-  path explicitly (for a refused `tests/*.mjs`, `node <path>`), then
+- **if the map cannot be extended right now**: the full gate is NOT evidence on its own for a refused path
+  its tests do not exercise. `npm test` runs `tests/*.test.mjs`; the guarded standalone suites here are
+  covered only if those files invoke their tests. Import alone does not run these guarded tests; a module
+  registering `node:test` cases at import time can instead run them on import. An unimported suite is not
+  covered either. Run the suite covering a path not exercised by those files explicitly (for a refused
+  `tests/*.mjs`, `node <path>`), then
   `FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check`, and name the command that
   produced the evidence in your hand-off.
 
 Do not make a refusal pass by pointing it at the baseline: a baseline run is not evidence that the changed
-module was tested.
+module was tested. The guarded-import negative and invoked positive controls added for web-uplift-igc9
+cost 0.11s and 0.20s as separate Node processes on this VM (2026-10-13); the fast-tier self-test gains
+these two probes, not a browser or a full-suite run.
 
 ## Measured cost of this policy (2026-10-13, web-uplift-5i9a)
 
