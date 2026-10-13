@@ -89,27 +89,43 @@ at the skill). opencode also reads this `AGENTS.md` for project context.
 ## Testing & fast gates (fleet-check --fast)
 
 The full test suite is `npm test`, which runs `npm run sync:vendored` and then
-`node --test --test-concurrency=3 tests/*.test.mjs`: the 14 modular suites
-(`tests/*.test.mjs`) each run in their own `node:test` process, taking 1.5 to 2.5
+`node --test --test-concurrency=6 tests/*.test.mjs`: the 14 modular suites
+(`tests/*.test.mjs`) each run in their own `node:test` process, taking about 1 to 1.5
 minutes on the project VM. It runs once per landing on the merger's merged union.
 
-**Why concurrency 3, and whether raising it is safe** (measured 2026-10-12, web-uplift-tb6p;
-replacing these numbers with adjectives is how this becomes a guess again):
+**Why concurrency 6** (measured 2026-10-13, web-uplift-f5mb; replacing these numbers with adjectives
+is how this becomes a guess again). Paired run by run in ONE window with the load beside every run,
+3 samples per arm, each arm in its own tree:
 
-- Paired runs in one tree, load recorded on every run (web-uplift-tb6p), each 148/148:
-    concurrency 2: 141.6s at load 2.4-3.8, then 127.9s at load 5.2-6.7
-    concurrency 3:  91.7s at load 3.8-5.2, then 104.8s at load 6.7-8.3
-  So concurrency 3 is consistently faster, about 1.2x to 1.5x, mean 134.8s to 98.3s (~1.4x). Do not
-  expect more from a further bump: the gate is bounded by total work over the number of slots, so the
-  ceiling here is 1.5x.
-- Compare concurrency settings with PAIRED runs, never against a single run from earlier in the day.
-  Background load on this shared VM moves the wall time by more than the setting does: one unpaired
-  concurrency 3 run through `npm test` took 226s at load 3-6, longer than every paired run at either
-  setting.
-- concurrency 4: 94.2s in an unpaired run, inside the noise of concurrency 3, and that is the point
-  at which memory is the risk rather than the reward. Peak memory measured about 2.2GB in use with
-  3-4 concurrent browser suites (MemAvailable never fell below 14,159,152 kB of 16,369,444 kB), so a
-  2GB host is already too small at 3. Do not raise this to 4 for a few seconds of noise.
+| arm | median | runs (s) | failed runs | peak job-tree RSS |
+| --- | --- | --- | --- | --- |
+| 10 suite files, concurrency 3 (before the split) | 99.1s | 105.1, 99.1, 96.4 | 0/3 | 490-530 MB |
+| 14 suite files, concurrency 3 | 82.6s | 82.6, 96.0, 80.6 | 0/3 | 497-708 MB |
+| 14 suite files, concurrency 6 | **66.2s** | 67.9, 60.8, 66.2 | 0/3 | 863-914 MB |
+| 14 suite files, concurrency 8 | 74.3s | 74.3, 56.5, 80.8 | **2/3** | 961-1033 MB |
+
+- **8 is rejected on both counts, and that is the useful part of this table.** It is SLOWER than 6
+  (74.3s against 66.2s) and 2 of its 3 runs FAILED, both on
+  `testOversizedBodyDoesNotEarnACleanVerdict` (web-uplift-wo80: the case relies on two socket writes
+  not coalescing, so it asserts on the reader's scheduling). The extra slots buy nothing here and
+  cost a flake; do not raise this to 8 on the strength of a single fast run.
+- **Memory is not the binding constraint, and that is measured, not assumed.** The number the reaper
+  acts on is the JOB TREE's RSS (it kills over 3 GB): 863-914 MB at concurrency 6, 3.4x of headroom,
+  with MemAvailable never below 12.6 GB. (An earlier note in this file cited "~2.2GB in use with 3-4
+  concurrent browser suites"; that is a machine-wide figure, not the job tree.)
+- **The gain is real but smaller than a model predicts.** A list-schedule fitted to per-file wall times
+  predicted 3 -> 76s, 6 -> 45s, 8 -> 37s. Measured: 82.6s, 66.2s, 74.3s. Per-file times do NOT survive
+  N-way contention on browser-and-parser-bound suites, so the model is a hypothesis and the paired runs
+  are the authority.
+- **Compare concurrency settings with PAIRED runs, never against a single run from earlier in the day.**
+  The load here moved between 7.7 and 21.0 across the window, and an unpaired concurrency 3 run through
+  `npm test` once took 226s at load 3-6 in a 2026-10-12 window. What makes this table usable is that
+  every arm was sampled in the same window and the concurrency 6 arm held 67.9/60.8/66.2s across loads
+  8.7 to 19.8.
+- The earlier concurrency-2-vs-3 measurement (web-uplift-tb6p, 2026-10-12: mean 134.8s against 98.3s)
+  is what took this off 1. Its prohibition on going above 3 rested on a 2-vCPU premise that is not this
+  host (8 vCPU / 16 GiB), and on one unpaired concurrency 4 run at 94.2s. Superseded: see
+  `docs/adr-0002`.
 - Raising concurrency was BLOCKED until web-uplift-tb6p: `testCredentialRedactorsAgree`
   asserted a wall-clock ratio between a cache-resident 160 kB measurement and a non-resident
   640 kB one, so it failed at concurrency 3 and 4 on both the split and the unsplit layouts.
@@ -122,7 +138,7 @@ For iteration and implementer fast gates, several selective mechanisms are provi
 1. **Native node:test runner:** All 14 suites use native `node:test` and `node:assert/strict`.
    Run `node --test tests/evidence-conditions.test.mjs` or filter natively by pattern via
    `node --test --test-name-pattern="<regex>" tests/evidence-conditions.test.mjs`. Multi-suite
-   execution is bounded by `--test-concurrency`: `npm test` runs the 14 files at concurrency 3,
+   execution is bounded by `--test-concurrency`: `npm test` runs the 14 files at concurrency 6,
    while `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`) pins it to 1
    as the serial escape hatch for a host too small for concurrent browser suites.
 2. **Direct suite execution:** Each `tests/*.test.mjs` suite can be run directly
