@@ -29,7 +29,7 @@
  * 16. Paths survive Git's own quoting (web-uplift-4bqu): a non-ASCII or otherwise quotable path is
  *     recorded literally by every source, so it is marked as uncommitted like any other and a rename is
  *     reported at its destination rather than losing its source.
- * 15. Every shared module under tests/ that a suite imports either runs a suite that imports it or is
+ * 17. Every shared module under tests/ that a suite imports either runs a suite that imports it or is
  *     REFUSED with its importing suites named - the control that would have caught tests/test-helpers.mjs
  *     running only the gate's own self-tests while 8 consumer suites were omitted (web-uplift-5y2w).
  */
