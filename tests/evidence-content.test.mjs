@@ -12,10 +12,16 @@ import { join, relative } from 'node:path';
 import { assert, run, runAsync, repoRoot, runSuite } from './test-helpers.mjs';
 import {
   gather,
+  parseArgs,
   waitForInteractEvidence,
   safeFetch,
   assertPageDerivedFetchAllowed,
 } from '../evidence/cli.mjs';
+import {
+  discoverabilitySettleMs,
+  DISCOVERABILITY_SETTLE_MS,
+  DISCOVERABILITY_CRAWLER_SETTLE_MS,
+} from '../evidence/primitives/discoverability.mjs';
 import { launchChrome } from '../evidence/cdp.mjs';
 import {
   testNoSourceArgumentOmitsSource,
@@ -334,6 +340,40 @@ export async function testDiscoverabilityH1InRaw() {
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
+}
+
+// The settle after the load event is a MEASUREMENT choice, so the one case where it is not the caller's to
+// choose has to be pinned. 3500ms is deliberate for hydrating SPAs (8350040: "SPA hydration gets a longer
+// settle (>=3.5s)"), and the CLI's global 1000ms fallback must NOT become discoverability's settle just
+// because the CLI always supplies a number. The defect this guard prevents (web-uplift-5w69) was the
+// opposite shape: `Math.max(opts.wait ?? 0, 3500)` applied the default to every caller, so a documented
+// `--wait` below 3500 was silently ignored. Nothing here launches a browser: the decision is pure, and the
+// boundary it depends on (the CLI marking a value as the operator's choice) is pure too.
+export function testDiscoverabilitySettleKeepsTheSpaDefaultAndHonoursAnExplicitWait() {
+  assert.equal(discoverabilitySettleMs({}), DISCOVERABILITY_SETTLE_MS, 'no wait at all must settle at the SPA default');
+  assert.equal(
+    discoverabilitySettleMs({ wait: 1000, waitIsDefault: true }),
+    DISCOVERABILITY_SETTLE_MS,
+    'the CLI global fallback is not a choice: a CLI run with no --wait must still settle at 3500',
+  );
+  assert.equal(discoverabilitySettleMs({ wait: 0 }), 0, 'an explicit 0 must be honoured (a local fixture needs no settle)');
+  assert.equal(discoverabilitySettleMs({ wait: 300 }), 300, 'an explicit wait below the default must be honoured, not floored');
+  assert.equal(discoverabilitySettleMs({ wait: 5000 }), 5000, 'an explicit wait above the default must not be capped');
+  assert.equal(
+    discoverabilitySettleMs({}, DISCOVERABILITY_CRAWLER_SETTLE_MS),
+    1200,
+    'the JS-disabled crawler view keeps its own smaller default',
+  );
+  // The CLI boundary the above rests on: --wait marks the value as chosen, and an absent --wait is visible
+  // to the primitive instead of being flattened into an ordinary 1000.
+  const bare = parseArgs(['discoverability', 'http://127.0.0.1:1/']);
+  assert.equal(bare.waitIsDefault, true, 'a CLI run with no --wait must be marked as using the default');
+  assert.equal(bare.wait, 1000, 'the CLI global fallback stays 1000 for the primitives that use it');
+  assert.equal(discoverabilitySettleMs(bare), DISCOVERABILITY_SETTLE_MS, 'the CLI path with no --wait settles at 3500');
+  const chosen = parseArgs(['discoverability', 'http://127.0.0.1:1/', '--wait', '300']);
+  assert.equal(chosen.wait, 300);
+  assert.equal(chosen.waitIsDefault, false, "--wait marks the value as the operator's choice");
+  assert.equal(discoverabilitySettleMs(chosen), 300, 'the CLI path with --wait 300 settles at 300, not 3500');
 }
 
 

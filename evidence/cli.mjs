@@ -177,8 +177,12 @@ const PRIMITIVES = {
 
 // --- argument plumbing -----------------------------------------------------
 
-function parseArgs(argv) {
-  const args = { _: [], wait: 1000 };
+export function parseArgs(argv) {
+  // `wait` is a GLOBAL fallback (1000ms) for the primitives that do not declare a settle of their own. It is
+  // marked as a default so a primitive with its own documented default can tell "the operator chose this"
+  // from "nobody chose anything" - without the marker, discoverability's 3500ms SPA default could not be
+  // distinguished from an explicit `--wait 1000` (web-uplift-5w69).
+  const args = { _: [], wait: 1000, waitIsDefault: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--out') args.out = argv[++i];
@@ -188,7 +192,10 @@ function parseArgs(argv) {
     else if (a === '--viewport') args.viewportRaw = argv[++i];
     else if (a === '--max-nodes') args.maxNodes = Number(argv[++i]);
     else if (a === '--max-stops') args.maxStops = Number(argv[++i]);
-    else if (a === '--wait') args.wait = Number(argv[++i]);
+    else if (a === '--wait') {
+      args.wait = Number(argv[++i]);
+      args.waitIsDefault = false;
+    }
     else if (a === '--cpu-throttle') args.cpuThrottle = Number(argv[++i]);
     else if (a === '--network') args.network = argv[++i];
     else if (a === '--locale') args.locale = argv[++i];
@@ -280,6 +287,8 @@ async function main() {
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies\n' +
         '         --cdp-deadline ms (bound every CDP attach/navigation wait; default 30000)\n' +
         '         --fetch-deadline ms (bound each raw-fetch exchange; default 30000)\n' +
+        '         --wait ms (settle after the load event; discoverability defaults to 3500ms for SPA\n' +
+        '         hydration, and an explicit --wait overrides that default)\n' +
         '         --no-redact-headers (keep raw credential header values; publication risk) --quiet',
     );
     process.exit(1);
