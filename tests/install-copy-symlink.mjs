@@ -19,7 +19,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { VENDORED_DEPENDENCIES, VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES } from '../install-surface.mjs';
 
@@ -653,14 +653,37 @@ export function testInstallAsksTheSharedSymlinkGuard() {
 // defect - so this runs the SAME fixture against a copy of the CURRENT CLI with the single decision line
 // mutated back to the old answer and asserts the OLD outcome: exit 0, and 'Installed' printed over a refused
 // destination. That is what makes fixture 4's assertion discriminating rather than merely true. The copy is
-// written one level under the repo root so every '../x' import resolves to the very file the real CLI imports,
+// written one level below a shim root so every '../x' import resolves to the very file the real CLI imports,
 // and the mutation is asserted to have applied, so this control cannot quietly become a no-op if the source
 // moves.
+//
+// THE SHIM ROOT IS OUTSIDE THE REPOSITORY (web-uplift-lql5). It used to be the repository root itself:
+// this fixture wrote `.v167-control-${pid}/web-uplift.mjs` INTO repoRoot and removed it in the finally
+// below. At --test-concurrency=6 that raced tests/syntax-core.test.mjs, which walks repoRoot via listFiles
+// looking for *.mjs; the walk would find the transient file and then get ENOENT reading it once this
+// finally had removed it, failing testSyntaxChecks. A real gate went red on it. The import-resolution
+// requirement is only that the copy's parent look like the repository, so the parent is now a temp
+// directory whose entries are SYMLINKS to the real ones: '../runner/agents.mjs' still resolves to the real
+// runner, and the repository root is never written to by a test.
 export function testInstallIncompleteExitControl() {
   const outside = mkdtempSync(join(tmpdir(), 'web-uplift-v167-control-outside-'));
   const target = mkdtempSync(join(tmpdir(), 'web-uplift-v167-control-target-'));
-  const controlDir = join(repoRoot, `.v167-control-${process.pid}`);
+  const shimRoot = mkdtempSync(join(tmpdir(), 'web-uplift-v167-shim-'));
+  const controlDir = join(shimRoot, 'control');
+  // THE GUARD (web-uplift-lql5). This is what keeps the collision from coming back: a transient .mjs
+  // anywhere under repoRoot is visible to any other suite that walks repoRoot, and a suite doing that at
+  // --test-concurrency=6 got ENOENT and failed a real gate. Measured on this machine, the repository root
+  // held the old transient directory in 26 of 96 samples taken while this fixture ran, so the exposure was
+  // never theoretical. Re-introducing a root-relative write fails right here.
+  assert(!controlDir.startsWith(repoRoot + sep),
+    `the control copy must not be created inside the repository: a concurrent suite walking repoRoot would find a transient .mjs and fail to read it (web-uplift-lql5), got ${controlDir}`);
+  assert(!shimRoot.startsWith(repoRoot + sep),
+    `the shim root must live outside the repository for the same reason, got ${shimRoot}`);
   try {
+    for (const entry of readdirSync(repoRoot)) {
+      if (entry === '.git') continue;
+      symlinkSync(join(repoRoot, entry), join(shimRoot, entry));
+    }
     const source = readFileSync(join(repoRoot, 'bin', 'web-uplift.mjs'), 'utf8');
     const mutated = source.replace('  return refusedDestinationCount > 0;', '  return false; // PRE-FIX CONTROL');
     assert(mutated !== source,
@@ -684,7 +707,13 @@ export function testInstallIncompleteExitControl() {
     assert(readFileSync(victim, 'utf8') === 'VICTIM-MANIFEST\n',
       'the control run must leave the victim untouched too: the refusal was never the broken half, the exit status was');
   } finally {
-    rmSync(controlDir, { recursive: true, force: true });
+    // The symlinks are unlinked explicitly before the directory. rmSync does not follow symlinks, but this
+    // tree sits beside the real repository, and a mistake here would delete the source it points at.
+    for (const entry of readdirSync(shimRoot)) {
+      const entryPath = join(shimRoot, entry);
+      if (lstatSync(entryPath).isSymbolicLink()) rmSync(entryPath, { force: true });
+    }
+    rmSync(shimRoot, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
   }
