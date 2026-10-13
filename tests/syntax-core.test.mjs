@@ -1924,7 +1924,7 @@ export function testSuiteListsMatchRegressionRegistry() {
   // population changed without saying so. When a case or a suite file is added or removed deliberately,
   // update the number in the same commit and say why in the message.
   const EXPECTED_SUITE_FILES = 14;
-  const EXPECTED_CASES = 162;
+  const EXPECTED_CASES = 163;
   assert(
     suiteFiles.length === EXPECTED_SUITE_FILES,
     `the gate now runs ${suiteFiles.length} suite file(s) and this control is pinned at ${EXPECTED_SUITE_FILES}. If a suite file was added or removed on purpose, update EXPECTED_SUITE_FILES and EXPECTED_CASES in the same commit; if it was not, a suite has silently stopped running (web-uplift-ougd).`,
@@ -2000,9 +2000,49 @@ export function testCensusDeclaredPopulationNamesATrackedFileItCannotReach() {
   );
 }
 
+// The walk's contract, as a control the SKIPPING version cannot pass (web-uplift-k63b). Bounding and
+// traversing have to be true at the same time: a symlinked directory must still be walked, and a cycle must
+// not be followed forever. The landed lql5 fix passes the cycle half and silently fails the traversal half,
+// so this builds a directory symlink whose target holds a case file and asserts the walk REACHES it, then
+// builds a cycle and asserts the walk terminates on exactly the real paths.
+export function testWalkTraversesASymlinkedDirectoryAndBoundsACycle() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-walk-'));
+  try {
+    mkdirSync(join(root, 'real'), { recursive: true });
+    writeFileSync(join(root, 'real', 'reached.mjs'), 'export const marker = 1;\n');
+    symlinkSync('real', join(root, 'linked'));
+    mkdirSync(join(root, 'cycle'), { recursive: true });
+    writeFileSync(join(root, 'cycle', 'plain.mjs'), 'export const plain = 1;\n');
+    symlinkSync('.', join(root, 'cycle', 'loop'));
+
+    const found = listFiles(root, (p) => p.endsWith('.mjs'))
+      .map((p) => relative(root, p))
+      .sort();
+    assert(
+      found.includes(join('linked', 'reached.mjs')),
+      `a symlinked directory must be traversed, so the case file behind it must be in the census: ${JSON.stringify(found)}`,
+    );
+    assert(
+      found.includes(join('real', 'reached.mjs')),
+      `the same file must also be reached by its real path: ${JSON.stringify(found)}`,
+    );
+    assert(
+      found.includes(join('cycle', 'plain.mjs')),
+      `the cycle's own files must still be reached: ${JSON.stringify(found)}`,
+    );
+    assert(
+      found.length === 3,
+      `a cycle must be bounded by directory identity rather than followed, so the walk must terminate on exactly the three real paths: ${JSON.stringify(found)}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export const syntaxCoreTests = [
   testSyntaxChecks,
   testCensusDeclaredPopulationNamesATrackedFileItCannotReach,
+  testWalkTraversesASymlinkedDirectoryAndBoundsACycle,
   testPackageRootImportIsSideEffectFree,
   testIconSatisfiesMatrix,
   testFirstPartyHostMatrix,
