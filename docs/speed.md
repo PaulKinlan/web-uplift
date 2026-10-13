@@ -125,6 +125,75 @@ a suite file changes neither the target set nor its order, and `npm test`'s conc
 is the file that imports and uses it after the split; the target it selects is smaller than the one it
 replaced.
 
+## Scheduling the suite files does not pay at fleet load (2026-10-13, web-uplift-jgkj)
+
+The gate runs a whole suite file per process, so the FILE is the unit of parallelism. `node --test` sorts
+its file list **alphabetically and ignores the order the paths are given in** (passing
+`c.test.mjs a.test.mjs b.test.mjs` runs a, b, c, and a control where the alphabetically-first file was also
+the largest still ran it first, so it is a path sort and not a size sort). The slot that frees first takes
+the whole remaining queue, so the run ends on a tail that is scheduling rather than work.
+
+**Measured.** Per-file costs, `node --test --test-concurrency=1 <file>` one file at a time on a quiet VM:
+total work W = 168.7s over 160 cases in 14 files, so the floor at 6 slots is 168.7/6 = 28.1s.
+
+**Modelled, not measured.** Everything in the next table is what a schedule would cost on an idle box. It is
+a list-schedule simulation over those measured per-file costs, and it assumes the files run at full speed
+with no contention between them. This project's record with that model is that it is optimistic in exactly
+one direction: it predicted 37s for concurrency 8 where the machine measured 74.3s, and it predicted a 6.2s
+win for the launcher described below where the machine measured 1.5s slower. Read this table as a ceiling
+and the paired table after it as the result.
+
+| N | floor W/N | alphabetical, modelled | longest-first, modelled |
+| --- | --- | --- | --- |
+| 3 | 56.2s | 63.9s | 56.8s |
+| 5 | 33.7s | 41.1s | 35.2s |
+| 6 | 28.1s | **35.8s** | **29.6s** |
+| 7 | 24.1s | 30.6s | 28.9s |
+| 8 | 21.1s | 28.9s | 28.9s |
+
+**It was built, then measured against the landed gate, and NOT adopted.** `scripts/run-full-gate.mjs` on
+branch `fleet/jgkj-shards` partitions the suite files longest-first into 6 groups and runs one
+`node --test --test-concurrency=1` per group concurrently. It works: exit 0, 160/160 cases, every file in
+exactly one group, groups finishing together rather than staggered. **Measured**, paired against the landed
+command, alternating, three samples per arm, load recorded per run:
+
+| arm | walls | median | exits | peak job-tree RSS |
+| --- | --- | --- | --- | --- |
+| alphabetical (the landed gate) | 44.1s, 46.3s, 47.1s | 46.3s | 1, 0, 1 | 842-895 MB |
+| longest-first (the launcher) | 39.1s, 48.1s, 47.8s | 47.8s | 0, 0, 0 | 1.10-1.13 GB |
+
+The launcher is 1.5s **slower** at the median and uses about 28% more memory (far under the reaper's 3 GB).
+
+The `exits` column carries a second finding. Arm A is the command the gate runs, and it failed two of its
+three runs on `testBatchIsolationGate`; the launcher passed three of three, which at n=3 is suggestive
+rather than proof. That failure is filed as `web-uplift-y741`, and under fleet load it matters more than
+the 6.2s ever did: a case that fails two runs in three turns an unrelated landing red, and a red gate the
+fleet learns to treat as noise is expensive.
+
+The reason is the thing worth remembering: **at that load the gate is contention-bound, not work-bound.**
+Both arms ran at about 1.6x the 28.1s floor, so a schedule can only redistribute work that is not the
+binding constraint. Holding peak concurrency for a whole run costs about what balancing the queue saves,
+and the launcher never idles a slot while node's dynamic scheduling does so naturally in the tail. The 6.2s
+is an idle-box number; both arms were stretched about 1.6x over this window (load 13.4-18.8 on 8 vCPU).
+
+The levers that move this gate under fleet load are therefore **fewer concurrent browser processes, shorter
+cases, and a quieter box**, not a better schedule. This is the same shape as the concurrency-8 result in
+"### The paired measurement, and the setting it chose" above.
+
+The clearest single number for that, and it is not a full-gate number at all: the SAME four fast-gate
+targets on the same docs-only change ran in **0.94s at 15:07 and 27.38s at 15:08**, one minute apart, with
+the heavy slot free both times. `testSyntaxChecks` alone went from 217ms to 6996ms. Nothing changed but the
+load other lanes were putting on the box, which is why a wall time quoted without the load beside it is not
+a measurement of anything.
+
+`--test-shard=i/N` is not a candidate either: it is ROUND-ROBIN over that same sorted list, so it inherits
+the arbitrary order. Simulated the same way on this 14-file set, six shards produce
+49.1s/38.0s/14.0s/20.2s/27.9s/19.5s, a 49.1s makespan against the 28.1s floor, worse than the alphabetical
+schedule it would replace.
+
+**Do not rename the suites so the alphabet happens to be a good schedule.** It looks like a fix, it stops
+being one the moment a file is added or shrinks, and it makes the file names lie about what they contain.
+
 ## The fast gate routes by changed path, and refuses what it cannot route
 
 `scripts/test-fast.mjs` compares the working tree to the merge-base of `HEAD` and `origin/master`, then
