@@ -76,12 +76,40 @@ function shownText(text, raw) {
   return typeof shown === 'string' && shown !== raw ? text.split(raw).join(shown) : text;
 }
 
-// A candidate the URL parser REJECTS is still printed (it is the operator's own input, and
-// an unparseable URL is what they need to see), but not with something that looks like a
-// credential in it. The parser is unavailable by definition here, so this is a shape-based
-// scrub of the common secret parameters.
-function fallbackScrub(text) {
-  return String(text).replace(/([?&](?:api_?key|access_?token|token|secret|password|passcode|session|code|key|csrf|pin|cvv)=)[^&\s#]*/gi, '$1%5Bredacted%5D');
+// The runner-level policy for a candidate the URL parser REJECTED (web-uplift-9lhy, web-uplift-mafp).
+//
+// ONE analysis of the value, then ONE decision. Both questions are asked, of the shared redactor,
+// before anything is decided:
+//   * VISIBLE: does it redact the value AS WRITTEN?
+//   * HIDDEN: does it redact the value only once the whitespace is gone? Whitespace is where its
+//     unparseable-authority sweep stops looking, so 'https://us er:SECRET@host:port/' is untouched as
+//     written and redacted once the space is removed.
+// The value is printed only when BOTH are false. If either is true the value is withheld, because a
+// recognised credential anywhere in a rejected value is evidence that the value carries one, and that
+// sweep is shape-based rather than a proof about what it did not find.
+//
+// ASKING BOTH BEFORE DECIDING IS THE POINT, not a refinement. Round 2 asked the visible question first
+// and returned on it, so 'https://us er:SECRET@invalid-host:port/path?api_key=OTHER' printed the query
+// credential REDACTED and the whitespace-hidden password in the clear: the case where the value DID
+// change is evidence that something else was found, not evidence that nothing was hidden. A sequence
+// of early exits produced a disclosure twice, so the decision is computed from the shape of the value
+// in one pass and neither question can shadow the other.
+//
+// Withholding here, rather than widening the shared sweep's run break set, is deliberate: that sweep
+// is shared with the HAR artifact, the console prose scanner and the flow recorder, and dropping ' '
+// from its breaks makes a rejected URL eat the prose after it up to the next '@'. Measured on this
+// tree: 'https://x.test:99999/a now. Contact support@example.com' is left alone today, while the same
+// text with tabs (already a non-break for that sweep) becomes 'https://[redacted]:[redacted]@example.com'.
+// The runner's own log line is the narrower surface, so the stricter policy belongs here.
+function shownRefusedUrl(candidate) {
+  const raw = String(candidate);
+  const tightened = raw.replace(/\s+/g, '');
+  const rendersVisible = redactUrlCredentialValues(raw) !== raw;
+  const rendersHidden = tightened !== raw && redactUrlCredentialValues(tightened) !== tightened;
+  // Neither form carries anything the shared rule recognises: the value is the operator's own input
+  // and an unparseable URL is what they need to see, so the diagnostic is kept in full.
+  if (!rendersVisible && !rendersHidden) return raw;
+  return `[withheld: ${raw.length} characters; the value carries a credential and this diagnostic does not print a value it cannot redact in place]`;
 }
 
 const PKG_ROOT = resolvePath(fileURLToPath(new URL('..', import.meta.url)));
@@ -732,7 +760,14 @@ async function collectUrls() {
   }
   return candidates.filter((candidate) => {
     if (URL.canParse(candidate)) return true;
-    console.warn(`skipping invalid URL: ${fallbackScrub(candidate)}`);
+    // A candidate the URL parser REJECTS is still printed (it is the operator's own input, and an
+    // unparseable URL is what they need to see), but through the SAME redactor every other printed
+    // URL uses, and with the runner's own withhold rule on top: the shared redactor decides whether
+    // the value can be rendered at all, and a value whose credential it cannot reach is withheld
+    // rather than printed. This used to be a second, local regex over '[?&]name=value' only, so a
+    // password in the authority reached stderr and the CI log verbatim (web-uplift-9lhy). One table,
+    // one answer (web-uplift-glar).
+    console.warn(`skipping invalid URL: ${shownRefusedUrl(candidate)}`);
     return false;
   });
 }
