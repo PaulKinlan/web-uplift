@@ -547,13 +547,14 @@ function testRefusalIsActionableAndDocumented() {
     assert(/NEXT ACTION/.test(doc), `${name} must carry the one next action, not only the policy`);
     assert(doc.includes('KNOWN_STANDALONE_TESTS') && doc.includes('OMITTED_RULES'), `${name} must name both mapping routes`);
     assert(/FLEET_CHECK_CONF=\S+\s+fleet-check/.test(doc), `${name} must name the escape with its config override`);
-    // The full gate includes imported suites, but not unimported paths (f2er).
+    // Import alone does not execute a guarded standalone suite: its importer must invoke its tests.
     const normalizedDoc = doc.replace(/\s+/g, ' ');
     assert(
-      /`npm test` runs `tests\/\*\.test\.mjs` and suites they import \(directly or transitively\)/.test(normalizedDoc)
+      /`npm test` runs `tests\/\*\.test\.mjs`/.test(normalizedDoc)
         && /imported standalone suite/i.test(normalizedDoc) && /unimported/i.test(normalizedDoc)
-        && /not evidence on its own/i.test(normalizedDoc),
-      `${name} must distinguish imported suites covered by npm test from unimported paths`
+        && /only (?:if|when)(?:\*\*)? .*invoke/i.test(normalizedDoc)
+        && /import alone/i.test(normalizedDoc) && /not evidence on its own/i.test(normalizedDoc),
+      `${name} must qualify coverage on invocation, not merely import, and distinguish unimported paths`
     );
     for (const rule of OMITTED_RULES) {
       assert(doc.includes(`\`${rule.id}\``), `${name} must name the omission rule ${rule.id}`);
@@ -610,8 +611,8 @@ function testRefusalIsActionableAndDocumented() {
     assert(res.stderr.includes('KNOWN_STANDALONE_TESTS'), 'the refusal must name the standalone-suite route');
     assert(res.stderr.includes('OMITTED_RULES'), 'the refusal must name the declared-omission route');
     assert(
-      res.stderr.includes('npm test runs tests/*.test.mjs and suites they import (directly or transitively); an imported suite IS covered, but an unimported suite is not.'),
-      'the refusal must distinguish imported suites covered by npm test from unimported suites'
+      res.stderr.includes('an imported standalone suite is covered ONLY if those files invoke its tests. Import alone is not coverage.'),
+      'the refusal must qualify coverage on invocation, not merely import'
     );
     assert(
       /FLEET_CHECK_CONF=\S+ fleet-check/.test(res.stderr),

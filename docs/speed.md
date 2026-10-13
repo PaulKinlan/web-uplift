@@ -26,10 +26,10 @@ Neither gate is run without naming this project's own command on a shared VM, be
 FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check --fast
 ```
 
-Note what the full gate does NOT run: `npm test` runs `tests/*.test.mjs` and suites they import (directly
-or transitively). An imported standalone suite is covered, even if the fast gate does not map it; a path
-no such suite covers, including an unimported standalone suite, is not exercised by the full gate, so that
-gate is not evidence for that path on its own.
+Note what the full gate does NOT run: `npm test` runs `tests/*.test.mjs`. An imported standalone suite is
+covered only when those files actually invoke its tests (directly or transitively); import alone does not
+run them. A path not exercised by those tests, including an unimported standalone suite or one imported
+only for helpers, is not covered by the full gate, even if the fast gate does not map it.
 
 ## The fast gate routes by changed path, and refuses what it cannot route
 
@@ -85,10 +85,11 @@ Extend the map in `scripts/test-fast.mjs`, then re-run `npm run test:fast`. Whic
 - **documentation, data or a fixture with genuinely no suite**: add an `OMITTED_RULES` entry with the
   reason it is skipped, so the next reader can see the policy rather than infer it. Do not add an entry
   whose only purpose is to make the gate green.
-- **if the map cannot be extended right now**: the full gate is NOT evidence on its own for an unimported
-  refused path. `npm test` runs `tests/*.test.mjs` and suites they import (directly or transitively): an
-  imported standalone suite IS covered, but an unimported one is not. Run the suite covering an unimported
-  path explicitly (for a refused `tests/*.mjs`, `node <path>`), then
+- **if the map cannot be extended right now**: the full gate is NOT evidence on its own for a refused path
+  its tests do not exercise. `npm test` runs `tests/*.test.mjs`; an imported standalone suite IS covered
+  only if those files invoke its tests. Import alone is not coverage, and an unimported suite is not
+  covered either. Run the suite covering a path not exercised by those files explicitly (for a refused
+  `tests/*.mjs`, `node <path>`), then
   `FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check`, and name the command that
   produced the evidence in your hand-off.
 
