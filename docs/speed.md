@@ -59,12 +59,14 @@ exactly two do (`deleted`, `recorded-artefacts`).
 | `fixture-and-demo-trees` | non-executable files under `tests/fixtures/**`, `playground/**`, `eval/**`, `examples/**` | non-executable file in a fixture or demo tree: no fast-tier suite of its own (unmapped executable files here are refused, never omitted) |
 
 Executable files in the fixture/demo trees are **not** omitted: `playground/**/*.js` and
-`eval/fixtures/seeded-issues/site/**/*.js` map to `tests/fixture-sites.test.mjs`. It reads all 18 JavaScript
+`eval/fixtures/seeded-issues/site/**/*.js` map to `tests/fixture-sites.test.mjs`. It reads exactly 18 JavaScript
 modules for syntax/local imports and loads each scenario index to check metadata; it does **not** drive the
-DOM. `.github/workflows/audit-playground.yml` serves and probes both sites in CI for browser behaviour.
+DOM. This is syntax-and-structure-only fast-tier coverage. For a behaviour change, drive the affected site
+in a browser and use `.github/workflows/audit-playground.yml`, which serves and probes both sites in CI.
 Other unmapped executable fixture/demo paths are refused rather than silently skipped. The new suite took
-1.04s standalone on this VM (2026-10-13, `/usr/bin/time node tests/fixture-sites.test.mjs`); only changed
-site JavaScript or the suite itself selects it, so unrelated fast-gate paths gain no work.
+0.21s standalone on this VM (2026-10-13, `node tests/fixture-sites.test.mjs`, after replacing 18 Node
+syntax-check spawns with one parser child); only changed site JavaScript or the suite itself selects it,
+so unrelated fast-gate paths gain no work.
 
 ## When the fast gate refuses: the escape
 
