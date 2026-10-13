@@ -226,6 +226,9 @@ const TEST_SUPPORT_MODULES = [
   // are changing - and that control only runs when tests/test-fast.mjs itself changes. Folded here rather than
   // in its own branch because this branch already edits this map for tests/filter-args.mjs.
   { file: 'scripts/check-verdict.mjs', consumer: 'tests/verdict-provenance.test.mjs' },
+  // web-uplift-dipf: the parser's own module, covered by the suite that now tests it directly, so a
+  // flag change selects that suite rather than refusing on tests/test-helpers.mjs (FULL-GATE-ONLY).
+  { file: 'tests/filter-args.mjs', consumer: 'tests/filter-args.test.mjs' },
 ];
 
 /**
