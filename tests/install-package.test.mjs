@@ -120,7 +120,15 @@ export function testCdpCopySyncMutationGuard() {
 }
 
 
-export function testInstalledEvidenceCli() {
+// The installed tree is built ON DEMAND rather than by a case that must run first (web-uplift-3yns). Two
+// cases need it, and before this change the second one asserted that the first had already run - "this
+// check reuses the target installed by testInstalledEvidenceCli, which must run first" - which held only
+// because cases inside a file run serially in list order. That made the case unrunnable on its own and
+// blocked making cases concurrent inside a file. Building it here means either case can run first, or
+// alone, and the pack and install are still paid exactly once per process.
+let installedTargetDir = null;
+function installedTarget() {
+  if (installedTargetDir !== null) return installedTargetDir;
   const target = join(tmp, 'installed-target');
   const tarball = packTarball();
   const install = run('npm', [
@@ -137,6 +145,12 @@ export function testInstalledEvidenceCli() {
     target,
   ], { env: noUpdateEnv() });
   assert(install.status === 0, `install failed: ${install.stderr || install.stdout}`);
+  installedTargetDir = target;
+  return target;
+}
+
+export function testInstalledEvidenceCli() {
+  const target = installedTarget();
 
   const manifest = JSON.parse(readFileSync(join(target, '.web-uplift/manifest.json'), 'utf8'));
   const pkg = readJson('package.json');
@@ -258,16 +272,14 @@ export function testNpxCacheDoesNotAccumulate() {
 // installed copy, because that is the shape that broke a shipped copy once already - the
 // CLI imported a module the package did not carry. The scorecard load asserted above
 // already exercises one such import transitively; this asserts the general class and says
-// which modules it exercised. It reuses the target installed by testInstalledEvidenceCli
-// rather than paying for a second pack+install, so it is registered immediately after it
-// and fails loudly if that target is not there (web-uplift-uz9).
+// which modules it exercised. It shares the target installed by testInstalledEvidenceCli
+// rather than paying for a second pack+install, and now builds it on demand if it is not
+// there (web-uplift-uz9, web-uplift-3yns).
 export function testInstalledTreeRelativeImportsResolve() {
-  const target = join(tmp, 'installed-target');
+  // Builds the tree itself if the other case has not already done so, so it is order-free and can be run
+  // alone (web-uplift-3yns).
+  const target = installedTarget();
   const vendoredRoot = join(target, '.web-uplift');
-  assert(
-    existsSync(vendoredRoot),
-    'installed tree: this check reuses the target installed by testInstalledEvidenceCli, which must run first',
-  );
   const vendoredModules = (dir) =>
     readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
       entry.isDirectory()
