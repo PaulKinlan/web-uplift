@@ -5,6 +5,25 @@ import { safeFetch, CRAWLER_UA, targetOriginOf } from '../fetch.mjs';
 import { stripHtmlToText, contentTokens, contentPresentInRaw, detectEmptyMounts } from '../html-text.mjs';
 import { evaluate, navigate, sleep } from '../cdp.mjs';
 
+// The settle after the load event, and the reason it has a default of its own. 3500ms is DELIBERATE
+// (8350040: "SPA hydration gets a longer settle (>=3.5s)"): a hydrating SPA that paints after the 1s
+// default would otherwise be measured as an empty shell, which is the exact false finding this primitive
+// exists to avoid. It is a DEFAULT for the case where nobody chose a settle - not a floor under every
+// caller. It used to be applied as `Math.max(opts.wait ?? 0, 3500)`, which silently ignored a documented
+// `--wait` below 3500 (the CLI always injects a global `wait: 1000`, so `--wait 300` and no `--wait` at all
+// both became 3500): the interface promised the caller could ask for a specific wait and the code refused
+// (web-uplift-5w69). An explicit choice is now honoured as given; an absent one - or the CLI's injected
+// global fallback, which `parseArgs` marks as `waitIsDefault` - gets the SPA default.
+export const DISCOVERABILITY_SETTLE_MS = 3500;
+// The JS-disabled crawler-view reload only has to let the raw document paint: no script runs, so it does not
+// need the hydration wait.
+export const DISCOVERABILITY_CRAWLER_SETTLE_MS = 1200;
+
+export function discoverabilitySettleMs(opts = {}, defaultMs = DISCOVERABILITY_SETTLE_MS) {
+  if (opts.wait === undefined || opts.waitIsDefault === true) return Math.max(opts.wait ?? 0, defaultMs);
+  return opts.wait;
+}
+
 export async function discoverability(client, url, opts, log) {
   // 1. Raw HTML as a non-JS crawler sees it: a plain fetch, no JS execution.
   let rawHtml = '';
@@ -29,10 +48,11 @@ export async function discoverability(client, url, opts, log) {
   }
 
   // 2. Rendered DOM after JS runs, via CDP. SPAs often need more than the
-  // default 1s to hydrate and paint their content, so settle for longer here
-  // unless the caller asked for a specific --wait.
+  // default 1s to hydrate and paint their content, so the settle here defaults to the
+  // SPA hydration wait - and is honoured as the caller asked for it when they asked
+  // for one (see discoverabilitySettleMs).
   await navigate(client, url, {
-    settleMs: Math.max(opts.wait ?? 0, 3500),
+    settleMs: discoverabilitySettleMs(opts),
     log,
     beforeTargetNavigate: () => applyConditions(client, opts, log),
   });
@@ -173,7 +193,7 @@ export async function discoverability(client, url, opts, log) {
       writeFileSync(renderedPng, uint8FromBase64(shotOn.data));
       // Reload with JavaScript disabled to see exactly what a non-JS crawler gets.
       await client.Emulation.setScriptExecutionDisabled({ value: true });
-      await navigate(client, url, { settleMs: Math.max(opts.wait ?? 0, 1200), log });
+      await navigate(client, url, { settleMs: discoverabilitySettleMs(opts, DISCOVERABILITY_CRAWLER_SETTLE_MS), log });
       const shotOff = await client.Page.captureScreenshot({ format: 'png' });
       writeFileSync(crawlerPng, uint8FromBase64(shotOff.data));
       await client.Emulation.setScriptExecutionDisabled({ value: false });

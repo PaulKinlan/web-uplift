@@ -522,6 +522,8 @@ Common options:
 --emulate-media prefers-color-scheme=dark,prefers-reduced-motion=reduce
 --viewport 360x800
 --wait <ms>
+  # settle after the load event. discoverability defaults to 3500ms (SPA hydration, 8350040);
+  # an explicit --wait overrides that default rather than being floored by it (web-uplift-5w69).
 --selector <css>
 --interact "<js>"
 --duration <ms>
