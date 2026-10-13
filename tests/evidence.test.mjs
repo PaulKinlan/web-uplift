@@ -7,7 +7,7 @@
 // reordered, and every case remains independent (it builds its own server and browser).
 
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { assert, run, runAsync, tmp, runSuite } from './test-helpers.mjs';
 import { gather, waitForInteractEvidence } from '../evidence/cli.mjs';
@@ -532,12 +532,74 @@ export async function testConsoleInteractDeadlineValidation() {
 // header the response does not send still reads as absent, so the fix cannot be
 // over-broad (web-uplift-0w6).
 
+export async function testRejectedConditionsNeverLaunchABrowser() {
+  // web-uplift-3mrg: gather launched Chrome BEFORE the primitive validated its options, so a call that was
+  // always going to be rejected paid a browser start and threw it away (measured 0.6-1.4s inside the gate on
+  // this VM, and the reason testThrottlingConditions looked like an 8-launch case). The evidence here is the
+  // launch LOG, not a timing, so it means the same thing on a loaded VM as on an idle one.
+  //
+  // The valid call comes first and is asserted: "no records" must not be able to pass because the log was
+  // never written at all. That is the vacuous-green shape this family keeps finding, so the detector is
+  // proven before the thing it detects is asserted to be absent.
+  const html = '<!doctype html><html><head><title>t</title></head><body><h1>x</h1></body></html>';
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(html);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const logPath = join(tmp, `rejected-conditions-launches-${process.pid}.jsonl`);
+  const previous = process.env.WEB_UPLIFT_LAUNCH_LOG;
+  process.env.WEB_UPLIFT_LAUNCH_LOG = logPath;
+  const launches = () =>
+    existsSync(logPath) ? readFileSync(logPath, 'utf8').split('\n').filter((line) => line.trim()).length : 0;
+  try {
+    const base = `http://127.0.0.1:${server.address().port}/`;
+    // Positive control: the detector works, and a valid run really does launch.
+    await gather('layout', base, { quiet: true, wait: 100 });
+    assert(
+      launches() === 1,
+      `the launch log must record the valid run's single launch, otherwise this case cannot tell "no launch" from "no log" (saw ${launches()})`,
+    );
+
+    // Each of these is a pure, declarative rejection: it must keep the exact message the in-session check
+    // produced, and it must not have launched anything to produce it.
+    const rejections = [
+      [{ network: 'dial-up' }, 'Unknown network profile "dial-up". One of: '],
+      [{ cpuThrottle: 0.5 }, '--cpu-throttle must be >= 1, got 0.5'],
+      [{ locale: 'not a language tag' }, 'Invalid --locale "not a language tag"'],
+      [{ timezone: 'Mars/Olympus_Mons' }, 'Invalid --timezone "Mars/Olympus_Mons"'],
+    ];
+    for (const [opts, expected] of rejections) {
+      let message = null;
+      try {
+        await gather('layout', base, { quiet: true, ...opts });
+      } catch (err) {
+        message = err.message;
+      }
+      assert(message !== null, `${JSON.stringify(opts)} must be rejected rather than silently ignored`);
+      assert(
+        message.startsWith(expected),
+        `${JSON.stringify(opts)}: the pre-launch check must keep the in-session message, expected one starting "${expected}", got "${message}"`,
+      );
+      assert(
+        launches() === 1,
+        `${JSON.stringify(opts)}: a rejected run must not launch a browser, but the launch log grew to ${launches()} record(s)`,
+      );
+    }
+  } finally {
+    if (previous === undefined) delete process.env.WEB_UPLIFT_LAUNCH_LOG;
+    else process.env.WEB_UPLIFT_LAUNCH_LOG = previous;
+    server.close();
+  }
+}
+
 export const evidenceTests = [
   testPreNavigationEmulation,
   testAxePrimitiveBypassesStrictCsp,
   testAxeKeepsPagePolicyAndDisclosesInjectionBypass,
   testThrottlingConditions,
   testLocaleTimezoneConditions,
+  testRejectedConditionsNeverLaunchABrowser,
   testConsoleEvidence,
   testConsoleEvidenceRedaction,
   testConsoleInteractDeadlineValidation,

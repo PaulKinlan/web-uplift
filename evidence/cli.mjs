@@ -75,6 +75,7 @@ import {
   configureCdpDeadlines,
   recordLaunch,
 } from './cdp.mjs';
+import { validateConditions } from './common.mjs';
 
 import { screenshot } from './primitives/screenshot.mjs';
 import { video } from './primitives/video.mjs';
@@ -251,6 +252,12 @@ export async function gather(primitive, url, opts = {}) {
   // browser-PROFILE state (cookies, storage, service workers, HTTP cache) IS shared, which is why only
   // cases that do not depend on a fresh profile opt in.
   const { browser: injectedBrowser, ...primitiveOpts } = opts;
+  // Reject a run that cannot succeed BEFORE paying for a browser (web-uplift-3mrg): the declarative
+  // conditions are pure checks, so an invalid network profile, CPU rate, locale or timezone now costs nothing
+  // instead of a Chrome start that is thrown away (measured 0.6-1.4s inside the gate on this VM).
+  // applyConditions still validates in-session from the same single source of truth, so this cannot drift into
+  // a "checked up front" claim that is no longer true.
+  validateConditions(primitiveOpts);
   const ownsBrowser = injectedBrowser === undefined || injectedBrowser === null;
   const chrome = ownsBrowser ? await launchChrome({ log }) : injectedBrowser;
   // Attribute the browser to this invocation AT LAUNCH (web-uplift-4wx): a

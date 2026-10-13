@@ -40,7 +40,46 @@ export function viewportEmulation(opts) {
   };
 }
 
+/**
+ * Validate the declarative options a run will apply - pure checks, no browser and no CDP session.
+ *
+ * gather() calls this BEFORE launchChrome (web-uplift-3mrg): a call that is going to be rejected used to open
+ * a browser first and throw it away, which measured 0.6-1.4s inside the gate on this VM and made
+ * testThrottlingConditions look like an 8-launch case when it has seven meaningful gathers. applyConditions()
+ * calls it again at its top, so the in-session path cannot skip a check. The messages are produced HERE and
+ * only here: a second copy of the wording is how a "validated up front" promise quietly stops being true.
+ */
+export function validateConditions(opts = {}) {
+  if (opts.network && !NETWORK_PROFILES[opts.network]) {
+    throw new Error(
+      `Unknown network profile "${opts.network}". One of: ${Object.keys(NETWORK_PROFILES).join(', ')}`,
+    );
+  }
+  const cpuRate = opts.cpuThrottle ?? (opts.network && NETWORK_PROFILES[opts.network]?.cpuSlowdownMultiplier);
+  if (cpuRate && !(cpuRate >= 1)) throw new Error(`--cpu-throttle must be >= 1, got ${cpuRate}`);
+  if (opts.locale) {
+    // Validate loudly up front: a typo'd locale must fail here, not silently
+    // judge the page under the default locale.
+    try {
+      Intl.getCanonicalLocales(opts.locale);
+    } catch {
+      throw new Error(`Invalid --locale "${opts.locale}" (expected a BCP 47 tag, e.g. de-DE, ar-EG, ja-JP)`);
+    }
+  }
+  if (opts.timezone) {
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: opts.timezone });
+    } catch {
+      throw new Error(`Invalid --timezone "${opts.timezone}" (expected an IANA zone, e.g. America/New_York, Asia/Tokyo)`);
+    }
+  }
+  return cpuRate;
+}
+
 export async function applyConditions(client, opts, log) {
+  // The same single source of truth gather() validates with before launching, so this path can neither skip a
+  // check nor drift from the pre-launch message (web-uplift-3mrg).
+  const cpuRate = validateConditions(opts);
   if (opts.emulateMedia && opts.emulateMedia.length) {
     await client.Emulation.setEmulatedMedia({ features: opts.emulateMedia });
     log(
@@ -63,11 +102,6 @@ export async function applyConditions(client, opts, log) {
   }
   if (opts.network) {
     const profile = NETWORK_PROFILES[opts.network];
-    if (!profile) {
-      throw new Error(
-        `Unknown network profile "${opts.network}". One of: ${Object.keys(NETWORK_PROFILES).join(', ')}`,
-      );
-    }
     await client.Network.emulateNetworkConditions({
       offline: false,
       latency: profile.latencyMs,
@@ -79,29 +113,15 @@ export async function applyConditions(client, opts, log) {
         `${profile.downloadThroughputBps} B/s down, ${profile.uploadThroughputBps} B/s up)`,
     );
   }
-  const cpuRate = opts.cpuThrottle ?? (opts.network && NETWORK_PROFILES[opts.network]?.cpuSlowdownMultiplier);
   if (cpuRate) {
-    if (!(cpuRate >= 1)) throw new Error(`--cpu-throttle must be >= 1, got ${cpuRate}`);
     await client.Emulation.setCPUThrottlingRate({ rate: cpuRate });
     log(`[evidence] cpu throttle: ${cpuRate}x slowdown`);
   }
   if (opts.locale) {
-    // Validate loudly up front: a typo'd locale must fail here, not silently
-    // judge the page under the default locale.
-    try {
-      Intl.getCanonicalLocales(opts.locale);
-    } catch {
-      throw new Error(`Invalid --locale "${opts.locale}" (expected a BCP 47 tag, e.g. de-DE, ar-EG, ja-JP)`);
-    }
     await client.Emulation.setLocaleOverride({ locale: opts.locale });
     log(`[evidence] locale: ${opts.locale}`);
   }
   if (opts.timezone) {
-    try {
-      new Intl.DateTimeFormat('en', { timeZone: opts.timezone });
-    } catch {
-      throw new Error(`Invalid --timezone "${opts.timezone}" (expected an IANA zone, e.g. America/New_York, Asia/Tokyo)`);
-    }
     await client.Emulation.setTimezoneOverride({ timezoneId: opts.timezone });
     log(`[evidence] timezone: ${opts.timezone}`);
   }
