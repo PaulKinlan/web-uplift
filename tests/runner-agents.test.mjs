@@ -323,7 +323,9 @@ export async function testAgentChildEnvAllowlist() {
 // The batch isolation gate (web-uplift-odx): the batch runner drives the SAME
 // write-capable, prompt-injectable agent as fix mode, so it must refuse to
 // spawn until the operator names a boundary - or explicitly acknowledges none -
-// exactly like the fixer. A stub agent on PATH proves whether a spawn happened.
+// exactly like the fixer. A stub agent on PATH proves whether a spawn happened, and WHEN IT DID NOT the
+// assertion reports the run's status, stderr and whether the security record was written (web-uplift-y741):
+// a refusal from the pre-spawn integrity gate, a spawn failure and a runner abort all leave no capture file.
 export async function testBatchIsolationGate() {
   const isoTmp = mkdtempSync(join(tmpdir(), 'web-uplift-isolation-'));
   try {
@@ -334,6 +336,17 @@ export async function testBatchIsolationGate() {
     writeFileSync(stubPath, `#!/bin/sh\ntouch ${captureFile}\nexit 0\n`);
     chmodSync(stubPath, 0o755);
     const baseEnv = { PATH: `${binDir}:${process.env.PATH}`, HOME: isoTmp };
+    // WHEN THE CAPTURE FILE IS MISSING THE ASSERTION HAS TO SAY WHY (web-uplift-y741). A missing file means
+    // the runner never spawned the agent and not that the file was late - runAgent resolves on the child's
+    // 'close' event and rejects on a non-zero exit, so the stub's touch has already happened if the child
+    // ran at all. But SEVERAL different fates produce the missing file: the pre-spawn integrity gate
+    // refusing the spawn because the executed set changed since the batch started (a deliberate refusal),
+    // a spawn failure such as ENOENT, or the runner aborting before the spawn. The original assertion
+    // discarded the status and the stderr, so every one of them read as the same bare 'must spawn the
+    // agent' - which is why this case could not be diagnosed when it failed under load. The assertion stays
+    // exactly as strict; only what it prints on failure changes.
+    const spawnFailure = (label, run, outDir) =>
+      `${label} must spawn the agent: status=${run.status} signal=${run.signal} recordWritten=${existsSync(join(outDir, 'run-security.json'))} stderr=${JSON.stringify((run.stderr || '').slice(-300))}`;
     const driveBatch = (extra) =>
       runAsync(process.execPath, [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com', '--agent', 'claude', ...extra], { env: baseEnv });
 
@@ -351,7 +364,7 @@ export async function testBatchIsolationGate() {
     //    a reportless failure (exit 1) - what is asserted is that the GATE
     //    passed: a spawn happened and no REFUSED was printed.
     const asserted = await driveBatch(['--isolation', 'docker', '--out', join(isoTmp, 'r2')]);
-    assert(existsSync(captureFile), 'an asserted run must spawn the agent');
+    assert(existsSync(captureFile), spawnFailure('an asserted run', asserted, join(isoTmp, 'r2')));
     assert(!asserted.stderr.includes('REFUSED'), `an asserted run must not be refused: ${asserted.stderr.slice(-200)}`);
     rmSync(captureFile);
     const okRecord = JSON.parse(readFileSync(join(isoTmp, 'r2', 'run-security.json'), 'utf8'));
@@ -363,7 +376,7 @@ export async function testBatchIsolationGate() {
 
     // 3. THE EXPLICIT ACKNOWLEDGEMENT: proceeds, recorded as acknowledged-none.
     const acked = await driveBatch(['--i-know-this-is-unisolated', '--out', join(isoTmp, 'r3')]);
-    assert(existsSync(captureFile), 'an acknowledged run must spawn the agent');
+    assert(existsSync(captureFile), spawnFailure('an acknowledged run', acked, join(isoTmp, 'r3')));
     assert(!acked.stderr.includes('REFUSED'), `an acknowledged run must not be refused: ${acked.stderr.slice(-200)}`);
     const ackRecord = JSON.parse(readFileSync(join(isoTmp, 'r3', 'run-security.json'), 'utf8'));
     assert(ackRecord.isolation === 'operator-acknowledged-none', `the acknowledgement must be recorded: ${JSON.stringify(ackRecord)}`);
@@ -371,6 +384,20 @@ export async function testBatchIsolationGate() {
     // 4. DRY-RUN EXEMPTION: spawns nothing, so no assertion is required.
     const dry = await driveBatch(['--dry-run', '--out', join(isoTmp, 'r4')]);
     assert(dry.status === 0, `a dry run must not require the assertion: ${dry.status} ${dry.stderr.slice(-200)}`);
+
+    // 5. THE CONTROL: an acknowledged run whose agent cannot be spawned at all must leave NO capture file.
+    //    Without this the assertions above could pass for a runner that never spawned anything, and the
+    //    case would be measuring its own stub rather than the gate (web-uplift-y741). Measured on this
+    //    path: status 1 and stderr naming 'spawn claude ENOENT'. The file from step 3 is removed first, so
+    //    the absence asserted here is an absence and not an oversight.
+    rmSync(captureFile, { force: true });
+    const noAgent = await runAsync(
+      process.execPath,
+      [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com', '--agent', 'claude', '--i-know-this-is-unisolated', '--out', join(isoTmp, 'r5')],
+      { env: { PATH: '/nonexistent', HOME: isoTmp } },
+    );
+    assert(noAgent.status !== 0, `a run whose agent cannot be spawned must not report success: ${noAgent.status} ${noAgent.stderr.slice(-200)}`);
+    assert(!existsSync(captureFile), 'and must leave no capture file: this is what proves the spawn assertions above can fail');
   } finally {
     rmSync(isoTmp, { recursive: true, force: true });
   }
