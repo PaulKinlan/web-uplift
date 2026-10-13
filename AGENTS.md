@@ -89,7 +89,7 @@ at the skill). opencode also reads this `AGENTS.md` for project context.
 ## Testing & fast gates (fleet-check --fast)
 
 The full test suite is `npm test`, which runs `npm run sync:vendored` and then
-`node --test --test-concurrency=3 tests/*.test.mjs`: the 9 modular suites
+`node --test --test-concurrency=3 tests/*.test.mjs`: the 14 modular suites
 (`tests/*.test.mjs`) each run in their own `node:test` process, taking 1.5 to 2.5
 minutes on the project VM. It runs once per landing on the merger's merged union.
 
@@ -119,14 +119,14 @@ replacing these numbers with adjectives is how this becomes a guess again):
 
 For iteration and implementer fast gates, several selective mechanisms are provided:
 
-1. **Native node:test runner:** All 9 suites use native `node:test` and `node:assert/strict`.
-   Run `node --test tests/evidence.test.mjs` or filter natively by pattern via
-   `node --test --test-name-pattern="<regex>" tests/evidence.test.mjs`. Multi-suite
-   execution is bounded by `--test-concurrency`: `npm test` runs the 9 files at concurrency 3,
+1. **Native node:test runner:** All 14 suites use native `node:test` and `node:assert/strict`.
+   Run `node --test tests/evidence-conditions.test.mjs` or filter natively by pattern via
+   `node --test --test-name-pattern="<regex>" tests/evidence-conditions.test.mjs`. Multi-suite
+   execution is bounded by `--test-concurrency`: `npm test` runs the 14 files at concurrency 3,
    while `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`) pins it to 1
    as the serial escape hatch for a host too small for concurrent browser suites.
 2. **Direct suite execution:** Each `tests/*.test.mjs` suite can be run directly
-   (e.g. `node tests/evidence.test.mjs`, `node tests/redaction.test.mjs`), with
+   (e.g. `node tests/evidence-conditions.test.mjs`, `node tests/redaction.test.mjs`), with
    support for `--only <filter>`, `--filter`, `--grep`, and `--list`.
 3. **Filterable regression tests:** `node tests/regression.mjs --only <filter>`
    runs only tests matching the given substring across all suites (e.g. `--only Flow`,
