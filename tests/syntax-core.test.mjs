@@ -48,6 +48,7 @@ import {
   readSourceTree,
   safeFetch,
 } from '../evidence/cli.mjs';
+import { launchChrome } from '../evidence/cdp.mjs';
 import { testSafeFetchDnsRebindingGuard, testSafeFetchContentDecoding } from './safe-fetch.mjs';
 import {
   testSourceTreeSkipsSymlinkFileEscape,
@@ -407,7 +408,14 @@ export async function testFetchDeadlineAndRawComparison() {
   const stallUrl = `http://127.0.0.1:${stallBody.address().port}/`;
   const stallOrigin = new URL(stallUrl).origin;
 
+  // One browser for the five routes this case drives (web-uplift-t2mr): each gather still creates its own
+  // session/target, so per-target emulation cannot leak between them, and no route here depends on a fresh
+  // profile - they are five different local ports and the raw fetch is a plain HTTP request, not the
+  // browser. The case asserts fetch-deadline and raw-comparison behaviour, none of it profile state.
+  let browser = null;
   try {
+    browser = await launchChrome({ log: () => {} });
+
     // 1. THE BOUND: a 200ms budget against an 800ms server fails loudly,
     let fastErr = null;
     try {
@@ -468,7 +476,7 @@ export async function testFetchDeadlineAndRawComparison() {
     //    record the comparison as NOT USABLE - a timeout is a network condition, never
     //    evidence that the page lacked raw content.
     configureFetchDeadline(400); // the server answers at 800ms: the raw fetch times out
-    const timed = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });
+    const timed = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false, browser });
     assert(timed && timed.fetchError, `discoverability: the timed-out raw fetch must be recorded as an error (${JSON.stringify(timed && { fetchError: timed.fetchError })})`);
     assert(timed.rawComparisonUsable === false, 'discoverability: the gate itself must be false when the raw fetch failed');
     assert(
@@ -485,7 +493,7 @@ export async function testFetchDeadlineAndRawComparison() {
       res.end('<!doctype html><title>Not Found</title><h1>404</h1>');
     });
     await new Promise((r) => nf.listen(0, '127.0.0.1', r));
-    const nfSummary = await gather('discoverability', `http://127.0.0.1:${nf.address().port}/`, { quiet: true, wait: 300, screenshots: false });
+    const nfSummary = await gather('discoverability', `http://127.0.0.1:${nf.address().port}/`, { quiet: true, wait: 300, screenshots: false, browser });
     assert(
       nfSummary.rawComparisonUsable === false &&
         nfSummary.fetchedStatus === 404 &&
@@ -512,7 +520,7 @@ export async function testFetchDeadlineAndRawComparison() {
     });
     await new Promise((r) => bodyStall.listen(0, '127.0.0.1', r));
     configureFetchDeadline(400);
-    const stalledSummary = await gather('discoverability', `http://127.0.0.1:${bodyStall.address().port}/`, { quiet: true, wait: 300, screenshots: false });
+    const stalledSummary = await gather('discoverability', `http://127.0.0.1:${bodyStall.address().port}/`, { quiet: true, wait: 300, screenshots: false, browser });
     assert(
       stalledSummary.rawComparisonUsable === false && typeof stalledSummary.fetchError === 'string',
       `discoverability: a body-read failure must be unusable with the error recorded (${JSON.stringify({ usable: stalledSummary.rawComparisonUsable, fetchError: stalledSummary.fetchError && stalledSummary.fetchError.slice(0, 60) })})`,
@@ -528,7 +536,7 @@ export async function testFetchDeadlineAndRawComparison() {
       res.end('');
     });
     await new Promise((r) => empty.listen(0, '127.0.0.1', r));
-    const emptySummary = await gather('discoverability', `http://127.0.0.1:${empty.address().port}/`, { quiet: true, wait: 300, screenshots: false });
+    const emptySummary = await gather('discoverability', `http://127.0.0.1:${empty.address().port}/`, { quiet: true, wait: 300, screenshots: false, browser });
     assert(
       emptySummary.rawComparisonUsable === true && emptySummary.fetchedStatus === 200 && emptySummary.raw.htmlBytes === 0,
       `discoverability: an empty 200 must stay usable with the emptiness observed (${JSON.stringify({ usable: emptySummary.rawComparisonUsable, status: emptySummary.fetchedStatus, raw: emptySummary.raw })})`,
@@ -538,7 +546,7 @@ export async function testFetchDeadlineAndRawComparison() {
     // 6c. THE RAISED-BUDGET CONTROL, end to end: the same page with the budget raised yields
     //    a real comparison - this passes only because the budget is configurable.
     configureFetchDeadline(5000);
-    const ok = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false });
+    const ok = await gather('discoverability', slowUrl, { quiet: true, wait: 300, screenshots: false, browser });
     assert(
       ok.rawComparisonUsable === true &&
         ok.coveragePct !== null &&
@@ -550,6 +558,7 @@ export async function testFetchDeadlineAndRawComparison() {
       `discoverability: with the budget raised, the slow-but-successful page must compare for real, siblings included (${JSON.stringify({ coveragePct: ok.coveragePct, isJsShell: ok.isJsShell, rawComparisonUsable: ok.rawComparisonUsable, titlePresentInRaw: ok.titlePresentInRaw, h1PresentInRaw: ok.h1PresentInRaw, emptyMounts: ok.emptyMounts, raw: ok.raw })})`,
     );
   } finally {
+    if (browser) await browser.close();
     configureFetchDeadline(30000); // restore the production default for the rest of the suite
     slow.close();
     stallBody.close();

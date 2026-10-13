@@ -243,18 +243,29 @@ export async function gather(primitive, url, opts = {}) {
   const fn = PRIMITIVES[primitive];
   if (!fn) throw new Error(`Unknown primitive "${primitive}". One of: ${Object.keys(PRIMITIVES).join(', ')}`);
   const log = opts.quiet ? () => {} : (m) => console.error(m);
-  const chrome = await launchChrome({ log });
+  // A caller may hand in a browser it already owns (web-uplift-t2mr: a case that drives several primitives
+  // wants ONE launch for the whole case). Then this call must not close it - the caller does - and the
+  // browser must not reach the primitive as an option. The default path is unchanged: no browser supplied
+  // means launch here and close here. Each call still creates its own session/target, so per-target CDP
+  // state (emulated network, CPU rate, viewport, locale, timezone) cannot leak between primitives;
+  // browser-PROFILE state (cookies, storage, service workers, HTTP cache) IS shared, which is why only
+  // cases that do not depend on a fresh profile opt in.
+  const { browser: injectedBrowser, ...primitiveOpts } = opts;
+  const ownsBrowser = injectedBrowser === undefined || injectedBrowser === null;
+  const chrome = ownsBrowser ? await launchChrome({ log }) : injectedBrowser;
   // Attribute the browser to this invocation AT LAUNCH (web-uplift-4wx): a
   // primitive that never completes writes no result artifact, so without this
   // marker nothing in the run tree ties a surviving chrome to its primitive.
-  recordLaunch({ primitive, url, chrome });
+  // `shared` says this call reused a browser the caller launched, so one launch that served several
+  // primitives does not read as several launches.
+  recordLaunch({ primitive, url, chrome, shared: !ownsBrowser });
   try {
     const session = await newSession(chrome, { log });
     try {
       // Attach BEFORE the primitive runs so console output from the load itself
       // is captured, not just whatever fires after it settles.
       const collector = await attachConsoleCollector(session.client, { log });
-      const result = await fn(session.client, url, opts, log, collector);
+      const result = await fn(session.client, url, primitiveOpts, log, collector);
       const block = attachConsoleEvidence(session.client, result);
       if (block && (block.consoleErrorCount > 0 || block.exceptionCount > 0)) {
         log(
@@ -267,7 +278,7 @@ export async function gather(primitive, url, opts = {}) {
       await session.close();
     }
   } finally {
-    await chrome.close();
+    if (ownsBrowser) await chrome.close();
   }
 }
 
