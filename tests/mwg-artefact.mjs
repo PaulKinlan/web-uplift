@@ -179,14 +179,16 @@ function readRuleSources() {
     : join(repoRoot, 'knowledge', 'principles.json');
   const ruleBasis = readJsonObject(ruleBasisPath, 'the applied rule basis');
   const principles = readJsonObject(principlesPath, 'the principles file');
-  const declared = principles.guidanceCatalogVersion;
-  const principlesVersion = typeof declared === 'string' && declared.includes('@')
-    ? declared.slice(declared.lastIndexOf('@') + 1)
-    : declared;
+  // THE TWO AXES ARE SEPARATE (web-uplift-a1vf, correcting my own conflation in this branch). The ANALYSED
+  // catalogue axis is catalog.version + catalogSha256 + principles.guidanceCatalogVersion, and the contract
+  // says it MAY advance on its own when upstream guide text moves without applied-rule changes, keeping
+  // appliedRulesVersion. So the applied-rules hash must not cover that pin: it hashes the rule basis plus the
+  // principles content EXCLUDING guidanceCatalogVersion, and the guard never compares the analysed pin to the
+  // rule basis.
+  const { guidanceCatalogVersion: _analysedCataloguePin, ...appliedPrinciples } = principles;
   return {
     catalogueVersion: ruleBasis.catalogueVersion,
-    principlesVersion,
-    ruleBasisSha256: computeSha256({ ruleBasis, principles }),
+    ruleBasisSha256: computeSha256({ ruleBasis, appliedPrinciples }),
   };
 }
 
@@ -281,12 +283,6 @@ if (isDirectRun) {
       );
       process.exit(1);
     }
-    if (rules.principlesVersion !== rules.catalogueVersion) {
-      console.error(
-        `FAIL: knowledge/principles.json declares guidanceCatalogVersion ${JSON.stringify(rules.principlesVersion)} while knowledge/mwg-rule-basis.json declares catalogueVersion ${JSON.stringify(rules.catalogueVersion)}; the two applied-rules sources disagree, so appliedRulesVersion cannot be derived unambiguously`
-      );
-      process.exit(1);
-    }
     if (typeof state.ruleBasisSha256 !== 'string' || !SHA256_PATTERN.test(state.ruleBasisSha256)) {
       console.error(
         `FAIL: state file at ${statePath} has missing or invalid ruleBasisSha256 (expected 64-char hex, got ${JSON.stringify(state.ruleBasisSha256 ?? null)}); run node tests/mwg-artefact.mjs update to record the applied rules`
@@ -348,12 +344,6 @@ if (isDirectRun) {
     const rules = readRuleSources();
     if (typeof rules.catalogueVersion !== 'string' || rules.catalogueVersion === '') {
       console.error('FAIL: knowledge/mwg-rule-basis.json declares no catalogueVersion, so the applied-rules axis cannot be recorded');
-      process.exit(1);
-    }
-    if (rules.principlesVersion !== rules.catalogueVersion) {
-      console.error(
-        `FAIL: knowledge/principles.json declares guidanceCatalogVersion ${JSON.stringify(rules.principlesVersion)} while knowledge/mwg-rule-basis.json declares catalogueVersion ${JSON.stringify(rules.catalogueVersion)}; make the two applied-rules sources agree before updating`
-      );
       process.exit(1);
     }
     // Strict on purpose, with no first-run allowance: this commit records the hash in the committed state

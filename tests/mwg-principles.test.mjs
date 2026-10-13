@@ -1535,7 +1535,56 @@ function testMwgArtefactAppliedRulesAxisFailsClosed() {
     assert(absorbed.status === 1 && /bump the version deliberately/.test(absorbed.stderr),
       `update must refuse to absorb a rules change under an unchanged version (got ${absorbed.status}: ${absorbed.stderr.trim()})`);
 
-    console.log('✔ the applied-rules axis fails closed on a missing, bogus, unrecorded or unbumped value');
+    // THE ANALYSED-ONLY PATH MUST PASS (web-uplift-a1vf, correcting my own conflation). Per
+    // docs/mwg-train-consumer-contract.md the ANALYSED catalogue axis may advance on its own - upstream guide
+    // text moved, no applied-rule change - while appliedRulesVersion stays where it is. My first cut compared
+    // principles.guidanceCatalogVersion (an analysed pin) against the rule basis and hashed it with the
+    // applied rules, so a legitimate analysed-only update was rejected and forced a needless rule bump.
+    const advancedCatalog = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-catalog.json'), 'utf8'));
+    advancedCatalog.version = '9.9.194';                 // a version no rule basis claims
+    const advancedCatalogPath = join(tmp, 'catalog-advanced.json');
+    writeFileSync(advancedCatalogPath, JSON.stringify(advancedCatalog, null, 2));
+    const advancedPrinciples = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'principles.json'), 'utf8'));
+    advancedPrinciples.guidanceCatalogVersion = 'modern-web-guidance@9.9.194';
+    const advancedPrinciplesPath = join(tmp, 'principles-advanced.json');
+    writeFileSync(advancedPrinciplesPath, JSON.stringify(advancedPrinciples, null, 2));
+    const advancedState = tmpState((s) => {
+      s.analysedVersion = '9.9.194';
+      s.catalogSha256 = JSON.parse(spawnSync(
+        process.execPath,
+        ['tests/mwg-artefact.mjs', 'compute'],
+        { cwd: repoRoot, encoding: 'utf8', env: { ...process.env, MWG_DRIFT_CATALOG: advancedCatalogPath } },
+      ).stdout).catalogSha256;
+    });
+    const analysedRun = (cmd, stateFile) => spawnSync(
+      process.execPath,
+      ['tests/mwg-artefact.mjs', cmd],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          MWG_DRIFT_STATE: stateFile,
+          MWG_DRIFT_CATALOG: advancedCatalogPath,
+          MWG_PRINCIPLES: advancedPrinciplesPath,
+        },
+      },
+    );
+    const analysedOnly = analysedRun('verify', advancedState);
+    assert(analysedOnly.status === 0,
+      `an ANALYSED-only advance must verify: appliedRulesVersion was not supposed to move (got ${analysedOnly.status}: ${analysedOnly.stderr.trim()})`);
+
+    // and update must accept it while KEEPING appliedRulesVersion where it was.
+    const updateTarget = join(tmp, 'state-analysed-only.json');
+    writeFileSync(updateTarget, readFileSync(advancedState));
+    const updated = analysedRun('update', updateTarget);
+    assert(updated.status === 0, `update must accept an analysed-only advance (got ${updated.status}: ${updated.stderr.trim()})`);
+    const after = JSON.parse(readFileSync(updateTarget, 'utf8'));
+    assert(after.analysedVersion === '9.9.194', `analysedVersion must advance (got ${after.analysedVersion})`);
+    assert(after.appliedRulesVersion === base.appliedRulesVersion,
+      `appliedRulesVersion must NOT move for an analysed-only advance (got ${after.appliedRulesVersion})`);
+
+    console.log('✔ the applied-rules axis fails closed on a missing, bogus, unrecorded or unbumped value, and an analysed-only advance still passes');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
