@@ -1741,6 +1741,17 @@ export function testSuiteListsMatchRegressionRegistry() {
       );
       byName.set(name, `tests/${file}`);
     }
+    // A case the file EXPORTS but its own list omits can never run: `npm test` runs the list, --list prints the
+    // list, and the registry aggregates the list, so nothing ever sees the function - the silently-unrunnable
+    // shape, one level below the registry (web-uplift-jyyq).
+    const source = readFileSync(join(repoRoot, 'tests', file), 'utf8');
+    const exported = [...source.matchAll(/^export[ \t]+(?:async[ \t]+)?function[ \t]+(test[A-Za-z0-9_]+)/gm)].map((m) => m[1]);
+    const listedHere = new Set(names);
+    const orphans = exported.filter((name) => !listedHere.has(name));
+    assert(
+      orphans.length === 0,
+      `tests/${file} exports ${orphans.length} case(s) that its own list does not run, so no gate can ever run them: ${orphans.join(', ')}. Add them to the suite's list or delete them.`,
+    );
   }
 
   const registry = listOf([join(repoRoot, 'tests', 'regression.mjs'), '--list']);
