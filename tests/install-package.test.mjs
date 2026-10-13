@@ -44,6 +44,9 @@ import {
   testInstallVendorsCompleteClosure,
   testInstallRefusesDestinationSymlinks,
   testInstallNormalDestinationWrites,
+  testGenerateVendoredSurfaceRefusesDestinationSymlinks,
+  testSyncRefusesCommittedSymlinkDestination,
+  testSyncRefusesEqualByteSymlinkDestination,
 } from './install-copy-symlink.mjs';
 
 // The in-tree vendored copies under .web-uplift/ must stay 100% byte-identical
@@ -568,6 +571,9 @@ export const installPackageTests = [
   testInstallVendorsCompleteClosure,
   testInstallRefusesDestinationSymlinks,
   testInstallNormalDestinationWrites,
+  testGenerateVendoredSurfaceRefusesDestinationSymlinks,
+  testSyncRefusesCommittedSymlinkDestination,
+  testSyncRefusesEqualByteSymlinkDestination,
   testMcpSkillsServerStdio,
   // DECLARED LATER IN THIS FILE and registered here too (web-uplift-o4ec). These two used to live
   // only in tests/regression.mjs's ALL_TESTS, so `node --test tests/*.test.mjs` - the alternative
@@ -583,6 +589,9 @@ export {
   testInstallVendorsCompleteClosure,
   testInstallRefusesDestinationSymlinks,
   testInstallNormalDestinationWrites,
+  testGenerateVendoredSurfaceRefusesDestinationSymlinks,
+  testSyncRefusesCommittedSymlinkDestination,
+  testSyncRefusesEqualByteSymlinkDestination,
 };
 
 await runSuite(installPackageTests, import.meta.url, { timeoutMs: 60000, concurrency: 1 });
