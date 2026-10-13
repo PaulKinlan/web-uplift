@@ -187,6 +187,17 @@ CHECK_FAST_TIMEOUT=300
 `fleet-check --fast` then runs the affected subsystem tests in seconds and
 records the cached verdict in `~/.fleet/checks/<tree>.fast.json`.
 
+`~/.fleet/check.conf` is MACHINE-GLOBAL: on a shared VM an installer from another checkout can overwrite it
+(web-uplift-ebvj, 2026-10-13), and a bare `fleet-check` would then run another project's command. Point the
+wrapper at a config this project owns instead:
+
+```bash
+FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check --fast
+```
+
+`docs/speed.md` records this project's gate budget, the affected-only routing policy, the named omission
+rules (with the reason each path is skipped) and the one next action when the fast gate refuses a change.
+
 ## Releases & versioning
 
 The single source of truth for the version is `package.json` (`version` field).

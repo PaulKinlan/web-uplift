@@ -19,7 +19,7 @@
  *   CHECK_FAST_TIMEOUT=300
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -94,6 +94,21 @@ export const CODE_EXTENSIONS = new Set([
 export function hasCodeExtension(relPath) {
   const dot = relPath.lastIndexOf('.');
   return dot > 0 && CODE_EXTENSIONS.has(relPath.slice(dot));
+}
+
+/**
+ * True when the tree HAS an entry at this path. `lstatSync`, not `existsSync`: existsSync follows the link
+ * and reports false for a dangling symlink, so a tracked path whose link broke would be read as DELETED and
+ * quietly omitted by the deleted rule while the entry is still right there (review finding P2 on 1cf6e36).
+ * A present-but-dangling entry is a change to an executable path, so it is refused like any other.
+ */
+export function pathEntryExists(relPath, repo = repoRoot) {
+  try {
+    lstatSync(join(repo, relPath));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -173,7 +188,7 @@ export const OMITTED_RULES = [
  *   { omitted: { path, rule, reason } } - a named rule covers it, nothing runs for it, exit stays 0
  *   { unknown: path }                   - an executable path with no rule, which FAILS the gate
  */
-export function classifyUnmappedPath(relPath, repo = repoRoot, exists = (p) => existsSync(join(repo, p))) {
+export function classifyUnmappedPath(relPath, repo = repoRoot, exists = (p) => pathEntryExists(p, repo)) {
   const ctx = { exists };
   const executable = hasCodeExtension(relPath);
   for (const rule of OMITTED_RULES) {
@@ -529,7 +544,7 @@ export function mapFilesToTests(filePaths, options = {}) {
   const targetsByKey = new Map();
   const unmappedFiles = [];
   const omittedFiles = [];
-  const exists = options.exists || ((p) => existsSync(join(repoRoot, p)));
+  const exists = options.exists || ((p) => pathEntryExists(p, repoRoot));
 
   for (const rawPath of filePaths) {
     const normalized = rawPath.startsWith('/') ? relative(repoRoot, rawPath) : rawPath;
@@ -786,6 +801,12 @@ Usage:
   // cover the diff, so NOTHING is run and the run is a FAILURE: a green verdict here would be a record
   // that a change was tested when no suite for it ran (fleet docs/speed.md R5 and R14). This is checked
   // before any target starts, including in --dry-run, so a preview cannot look greener than the run.
+  //
+  // The output names the ONE next action rather than only the problem: a lane under time pressure that
+  // gets an unexplained red either reaches for the baseline or skips the gate (web-uplift-coord, on the
+  // condition for this bead), and both of those are a false green. The same instruction is in
+  // docs/speed.md under "When the fast gate refuses", which is where a lane looks without reading an
+  // error, and per-path skeletons are printed here because the map entry is the fix.
   if (plan.unmappedFiles.length > 0) {
     for (const f of plan.unmappedFiles) {
       console.log(`fast-gate: unmapped: ${f}`);
@@ -794,11 +815,21 @@ Usage:
     for (const f of plan.unmappedFiles) {
       console.error(`  ${f}`);
     }
-    console.error('[test:fast] No test target was executed. Fix the map in scripts/test-fast.mjs, then re-run:');
-    console.error('  * a module with a suite: add the path to the SUBSYSTEMS entry for that suite;');
-    console.error('  * a runnable suite: add it to KNOWN_STANDALONE_TESTS so it maps to itself;');
-    console.error('  * documentation/data with no suite: add a named OMITTED_RULES entry carrying the reason.');
-    console.error('[test:fast] npm test remains the merger\'s full union gate; it is not a substitute for this check.');
+    console.error('[test:fast] NEXT ACTION: extend the map in scripts/test-fast.mjs, then re-run npm run test:fast:');
+    for (const f of plan.unmappedFiles) {
+      if (f.startsWith('tests/') && f.endsWith('.mjs')) {
+        console.error(`  * ${f}: add it to KNOWN_STANDALONE_TESTS if it is a suite that runs with no arguments,`);
+        console.error('    or to the SUBSYSTEMS entry of the suite that imports it.');
+      } else {
+        console.error(`  * ${f}: add it to the SUBSYSTEMS entry of the suite that covers it, e.g.`);
+        console.error(`      { id: '<id>', match: (candidate) => candidate === '${f}', targets: [{ type: 'node', path: 'tests/<suite>.test.mjs' }] },`);
+        console.error('    or add it to KNOWN_STANDALONE_TESTS if it is a suite that runs with no arguments.');
+      }
+    }
+    console.error('  * documentation/data/fixture with genuinely no suite: add an OMITTED_RULES entry carrying the reason it is skipped.');
+    console.error('  * cannot extend the map right now: run the full union gate instead, do not point this path at the baseline:');
+    console.error('      FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check');
+    console.error('[test:fast] No test target was executed. A baseline run is not evidence that the changed file was tested.');
     process.exit(1);
   }
 
