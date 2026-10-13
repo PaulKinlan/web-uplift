@@ -540,11 +540,37 @@ function testRefusalIsActionableAndDocumented() {
   assert(/NEXT ACTION|one next action/i.test(doc), 'docs/speed.md must carry the one next action, not only the policy');
   assert(doc.includes('KNOWN_STANDALONE_TESTS') && doc.includes('OMITTED_RULES'), 'docs/speed.md must name both mapping routes');
   assert(/FLEET_CHECK_CONF=\S+\s+fleet-check/.test(doc), 'docs/speed.md must name the full-gate escape hatch with its config override');
-  // The omission table is DATA and the document must describe every entry of it. A rule added to the code
-  // and not to the doc (or vice versa) is the drift this walks for.
-  for (const rule of OMITTED_RULES) {
-    assert(doc.includes(`\`${rule.id}\``), `docs/speed.md must document the omission rule ${rule.id}`);
+  // The full gate is not evidence for a path `npm test` does not run, so the fallback has to say so rather
+  // than presenting `fleet-check` alone as proof (review finding P1 on a709eb9).
+  assert(
+    /runs `tests\/\*\.test\.mjs` only/.test(doc) && /NOT evidence on its own/.test(doc),
+    'docs/speed.md must qualify the full-gate fallback: npm test only runs tests/*.test.mjs'
+  );
+  // The omission table is DATA and the document must carry every entry of it, VERBATIM: parsing the rows and
+  // comparing the reason cell to the rule data is what makes a wrong-but-plausible "why" cell fail
+  // (review finding P2 on a709eb9 - an id-presence check would have passed that).
+  const tableRows = new Map();
+  for (const line of doc.split('\n')) {
+    const parsed = line.match(/^\|\s*`([a-z-]+)`\s*\|(.*)\|\s*$/);
+    if (parsed) tableRows.set(parsed[1], parsed[2].split('|').map((cell) => cell.trim()));
   }
+  for (const rule of OMITTED_RULES) {
+    assert(tableRows.has(rule.id), `docs/speed.md must have a table row for the omission rule ${rule.id}`);
+    const cells = tableRows.get(rule.id);
+    assert.equal(
+      cells[cells.length - 1],
+      rule.reason,
+      `the reason cell for ${rule.id} must be the rule's own reason string, not a paraphrase`
+    );
+    assert(cells.length === 2 && cells[0].length > 0, `the row for ${rule.id} must also say what it omits`);
+  }
+  for (const id of tableRows.keys()) {
+    assert(OMITTED_RULES.some((rule) => rule.id === id), `docs/speed.md documents an omission rule that does not exist: ${id}`);
+  }
+  // The claimed cost has to be a number with its provenance, not an adjective, and the spawn count is the
+  // kind of detail that silently rots when a test is added (review finding P2 on a709eb9).
+  assert(/six bounded\s+`node` spawns/.test(doc), 'docs/speed.md must state the measured spawn count, so adding a test forces the doc to be updated');
+  assert(/7\.2s direct/.test(doc) && /11\.0s in the cached/.test(doc), 'docs/speed.md must give each timing sample with its provenance');
   // ...and `--list` prints the same rules from the single source of truth, so a lane can read the policy
   // from the tool rather than from prose.
   const listRes = spawnSync(process.execPath, [join(repoRoot, 'scripts', 'test-fast.mjs'), '--list'], { encoding: 'utf8' });
@@ -571,8 +597,12 @@ function testRefusalIsActionableAndDocumented() {
     assert(res.stderr.includes('KNOWN_STANDALONE_TESTS'), 'the refusal must name the standalone-suite route');
     assert(res.stderr.includes('OMITTED_RULES'), 'the refusal must name the declared-omission route');
     assert(
+      res.stderr.includes('npm test runs tests/*.test.mjs only'),
+      'the refusal must qualify the full gate: it does not run a path no tests/*.test.mjs suite covers'
+    );
+    assert(
       /FLEET_CHECK_CONF=\S+ fleet-check/.test(res.stderr),
-      'the refusal must name the full-gate fallback instead of leaving a lane to reach for the baseline'
+      'the refusal must still give the full-gate command, after the qualification'
     );
     assert(
       res.stderr.includes('baseline run is not evidence'),

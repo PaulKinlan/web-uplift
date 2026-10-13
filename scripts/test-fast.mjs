@@ -827,8 +827,16 @@ Usage:
       }
     }
     console.error('  * documentation/data/fixture with genuinely no suite: add an OMITTED_RULES entry carrying the reason it is skipped.');
-    console.error('  * cannot extend the map right now: run the full union gate instead, do not point this path at the baseline:');
+    console.error('  * cannot extend the map right now? The full gate is NOT evidence on its own for a refused path:');
+    console.error('    npm test runs tests/*.test.mjs only, so a path that no such suite covers is not run by it either.');
+    console.error('    Run the suite that covers the path explicitly, then run the full gate:');
+    for (const f of plan.unmappedFiles) {
+      if (f.startsWith('tests/') && f.endsWith('.mjs')) {
+        console.error(`      node ${f}   # the refused path is itself a runnable suite`);
+      }
+    }
     console.error('      FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check');
+    console.error('    and name the command that produced the evidence in your hand-off.');
     console.error('[test:fast] No test target was executed. A baseline run is not evidence that the changed file was tested.');
     process.exit(1);
   }
