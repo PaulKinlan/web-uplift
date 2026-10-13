@@ -23,6 +23,12 @@
  * 14. A refusal is actionable (the next action, a paste-able map entry, and the qualified full-gate escape);
  *     AGENTS.md names the escape and the rules, docs/speed.md's omission table is parsed and compared to
  *     the OMITTED_RULES reasons verbatim, and --list prints each rule with its reason from that data.
+ * 15. The diff provenance is reported, not implied (web-uplift-5e9s): the run names the comparison BASE
+ *     and how far the branch is ahead/behind the ref, names every UNCOMMITTED path it selected with why
+ *     it is not in HEAD, and prints no uncommitted block on a clean worktree (the negative control).
+ * 16. Paths survive Git's own quoting (web-uplift-4bqu): a non-ASCII or otherwise quotable path is
+ *     recorded literally by every source, so it is marked as uncommitted like any other and a rename is
+ *     reported at its destination rather than losing its source.
  */
 
 import { strict as assert } from 'node:assert';
@@ -43,6 +49,8 @@ import {
   CODE_EXTENSIONS,
   getChangedFiles,
   getChangedRegressionTests,
+  getDiffDistance,
+  getUncommittedChanges,
   printAutoMappings,
   repoRoot,
 } from '../scripts/test-fast.mjs';
@@ -340,16 +348,148 @@ function testChangedFilesUseMergeBase() {
     assert.equal(changed.base, base, 'compare against the common ancestor, not master tip');
     assert.deepEqual(changed.files.sort(), ['feature.txt', 'tests/regression.mjs']);
     assert.deepEqual(getChangedRegressionTests(repo, 'master'), ['testFeature'], 'master-only regression cases must not be selected');
+    // A CLEAN worktree has nothing to disclaim, and the distance is stated so a large diff can be
+    // attributed to the comparison point rather than to the branch (web-uplift-5e9s (2)).
+    assert.deepEqual(changed.uncommitted, [], 'a clean worktree must report no uncommitted paths');
+    assert.deepEqual(getDiffDistance(repo, 'master'), { ahead: 1, behind: 1 }, 'the distance must count each side of the fork');
 
     writeFileSync(join(repo, 'base.txt'), 'base\nuncommitted\n');
     writeFileSync(join(repo, 'untracked.txt'), 'untracked\n');
     const local = getChangedFiles(repo, 'master');
     assert(local.files.includes('base.txt') && local.files.includes('untracked.txt'), 'tracked edits and untracked files must still count');
+    // WHAT THE RUN SELECTS vs WHAT A COMMITTED-TREE VERDICT COVERS (web-uplift-5e9s (1)): the working-tree
+    // paths are still selected, and they are named with why they are not in HEAD.
+    assert.deepEqual(
+      local.uncommitted,
+      [
+        { path: 'base.txt', kind: 'modified' },
+        { path: 'untracked.txt', kind: 'untracked' },
+      ],
+      'every selected path that is not in HEAD must be named with its kind'
+    );
+    assert(!local.uncommitted.some((u) => u.path === 'feature.txt'), 'a committed branch path is not uncommitted');
+    assert.equal(getUncommittedChanges(repo).get('tests/regression.mjs'), undefined, 'an untouched committed path has no status entry');
+
+    // GIT'S DEFAULT C-QUOTING MUST NOT HIDE A PATH (web-uplift-4bqu). With core.quotePath at its default,
+    // `git status --porcelain` escaped this name as \303\251 space.txt while `git diff --name-only`
+    // escaped it differently, so the two sources disagreed, the uncommitted set came out EMPTY and the
+    // provenance warning never printed for a path the run had selected. Every source now reads -z output,
+    // where paths are raw and byte-identical.
+    const unicodeName = 'é space.txt';
+    writeFileSync(join(repo, unicodeName), 'unicode\n');
+    const quoted = getChangedFiles(repo, 'master');
+    assert(
+      quoted.files.includes(unicodeName),
+      `a non-ASCII path must be selected literally, not C-quoted: ${JSON.stringify(quoted.files)}`
+    );
+    assert.deepEqual(
+      quoted.uncommitted.find((u) => u.path === unicodeName),
+      { path: unicodeName, kind: 'untracked' },
+      'a non-ASCII untracked path must still be named as uncommitted (web-uplift-4bqu)'
+    );
+    assert(
+      !quoted.files.some((p) => p.includes('\\303') || p.startsWith('"')),
+      `no selected path may retain a C-quote or C-escape: ${JSON.stringify(quoted.files)}`
+    );
+
+    git('mv', 'base.txt', 'renamed.txt');
+    const renamed = getChangedFiles(repo, 'master');
+    assert.deepEqual(
+      renamed.uncommitted.find((u) => u.path === 'renamed.txt'),
+      { path: 'renamed.txt', kind: 'modified' },
+      'a rename must be reported at its destination path'
+    );
+    assert(
+      !renamed.uncommitted.some((u) => u.path === 'base.txt'),
+      'the rename SOURCE is a field of the status entry, not a second uncommitted path'
+    );
     assert(getChangedFiles(repo, 'HEAD~1').files.includes('feature.txt'), 'an ancestor --diff ref must still select feature changes');
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
   console.log('✔ Stale branch selects only feature changes, plus working-tree edits');
+}
+
+/**
+ * The diff provenance a lane READS: base sha, distance, and the uncommitted paths the run selected. The
+ * unit-level classification is pinned in testChangedFilesUseMergeBase; this is the printed form, in an
+ * isolated copy of the gate with its own git repo, so no lane's worktree is touched. The clean second run
+ * is the negative control: the block must not appear when there is nothing to disclaim.
+ */
+function testDiffProvenanceIsReported() {
+  console.log('Testing that the diff provenance names the base, the distance and the uncommitted paths...');
+  const temp = mkdtempSync(join(tmpdir(), 'test-fast-provenance-'));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: temp, encoding: 'utf8' });
+    assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  try {
+    mkdirSync(join(temp, 'scripts'));
+    copyFileSync(join(repoRoot, 'scripts', 'test-fast.mjs'), join(temp, 'scripts', 'test-fast.mjs'));
+    writeFileSync(join(temp, 'package.json'), '{"type":"module"}\n');
+    git('init', '-q', '-b', 'master');
+    git('config', 'user.email', 'gate@test.invalid');
+    git('config', 'user.name', 'gate');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(temp, 'base.txt'), 'base\n');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    const fork = git('rev-parse', '--short', 'HEAD');
+
+    git('checkout', '-q', '-b', 'feature');
+    writeFileSync(join(temp, 'feature.txt'), 'feature\n');
+    git('add', '.');
+    git('commit', '-qm', 'feature');
+    git('checkout', '-q', 'master');
+    writeFileSync(join(temp, 'master-only.txt'), 'master\n');
+    git('add', '.');
+    git('commit', '-qm', 'master');
+    git('checkout', '-q', 'feature');
+
+    writeFileSync(join(temp, 'base.txt'), 'base\nuncommitted\n');
+    writeFileSync(join(temp, 'untracked.txt'), 'untracked\n');
+    // A quotable path (Git's default core.quotePath escapes this one) must be reported like any other:
+    // before web-uplift-4bqu it was selected but silently absent from the uncommitted block.
+    writeFileSync(join(temp, 'é space.txt'), 'unicode\n');
+
+    const fast = join(temp, 'scripts', 'test-fast.mjs');
+    const dirty = spawnSync(process.execPath, [fast, '--dry-run'], { cwd: temp, encoding: 'utf8', timeout: 20000 });
+    assert.equal(dirty.status, 0, `a dirty-tree dry run must succeed: ${dirty.stderr}`);
+    assert(
+      dirty.stdout.includes(`vs base ${fork} (merge-base of master); branch 1 ahead / 1 behind master`),
+      `the run must name the BASE it compared against and the distance, not the ref alone:\n${dirty.stdout}`
+    );
+    assert(dirty.stdout.includes('base.txt  [uncommitted: modified]'), 'a modified working-tree path must be marked in the file list');
+    assert(dirty.stdout.includes('untracked.txt  [uncommitted: untracked]'), 'an untracked selected path must be marked too');
+    assert(
+      dirty.stdout.includes('é space.txt  [uncommitted: untracked]'),
+      'a quotable non-ASCII path must be marked like any other (web-uplift-4bqu)'
+    );
+    assert(dirty.stdout.includes('UNCOMMITTED (3 of 4)'), 'the block must count the uncommitted share of the selection');
+    assert(
+      dirty.stdout.includes('base.txt [modified]') && dirty.stdout.includes('untracked.txt [untracked]'),
+      'the block must list each path and kind'
+    );
+    assert(dirty.stdout.includes('é space.txt [untracked]'), 'the block must list the quotable path too');
+    assert(
+      dirty.stdout.includes('This run selects and executes against the WORKING TREE. Its result is not a verdict for HEAD alone'),
+      'the run must state that a committed-tree verdict does not describe this selection'
+    );
+
+    // NEGATIVE CONTROL: nothing uncommitted -> no block, and the same honest base line.
+    git('checkout', '-q', '--', 'base.txt');
+    rmSync(join(temp, 'untracked.txt'));
+    rmSync(join(temp, 'é space.txt'));
+    const clean = spawnSync(process.execPath, [fast, '--dry-run'], { cwd: temp, encoding: 'utf8', timeout: 20000 });
+    assert.equal(clean.status, 0, `a clean-tree dry run must succeed: ${clean.stderr}`);
+    assert(clean.stdout.includes(`vs base ${fork} (merge-base of master); branch 1 ahead / 1 behind master`), 'the base and distance must be stated on a clean tree too');
+    assert(!clean.stdout.includes('UNCOMMITTED'), 'a clean worktree must not print an uncommitted block');
+    assert(!clean.stdout.includes('[uncommitted:'), 'a clean worktree must mark no path as uncommitted');
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+  console.log('✔ Base, distance and uncommitted paths are reported, and the clean control stays quiet');
 }
 
 function testCliDryRunAndListAndAll() {
@@ -707,8 +847,32 @@ function testRefusalIsActionableAndDocumented() {
     assert(OMITTED_RULES.some((rule) => rule.id === id), `docs/speed.md documents an omission rule that does not exist: ${id}`);
   }
   // The claimed cost is a number with provenance, and the spawn count is the kind of detail that rots
-  // silently when a test is added (round-3 finding P2).
-  assert(/six bounded\s+`node` spawns/.test(docs['docs/speed.md']), 'docs/speed.md must state the measured spawn count, so adding a test forces the measurement to be updated');
+  // silently when a test is added (round-3 finding P2). web-uplift-opyk: a hand-pinned literal rotted to
+  // six while the guarded functions held eight, and the guard then REJECTED the corrected value, so a
+  // lane that fixed the number turned the gate red. The count is now DERIVED from this file's guarded
+  // test functions and the document is required to state it, so adding a probe fails here with the
+  // number to write rather than pinning a stale one.
+  const selfSource = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const guardedFunctions = [
+    'testUnmappedExecutablePathsFailClosed',
+    'testRefusalIsActionableAndDocumented',
+    'testSuiteExecutionMarkers',
+    'testDiffProvenanceIsReported',
+  ];
+  const guardedSpawns = guardedFunctions.map((name) => {
+    const start = selfSource.indexOf(`\nfunction ${name}()`);
+    assert.notEqual(start, -1, `the guarded spawn census must find ${name}`);
+    const end = selfSource.indexOf('\n}\n', start);
+    assert.notEqual(end, -1, `the guarded spawn census must find the end of ${name}`);
+    return { name, count: (selfSource.slice(start, end).match(/spawnSync\(process\.execPath/g) || []).length };
+  });
+  const guardedSpawnCount = guardedSpawns.reduce((sum, fn) => sum + fn.count, 0);
+  assert(guardedSpawns.every((fn) => fn.count > 0), `every guarded function must spawn a bounded node: ${JSON.stringify(guardedSpawns)}`);
+  const census = guardedSpawns.map((fn) => `${fn.name}=${fn.count}`).join(', ');
+  assert(
+    docs['docs/speed.md'].includes(`guarded spawn count is ${guardedSpawnCount}`),
+    `docs/speed.md must state the live guarded spawn count (${guardedSpawnCount}) derived from this file: ${census}`
+  );
   assert(/7\.2s direct/.test(docs['docs/speed.md']) && /11\.0s in the cached/.test(docs['docs/speed.md']), 'docs/speed.md must give each timing sample with its provenance');
 
   // The executable half: `--list` prints every rule and its reason from the data.
@@ -920,6 +1084,7 @@ function runAll() {
   testAllRegressionFiltersAreValid();
   testDeduplicationAndFallback();
   testChangedFilesUseMergeBase();
+  testDiffProvenanceIsReported();
   testCliDryRunAndListAndAll();
   testRegressionFilterCli();
   testMissingTargetSkippedCleanly();
