@@ -670,8 +670,8 @@ export function testMwgArtefactGuard() {
       `mwg-artefact: case 2 canonicalisation mismatch:\nexpected: ${expectedCanon}\ngot:      ${state.canonicalisation}`
     );
     assert(
-      state.appliedRulesVersion === '0.0.193',
-      `mwg-artefact: case 2 appliedRulesVersion must be "0.0.193", got ${state.appliedRulesVersion}`
+      state.appliedRulesVersion === JSON.parse(readFileSync(new URL('../knowledge/mwg-rule-basis.json', import.meta.url), 'utf8')).catalogueVersion,
+      `mwg-artefact: case 2 appliedRulesVersion must equal the applied rules' catalogueVersion (${JSON.parse(readFileSync(new URL('../knowledge/mwg-rule-basis.json', import.meta.url), 'utf8')).catalogueVersion}), got ${state.appliedRulesVersion}`
     );
     // Set identity fields: derived from the live catalog, never a hardcoded count
     // (the catalog set may gain prompt-api via web-uplift-968's fix bead).
@@ -1455,6 +1455,7 @@ export async function testBaselineOracle() {
 
 
 export const mwgPrinciplesTests = [
+  testMwgArtefactAppliedRulesAxisFailsClosed,
   testMwgDriftExtractPipe,
   testMwgDriftBasisFloor,
   testGuidanceUsage,
@@ -1475,3 +1476,116 @@ export {
 };
 
 await runSuite(mwgPrinciplesTests, import.meta.url, { timeoutMs: 60000, concurrency: 1 });
+
+// web-uplift-s52q: the applied-rules axis is an instrument now, and instruments need a case that can fail.
+// FIXTURES ONLY: this case writes temp copies of the state and of the two rule sources and points the tool at
+// them through the same env overrides it already supports for its state and catalog. It never reads or writes
+// the live knowledge/ files, so it cannot turn another lane's tree red (docs/speed.md).
+function testMwgArtefactAppliedRulesAxisFailsClosed() {
+  console.log('Testing that the mwg artefact fails closed on the applied-rules axis (web-uplift-s52q)...');
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+  const tmp = mkdtempSync(join(tmpdir(), 's52q-axis-'));
+  try {
+    const base = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-state.json'), 'utf8'));
+    const baseRules = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-rule-basis.json'), 'utf8'));
+    const tmpState = (mutate) => {
+      const s = structuredClone(base);
+      mutate(s);
+      const f = join(tmp, `state-${Math.random().toString(36).slice(2)}.json`);
+      writeFileSync(f, JSON.stringify(s, null, 2));
+      return f;
+    };
+    const run = (stateFile, { cmd = 'verify', rules } = {}) => spawnSync(
+      process.execPath,
+      ['tests/mwg-artefact.mjs', cmd],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          MWG_DRIFT_STATE: stateFile,
+          ...(rules ? { MWG_RULE_BASIS: rules } : {}),
+        },
+      },
+    );
+
+    // POSITIVE FIRST: the state this repo commits must verify, or every refusal below proves nothing.
+    const positive = run(tmpState(() => {}));
+    assert(positive.status === 0, `the committed state must verify (got ${positive.status}: ${positive.stderr.trim()})`);
+
+    const missing = run(tmpState((s) => { delete s.appliedRulesVersion; }));
+    assert(missing.status === 1 && /appliedRulesVersion/.test(missing.stderr),
+      `a missing appliedRulesVersion must fail closed and name the field (got ${missing.status}: ${missing.stderr.trim()})`);
+
+    const bogus = run(tmpState((s) => { s.appliedRulesVersion = '9.9.999'; }));
+    assert(bogus.status === 1 && /does not match the applied rules/.test(bogus.stderr),
+      `a version that disagrees with the applied rules must fail closed (got ${bogus.status}: ${bogus.stderr.trim()})`);
+
+    const unrecorded = run(tmpState((s) => { delete s.ruleBasisSha256; }));
+    assert(unrecorded.status === 1 && /ruleBasisSha256/.test(unrecorded.stderr),
+      `an unrecorded rules hash must fail closed (got ${unrecorded.status}: ${unrecorded.stderr.trim()})`);
+
+    // THE RULES CHANGE ITSELF, with the version deliberately unchanged: the case the bead exists for.
+    const editedRules = join(tmp, 'rule-basis-edited.json');
+    writeFileSync(editedRules, JSON.stringify({ ...baseRules, _probe: 'an edit that nobody bumped for' }, null, 2));
+    const drifted = run(tmpState(() => {}), { rules: editedRules });
+    assert(drifted.status === 1 && /ruleBasisSha256 mismatch/.test(drifted.stderr),
+      `a rules edit with no version bump must fail verify (got ${drifted.status}: ${drifted.stderr.trim()})`);
+    const absorbed = run(tmpState(() => {}), { cmd: 'update', rules: editedRules });
+    assert(absorbed.status === 1 && /bump the version deliberately/.test(absorbed.stderr),
+      `update must refuse to absorb a rules change under an unchanged version (got ${absorbed.status}: ${absorbed.stderr.trim()})`);
+
+    // THE ANALYSED-ONLY PATH MUST PASS (web-uplift-a1vf, correcting my own conflation). Per
+    // docs/mwg-train-consumer-contract.md the ANALYSED catalogue axis may advance on its own - upstream guide
+    // text moved, no applied-rule change - while appliedRulesVersion stays where it is. My first cut compared
+    // principles.guidanceCatalogVersion (an analysed pin) against the rule basis and hashed it with the
+    // applied rules, so a legitimate analysed-only update was rejected and forced a needless rule bump.
+    const advancedCatalog = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-catalog.json'), 'utf8'));
+    advancedCatalog.version = '9.9.194';                 // a version no rule basis claims
+    const advancedCatalogPath = join(tmp, 'catalog-advanced.json');
+    writeFileSync(advancedCatalogPath, JSON.stringify(advancedCatalog, null, 2));
+    const advancedPrinciples = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'principles.json'), 'utf8'));
+    advancedPrinciples.guidanceCatalogVersion = 'modern-web-guidance@9.9.194';
+    const advancedPrinciplesPath = join(tmp, 'principles-advanced.json');
+    writeFileSync(advancedPrinciplesPath, JSON.stringify(advancedPrinciples, null, 2));
+    const advancedState = tmpState((s) => {
+      s.analysedVersion = '9.9.194';
+      s.catalogSha256 = JSON.parse(spawnSync(
+        process.execPath,
+        ['tests/mwg-artefact.mjs', 'compute'],
+        { cwd: repoRoot, encoding: 'utf8', env: { ...process.env, MWG_DRIFT_CATALOG: advancedCatalogPath } },
+      ).stdout).catalogSha256;
+    });
+    const analysedRun = (cmd, stateFile) => spawnSync(
+      process.execPath,
+      ['tests/mwg-artefact.mjs', cmd],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          MWG_DRIFT_STATE: stateFile,
+          MWG_DRIFT_CATALOG: advancedCatalogPath,
+          MWG_PRINCIPLES: advancedPrinciplesPath,
+        },
+      },
+    );
+    const analysedOnly = analysedRun('verify', advancedState);
+    assert(analysedOnly.status === 0,
+      `an ANALYSED-only advance must verify: appliedRulesVersion was not supposed to move (got ${analysedOnly.status}: ${analysedOnly.stderr.trim()})`);
+
+    // and update must accept it while KEEPING appliedRulesVersion where it was.
+    const updateTarget = join(tmp, 'state-analysed-only.json');
+    writeFileSync(updateTarget, readFileSync(advancedState));
+    const updated = analysedRun('update', updateTarget);
+    assert(updated.status === 0, `update must accept an analysed-only advance (got ${updated.status}: ${updated.stderr.trim()})`);
+    const after = JSON.parse(readFileSync(updateTarget, 'utf8'));
+    assert(after.analysedVersion === '9.9.194', `analysedVersion must advance (got ${after.analysedVersion})`);
+    assert(after.appliedRulesVersion === base.appliedRulesVersion,
+      `appliedRulesVersion must NOT move for an analysed-only advance (got ${after.appliedRulesVersion})`);
+
+    console.log('✔ the applied-rules axis fails closed on a missing, bogus, unrecorded or unbumped value, and an analysed-only advance still passes');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}

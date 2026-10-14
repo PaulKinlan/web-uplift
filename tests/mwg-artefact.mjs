@@ -146,6 +146,52 @@ function declarationMismatches(catalog, derivedIds, ids) {
   return mismatches;
 }
 
+// THE APPLIED-RULES AXIS (web-uplift-s52q). analysedVersion is tied to the catalog it was analysed from,
+// but the APPLIED rules are a second axis - what the engine actually applied - and nothing tied them to
+// anything. A change to knowledge/mwg-rule-basis.json or knowledge/principles.json that skipped the manual
+// version bump left verify, npm test, catalogSha256 and the consumer pin all green, so a consumer kept
+// trusting a pin that no longer described the applied rules. Two instruments close that: the version is
+// DERIVED from the rules themselves, and the rules are HASHED so a change is visible even when the version is
+// not bumped. The version stays a deliberate, reviewed edit - update refuses to absorb a rules change under
+// an unchanged version rather than bumping it for you.
+function readJsonObject(path, what) {
+  let raw;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch (err) {
+    console.error(`FAIL: cannot read ${what} at ${path}: ${err.message}`);
+    process.exit(1);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error(`FAIL: cannot parse ${what} at ${path}: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+function readRuleSources() {
+  const ruleBasisPath = process.env.MWG_RULE_BASIS
+    ? resolve(process.cwd(), process.env.MWG_RULE_BASIS)
+    : join(repoRoot, 'knowledge', 'mwg-rule-basis.json');
+  const principlesPath = process.env.MWG_PRINCIPLES
+    ? resolve(process.cwd(), process.env.MWG_PRINCIPLES)
+    : join(repoRoot, 'knowledge', 'principles.json');
+  const ruleBasis = readJsonObject(ruleBasisPath, 'the applied rule basis');
+  const principles = readJsonObject(principlesPath, 'the principles file');
+  // THE TWO AXES ARE SEPARATE (web-uplift-a1vf, correcting my own conflation in this branch). The ANALYSED
+  // catalogue axis is catalog.version + catalogSha256 + principles.guidanceCatalogVersion, and the contract
+  // says it MAY advance on its own when upstream guide text moves without applied-rule changes, keeping
+  // appliedRulesVersion. So the applied-rules hash must not cover that pin: it hashes the rule basis plus the
+  // principles content EXCLUDING guidanceCatalogVersion, and the guard never compares the analysed pin to the
+  // rule basis.
+  const { guidanceCatalogVersion: _analysedCataloguePin, ...appliedPrinciples } = principles;
+  return {
+    catalogueVersion: ruleBasis.catalogueVersion,
+    ruleBasisSha256: computeSha256({ ruleBasis, appliedPrinciples }),
+  };
+}
+
 const isDirectRun = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 
 if (isDirectRun) {
@@ -183,7 +229,16 @@ if (isDirectRun) {
 
   if (command === 'compute') {
     const catalog = readCatalogFile(catalogPath);
-    console.log(JSON.stringify({ catalogSha256: computeSha256(catalog), ...computeGuideIds(catalog) }));
+    // compute also prints the applied-rules axis, because update deliberately refuses to ESTABLISH it (a
+    // rules change is indistinguishable from a first run, so recording it must be a reviewed human step).
+    // This is how the field is bootstrapped: run compute, put the value in knowledge/mwg-state.json, review
+    // that the rules at this revision are the ones you intend (web-uplift-s52q).
+    console.log(JSON.stringify({
+      catalogSha256: computeSha256(catalog),
+      ...computeGuideIds(catalog),
+      appliedRulesVersion: readRuleSources().catalogueVersion,
+      ruleBasisSha256: readRuleSources().ruleBasisSha256,
+    }));
     process.exit(0);
   }
 
@@ -208,6 +263,33 @@ if (isDirectRun) {
       process.exit(1);
     }
 
+    // The applied-rules axis, checked rather than trusted (web-uplift-s52q).
+    const rules = readRuleSources();
+    if (typeof state.appliedRulesVersion !== 'string' || state.appliedRulesVersion.trim() === '') {
+      console.error(
+        `FAIL: state file at ${statePath} has missing or invalid appliedRulesVersion (got ${JSON.stringify(state.appliedRulesVersion ?? null)}); it is the field a consumer trusts when guide text has not moved, so it cannot be absent`
+      );
+      process.exit(1);
+    }
+    if (typeof rules.catalogueVersion !== 'string' || rules.catalogueVersion === '') {
+      console.error(
+        'FAIL: knowledge/mwg-rule-basis.json declares no catalogueVersion, so appliedRulesVersion cannot be checked against the rules it claims to describe'
+      );
+      process.exit(1);
+    }
+    if (state.appliedRulesVersion !== rules.catalogueVersion) {
+      console.error(
+        `FAIL: appliedRulesVersion (${JSON.stringify(state.appliedRulesVersion)}) does not match the applied rules' catalogueVersion (${JSON.stringify(rules.catalogueVersion)}); the rules and the version they are recorded under have diverged`
+      );
+      process.exit(1);
+    }
+    if (typeof state.ruleBasisSha256 !== 'string' || !SHA256_PATTERN.test(state.ruleBasisSha256)) {
+      console.error(
+        `FAIL: state file at ${statePath} has missing or invalid ruleBasisSha256 (expected 64-char hex, got ${JSON.stringify(state.ruleBasisSha256 ?? null)}); run node tests/mwg-artefact.mjs update to record the applied rules`
+      );
+      process.exit(1);
+    }
+
     const catalog = readCatalogFile(catalogPath);
     const computed = computeSha256(catalog);
     const ids = computeGuideIds(catalog);
@@ -227,12 +309,17 @@ if (isDirectRun) {
     // against the values derived from its guides array.
     const derivedIds = catalog.guides.map((g) => g.id).sort();
     mismatches.push(...declarationMismatches(catalog, derivedIds, ids));
+    if (rules.ruleBasisSha256 !== state.ruleBasisSha256) {
+      mismatches.push(
+        `ruleBasisSha256 mismatch (state: ${state.ruleBasisSha256}, computed: ${rules.ruleBasisSha256}): the APPLIED RULES changed and were not re-recorded. If the version should move, bump appliedRulesVersion in knowledge/mwg-state.json, make knowledge/mwg-rule-basis.json and knowledge/principles.json agree, and run update; if it should not, revert the rules edit`
+      );
+    }
     if (mismatches.length > 0) {
       for (const m of mismatches) console.error(`FAIL: ${m}`);
       process.exit(1);
     }
 
-    console.log(`OK: catalogSha256, guideIdsSha256 and guideCount match (${computed}, ${ids.guideCount} guides)`);
+    console.log(`OK: catalogSha256, guideIdsSha256 and guideCount match (${computed}, ${ids.guideCount} guides), and the applied-rules axis is pinned (appliedRulesVersion ${state.appliedRulesVersion}, ruleBasisSha256 ${state.ruleBasisSha256})`);
     process.exit(0);
   }
 
@@ -252,6 +339,33 @@ if (isDirectRun) {
       process.exit(1);
     }
 
+    // The rules changed while the version stood still: that IS the missed bump this bead is about, so update
+    // refuses and names it instead of silently recording a new hash under the old version (web-uplift-s52q).
+    const rules = readRuleSources();
+    if (typeof rules.catalogueVersion !== 'string' || rules.catalogueVersion === '') {
+      console.error('FAIL: knowledge/mwg-rule-basis.json declares no catalogueVersion, so the applied-rules axis cannot be recorded');
+      process.exit(1);
+    }
+    // Strict on purpose, with no first-run allowance: this commit records the hash in the committed state
+    // file, so after it lands the field always exists, and an allowance would simply absorb the case this
+    // bead exists to catch - a rules change that nobody bumped (found by measuring: my first cut let a
+    // verified rules edit through because the restored state had no recorded hash).
+    const previousRulesSha = state.ruleBasisSha256;
+    if (typeof previousRulesSha !== 'string' || !SHA256_PATTERN.test(previousRulesSha)) {
+      console.error(
+        `FAIL: knowledge/mwg-state.json carries no usable ruleBasisSha256 (got ${JSON.stringify(previousRulesSha ?? null)}), so a rules change cannot be told from a first run; record it deliberately (node tests/mwg-artefact.mjs update on a tree you have actually reviewed)`
+      );
+      process.exit(1);
+    }
+    if (previousRulesSha !== rules.ruleBasisSha256 && state.appliedRulesVersion === rules.catalogueVersion) {
+      console.error(
+        `FAIL: the applied rules changed (ruleBasisSha256 ${rules.ruleBasisSha256}) but appliedRulesVersion is unchanged at ${JSON.stringify(state.appliedRulesVersion)}; bump the version deliberately in knowledge/mwg-state.json AND knowledge/mwg-rule-basis.json AND knowledge/principles.json, or revert the rules edit - update will not absorb a rules change under an unchanged version (web-uplift-s52q)`
+      );
+      process.exit(1);
+    }
+
+    state.appliedRulesVersion = rules.catalogueVersion;
+    state.ruleBasisSha256 = rules.ruleBasisSha256;
     state.catalogSha256 = computed;
     state.guideIdsSha256 = ids.guideIdsSha256;
     state.guideCount = ids.guideCount;
@@ -263,7 +377,7 @@ if (isDirectRun) {
       process.exit(1);
     }
 
-    console.log(`OK: updated catalogSha256, guideIdsSha256 and guideCount in ${statePath} (${computed}, ${ids.guideCount} guides)`);
+    console.log(`OK: updated catalogSha256, guideIdsSha256, guideCount and the applied-rules axis (appliedRulesVersion ${rules.catalogueVersion}, ruleBasisSha256 ${rules.ruleBasisSha256}) in ${statePath}`);
     process.exit(0);
   }
 }

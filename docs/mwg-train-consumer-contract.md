@@ -38,7 +38,7 @@ The contract explicitly distinguishes `analysedVersion` from `appliedRulesVersio
 Downstream consumer `mwg-train` must observe the following operational constraints:
 
 ### Pinning Discipline
-`mwg-train` pins `catalogSha256`, `guideIdsSha256`, `guideCount`, `analysedVersion`, and `appliedRulesVersion`. The catalog snapshot and the state descriptor are committed directly in the consumer repository.
+`mwg-train` pins `catalogSha256`, `guideIdsSha256`, `guideCount`, `analysedVersion`, `appliedRulesVersion`, and `ruleBasisSha256` (the hash of the applied rules themselves, so a rules change is a new pin even when guide text has not moved; `node tests/mwg-artefact.mjs verify` fails closed on a missing, mismatched or unrecorded value) - web-uplift-s52q. The catalog snapshot and the state descriptor are committed directly in the consumer repository.
 
 ### Set Identity, Not Count
 A guide count is not an identity: two catalog versions can share a count while holding different guide sets (this exact defect hid the `prompt-api` divergence tracked in `web-uplift-968`). The artefact therefore carries `guideIdsSha256`, the sha256 (UTF-8, hex) of the catalog's guide ids sorted lexicographically and joined by single LF newlines with no trailing newline, alongside `guideCount`. This is deliberately the SAME construction the catalog itself declares in its own `guideIdsSha256` field: one construction, one hash; two different values must never claim to identify the same set. Consumers must compare SETS: recompute `guideIdsSha256` from the committed catalog snapshot and fail closed on any mismatch, then use the catalog's own `guides[].id` list as the set to diff against their extractor's set. Never accept a bare count match as proof of identity.
