@@ -223,11 +223,11 @@
     "note": "Zero of the nine ground-truth findings on the live playground. The product guard passes."
   },
   "coverage": {
-    "catalogVersion": "modern-web-guidance@0.0.193",
-    "catalogChecksum": "sha256:5cb6b09a94a3c27fc78161504f385a086f7a437d1a9f6c321bbac2bdc0fb82b7",
-    "expected": 58,
-    "recorded": 58,
-    "judged": 58,
+    "catalogVersion": "modern-web-guidance@0.0.194",
+    "catalogChecksum": "sha256:d91a50de1278d2b407581408d2dc9feef27a7943c440c2cab596f4f456a33e7b",
+    "expected": 60,
+    "recorded": 60,
+    "judged": 60,
     "blocked": 0,
     "notRun": 0,
     "missing": 0,
@@ -699,6 +699,30 @@
       "confidence": "high",
       "method": "Playground fixture evidence review",
       "evidence": "Playground fixture evidence supports defensive-browser-policies",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "encrypt-in-the-browser",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports encrypt-in-the-browser",
+      "pathIds": [
+        "no-dark-mode"
+      ],
+      "findingIds": []
+    },
+    {
+      "principleId": "be-private-and-secure",
+      "checkId": "sign-and-verify-in-the-browser",
+      "status": "pass",
+      "confidence": "high",
+      "method": "Playground fixture evidence review",
+      "evidence": "Playground fixture evidence supports sign-and-verify-in-the-browser",
       "pathIds": [
         "no-dark-mode"
       ],
