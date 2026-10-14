@@ -1204,33 +1204,49 @@ function testSharedModulesAreWiredOrRefused() {
   console.log(`✔ ${sharedModules.length} shared module(s) either run an importing suite or refuse with their consumers named`);
 }
 
+const CASES = [
+  testSubsystemMappings,
+  testNonTestExclusion,
+  testAllRegressionFiltersAreValid,
+  testDeduplicationAndFallback,
+  testChangedFilesUseMergeBase,
+  testDiffProvenanceIsReported,
+  testCliDryRunAndListAndAll,
+  testRegressionFilterCli,
+  testMissingTargetSkippedCleanly,
+  testFailingTargetExitsNonZero,
+  testSlowTargetTimesOutWithExit124,
+  testUnmappedExecutablePathsFailClosed,
+  testChangedSuiteAutoMap,
+  testH68zAutoMappedExecutableIsRefusedAndRunsTheControls,
+  testSelectionManifestRefusesToCertifyIncompleteRuns,
+  testSelectionManifestTreeAndPathFidelity,
+  testSkippedTargetNeverCertifies,
+  testOmittedRulesAreNamedAndNarrow,
+  testRefusalIsActionableAndDocumented,
+  testSuiteExecutionMarkers,
+  testSharedModulesAreWiredOrRefused,
+  testSkippedTargetNeverHidesBehindTheSummaryLine,
+];
+
 function runAll() {
-  testSubsystemMappings();
-  testNonTestExclusion();
-  testAllRegressionFiltersAreValid();
-  testDeduplicationAndFallback();
-  testChangedFilesUseMergeBase();
-  testDiffProvenanceIsReported();
-  testCliDryRunAndListAndAll();
-  testRegressionFilterCli();
-  testMissingTargetSkippedCleanly();
-  testFailingTargetExitsNonZero();
-  testSlowTargetTimesOutWithExit124();
-  testUnmappedExecutablePathsFailClosed();
-  testChangedSuiteAutoMap();
-  testH68zAutoMappedExecutableIsRefusedAndRunsTheControls();
-  testSelectionManifestRefusesToCertifyIncompleteRuns();
-  testSelectionManifestTreeAndPathFidelity();
-  testSkippedTargetNeverCertifies();
-  testOmittedRulesAreNamedAndNarrow();
-  testRefusalIsActionableAndDocumented();
-  testSuiteExecutionMarkers();
-  testSharedModulesAreWiredOrRefused();
-  testSkippedTargetNeverHidesBehindTheSummaryLine();
+  for (const fn of CASES) fn();
   console.log('\nAll fast gate unit and integration tests passed successfully.');
 }
 
-runAll();
+// The fast gate runs this file as a TARGET, and DECLARED_SUITE_CASES can only guard the cases of a suite
+// that can name them. tests/test-helpers.mjs's runSuite does this for suites that use it; this file has its
+// own runner, so it names its cases here. All 22 cases are listed from the CASES array that runAll() also
+// drives, so the list cannot drift from what actually runs (web-uplift-yfbk).
+const { list: listCases } = parseFilterArgs(process.argv.slice(2));
+if (listCases) {
+  for (const fn of CASES) console.log(fn.name);
+  // process.exitCode rather than process.exit: exit() does not flush asynchronous stdout on a pipe, which is
+  // how the harness used to lose the tail of a long list (web-uplift-ecif).
+  process.exitCode = 0;
+} else {
+  runAll();
+}
 
 function testH68zAutoMappedExecutableIsRefusedAndRunsTheControls() {
   console.log('Testing that an auto-mapped executable is still refused and pulls in the gate controls (web-uplift-h68z)...');
