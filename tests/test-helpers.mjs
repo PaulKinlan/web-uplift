@@ -306,7 +306,15 @@ export async function runSuite(tests, metaUrl, options = {}) {
     for (const fn of tests) {
       console.log(fn.name);
     }
-    process.exit(0);
+    // NOT process.exit(0). process.exit() terminates without flushing ASYNCHRONOUS stdout, which is what a pipe
+    // is, so when this list is long the tail of it was written into the buffer and never drained: the reader got
+    // a shorter list from a run that exited 0 with nothing on stderr. That is how the registry's aggregate lost
+    // its last two suites' cases about 8% of the time (web-uplift-ecif), which is the same shape as the merger's
+    // 178-of-194 in web-uplift-k81u - an enumeration reading fewer names than the tree has, intermittently and
+    // independent of the tree. Setting the exit code and returning lets the stream drain; the process still ends
+    // with the same status once it is idle.
+    process.exitCode = 0;
+    return;
   }
 
   const selectedTests = testFilters.length === 0
@@ -317,7 +325,10 @@ export async function runSuite(tests, metaUrl, options = {}) {
 
   if (selectedTests.length === 0) {
     console.error(`no tests matched filter: ${testFilters.join(', ')}`);
-    process.exit(1);
+    // Same reason as the list path above: this is a write followed by an exit, so on a pipe the message could be
+    // lost even though the status is right. The code carries the failure; the return lets the write drain.
+    process.exitCode = 1;
+    return;
   }
 
   let failed = false;
