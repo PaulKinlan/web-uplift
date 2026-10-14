@@ -1201,7 +1201,13 @@ export async function testCredentialRedactorsAgree() {
     // in are pinned as ordinary so the boundary cannot drift by accident.
     assert(!redactor(`https://x.test/p?pass=${SECRET_USERINFO}`).includes(SECRET_USERINFO), '?pass= is a credential name');
     assert(!redactor(`https://x.test/p#pass=${SECRET_USERINFO}`).includes(SECRET_USERINFO), 'so is a FRAGMENT #pass=');
-    for (const ordinary of ['passenger=1', 'bypass=1', 'compass=1', 'passphrase=1', 'passkey=1', 'pass_count=2']) {
+    // web-uplift-j79f: passphrase and passkey came OUT of this list. The list's purpose is to pin the words a
+    // weak word would otherwise drag in, and it still does that for the four that merely CONTAIN 'pass'. But a
+    // passphrase is a password and a passkey is a WebAuthn credential - they are credentials, not ordinary
+    // names, and pinning them here is what made the filter forward their values. The distinction is the
+    // explicit set in evidence/credential-terms.mjs rather than the qualifier rule, because that rule cannot
+    // tell 'passphrase' from 'passenger'.
+    for (const ordinary of ['passenger=1', 'bypass=1', 'compass=1', 'pass_count=2']) {
       assert(redactor(`https://x.test/p?${ordinary}`) === `https://x.test/p?${ordinary}`,
         `?${ordinary} is an ordinary name and must keep its value`);
     }
@@ -1281,4 +1287,42 @@ export async function testCompoundCredentialSpellingsAreClassified() {
     'a bare weak word stays a credential while an innocent word that merely contains it does not');
 
   console.log('✔ compound password spellings are classified and redacted end to end');
+}
+
+// web-uplift-j79f: passphrase and passkey are credentials (an explicit set, not a rule), and the words that
+// merely CONTAIN 'pass' must stay ordinary - that is the drift this case exists to stop. It asserts the VALUE's
+// fate through BOTH redactors rather than membership in a table, and it pins the field-test consequence too:
+// the recorder must not write a passphrase field into flow.json in plaintext (web-uplift-d8i4's boundary).
+export async function testPassphraseAndPasskeyAreCredentialsAndPassengerIsNot() {
+  console.log('Testing that passphrase/passkey are credentials while passenger/compass/bypass stay ordinary (P2)...');
+  const cli = await import('../evidence/cli.mjs');
+  const flow = await import('../runner/flow-record.mjs');
+  const terms = await import('../evidence/credential-terms.mjs');
+
+  // POSITIVE FIRST.
+  for (const name of ['passphrase', 'passkey', 'passwd', 'passcode']) {
+    assert(terms.isCredentialName(name), `"${name}" must be a credential name`);
+    const url = `https://example.com/x?${name}=correcthorsebatterystaple`;
+    for (const [label, redact] of [['cli', cli.redactUrlCredentialValues], ['flow', flow.sanitizeNavUrl]]) {
+      const out = redact(url);
+      assert(!out.includes('correcthorsebatterystaple'), `the ${label} redactor must not forward the value of ?${name} (got: ${out})`);
+      assert(REDACTED.test(out), `the ${label} redactor must mark ?${name} as redacted (got: ${out})`);
+    }
+    // The recorder's field test too: a field named passphrase must not be persisted in plaintext.
+    const sensitive = flow.isSensitiveField({ type: 'text', name, id: '' });
+    assert(sensitive === true, `a recorded field named ${name} must be classified sensitive`);
+  }
+
+  // THE DRIFT GUARD: these merely contain 'pass' and must survive BOTH redactors byte-for-byte, which is what
+  // stops the explicit set from quietly becoming the broad rule it replaced.
+  for (const [name, value] of [['passenger', 'Alice'], ['bypass', 'B1'], ['compass', 'north'], ['pass_count', '2'], ['passports', 'GB']]) {
+    assert(!terms.isCredentialName(name), `"${name}" must NOT be a credential name`);
+    const url = `https://example.com/x?${name}=${value}`;
+    for (const [label, redact] of [['cli', cli.redactUrlCredentialValues], ['flow', flow.sanitizeNavUrl]]) {
+      assert(redact(url) === url, `the ${label} redactor must preserve ?${name}= verbatim`);
+    }
+    assert(flow.isSensitiveField({ type: 'text', name, id: '' }) === false, `a field named ${name} must stay replayable`);
+  }
+
+  console.log('✔ passphrase/passkey are credentials and the words containing pass stay ordinary');
 }

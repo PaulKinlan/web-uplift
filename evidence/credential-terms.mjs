@@ -43,6 +43,13 @@ export const CREDENTIAL_WORDS = new Set([
   'csrf', 'xsrf', 'security', 'securitycode', 'verificationcode',
   // payment & financial identifiers
   'cvv', 'cvc', 'csc', 'cardnumber', 'creditcard', 'cardholder', 'routing', 'iban', 'swift',
+  // web-uplift-j79f: EXPLICIT SPELLINGS, deliberately not derived from the qualifier rule. A passphrase is a
+  // password and a passkey is a WebAuthn credential, so both are credentials; but the rule that recognises
+  // db_pass / user_pass works on a qualifier plus a weak word, and it cannot separate 'passphrase' from
+  // 'passenger' - both are one joined word ending in 'pass'. So these are named here, and 'passenger',
+  // 'bypass', 'compass' and 'pass_count' stay ordinary by construction rather than by luck. passwd and
+  // passcode were already in this set.
+  'passphrase', 'passkey',
 ]);
 
 // Credential-shaped only when the ENTIRE name is the word. See the header: a
