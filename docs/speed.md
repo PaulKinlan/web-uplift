@@ -347,6 +347,59 @@ module was tested. The guarded-import negative and invoked positive controls add
 cost 0.11s and 0.20s as separate Node processes on this VM (2026-10-13); the fast-tier self-test gains
 these two probes, not a browser or a full-suite run.
 
+## The fast gate publishes a selection manifest, and only a clean complete run certifies (web-uplift-5jwc, ADR web-uplift-tdg4)
+
+A green exit and `coverage_verified=true` are an EXECUTION observation, not evidence that every changed path was
+covered. The cached `bdd92589` record read `PASS / rc=0 / coverage_verified=true` while `unmapped` was
+`[tests/test-helpers.mjs]` and eight consumer suites were omitted; web-uplift-yb2a's own gate printed
+`COVERAGE WARNING: 1 unmapped changed file(s)` while calling itself a pass. A log line cannot stop a reviewer
+reading the persisted record as complete, so the gate now writes the facts down in one machine-readable place:
+
+```
+node scripts/test-fast.mjs --manifest /path/to/manifest.json
+```
+
+The manifest (also written on every REFUSAL path, so a consumer never has to infer a refusal from prose) carries:
+the mode; HEAD and the exact `HEAD^{tree}`; the comparison base and the ref; the changed set and every
+uncommitted path with its kind; the selected targets with their kind/label/path-or-filter; the auto-mapped,
+omitted, refused and unmapped entries with their reasons; the suites that LITERALLY IMPORT a changed executable
+but were not selected; the per-target status and duration; and a computed `certifiable` boolean with the list of
+reasons it is false.
+
+**`certifiable` is true only when all of these hold**, and a consumer must treat anything else as iteration
+evidence, never as coverage of the tree:
+
+- the run EXECUTED (a `--dry-run` certifies nothing);
+- the changed set came from the diff, not from explicit file arguments, which are not a complete selection;
+- the working tree is CLEAN - uncommitted paths mean the run observed the working tree, not the tree a cached
+  verdict is keyed to;
+- a committed tree could be read at all: a verdict is keyed to a tree, so a run that cannot name one cannot
+  certify one;
+- no changed executable is unmapped, no changed path was refused to the full gate, and no required consumer was
+  omitted;
+- every selected target reported a status, and every one of them passed.
+
+Two directions of error are treated differently on purpose. A REFUSAL uses `importingSuitesOf`, which matches any
+text reference and deliberately names one consumer too many, because the cost is running the full gate. The
+CERTIFICATION check uses literal import specifiers instead: a condition that only avoiding every text reference
+could satisfy would mark essentially every diff non-certifying, and a boolean that can never be true carries no
+information. A suite that LOADS the module is the evidence that it exercises it.
+
+Measured cost: a paired dry-run sample on this worktree is **0.07s without the manifest and 0.08s with it** (two paired samples each) - the
+association scan reads the ~15 suite sources once per changed executable and no browser or suite work is added.
+
+The format is VERSIONED (`manifestVersion`), and that is what makes rollout safe in both directions
+(web-uplift-5jwc constraint 2, per tdg4): a consumer that reads a record with NO manifest, or with a manifest
+version it does not understand, must treat that record as NOT COMPLETE rather than as an old-style pass. Nothing
+older than the manifest may be promoted to "complete" by default, and the producer keeps the version field even
+while a consumer is being written, so an old record can never be silently read as certification it never had.
+
+The consumer half is hub-side and must not be guessed locally: `fleet-check` persists the manifest, refuses
+certification unless the manifest's tree matches the cached key's tree and `certifiable` is true, and publishes
+the execution result and the coverage-complete result as distinct fields; `check-coverage.py` then reads the
+manifest instead of deriving the changed set itself (which is also what web-uplift-1rwo documents). A missing
+manifest or a manifest that cannot be written is a FAILURE, never a silent pass.
+
 ## Measured cost of this policy (2026-10-13, web-uplift-5i9a)
 
 - The policy changed no target for any mapped path: the dry-run plan for 8 representative paths
