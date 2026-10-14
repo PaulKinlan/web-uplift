@@ -19,7 +19,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { VENDORED_DEPENDENCIES, VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface } from '../install-surface.mjs';
 import { Worker } from 'node:worker_threads';
@@ -30,6 +30,22 @@ const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 // schema/ is a declared VENDORED_DIR, so a symlink planted here is copied by the
 // installer's copy-dir path and is a real, observable fixture for the fix.
 const SCHEMA_DIR = join(repoRoot, 'schema');
+
+// Fixture paths are UNIQUE PER PROCESS and memoised per fixture name (web-uplift-rn7w). They must live
+// under SCHEMA_DIR - that is what makes the installer walk them and hit the depth and symlink guards - and a
+// FIXED name under schema/ is then a resource shared with any other gate process in this worktree, which is
+// exactly what preemption produces: the merger's full gate preempts an implementer's fast check, the
+// implementer's job requeues automatically, and the two then overlap in the same tree. Two processes building
+// the same non-recursively-mkdir'd fixture is the EEXIST/ENOENT the union gate hit twice on one clean tree.
+// Memoising by name keeps every reference in this file - including the leftover control below - on the SAME
+// path, so the control still pre-creates leftovers where the fixtures will actually look.
+const fixturePaths = new Map();
+function fixturePath(name) {
+  if (!fixturePaths.has(name)) {
+    fixturePaths.set(name, join(SCHEMA_DIR, `${name}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`));
+  }
+  return fixturePaths.get(name);
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -93,8 +109,8 @@ function walkFiles(dir) {
 export function testInstallSkipsSymlinksInVendoredSource() {
   const outside = mkdtempSync(join(tmpdir(), 'web-uplift-install-symlink-outside-'));
   const target = mkdtempSync(join(tmpdir(), 'web-uplift-install-symlink-target-'));
-  const fileLink = join(SCHEMA_DIR, 'install-symlink-escape.txt');
-  const cycleDir = join(SCHEMA_DIR, 'install-symlink-cycle');
+  const fileLink = `${fixturePath('install-symlink-escape')}.txt`;
+  const cycleDir = fixturePath('install-symlink-cycle');
   try {
     // Purge BEFORE building, not only in the finally: a killed run (reaper, timeout, preempted heavy
     // slot) never reaches finally, and the leftovers then make the FIRST non-recursive mkdir/symlink
@@ -110,13 +126,20 @@ export function testInstallSkipsSymlinksInVendoredSource() {
 
     const install = runInstall(target);
     assert(install.status === 0, `install with symlinks failed:\n${install.stderr || install.stdout}`);
-    assert(install.stdout.includes('install-symlink-escape.txt (symlink)'), `install did not record skipping the file symlink:\n${install.stdout}`);
+    assert(install.stdout.includes(`${basename(fileLink)} (symlink)`), `install did not record skipping the file symlink (looked for ${basename(fileLink)}):\n${install.stdout}`);
     assert(install.stdout.includes('loop (symlink)'), `install did not record skipping the directory symlink:\n${install.stdout}`);
-    assert(!existsSync(join(target, '.web-uplift/schema/install-symlink-escape.txt')), 'the symlink FILE must not be copied');
-    assert(!existsSync(join(target, '.web-uplift/schema/install-symlink-cycle/loop')), 'the symlink DIR must not be copied');
+    assert(!existsSync(join(target, '.web-uplift/schema', basename(fileLink))), `the symlink FILE (${basename(fileLink)}) must not be copied`);
+    assert(!existsSync(join(target, '.web-uplift/schema', basename(cycleDir), 'loop')), `the symlink DIR (${basename(cycleDir)}) must not be copied`);
 
-    const copied = JSON.stringify([...walkFiles(join(target, '.web-uplift')).keys()]);
-    assert(!copied.includes(secret), 'the symlink FILE target content must not be copied');
+    // The copy must not carry the symlink's TARGET CONTENT either, and this is checked over file CONTENTS
+    // rather than over the path KEYS it used to stringify: a set of paths can never contain a secret string,
+    // so that assertion was true whatever the installer did (web-uplift-b5bj - a vacuous green my own
+    // rename created). The matcher is proved LIVE first, against the file outside the tree that really does
+    // hold the secret, so this scan is known to be able to fail before it is trusted to pass.
+    assert(readFileSync(outsideSecret, 'utf8').includes(secret), 'the secret must be readable where it was planted, or the content scan below proves nothing');
+    const copiedFiles = [...walkFiles(join(target, '.web-uplift')).values()];
+    const leaked = copiedFiles.filter((p) => readFileSync(p, 'utf8').includes(secret));
+    assert(leaked.length === 0, `no copied file may contain the symlink target's content (leaked in ${leaked.join(', ')})`);
   } finally {
     rmSync(fileLink, { force: true });
     rmSync(cycleDir, { recursive: true, force: true });
@@ -130,7 +153,7 @@ export function testInstallSkipsSymlinksInVendoredSource() {
 // cycle that somehow survives the symlink skip).
 export function testInstallCopyDepthGuard() {
   const target = mkdtempSync(join(tmpdir(), 'web-uplift-install-depth-target-'));
-  const fixture = join(SCHEMA_DIR, 'install-depth-fixture');
+  const fixture = fixturePath('install-depth-fixture');
   try {
     // Same start-of-run purge as fixture 1, and for the same reason: the descent below uses a
     // NON-recursive mkdir, so an `install-depth-fixture/d` left by a killed run makes this throw
@@ -166,9 +189,9 @@ export function testInstallCopyDepthGuard() {
 // unrelated change. The leftovers are created here rather than assumed, so the control cannot pass
 // because the paths happened to be clean.
 export function testInstallFixturesTolerateLeftoversFromAKilledRun() {
-  const fileLink = join(SCHEMA_DIR, 'install-symlink-escape.txt');
-  const cycleDir = join(SCHEMA_DIR, 'install-symlink-cycle');
-  const fixture = join(SCHEMA_DIR, 'install-depth-fixture');
+  const fileLink = `${fixturePath('install-symlink-escape')}.txt`;
+  const cycleDir = fixturePath('install-symlink-cycle');
+  const fixture = fixturePath('install-depth-fixture');
   rmSync(fileLink, { recursive: true, force: true });
   rmSync(cycleDir, { recursive: true, force: true });
   rmSync(fixture, { recursive: true, force: true });
