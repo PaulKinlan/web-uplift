@@ -99,6 +99,11 @@ export function testGuidanceVersionPinnedInDocs() {
     '.github/copilot-instructions.md',
     'web-uplift.example.json',
     'schema/config.schema.json',
+    // The audit skill exists twice: the source and its tracked vendored twin, which install-surface.mjs
+    // regenerates during prepare. Both are surfaced to operators, so both must name the pin - the twin was
+    // stale once (web-uplift-xkax) and nothing was watching it (web-uplift-yfbk).
+    '.claude/skills/web-audit/SKILL.md',
+    '.pi/skills/web-audit/SKILL.md',
   ];
   for (const rel of docs) {
     const text = readFileSync(join(repoRoot, rel), 'utf8');
@@ -116,6 +121,19 @@ export function testGuidanceVersionPinnedInDocs() {
       );
     }
   }
+
+  // The snapshot doc states the guide total as prose next to the JSON that is authoritative for it, and the
+  // two drifted apart silently: knowledge/mwg-catalog.md said 178 while mwg-catalog.json declared 187, three
+  // version bumps after the snapshot was written (web-uplift-8jzf). Naming the number here means a bump that
+  // regenerates the JSON but forgets the prose fails the suite instead of waiting for a reviewer.
+  const snapshot = readFileSync(join(repoRoot, 'knowledge/mwg-catalog.md'), 'utf8');
+  const stated = /\*\*Total guides:\*\*\s*([0-9]+)/.exec(snapshot);
+  assert(stated, 'knowledge/mwg-catalog.md must state its guide total so it can be cross-checked');
+  const declared = readJson('knowledge/mwg-catalog.json').guideCount;
+  assert(
+    Number(stated[1]) === declared,
+    `knowledge/mwg-catalog.md says ${stated[1]} guides but mwg-catalog.json declares ${declared}`,
+  );
 }
 
 
@@ -147,7 +165,7 @@ export async function testMwgCatalogRegenerateAgreement() {
 }
 
 
-// Validates that every guide in the current Modern Web Guidance catalog (0.0.193)
+// Validates that every guide in the current Modern Web Guidance catalog (0.0.194)
 // is covered by principles.json, dead/renamed ids are rejected, and changed-guidance
 // deltas (CSP object-src none, custom-button-actions, top-layer probe, etc.) are
 // actively asserted so regressions would fail.
@@ -654,7 +672,7 @@ export function testMwgArtefactGuard() {
     assert(res.status === 0, `mwg-artefact: case 1 (verify committed) must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
   }
 
-  // 2. committed state shape: artifactId === "web-uplift/mwg-catalog", catalogSha256 matches /^[0-9a-f]{64}$/, canonicalisation is the exact rule string, appliedRulesVersion === "0.0.193", and analysedVersion and appliedRulesVersion are both present as distinct fields.
+  // 2. committed state shape: artifactId === "web-uplift/mwg-catalog", catalogSha256 matches /^[0-9a-f]{64}$/, canonicalisation is the exact rule string, appliedRulesVersion equal to the rule basis's version, and analysedVersion and appliedRulesVersion are both present as distinct fields.
   {
     const state = readJson('knowledge/mwg-state.json');
     assert(

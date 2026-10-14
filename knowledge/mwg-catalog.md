@@ -6,7 +6,7 @@ This directory contains `mwg-catalog.json`, a machine-readable enumeration of ev
 
 - **Source:** `modern-web-guidance`
 - **Published version:** `0.0.194`
-- **Total guides:** 178
+- **Total guides:** 187
 - **Artifact path:** `knowledge/mwg-catalog.json`
 
 ## CLI Verification

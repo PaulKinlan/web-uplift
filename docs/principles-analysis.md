@@ -1,5 +1,9 @@
 # Proposal: an expanded principle set for web-uplift
 
+> **Historical snapshot.** This analysis was written against the `modern-web-guidance@0.0.193` corpus.
+> Every `0.0.193` and guide-count reference below records that state and is deliberately left as written; the
+> current pin lives in `knowledge/principles.json` and is asserted by `tests/mwg-principles.test.mjs`.
+
 Status: ADOPTED 2026-06-13. Paul approved the full expansion - all net-new
 principles including the optional `be-agent-ready`, the `be-accessible` ->
 `be-inclusive` rename, the narrowing of `follow-best-practices`, and the
