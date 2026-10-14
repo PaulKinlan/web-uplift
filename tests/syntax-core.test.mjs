@@ -1986,6 +1986,8 @@ export function testSuiteListsMatchRegressionRegistry() {
   // never touch the same declaration. Only a deliberate REMOVAL edits this block, and it says which.
   const DECLARED_SUITE_CASES = {
     'tests/git-env-isolation.test.mjs': [
+      'testASpreadEnvCannotRestoreGitDir',
+      'testEveryGitSpawnInTestsGoesThroughTheScrub',
     'testGitDirOverridesCwdSoTheLeakIsReal',
     'testInheritedGitDirIsStrippedByTheHarness',
   ],

@@ -43,12 +43,21 @@ process.on('exit', () => {
 // would be enough to redirect every spawn below. Every git spawn in this harness therefore passes an env with
 // GIT_* REMOVED instead of inheriting process.env. A caller that genuinely needs a GIT_* sets it explicitly
 // through `extra`, which is the only way one can appear in a child spawned by this file.
-export function gitEnv(extra = {}) {
-  const env = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith('GIT_')) env[key] = value;
+export function gitEnv(extra = {}, options = {}) {
+  // The GIT_* removal happens LAST, on the merged result, and that ordering is the whole point: deleting from
+  // process.env and then spreading a caller's env back over it (env: { ...process.env }) RESTORES the inherited
+  // variable and silently defeats the scrub, which is a real pattern in this repository rather than a
+  // hypothetical - tests/test-fast.mjs and tests/runner-agents.test.mjs both spread process.env into a spawn.
+  // Sanitising the final object means no caller can reintroduce GIT_* by accident, whatever it passes.
+  const env = { ...process.env, ...extra };
+  // A caller that genuinely wants to carry a GIT_* must say so explicitly, because intent cannot be inferred
+  // from a spread that happens to include process.env: that is exactly how the scrub was defeated before.
+  if (options.allowGitDir !== true) {
+    for (const key of Object.keys(env)) {
+      if (key.startsWith('GIT_')) delete env[key];
+    }
   }
-  return { ...env, ...extra };
+  return env;
 }
 
 export function run(command, args, opts = {}) {

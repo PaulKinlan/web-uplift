@@ -1329,7 +1329,7 @@ function testSelectionManifestRefusesToCertifyIncompleteRuns() {
 function testSelectionManifestTreeAndPathFidelity() {
   console.log('Testing that the manifest names the real tree, the merge-base, and untracked paths exactly (web-uplift-5jwc)...');
   const temp = mkdtempSync(join(tmpdir(), 'test-fast-manifest-'));
-  const git = (...args) => execFileSync('git', args, { cwd: temp, encoding: 'utf8' }).trim();
+  const git = (...args) => execFileSync('git', args, { cwd: temp, encoding: 'utf8', env: gitEnv() }).trim();
   try {
     git('init', '-q', '-b', 'master');
     git('config', 'user.email', 'test@example.invalid');

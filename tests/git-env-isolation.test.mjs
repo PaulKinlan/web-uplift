@@ -11,15 +11,16 @@
 // These cases hold both halves of that claim, because either half alone is worthless: that the leak is real and
 // would otherwise misdirect a lookup, and that a spawn through the harness is immune to it. The second case is
 // the one that fails if the scrub is reverted, which is how the fix was proven rather than asserted.
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { strict as assert } from 'node:assert';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { gitEnv, run, runSuite } from './test-helpers.mjs';
+import { gitEnv, repoRoot, run, runSuite } from './test-helpers.mjs';
 
 function makeRepo(fileName) {
   const dir = mkdtempSync(join(tmpdir(), 'tax6-git-env-'));
-  const git = (args, env) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: env || gitEnv() });
+  const git = (args, env, opts) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: gitEnv(env ?? {}, opts) });
   const init = git(['init', '-q']);
   if (init.status !== 0) throw new Error(`git init failed in ${dir}: ${init.stderr}`);
   writeFileSync(join(dir, fileName), `${fileName}\n`);
@@ -28,8 +29,8 @@ function makeRepo(fileName) {
   return dir;
 }
 
-function listFiles(dir, env) {
-  const res = spawnSync('git', ['ls-files'], { cwd: dir, encoding: 'utf8', env: env || gitEnv() });
+function listFiles(dir, env, opts) {
+  const res = spawnSync('git', ['ls-files'], { cwd: dir, encoding: 'utf8', env: gitEnv(env ?? {}, opts) });
   if (res.status !== 0) throw new Error(`git ls-files failed in ${dir}: ${res.stderr}`);
   return res.stdout.split('\n').filter(Boolean);
 }
@@ -46,8 +47,10 @@ function testGitDirOverridesCwdSoTheLeakIsReal() {
       }
     }
     // The leak: cwd points at a, the environment points at b, and git answers about b. This is why removing the
-    // variable matters and why passing an explicit cwd is not enough on its own.
-    const leaked = listFiles(a, { ...process.env, GIT_DIR: join(b, '.git') });
+    // variable matters and why passing an explicit cwd is not enough on its own. Carrying a GIT_* is asked for
+    // EXPLICITLY here (allowGitDir), because a deliberate override must be visible rather than inferred from a
+    // spread - the same reasoning that made the scrub sanitise the final environment.
+    const leaked = listFiles(a, { GIT_DIR: join(b, '.git') }, { allowGitDir: true });
     if (leaked.length !== 1 || leaked[0] !== 'in-b.txt') {
       throw new Error(
         `GIT_DIR must override cwd or this control proves nothing: asked about a while the environment pointed at b, ` +
@@ -81,10 +84,14 @@ function testInheritedGitDirIsStrippedByTheHarness() {
         `an inherited GIT_DIR must NOT redirect a harness spawn: asked about a and got ${JSON.stringify(answered)}`,
       );
     }
-    // A caller that genuinely needs a variable still gets it through the explicit argument - the strip is of the
-    // INHERITED environment, not of the caller's stated intent.
-    if (gitEnv({ GIT_DIR: join(b, '.git') }).GIT_DIR !== join(b, '.git')) {
-      throw new Error('an explicitly passed GIT_* must survive, or the helper cannot express a deliberate choice');
+    // A caller that genuinely needs a variable must ASK for it. A bare argument is not enough any more, and
+    // that is deliberate: the scrub is applied to the merged result, so intent cannot be inferred from an object
+    // that may simply be a spread of process.env - which is how the scrub was defeated in the first place.
+    if (gitEnv({ GIT_DIR: join(b, '.git') }).GIT_DIR !== undefined) {
+      throw new Error('a bare GIT_* argument must NOT survive: a spread of process.env must not be able to restore it');
+    }
+    if (gitEnv({ GIT_DIR: join(b, '.git') }, { allowGitDir: true }).GIT_DIR !== join(b, '.git')) {
+      throw new Error('an explicitly requested GIT_* must survive, or the helper cannot express a deliberate choice');
     }
   } finally {
     if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
@@ -95,6 +102,8 @@ function testInheritedGitDirIsStrippedByTheHarness() {
 }
 
 export const gitEnvIsolationCases = [
+  testASpreadEnvCannotRestoreGitDir,
+  testEveryGitSpawnInTestsGoesThroughTheScrub,
   testGitDirOverridesCwdSoTheLeakIsReal,
   testInheritedGitDirIsStrippedByTheHarness,
 ];
@@ -102,3 +111,70 @@ export const gitEnvIsolationCases = [
 // Same shape as every suite here: the harness returns immediately unless this file IS argv[1], so being imported
 // by the registry does not re-run these cases, and running this file directly does.
 await runSuite(gitEnvIsolationCases, import.meta.url, { timeoutMs: 60000, concurrency: 1 });
+
+// The reviewer's measurement, as a test: the scrub used to be defeated by the CALLER. gitEnv deleted GIT_* from
+// process.env and then spread the caller's env over the result, so a caller passing { ...process.env } - the real
+// pattern at tests/test-fast.mjs and tests/runner-agents.test.mjs - restored the inherited GIT_DIR and pointed
+// the spawn at another repository again. Sanitising the FINAL merged environment is what stops that, and this
+// case is the proof: it deliberately spreads process.env into the call.
+function testASpreadEnvCannotRestoreGitDir() {
+  const a = makeRepo('in-a.txt');
+  const b = makeRepo('in-b.txt');
+  const saved = process.env.GIT_DIR;
+  try {
+    process.env.GIT_DIR = join(b, '.git');
+    const viaRun = run('git', ['ls-files'], { cwd: a, env: { ...process.env } });
+    if (viaRun.status !== 0) throw new Error(`harness spawn failed: ${viaRun.stderr}`);
+    const answered = viaRun.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (answered.length !== 1 || answered[0] !== 'in-a.txt') {
+      throw new Error(
+        `a caller spreading process.env must NOT be able to restore a GIT_DIR: asked about a and got ${JSON.stringify(answered)}`,
+      );
+    }
+  } finally {
+    if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
+    rmSync(a, { recursive: true, force: true });
+    rmSync(b, { recursive: true, force: true });
+  }
+}
+
+// An ENUMERATION rather than a count, because a count is what let a missed site through: the first pass fixed 13
+// spawns and the reviewer found more (web-uplift-rmhf measured the fixture helper in tests/test-fast.mjs). This
+// walks every module under tests/ that spawns git, extracts the WHOLE call for each one by balancing parentheses,
+// and requires the scrub in that call. It fails by naming the file and line, and it asserts a floor on the number
+// of sites so it cannot pass by finding none at all.
+function testEveryGitSpawnInTestsGoesThroughTheScrub() {
+  const dir = join(repoRoot, 'tests');
+  const spawnPattern = /(?:execFileSync|execFile|execSync|spawnSync|spawn|exec)\(\s*['"]git['"]/g;
+  const files = readdirSync(dir).filter((name) => name.endsWith('.mjs'));
+  const sites = [];
+  for (const file of files) {
+    const text = readFileSync(join(dir, file), 'utf8');
+    for (const match of text.matchAll(spawnPattern)) {
+      // Balance parentheses from the opening call to its close, so the statement checked is this call's.
+      let depth = 0;
+      let index = match.index + match[0].length - 1;
+      let end = index;
+      for (; index < text.length; index += 1) {
+        if (text[index] === '(') depth += 1;
+        else if (text[index] === ')') {
+          depth -= 1;
+          if (depth === 0) { end = index; break; }
+        }
+      }
+      const call = text.slice(match.index, end + 1);
+      const line = text.slice(0, match.index).split('\n').length;
+      sites.push({ file, line, scrubbed: call.includes('gitEnv(') });
+    }
+  }
+  const unscrubbed = sites.filter((site) => !site.scrubbed);
+  assert(
+    unscrubbed.length === 0,
+    `every git spawn under tests/ must pass env: gitEnv(...), and these do not: ${unscrubbed.map((s) => `${s.file}:${s.line}`).join(', ')}`,
+  );
+  assert(
+    sites.length >= 10,
+    `this control must actually find the git spawns it is guarding: it found ${sites.length}, which is too few to be the real set`,
+  );
+  console.log(`\u2714 all ${sites.length} git spawn(s) under tests/ scrub GIT_* through gitEnv()`);
+}
