@@ -23,7 +23,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { VENDORED_DEPENDENCIES, VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface } from '../install-surface.mjs';
 import { Worker } from 'node:worker_threads';
-import { listFiles } from './test-helpers.mjs';
+import { listFiles, gitEnv } from './test-helpers.mjs';
 
 const require = createRequire(import.meta.url);
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -529,7 +529,7 @@ function buildSyncFixture() {
 }
 
 function git(fixture, args) {
-  const run = spawnSync('git', args, { cwd: fixture, encoding: 'utf8' });
+  const run = spawnSync('git', args, { cwd: fixture, encoding: 'utf8', env: gitEnv() });
   assert(run.status === 0, `fixture git ${args.join(' ')} failed: ${run.stderr || run.stdout}`);
   return run;
 }
@@ -557,7 +557,7 @@ function committedSymlinkFixture({ withGeneratedSurface, victimContent }) {
   git(fixture, ['init', '-q']);
   git(fixture, ['add', '-A']);
   git(fixture, ['-c', 'user.email=fixture@test.invalid', '-c', 'user.name=fixture', 'commit', '-qm', 'fixture']);
-  const lsFiles = spawnSync('git', ['ls-files', '-s', tracked.dest], { cwd: fixture, encoding: 'utf8' });
+  const lsFiles = spawnSync('git', ['ls-files', '-s', tracked.dest], { cwd: fixture, encoding: 'utf8', env: gitEnv() });
   assert(lsFiles.stdout.startsWith('120000'),
     `the fixture must commit the symlink as a tracked link, else it is not the PR-reachable vector: ${lsFiles.stdout}`);
   return { fixture, victimDir, victim, destAbs, victimContent };

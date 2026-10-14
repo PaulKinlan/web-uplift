@@ -36,8 +36,7 @@ import {
   packTarball,
   noUpdateEnv,
   SKIP_DIRS,
-  SKIP_DIR_PREFIXES,
-} from './test-helpers.mjs';
+  SKIP_DIR_PREFIXES, gitEnv } from './test-helpers.mjs';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import {
@@ -161,7 +160,7 @@ export function censusPopulationProblem(files, { trackable = null } = {}) {
   const prefix = `${repoRoot}/`;
   const walked = new Set(files.map((file) => file.replace(prefix, '')));
   const underSkipRule = (file) => file.split('/').some((segment) => SKIP_DIRS.has(segment));
-  const tracked = trackable ?? execFileSync('git', ['ls-files', '*.mjs'], { cwd: repoRoot, encoding: 'utf8' })
+  const tracked = trackable ?? execFileSync('git', ['ls-files', '*.mjs'], { cwd: repoRoot, encoding: 'utf8', env: gitEnv() })
     .split('\n')
     .filter(Boolean);
   const excluded = tracked.filter(underSkipRule);
@@ -1978,7 +1977,7 @@ export function testSuiteListsMatchRegressionRegistry() {
   // These two numbers ARE the pin. A failure here does not mean the tree is broken; it means the gate's
   // population changed without saying so. When a case or a suite file is added or removed deliberately,
   // update the number in the same commit and say why in the message.
-  const EXPECTED_SUITE_FILES = 16;
+  const EXPECTED_SUITE_FILES = 17;
   // web-uplift-rkcs: the case population is DECLARED BY NAME PER SUITE FILE, for the web-uplift-j3go
   // reason. A count cannot tell an addition in one file from a removal in another, and the reviewer showed a
   // global floor still passing after exactly that pair of edits (add a case, drop a preexisting one). Every
@@ -1986,7 +1985,11 @@ export function testSuiteListsMatchRegressionRegistry() {
   // addition anywhere can supply, an added case needs no edit here at all, and two branches adding cases
   // never touch the same declaration. Only a deliberate REMOVAL edits this block, and it says which.
   const DECLARED_SUITE_CASES = {
-    'tests/filter-args.test.mjs': [
+    'tests/git-env-isolation.test.mjs': [
+    'testGitDirOverridesCwdSoTheLeakIsReal',
+    'testInheritedGitDirIsStrippedByTheHarness',
+  ],
+  'tests/filter-args.test.mjs': [
       'testNoFlagsMeansEveryCase',
       'testLongAndShortAliasesCollectFilters',
       'testEqualsFormsCollectFilters',
@@ -2161,7 +2164,7 @@ export function testCensusDeclaredPopulationNamesATrackedFileItCannotReach() {
   // The count rule is gone (web-uplift-rkcs), so the drop direction is exercised against the DECLARED NAMES
   // instead: a tracked list MISSING one declared module must fail and name it, which is the same shape the
   // reviewer used against the old floor.
-  const trackedNames = execFileSync('git', ['ls-files', '*.mjs'], { cwd: repoRoot, encoding: 'utf8' })
+  const trackedNames = execFileSync('git', ['ls-files', '*.mjs'], { cwd: repoRoot, encoding: 'utf8', env: gitEnv() })
     .split('\n')
     .filter(Boolean);
   const miscounted = censusPopulationProblem(files, {

@@ -17,7 +17,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runSuite } from './test-helpers.mjs';
+import { runSuite, gitEnv } from './test-helpers.mjs';
 import { judgeVerdict, findRecord, gitCommonDir, PROJECT_COMMANDS } from '../scripts/check-verdict.mjs';
 
 const repoRoot = process.cwd();
@@ -49,7 +49,7 @@ function testForeignProjectIsRefused() {
   // must refuse even though the COMMAND is ours.
   const other = scratch();
   try {
-    execFileSync('git', ['init', '-q'], { cwd: other, stdio: 'ignore' });
+    execFileSync('git', ['init', '-q'], { cwd: other, stdio: 'ignore', env: gitEnv() });
     const verdict = judgeVerdict(record({ cmd: 'npm run test:fast', repo: other }));
     assert.equal(verdict.ok, false, `a verdict produced in another project must be refused even with our command (got: ${verdict.why})`);
     assert(verdict.why.includes('different project'), `the refusal must say it is a different project (got: ${verdict.why})`);
@@ -70,9 +70,9 @@ function testAnotherWorktreeOfTheSameProjectIsAccepted() {
   const wt = join(base, 'wt');
   try {
     mkdirSync(main, { recursive: true });
-    execFileSync('git', ['init', '-q'], { cwd: main, stdio: 'ignore' });
-    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: main, stdio: 'ignore' });
-    execFileSync('git', ['worktree', 'add', '-q', '--detach', wt, 'HEAD'], { cwd: main, stdio: 'ignore' });
+    execFileSync('git', ['init', '-q'], { cwd: main, stdio: 'ignore', env: gitEnv() });
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: main, stdio: 'ignore', env: gitEnv() });
+    execFileSync('git', ['worktree', 'add', '-q', '--detach', wt, 'HEAD'], { cwd: main, stdio: 'ignore', env: gitEnv() });
     const mainCommon = gitCommonDir(main);
     assert(mainCommon, 'the temp main repo must resolve a common dir');
     assert.equal(gitCommonDir(wt), mainCommon,

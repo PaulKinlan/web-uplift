@@ -36,8 +36,7 @@ import {
   cleanStaleNpxRegressionTrees,
   packTarball,
   noUpdateEnv,
-  SKIP_DIRS,
-} from './test-helpers.mjs';
+  SKIP_DIRS, gitEnv } from './test-helpers.mjs';
 import {
   testInstallSkipsSymlinksInVendoredSource,
   testInstallFixturesTolerateLeftoversFromAKilledRun,
@@ -654,7 +653,7 @@ export function testCdpCopySyncRefusesToOverwriteTrackedEdits() {
   writeFileSync(join(fixture, srcRel), '# skill\noriginal content\n');
   writeFileSync(join(fixture, dstRel), '# skill\noriginal content\n');
 
-  const git = (...args) => spawnSync('git', args, { cwd: fixture, encoding: 'utf8' });
+  const git = (...args) => spawnSync('git', args, { cwd: fixture, encoding: 'utf8', env: gitEnv() });
   git('init', '-q');
   git('add', '-A');
   git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '-q', '-m', 'fixture');
@@ -705,7 +704,7 @@ export async function testGenerateVendoredSurfaceLeavesTrackedEditsAlone() {
   writeFileSync(join(fixture, srcRel), '# skill\noriginal content\n');
   writeFileSync(join(fixture, dstRel), '# skill\noriginal content\n');
 
-  const git = (...args) => spawnSync('git', args, { cwd: fixture, encoding: 'utf8' });
+  const git = (...args) => spawnSync('git', args, { cwd: fixture, encoding: 'utf8', env: gitEnv() });
   git('init', '-q');
   git('add', '-A');
   git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '-q', '-m', 'fixture');
