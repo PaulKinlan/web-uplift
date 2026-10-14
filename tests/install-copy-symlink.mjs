@@ -128,11 +128,18 @@ export function testInstallSkipsSymlinksInVendoredSource() {
     assert(install.status === 0, `install with symlinks failed:\n${install.stderr || install.stdout}`);
     assert(install.stdout.includes(`${basename(fileLink)} (symlink)`), `install did not record skipping the file symlink (looked for ${basename(fileLink)}):\n${install.stdout}`);
     assert(install.stdout.includes('loop (symlink)'), `install did not record skipping the directory symlink:\n${install.stdout}`);
-    assert(!existsSync(join(target, '.web-uplift/schema/install-symlink-escape.txt')), 'the symlink FILE must not be copied');
-    assert(!existsSync(join(target, '.web-uplift/schema/install-symlink-cycle/loop')), 'the symlink DIR must not be copied');
+    assert(!existsSync(join(target, '.web-uplift/schema', basename(fileLink))), `the symlink FILE (${basename(fileLink)}) must not be copied`);
+    assert(!existsSync(join(target, '.web-uplift/schema', basename(cycleDir), 'loop')), `the symlink DIR (${basename(cycleDir)}) must not be copied`);
 
-    const copied = JSON.stringify([...walkFiles(join(target, '.web-uplift')).keys()]);
-    assert(!copied.includes(secret), 'the symlink FILE target content must not be copied');
+    // The copy must not carry the symlink's TARGET CONTENT either, and this is checked over file CONTENTS
+    // rather than over the path KEYS it used to stringify: a set of paths can never contain a secret string,
+    // so that assertion was true whatever the installer did (web-uplift-b5bj - a vacuous green my own
+    // rename created). The matcher is proved LIVE first, against the file outside the tree that really does
+    // hold the secret, so this scan is known to be able to fail before it is trusted to pass.
+    assert(readFileSync(outsideSecret, 'utf8').includes(secret), 'the secret must be readable where it was planted, or the content scan below proves nothing');
+    const copiedFiles = [...walkFiles(join(target, '.web-uplift')).values()];
+    const leaked = copiedFiles.filter((p) => readFileSync(p, 'utf8').includes(secret));
+    assert(leaked.length === 0, `no copied file may contain the symlink target's content (leaked in ${leaked.join(', ')})`);
   } finally {
     rmSync(fileLink, { force: true });
     rmSync(cycleDir, { recursive: true, force: true });
