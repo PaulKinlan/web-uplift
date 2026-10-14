@@ -35,11 +35,37 @@ process.on('exit', () => {
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 });
 
+// GIT_DIR and its siblings OVERRIDE cwd, so a git call that sets an explicit cwd can still operate on a
+// DIFFERENT repository when the environment carries a GIT_* from a wrapper, a lane's shell, or a nested run: the
+// paths look right while the answers come from somewhere else (web-uplift-tax6). Measured on this VM: the gate's
+// children inherit GIT_EDITOR/GIT_PAGER/GIT_SEQUENCE_EDITOR/GIT_MERGE_AUTOEDIT/GIT_TERMINAL_PROMPT from the
+// surrounding shell, so inherited GIT_* is the normal case here rather than a hypothetical, and GIT_DIR alone
+// would be enough to redirect every spawn below. Every git spawn in this harness therefore passes an env with
+// GIT_* REMOVED instead of inheriting process.env. A caller that genuinely needs a GIT_* sets it explicitly
+// through `extra`, which is the only way one can appear in a child spawned by this file.
+export function gitEnv(extra = {}, options = {}) {
+  // The GIT_* removal happens LAST, on the merged result, and that ordering is the whole point: deleting from
+  // process.env and then spreading a caller's env back over it (env: { ...process.env }) RESTORES the inherited
+  // variable and silently defeats the scrub, which is a real pattern in this repository rather than a
+  // hypothetical - tests/test-fast.mjs and tests/runner-agents.test.mjs both spread process.env into a spawn.
+  // Sanitising the final object means no caller can reintroduce GIT_* by accident, whatever it passes.
+  const env = { ...process.env, ...extra };
+  // A caller that genuinely wants to carry a GIT_* must say so explicitly, because intent cannot be inferred
+  // from a spread that happens to include process.env: that is exactly how the scrub was defeated before.
+  if (options.allowGitDir !== true) {
+    for (const key of Object.keys(env)) {
+      if (key.startsWith('GIT_')) delete env[key];
+    }
+  }
+  return env;
+}
+
 export function run(command, args, opts = {}) {
   return spawnSync(command, args, {
     cwd: repoRoot,
     encoding: 'utf8',
     ...opts,
+    env: gitEnv(opts.env),
   });
 }
 
@@ -48,7 +74,7 @@ export function run(command, args, opts = {}) {
 // hung browser fails the suite instead of hanging it.
 export function runAsync(command, args, opts = {}) {
   return new Promise((resolvePromise) => {
-    const child = spawn(command, args, { cwd: repoRoot, timeout: 120000, ...opts });
+    const child = spawn(command, args, { cwd: repoRoot, timeout: 120000, ...opts, env: gitEnv(opts.env) });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });

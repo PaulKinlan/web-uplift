@@ -22,6 +22,7 @@
 // checkTarget() must REJECT a known-generated path. Without that, the whole file could pass by
 // returning success unconditionally, which is the defect class this lane keeps being corrected for.
 import { spawn } from 'node:child_process';
+import { gitEnv } from './test-helpers.mjs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +50,7 @@ function extractTargets(source, pattern) {
 // a path it does not know, and that covers both "does not exist" and "exists but is ignored" without
 // this guard having to reimplement ignore rules.
 export function checkTarget(target, { cwd = repoRoot } = {}) {
-  const res = spawn('git', ['ls-files', '--error-unmatch', '--', target], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  const res = spawn('git', ['ls-files', '--error-unmatch', '--', target], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() });
   const err = [];
   res.stderr.on('data', (chunk) => err.push(String(chunk)));
   return new Promise((resolve) => {

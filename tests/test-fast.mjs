@@ -60,7 +60,7 @@ import {
   repoRoot,
   buildSelectionManifest,
 } from '../scripts/test-fast.mjs';
-import { parseFilterArgs } from './test-helpers.mjs';
+import { parseFilterArgs, gitEnv } from './test-helpers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -320,7 +320,7 @@ function testChangedFilesUseMergeBase() {
   console.log('Testing stale-branch merge-base changed-file selection...');
   const repo = mkdtempSync(join(tmpdir(), 'test-fast-merge-base-'));
   const git = (...args) => {
-    const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: gitEnv() });
     assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
     return result.stdout.trim();
   };
@@ -427,7 +427,7 @@ function testDiffProvenanceIsReported() {
   console.log('Testing that the diff provenance names the base, the distance and the uncommitted paths...');
   const temp = mkdtempSync(join(tmpdir(), 'test-fast-provenance-'));
   const git = (...args) => {
-    const result = spawnSync('git', args, { cwd: temp, encoding: 'utf8' });
+    const result = spawnSync('git', args, { cwd: temp, encoding: 'utf8', env: gitEnv() });
     assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
     return result.stdout.trim();
   };
@@ -1053,7 +1053,7 @@ function testOmittedRulesAreNamedAndNarrow() {
   //      the declared exceptions), and
   //   2. every NON-EXECUTABLE tracked path must be mapped or omitted, so nothing is dropped silently.
   // No authored executable may remain unmapped after web-uplift-5r7z.
-  const tracked = spawnSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  const tracked = spawnSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8', env: gitEnv() }).stdout.split('\n').filter(Boolean);
   assert(tracked.length > 100, `expected a real tracked-file list, got ${tracked.length}`);
   const plans = tracked.map((f) => [f, mapFilesToTests([f])]);
   const recordTrees = ['evidence-out/', '.pi-subagents/'];
@@ -1329,7 +1329,7 @@ function testSelectionManifestRefusesToCertifyIncompleteRuns() {
 function testSelectionManifestTreeAndPathFidelity() {
   console.log('Testing that the manifest names the real tree, the merge-base, and untracked paths exactly (web-uplift-5jwc)...');
   const temp = mkdtempSync(join(tmpdir(), 'test-fast-manifest-'));
-  const git = (...args) => execFileSync('git', args, { cwd: temp, encoding: 'utf8' }).trim();
+  const git = (...args) => execFileSync('git', args, { cwd: temp, encoding: 'utf8', env: gitEnv() }).trim();
   try {
     git('init', '-q', '-b', 'master');
     git('config', 'user.email', 'test@example.invalid');
