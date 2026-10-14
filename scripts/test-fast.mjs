@@ -802,7 +802,16 @@ export function buildSelectionManifest({ plan, changed, mode, diffRef, head, tre
     reasons.push(`${path} is named by ${consumer}, which this run did not select: a required consumer was omitted`);
   }
   for (const entry of executed) {
-    if (!entry.ok) reasons.push(`${entry.label} did not pass${entry.skipped ? ' (skipped)' : ''}`);
+    // A target whose path does not exist reports ok:true with skipped:true (runTarget does that so a renamed or
+    // deleted suite does not crash the gate), but a target that never ran is NOT evidence. Testing only
+    // !entry.ok here let a skipped target certify a tree while the '(skipped)' note below was dead code
+    // (web-uplift-um6b), which is the same failure this manifest exists to prevent: a run that looks complete
+    // while some of its selection was never executed.
+    if (!entry.ok || entry.skipped) {
+      reasons.push(entry.skipped
+        ? `${entry.label} was SKIPPED: ${entry.path || entry.filter || 'its target'} does not exist, so this run has no evidence for it`
+        : `${entry.label} did not pass`);
+    }
   }
   if (mode === 'execute' && executed.length < plan.targets.length) {
     reasons.push(`only ${executed.length} of ${plan.targets.length} selected target(s) reported a status`);
