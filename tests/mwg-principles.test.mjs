@@ -99,6 +99,11 @@ export function testGuidanceVersionPinnedInDocs() {
     '.github/copilot-instructions.md',
     'web-uplift.example.json',
     'schema/config.schema.json',
+    // The audit skill exists twice: the source and its tracked vendored twin, which install-surface.mjs
+    // regenerates during prepare. Both are surfaced to operators, so both must name the pin - the twin was
+    // stale once (web-uplift-xkax) and nothing was watching it (web-uplift-yfbk).
+    '.claude/skills/web-audit/SKILL.md',
+    '.pi/skills/web-audit/SKILL.md',
   ];
   for (const rel of docs) {
     const text = readFileSync(join(repoRoot, rel), 'utf8');
@@ -116,6 +121,19 @@ export function testGuidanceVersionPinnedInDocs() {
       );
     }
   }
+
+  // The snapshot doc states the guide total as prose next to the JSON that is authoritative for it, and the
+  // two drifted apart silently: knowledge/mwg-catalog.md said 178 while mwg-catalog.json declared 187, three
+  // version bumps after the snapshot was written (web-uplift-8jzf). Naming the number here means a bump that
+  // regenerates the JSON but forgets the prose fails the suite instead of waiting for a reviewer.
+  const snapshot = readFileSync(join(repoRoot, 'knowledge/mwg-catalog.md'), 'utf8');
+  const stated = /\*\*Total guides:\*\*\s*([0-9]+)/.exec(snapshot);
+  assert(stated, 'knowledge/mwg-catalog.md must state its guide total so it can be cross-checked');
+  const declared = readJson('knowledge/mwg-catalog.json').guideCount;
+  assert(
+    Number(stated[1]) === declared,
+    `knowledge/mwg-catalog.md says ${stated[1]} guides but mwg-catalog.json declares ${declared}`,
+  );
 }
 
 
@@ -147,7 +165,7 @@ export async function testMwgCatalogRegenerateAgreement() {
 }
 
 
-// Validates that every guide in the current Modern Web Guidance catalog (0.0.193)
+// Validates that every guide in the current Modern Web Guidance catalog (0.0.194)
 // is covered by principles.json, dead/renamed ids are rejected, and changed-guidance
 // deltas (CSP object-src none, custom-button-actions, top-layer probe, etc.) are
 // actively asserted so regressions would fail.
@@ -162,14 +180,15 @@ export function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
     `principles.json guidanceCatalogVersion (${principles.guidanceCatalogVersion}) must match mwg-catalog.json version (modern-web-guidance@${catalog.version})`,
   );
 
-  // Assert canonical catalog has 178 guides, includes prompt-api, and has a sorted guideIds list
+  // Assert the canonical catalog has the full guide set (187 as of the 0.0.194 reanalysis, web-uplift-lcth),
+  // includes prompt-api, and has a sorted guideIds list
   assert(
-    catalog.guideCount === 178,
-    `mwg-catalog.json guideCount must be 178, got ${catalog.guideCount}`,
+    catalog.guideCount === 187,
+    `mwg-catalog.json guideCount must be 187, got ${catalog.guideCount}`,
   );
   assert(
-    catalog.guides.length === 178,
-    `mwg-catalog.json guides array must contain 178 entries, got ${catalog.guides.length}`,
+    catalog.guides.length === 187,
+    `mwg-catalog.json guides array must contain 187 entries, got ${catalog.guides.length}`,
   );
   assert(
     catalogIds.has('prompt-api'),
@@ -181,8 +200,8 @@ export function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
     `prompt-api category must be built-in-ai, got ${promptApi?.category}`,
   );
   assert(
-    Array.isArray(catalog.guideIds) && catalog.guideIds.length === 178,
-    'mwg-catalog.json must declare a sorted guideIds array of 178 items',
+    Array.isArray(catalog.guideIds) && catalog.guideIds.length === 187,
+    'mwg-catalog.json must declare a sorted guideIds array of 187 items',
   );
   assert(
     catalog.guideIds.includes('prompt-api'),
@@ -653,7 +672,7 @@ export function testMwgArtefactGuard() {
     assert(res.status === 0, `mwg-artefact: case 1 (verify committed) must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
   }
 
-  // 2. committed state shape: artifactId === "web-uplift/mwg-catalog", catalogSha256 matches /^[0-9a-f]{64}$/, canonicalisation is the exact rule string, appliedRulesVersion === "0.0.193", and analysedVersion and appliedRulesVersion are both present as distinct fields.
+  // 2. committed state shape: artifactId === "web-uplift/mwg-catalog", catalogSha256 matches /^[0-9a-f]{64}$/, canonicalisation is the exact rule string, appliedRulesVersion equal to the rule basis's version, and analysedVersion and appliedRulesVersion are both present as distinct fields.
   {
     const state = readJson('knowledge/mwg-state.json');
     assert(
@@ -1357,9 +1376,25 @@ export function testMwgDriftClassifierGuard() {
         `mwg-drift-classify: case 20 registry rule "${rule.id}" references guide "${rule.guide}" absent from catalog guideIds`
       );
     }
+    // The two axes are separate (web-uplift-a1vf): the contract lets the ANALYSED catalogue advance on its own
+    // when upstream guide text moves without applied-rule changes, keeping appliedRulesVersion, and the artefact
+    // guard deliberately never compares the analysed pin to the rule basis. This case used to require the two
+    // versions to be EQUAL, which forbade exactly the state the contract permits - the assertion was stronger
+    // than the contract, so it is replaced by the invariants that do hold: both versions are well formed, and
+    // the state's appliedRulesVersion agrees with the registry it describes. Found while actioning the 0.0.194
+    // reanalysis (web-uplift-lcth), where the catalogue moved and the applied rules legitimately did not.
     assert(
-      basis.catalogueVersion === catalog.version,
-      `mwg-drift-classify: case 20 registry catalogueVersion (${basis.catalogueVersion}) must match catalog version (${catalog.version})`
+      typeof basis.catalogueVersion === 'string' && /^\d+\.\d+\.\d+/.test(basis.catalogueVersion),
+      `mwg-drift-classify: case 20 registry catalogueVersion must be a semver (got ${JSON.stringify(basis.catalogueVersion)})`
+    );
+    assert(
+      typeof catalog.version === 'string' && /^\d+\.\d+\.\d+/.test(catalog.version),
+      `mwg-drift-classify: case 20 catalog version must be a semver (got ${JSON.stringify(catalog.version)})`
+    );
+    const state = readJson('knowledge/mwg-state.json');
+    assert(
+      state.appliedRulesVersion === basis.catalogueVersion,
+      `mwg-drift-classify: case 20 the state's appliedRulesVersion (${state.appliedRulesVersion}) must match the registry it describes (${basis.catalogueVersion})`
     );
   }
 }

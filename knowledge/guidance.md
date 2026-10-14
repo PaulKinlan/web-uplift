@@ -21,13 +21,13 @@ running, which is the part of the exposure that needs no luck at all.
 
 ```sh
 # List every guide.
-npx -y --ignore-scripts modern-web-guidance@0.0.193 list
+npx -y --ignore-scripts modern-web-guidance@0.0.194 list
 
 # Semantic search.
-npx -y --ignore-scripts modern-web-guidance@0.0.193 search "dark mode prefers-color-scheme"
+npx -y --ignore-scripts modern-web-guidance@0.0.194 search "dark mode prefers-color-scheme"
 
 # Retrieve a full guide by id.
-npx -y --ignore-scripts modern-web-guidance@0.0.193 retrieve "dark-mode"
+npx -y --ignore-scripts modern-web-guidance@0.0.194 retrieve "dark-mode"
 ```
 
 `search` returns entries shaped like:
@@ -64,8 +64,8 @@ The model consults them up front, before judging, so the bar comes from the
 current recommended approach rather than memory:
 
 ```sh
-npx -y --ignore-scripts modern-web-guidance@0.0.193 retrieve "dark-mode"
-npx -y --ignore-scripts modern-web-guidance@0.0.193 search "high contrast prefers-contrast forced colors"
+npx -y --ignore-scripts modern-web-guidance@0.0.194 retrieve "dark-mode"
+npx -y --ignore-scripts modern-web-guidance@0.0.194 search "high contrast prefers-contrast forced colors"
 ```
 
 Use the result to:
@@ -90,7 +90,7 @@ snapshot workflow, memlab analysis, and common leak patterns; the repo-native
 For each task in `taskList`, retrieve the full guide:
 
 ```sh
-npx -y --ignore-scripts modern-web-guidance@0.0.193 retrieve "<guidanceId>"
+npx -y --ignore-scripts modern-web-guidance@0.0.194 retrieve "<guidanceId>"
 ```
 
 Apply the guide's technique to the local source, respecting browser-support and
@@ -100,7 +100,7 @@ the finding is gone.
 ## Version Pinning
 
 The pinned feed version lives in `principles.json` as
-`guidanceCatalogVersion`, currently `modern-web-guidance@0.0.193`, unless a
+`guidanceCatalogVersion`, currently `modern-web-guidance@0.0.194`, unless a
 project config overrides it with `web-uplift.json`.
 
 Bump the pin deliberately and re-verify the coverage map in

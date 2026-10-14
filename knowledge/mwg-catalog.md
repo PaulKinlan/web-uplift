@@ -5,8 +5,8 @@ This directory contains `mwg-catalog.json`, a machine-readable enumeration of ev
 ## Current Snapshot
 
 - **Source:** `modern-web-guidance`
-- **Published version:** `0.0.193`
-- **Total guides:** 178
+- **Published version:** `0.0.194`
+- **Total guides:** 187
 - **Artifact path:** `knowledge/mwg-catalog.json`
 
 ## CLI Verification
@@ -14,13 +14,13 @@ This directory contains `mwg-catalog.json`, a machine-readable enumeration of ev
 To list all available guides using the npm package CLI:
 
 ```sh
-npx -y --ignore-scripts modern-web-guidance@0.0.193 list
+npx -y --ignore-scripts modern-web-guidance@0.0.194 list
 ```
 
 To retrieve a specific guide in full:
 
 ```sh
-npx -y --ignore-scripts modern-web-guidance@0.0.193 retrieve "<id>"
+npx -y --ignore-scripts modern-web-guidance@0.0.194 retrieve "<id>"
 ```
 
 ## How to Regenerate

@@ -1,9 +1,9 @@
 {
   "source": "modern-web-guidance",
-  "version": "0.0.193",
-  "retrievedAt": "2026-10-08T14:19:37.712Z",
+  "version": "0.0.194",
+  "retrievedAt": "2026-10-14T02:21:05.048Z",
   "regenerate": "Regenerate with the committed generator: `node tests/mwg-catalog.mjs --package-dir <unpacked modern-web-guidance package> --version <x.y.z> --out knowledge/mwg-catalog.json` (see \"How to Regenerate\" in knowledge/mwg-catalog.md). It unions the USE_CASES table from the package's skills/modern-web-guidance/modern-web.mjs with the package guides/*/*.md file enumeration to ensure guides omitted from USE_CASES like prompt-api are included; the CLI `list` command does not emit featuresUsed/tokenCount.",
-  "guideCount": 178,
+  "guideCount": 187,
   "guideIds": [
     "accessibility",
     "accessible-error-announcement",
@@ -35,7 +35,9 @@
     "capture-location-agnostic-data",
     "carousel-slide-effects",
     "carousel-snap-highlights",
+    "checkbox",
     "child-state-based-styling",
+    "client-side-encryption",
     "color",
     "complex-shapes",
     "component-specific-light-dark-theme",
@@ -61,6 +63,7 @@
     "deprioritize-background-fetches",
     "design-token-reactivity",
     "detect-initial-visibility-state",
+    "digital-signatures",
     "directional-navigation-transitions",
     "drag",
     "dynamic-sibling-animations",
@@ -79,6 +82,7 @@
     "full-session-analytics",
     "group-element-transitions",
     "highlight-text-ranges",
+    "hovercard",
     "html",
     "identify-heavy-scripts",
     "identify-inp-causes",
@@ -124,6 +128,7 @@
     "position-aware-tooltips",
     "precise-text-alignment",
     "prerendering-custom-elements",
+    "prevent-page-scroll-under-modal-dialog",
     "privacy",
     "progress-ring",
     "prompt-api",
@@ -140,6 +145,7 @@
     "same-document-transitions",
     "sanitize-untrusted-html",
     "schedule-tasks-by-priority",
+    "scroll-completion-effects",
     "scroll-entry-exit-effects",
     "scroll-position-aware-elements",
     "scroll-progress-indicator",
@@ -158,6 +164,7 @@
     "shaped-cutouts",
     "shrinking-header-on-scroll",
     "size-aware-styling",
+    "slider",
     "sms-otp-form",
     "soft-edge-content-fade",
     "spatial-navigation",
@@ -170,6 +177,8 @@
     "summarizer",
     "support-global-calendar-systems",
     "swipe-to-remove",
+    "swipe-to-reveal",
+    "switch",
     "translator",
     "trusted-types",
     "typography",
@@ -184,8 +193,8 @@
     "web-components",
     "webmcp"
   ],
-  "guideIdsSha256": "bc041692e3d9631a997427252ce2e54d8a5a0dd7e28387b4dcae6a4b9d3d5ab2",
-  "comment": "Catalog extracted from modern-web-guidance@0.0.193. The package CLI list command outputs id, category, and description; the package USE_CASES table and guides file enumeration additionally provide featuresUsed, tokenCount, and unlisted guides (such as prompt-api).",
+  "guideIdsSha256": "f17c59bfcd725643bbc58dcc66da50ab615bf4b2e42d72d58e8435e82b15f902",
+  "comment": "Catalog extracted from modern-web-guidance@0.0.194. The package CLI list command outputs id, category, and description; the package USE_CASES table and guides file enumeration additionally provide featuresUsed, tokenCount, and unlisted guides (such as prompt-api).",
   "guides": [
     {
       "id": "accessibility",
@@ -284,7 +293,7 @@
       "featuresUsed": [
         "at-rule()"
       ],
-      "tokenCount": 1572
+      "tokenCount": 1574
     },
     {
       "id": "calculate-with-intrinsic-sizes",
@@ -347,8 +356,23 @@
       "id": "css-layout",
       "category": "css",
       "description": "Modern CSS layouts such as flexbox, grid, subgrid, container queries, anchor positioning, and intrinsic sizing. Use this skill when architecting responsive UI components or page layouts.",
-      "featuresUsed": [],
-      "tokenCount": 5902
+      "featuresUsed": [
+        "Flexbox",
+        "flex-wrap: balance",
+        "Grid",
+        "Subgrid",
+        "Container queries (size)",
+        "<dialog>",
+        "Popover",
+        "Anchor positioning",
+        "scrollbar-gutter",
+        "line-clamp",
+        "Small, large, and dynamic viewport units",
+        "Grid lanes",
+        "aspect-ratio",
+        "Logical properties"
+      ],
+      "tokenCount": 6142
     },
     {
       "id": "design-token-reactivity",
@@ -367,7 +391,7 @@
         "sibling-count() and sibling-index()",
         "Trigonometric functions (CSS)"
       ],
-      "tokenCount": 1056
+      "tokenCount": 1061
     },
     {
       "id": "fluid-scaling",
@@ -491,7 +515,7 @@
         "Email, telephone, and URL <input> types",
         "inputmode"
       ],
-      "tokenCount": 2241
+      "tokenCount": 2272
     },
     {
       "id": "autofill-sign-in-form",
@@ -502,7 +526,7 @@
         "Email, telephone, and URL <input> types",
         "inputmode"
       ],
-      "tokenCount": 2569
+      "tokenCount": 2574
     },
     {
       "id": "autofill-sign-up-form",
@@ -513,7 +537,7 @@
         "Email, telephone, and URL <input> types",
         "inputmode"
       ],
-      "tokenCount": 2827
+      "tokenCount": 2832
     },
     {
       "id": "brand-consistent-forms",
@@ -565,7 +589,7 @@
       "featuresUsed": [
         "Keyboard events"
       ],
-      "tokenCount": 1461
+      "tokenCount": 1453
     },
     {
       "id": "required-field-feedback",
@@ -595,6 +619,20 @@
       "tokenCount": 1666
     },
     {
+      "id": "slider",
+      "category": "forms",
+      "description": "Style a native range slider with custom track, thumb, fill, and focus states while preserving native functionality and accessibility.",
+      "featuresUsed": [
+        "accent-color",
+        "<input type=\"range\">",
+        "appearance",
+        "progress()",
+        "attr()",
+        ":dir()"
+      ],
+      "tokenCount": 2157
+    },
+    {
       "id": "sms-otp-form",
       "category": "forms",
       "description": "Verify user phone numbers and one-time passcodes delivered over SMS with automatic code extraction and accessible form input.",
@@ -605,6 +643,16 @@
         "Permissions policy"
       ],
       "tokenCount": 3681
+    },
+    {
+      "id": "switch",
+      "category": "forms",
+      "description": "Build an accessible switch with the native HTML switch attribute, falling back to a styled checkbox when not supported.",
+      "featuresUsed": [
+        "<input type=\"checkbox\" switch>",
+        "accent-color"
+      ],
+      "tokenCount": 719
     },
     {
       "id": "validate-input-after-interaction",
@@ -623,7 +671,7 @@
         "ARIA attribute reflection",
         "Shadow DOM"
       ],
-      "tokenCount": 1027
+      "tokenCount": 1382
     },
     {
       "id": "custom-elements",
@@ -632,7 +680,7 @@
       "featuresUsed": [
         "Autonomous custom elements"
       ],
-      "tokenCount": 2390
+      "tokenCount": 2509
     },
     {
       "id": "form-associated-custom-elements",
@@ -641,7 +689,7 @@
       "featuresUsed": [
         "Form-associated custom elements"
       ],
-      "tokenCount": 950
+      "tokenCount": 1138
     },
     {
       "id": "html",
@@ -657,7 +705,7 @@
       "featuresUsed": [
         "Declarative shadow DOM"
       ],
-      "tokenCount": 956
+      "tokenCount": 1027
     },
     {
       "id": "shadow-dom",
@@ -667,7 +715,7 @@
         "Shadow DOM",
         "<slot>"
       ],
-      "tokenCount": 1062
+      "tokenCount": 1093
     },
     {
       "id": "styling-web-components",
@@ -679,7 +727,7 @@
         "Cascade layers",
         "Container queries (size)"
       ],
-      "tokenCount": 2346
+      "tokenCount": 2438
     },
     {
       "id": "web-components",
@@ -922,7 +970,7 @@
         "Interaction contentful paint performance entries",
         "Soft navigation performance entries"
       ],
-      "tokenCount": 3009
+      "tokenCount": 3029
     },
     {
       "id": "interactions-in-complex-layouts",
@@ -943,7 +991,7 @@
         "<audio>",
         "Intersection observer"
       ],
-      "tokenCount": 2682
+      "tokenCount": 2692
     },
     {
       "id": "optimize-image-priority",
@@ -984,7 +1032,7 @@
         "HTML streaming setters",
         "HTML processing instructions"
       ],
-      "tokenCount": 2240
+      "tokenCount": 2260
     },
     {
       "id": "performance",
@@ -1042,13 +1090,33 @@
       "tokenCount": 993
     },
     {
+      "id": "client-side-encryption",
+      "category": "security",
+      "description": "Establish shared secrets using public-key encapsulation or key agreement—including hybrid and post-quantum protection—and encrypt sensitive data in the browser with authenticated encryption.",
+      "featuresUsed": [
+        "webcrypto-modern-algos",
+        "Web Cryptography"
+      ],
+      "tokenCount": 5258
+    },
+    {
+      "id": "digital-signatures",
+      "category": "security",
+      "description": "Sign and verify messages, tokens, or artifacts in the browser using classical or quantum-resistant (post-quantum) asymmetric keys to ensure data integrity and authenticity.",
+      "featuresUsed": [
+        "webcrypto-modern-algos",
+        "Web Cryptography"
+      ],
+      "tokenCount": 3307
+    },
+    {
       "id": "local-network-access",
       "category": "security",
       "description": "Access resources on a user's local network or loopback interface from a public web application.",
       "featuresUsed": [
         "Local network access"
       ],
-      "tokenCount": 3577
+      "tokenCount": 3598
     },
     {
       "id": "passkey-authentication",
@@ -1115,7 +1183,7 @@
       "featuresUsed": [
         "Connection allowlists"
       ],
-      "tokenCount": 4208
+      "tokenCount": 4218
     },
     {
       "id": "sanitize-untrusted-html",
@@ -1124,7 +1192,7 @@
       "featuresUsed": [
         "Sanitizer API"
       ],
-      "tokenCount": 1543
+      "tokenCount": 1631
     },
     {
       "id": "security",
@@ -1136,11 +1204,11 @@
     {
       "id": "trusted-types",
       "category": "security",
-      "description": "Help prevent DOM-based XSS attacks by ensuring all untrusted content is sanitized before being inserted into the page.",
+      "description": "Help prevent DOM-based XSS attacks by locking down dangerous DOM sinks so they reject raw strings and only accept policy-validated HTML.",
       "featuresUsed": [
         "Trusted types"
       ],
-      "tokenCount": 1498
+      "tokenCount": 1706
     },
     {
       "id": "validate-origins",
@@ -1149,7 +1217,7 @@
       "featuresUsed": [
         "Origin"
       ],
-      "tokenCount": 3842
+      "tokenCount": 3847
     },
     {
       "id": "verify-email-ownership",
@@ -1208,7 +1276,7 @@
         "Anchor positioning",
         "Popover"
       ],
-      "tokenCount": 1782
+      "tokenCount": 1819
     },
     {
       "id": "responsive-table",
@@ -1378,7 +1446,7 @@
       "featuresUsed": [
         "sibling-count() and sibling-index()"
       ],
-      "tokenCount": 786
+      "tokenCount": 791
     },
     {
       "id": "group-element-transitions",
@@ -1416,7 +1484,7 @@
       "featuresUsed": [
         "Interest invokers"
       ],
-      "tokenCount": 1132
+      "tokenCount": 1322
     },
     {
       "id": "interest-triggered-tooltips",
@@ -1428,7 +1496,7 @@
         "popover=\"hint\"",
         "Anchor positioning"
       ],
-      "tokenCount": 2353
+      "tokenCount": 2761
     },
     {
       "id": "light-dismiss-a-dialog",
@@ -1458,7 +1526,7 @@
         "prefers-reduced-motion media query",
         "Registered custom properties"
       ],
-      "tokenCount": 668
+      "tokenCount": 1255
     },
     {
       "id": "move-dom-element-without-losing-state",
@@ -1506,6 +1574,18 @@
       "tokenCount": 728
     },
     {
+      "id": "prevent-page-scroll-under-modal-dialog",
+      "category": "ui-behaviors",
+      "description": "Prevent the underlying page from scrolling while a modal dialog is open.",
+      "featuresUsed": [
+        "overscroll-behavior",
+        "<dialog>",
+        "::backdrop",
+        ":modal"
+      ],
+      "tokenCount": 1290
+    },
+    {
       "id": "same-document-transitions",
       "category": "ui-behaviors",
       "description": "Visually connect persisting elements across different page states or navigations in a Single Page Application (SPA) (e.g. expanding a product thumbnail into a full-bleed hero image) by smoothly morphing their size, position, or other styling properties.",
@@ -1513,6 +1593,16 @@
         "View transitions"
       ],
       "tokenCount": 2134
+    },
+    {
+      "id": "scroll-completion-effects",
+      "category": "ui-behaviors",
+      "description": "Trigger visual effects, animations, or focus changes on a target element only after a smooth programmatic scroll to that element has finished.",
+      "featuresUsed": [
+        "Scroll method promises",
+        "scrollIntoView()"
+      ],
+      "tokenCount": 1773
     },
     {
       "id": "scroll-entry-exit-effects",
@@ -1596,7 +1686,31 @@
         "Resize observer",
         "Web animations"
       ],
-      "tokenCount": 7519
+      "tokenCount": 7589
+    },
+    {
+      "id": "swipe-to-reveal",
+      "category": "ui-behaviors",
+      "description": "Let users swipe horizontally on a list item or content pane to reveal contextual action buttons or a side menu without automatically triggering an action.",
+      "featuresUsed": [
+        "overscroll-behavior",
+        "scroll-initial-target",
+        "Scroll snap",
+        "scrollbar-width"
+      ],
+      "tokenCount": 2958
+    },
+    {
+      "id": "checkbox",
+      "category": "ui-components",
+      "description": "Style checkboxes, including custom icons, layout, colors, check/uncheck animations, while preserving native functionality and accessibility.",
+      "featuresUsed": [
+        "accent-color",
+        ":indeterminate",
+        "Individual transform properties",
+        "Masks"
+      ],
+      "tokenCount": 1461
     },
     {
       "id": "dark-mode-toggle",
@@ -1609,6 +1723,21 @@
         ":has()"
       ],
       "tokenCount": 2352
+    },
+    {
+      "id": "hovercard",
+      "category": "ui-components",
+      "description": "Build a hovercard component that displays an interactive structured preview of the page a certain type of link (e.g. a user profile) will navigate to when hovered over.",
+      "featuresUsed": [
+        "Popover",
+        "popover=\"hint\"",
+        "Anchor positioning",
+        "Interest invokers",
+        "Cross-document view transitions",
+        "blocking=\"render\"",
+        "<link rel=\"expect\">"
+      ],
+      "tokenCount": 3268
     },
     {
       "id": "navigation-drawer",
@@ -1657,7 +1786,7 @@
         "Masks",
         "Registered custom properties"
       ],
-      "tokenCount": 1681
+      "tokenCount": 1696
     },
     {
       "id": "scrollspy",
@@ -1678,7 +1807,7 @@
         "Conic gradients",
         "<progress>"
       ],
-      "tokenCount": 1498
+      "tokenCount": 1508
     },
     {
       "id": "stack-drill-down",
@@ -1793,7 +1922,7 @@
         "image()",
         "accent-color"
       ],
-      "tokenCount": 4509
+      "tokenCount": 4519
     },
     {
       "id": "equal-width-text-lines",
@@ -1804,7 +1933,7 @@
         "text-wrap: balance",
         "text-box"
       ],
-      "tokenCount": 1798
+      "tokenCount": 1808
     },
     {
       "id": "export-html-media-from-canvas",
