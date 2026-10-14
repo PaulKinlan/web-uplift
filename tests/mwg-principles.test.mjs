@@ -16,6 +16,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { CANONICALISATION_RULE, computeSha256 } from './mwg-artefact.mjs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -664,7 +665,7 @@ export function testMwgArtefactGuard() {
       `mwg-artefact: case 2 catalogSha256 must match /^[0-9a-f]{64}$/, got ${state.catalogSha256}`
     );
     const expectedCanon =
-      'json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation';
+      'json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation; non-ASCII characters are emitted as literal UTF-8, never as \\uXXXX escapes (a serialiser that escapes them computes a different digest for the same catalog - the committed catalog contains U+2014; web-uplift-rxbh)';
     assert(
       state.canonicalisation === expectedCanon,
       `mwg-artefact: case 2 canonicalisation mismatch:\nexpected: ${expectedCanon}\ngot:      ${state.canonicalisation}`
@@ -1455,6 +1456,7 @@ export async function testBaselineOracle() {
 
 
 export const mwgPrinciplesTests = [
+  testMwgCanonicalisationPinsStringEscaping,
   testMwgArtefactAppliedRulesAxisFailsClosed,
   testMwgDriftExtractPipe,
   testMwgDriftBasisFloor,
@@ -1588,4 +1590,37 @@ function testMwgArtefactAppliedRulesAxisFailsClosed() {
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+// web-uplift-rxbh: the canonicalisation rule a consumer implements from must pin STRING ESCAPING. The committed
+// catalog contains non-ASCII (U+2014), so a serialiser that escapes it computes a different digest for the same
+// bytes - Python's json.dumps does that by default. This case implements the documented rule independently (it
+// does not call the tool's helper) and checks both directions, with a guard so the experiment is not vacuous: if
+// the catalog carried no non-ASCII, the escaped form would equal the literal one and prove nothing.
+function testMwgCanonicalisationPinsStringEscaping() {
+  console.log('Testing that the canonicalisation rule pins JSON string escaping (P3, web-uplift-rxbh)...');
+  const catalog = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-catalog.json'), 'utf8'));
+  const state = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-state.json'), 'utf8'));
+  const canon = (v) => {
+    if (Array.isArray(v)) return v.map(canon);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]));
+    return v;
+  };
+  const sha = (str) => createHash('sha256').update(str, 'utf8').digest('hex');
+  const literal = JSON.stringify(canon(catalog));
+  const escaped = literal.replace(/[^\x00-\x7F]/g, (ch) => '\\u' + ch.codePointAt(0).toString(16).padStart(4, '0'));
+
+  assert(/[^\x00-\x7F]/.test(literal), 'the catalog must actually contain non-ASCII, or the comparison below is vacuous');
+  assert(sha(literal) === state.catalogSha256,
+    `the documented rule, implemented independently with literal non-ASCII, must reproduce the pin (got ${sha(literal)})`);
+  // And the NORMATIVE implementation must agree with that independent reading. Without this the case would
+  // still pass if the tool's own serialiser started escaping non-ASCII - verified by mutating computeSha256 to
+  // escape, which fails verify and now fails here too - so the rule and the implementation are tied together.
+  assert(computeSha256(catalog) === state.catalogSha256,
+    `the normative implementation must reproduce the pin under the rule it documents (got ${computeSha256(catalog)})`);
+  assert(sha(escaped) !== state.catalogSha256,
+    'an escaped serialisation must NOT reproduce the pin - that difference is exactly what the rule has to name');
+  assert(CANONICALISATION_RULE.includes('literal UTF-8') && CANONICALISATION_RULE.includes('uXXXX'),
+    'the normative rule string must state the escaping, not leave it to the consumer');
+  console.log('✔ the canonicalisation rule pins JSON string escaping');
 }

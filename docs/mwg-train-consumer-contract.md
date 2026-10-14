@@ -14,7 +14,7 @@ The artefact interface consists of:
 - `artifactId`: The canonical artefact identifier (`"web-uplift/mwg-catalog"`).
 - `catalogSha256`: The full 64-character lowercase hex SHA-256 digest of the canonicalised catalog (`knowledge/mwg-catalog.json`).
 - `canonicalisation`: The exact deterministic canonicalisation rule string:
-  `"json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation"`.
+  `"json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation; non-ASCII characters are emitted as literal UTF-8, never as \uXXXX escapes (a serialiser that escapes them computes a different digest for the same catalog - the committed catalog contains U+2014; web-uplift-rxbh)"`.
 - `analysedVersion`: The upstream package version analysed during the snapshot (matching the version pinned in knowledge/principles.json).
 - `appliedRulesVersion`: The upstream package version that the rules actually applied correspond to.
 
@@ -79,6 +79,7 @@ To verify the catalog against the pin, the consumer executes the following canon
    - For arrays, preserve element order and recursively canonicalise each element.
    - For objects, sort all own property keys lexicographically, recursively canonicalise each value, and construct the sorted key-value mapping. Note the normative refinement in the rule string: object keys are emitted in JS property-enumeration order, so integer-like keys sort ascending numeric rather than lexicographic; `tests/mwg-artefact.mjs` is the normative implementation.
 3. Serialize to compact JSON without indentation or whitespace between tokens (`JSON.stringify(canon)`).
+   - **String escaping is part of the rule.** Serialise with non-ASCII characters kept LITERAL: no `\uXXXX` escapes. `JSON.stringify` does this by default, but Python's `json.dumps` does NOT - it escapes non-ASCII unless you pass `ensure_ascii=False`. The committed catalog contains U+2014, so a consumer using the default escaper computes a digest that will never match the pin (web-uplift-rxbh).
 4. Encode the serialized JSON string as UTF-8 bytes.
 5. Compute the SHA-256 cryptographic digest of the UTF-8 bytes and format as 64 lowercase hexadecimal characters.
 6. Compare the computed hex digest against the pinned `catalogSha256`.
@@ -114,5 +115,5 @@ A historical extractor SET divergence existed between `web-uplift` and `mwg-trai
 - Bead `web-uplift-968` records that the two extractors disagreed on guide set membership: `mwg-train`'s set contained `prompt-api`, while `web-uplift`'s USE_CASES-derived catalog omitted it.
 - On the `web-uplift` side this is resolved by bead `web-uplift-ddf` (branch `fleet/mwg-catalog-fix`), which adds `prompt-api` to the catalog together with a top-level sorted `guideIds` array and the catalog's own `guideIdsSha256` declaration.
 - This contract compares SETS, not counts: `guideIdsSha256` (and the sorted `guideIds` list the catalog carries) is the identity. `tests/mwg-artefact.mjs verify` cross-checks any declared `guideIds`/`guideIdsSha256`/`guideCount` in the catalog against the values derived from its `guides` array and fails closed on disagreement, so a recurrence of this defect class is loud.
-- Until `web-uplift-ddf` lands, the pin in `knowledge/mwg-state.json` covers `web-uplift`'s catalog exactly as committed in this repository; when it lands, `tests/mwg-artefact.mjs update` refreshes the pin. No value is hardcoded to either side's count.
+- RESOLVED, and this paragraph used to claim otherwise (web-uplift-ic6a): the `web-uplift` side carries 178 guides INCLUDING `prompt-api`, its catalog declares the sorted `guideIds`/`guideIdsSha256`/`guideCount` trio, and the pin in `knowledge/mwg-state.json` is the one those declarations derive from. A refresh is still `tests/mwg-artefact.mjs update`, and `verify` still fails closed on disagreement - so the mechanism the paragraph described is current; only its precondition was stale. No value is hardcoded to either side's count.
 - Cross-extractor consensus tracking remains assigned to bead `web-uplift-968`.
