@@ -41,7 +41,7 @@ const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 export const CANONICALISATION_RULE =
-  'json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation';
+  'json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation; non-ASCII characters are emitted as literal UTF-8, never as \\uXXXX escapes (a serialiser that escapes them computes a different digest for the same catalog - the committed catalog contains U+2014; web-uplift-rxbh)';
 
 export function canonicalise(val) {
   if (val === null || typeof val !== 'object') {
