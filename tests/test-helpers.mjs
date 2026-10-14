@@ -21,6 +21,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 export const SKIP_DIRS = new Set(['.git', 'node_modules', 'reports', 'scratch']);
 
+// Scratch paths the HARNESS creates inside the repository and skips by name (web-uplift-rn7w). They must
+// live under schema/ - the installer has to walk them to hit the depth and symlink guards - so they cannot
+// be moved to a tmpdir, and a walk of the repository then races them while another process builds or removes
+// them. Skipping them by prefix makes the walk deterministic without weakening it: the guard test in
+// tests/syntax-core.test.mjs asserts that no TRACKED path matches a prefix here, so a real file can never be
+// hidden by this list. The deeper fix is that the fixtures are now unique per process, so two gates in one
+// worktree cannot collide in the first place.
+export const SKIP_DIR_PREFIXES = ['install-depth-fixture', 'install-symlink-cycle', 'install-symlink-escape'];
+
 export const tmp = mkdtempSync(join(tmpdir(), 'web-uplift-regression-'));
 process.on('exit', () => {
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
@@ -88,11 +97,26 @@ const directoryIdentity = (path) => {
   return `${st.dev}:${st.ino}`;
 };
 
+// A directory being created or removed by another process cannot be walked exactly, so an entry that
+// disappears between being listed and being stat'd is treated as ABSENT rather than as a failure
+// (web-uplift-rn7w). This does not weaken the census: a declared module that is genuinely missing is a
+// different outcome from an entry vanishing mid-walk, and the declared-membership assertion still fails
+// loudly for it - what this removes is the spurious ENOENT a concurrently-built fixture produced.
+const lstatOrNull = (path) => {
+  try {
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
+};
+
 export function listFiles(dir, predicate, out = [], path = new Set([directoryIdentity(dir)])) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;
+    if (SKIP_DIR_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
     const full = join(dir, name);
-    const st = lstatSync(full);
+    const st = lstatOrNull(full);
+    if (st === null) continue; // vanished between the readdir and the stat: another process is building a fixture
     if (st.isSymbolicLink()) {
       let target;
       try {
@@ -108,7 +132,13 @@ export function listFiles(dir, predicate, out = [], path = new Set([directoryIde
         out.push(full);
       }
     } else if (st.isDirectory()) {
-      listFiles(full, predicate, out, new Set([...path, directoryIdentity(full)]));
+      let identity;
+      try {
+        identity = directoryIdentity(full);
+      } catch {
+        continue; // the directory vanished as we descended into it
+      }
+      listFiles(full, predicate, out, new Set([...path, identity]));
     } else if (predicate(full)) {
       out.push(full);
     }

@@ -36,6 +36,7 @@ import {
   packTarball,
   noUpdateEnv,
   SKIP_DIRS,
+  SKIP_DIR_PREFIXES,
 } from './test-helpers.mjs';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
@@ -2212,6 +2213,7 @@ export function testWalkTraversesASymlinkedDirectoryAndBoundsACycle() {
 }
 
 export const syntaxCoreTests = [
+  testHarnessScratchSkipsCannotHideTrackedModules,
   testSyntaxChecks,
   testCensusDeclaredPopulationNamesATrackedFileItCannotReach,
   testWalkTraversesASymlinkedDirectoryAndBoundsACycle,
@@ -2253,3 +2255,38 @@ export {
 };
 
 await runSuite(syntaxCoreTests, import.meta.url, { timeoutMs: 120000, concurrency: 1 });
+
+// web-uplift-rn7w: the harness skips its own scratch paths (the installer fixtures that must live under
+// schema/), and that skip list must not be able to hide a real file. This is the bidirectional control: the
+// prefixes are narrowed by asserting no TRACKED module matches one, and the census walk is proved to still
+// reach every declared module while they are in force.
+function testHarnessScratchSkipsCannotHideTrackedModules() {
+  console.log('Testing that the harness scratch skip list cannot hide a tracked module (web-uplift-rn7w)...');
+  const files = listFiles(repoRoot, (p) => p.endsWith('.mjs'));
+  const reachable = new Set(files.map((f) => f.replace(`${repoRoot}/`, '')));
+  const hidden = DECLARED_TRACKED_MODULES.filter((f) => !reachable.has(f));
+  assert.deepEqual(hidden, [], `no declared module may be skipped by the harness scratch list (missing: ${hidden.slice(0, 5).join(', ')})`);
+
+  // POSITIVE FIRST: the prefixes really are skipped, or the list is inert and this test proves nothing.
+  const scratch = join(repoRoot, 'schema', `${SKIP_DIR_PREFIXES[0]}.probe`);
+  try {
+    mkdirSync(scratch, { recursive: true });
+    writeFileSync(join(scratch, 'planted.mjs'), 'export const planted = 1;\n');
+    assert(!listFiles(repoRoot, (p) => p.endsWith('.mjs')).includes(join(scratch, 'planted.mjs')),
+      'a planted module inside a skipped scratch directory must NOT be reached');
+    // ...and the same module at a normal path IS reached, so the skip is narrow rather than a blanket rule.
+    const normal = join(repoRoot, 'tests', 'rn7w-walk-probe.mjs');
+    writeFileSync(normal, 'export const probe = 1;\n');
+    assert(listFiles(repoRoot, (p) => p.endsWith('.mjs')).includes(normal),
+      'a module at a normal path must still be reached');
+    rmSync(normal, { force: true });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+
+  // And the list can never match a TRACKED module, so a future name collision fails here rather than
+  // silently removing a real file from the census.
+  const trackedHere = DECLARED_TRACKED_MODULES.filter((f) => SKIP_DIR_PREFIXES.some((prefix) => f.split('/').some((part) => part.startsWith(prefix))));
+  assert.deepEqual(trackedHere, [], `a tracked module whose path matches a scratch prefix would be invisible to the walk: ${trackedHere.join(', ')}`);
+  console.log('\u2714 the harness scratch skip list is narrow and cannot hide a tracked module');
+}
