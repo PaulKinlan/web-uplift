@@ -696,7 +696,11 @@ function testChangedSuiteAutoMap() {
   const options = { exists: () => true, readSuite: (path) => { reads++; return sources[path]; } };
 
   const named = mapFilesToTests([module, suite], options);
-  assert.deepEqual(named.unmappedFiles, [], 'a named new executable plus changed suite must not refuse');
+  // web-uplift-h68z deliberately re-narrows web-uplift-tp77 here. The auto-map still runs the naming suite
+  // and still prints it, but it no longer reaches a GREEN verdict on its own: the mapping answers 'was this
+  // diff tested?' and not 'does main carry a rule for this executable?', and it was the second question that
+  // web-uplift-ebvj slipped past. So the file stays refused until the map names it.
+  assert.deepEqual(named.unmappedFiles, [module], 'an auto-mapped executable is still refused until the map carries a rule for it');
   assert.deepEqual(named.autoMappedFiles, [{ path: module, suite }], 'mapping identifies its actual changed suite');
   assert(named.targets.some((target) => target.path === suite), 'the naming suite must run');
   assert.equal(reads, 1, 'only the changed suite source is inspected once');
@@ -737,11 +741,16 @@ function testChangedSuiteAutoMap() {
     const fast = join(temp, 'scripts', 'test-fast.mjs');
     const suitePath = 'tests/new-tool.test.mjs';
     const success = spawnSync(process.execPath, [fast, module, suitePath], { cwd: temp, encoding: 'utf8', timeout: 15000 });
-    assert.equal(success.status, 0, `named module plus changed suite must pass: ${success.stderr}`);
+    // web-uplift-h68z re-narrows tp77 at the CLI level too: the auto-map is recorded and printed, but the run
+    // REFUSES, because the mapping proves this diff exercised the file and not that main carries a rule for it.
+    // The refusal returns before any target runs, so the naming suite does not execute - that is the friction
+    // tp77 removed and this restores, deliberately and with the reason named.
+    assert.notEqual(success.status, 0, 'an auto-mapped module with no map rule must still refuse');
+    assert(success.stderr.includes('fast-gate: FAIL'), 'the refusal must say FAIL');
     assert(success.stdout.includes(`auto-mapped ${module} -> ${suitePath}`), 'successful CLI run must print the map');
-    assert(success.stdout.includes(`fast-gate: passed: ${suitePath}`), 'the naming suite must actually run');
+    assert(success.stdout.includes(`fast-gate: unmapped: ${module}`), 'the refusal must name the executable and the missing rule');
     const dry = spawnSync(process.execPath, [fast, '--dry-run', module, suitePath], { cwd: temp, encoding: 'utf8', timeout: 15000 });
-    assert.equal(dry.status, 0, 'dry run must accept the same named pair');
+    assert.notEqual(dry.status, 0, 'the dry run must refuse the same pair, so the verdict cannot be a green dry run either');
     assert(dry.stdout.includes(`auto-mapped ${module} -> ${suitePath}`), 'dry run must print the map too');
     const refusal = spawnSync(process.execPath, [fast, 'scripts/orphan.mjs', suitePath], { cwd: temp, encoding: 'utf8', timeout: 15000 });
     assert.notEqual(refusal.status, 0, 'unnamed module must still refuse in a mixed diff');
@@ -1207,6 +1216,7 @@ function runAll() {
   testSlowTargetTimesOutWithExit124();
   testUnmappedExecutablePathsFailClosed();
   testChangedSuiteAutoMap();
+  testH68zAutoMappedExecutableIsRefusedAndRunsTheControls();
   testOmittedRulesAreNamedAndNarrow();
   testRefusalIsActionableAndDocumented();
   testSuiteExecutionMarkers();
@@ -1215,3 +1225,39 @@ function runAll() {
 }
 
 runAll();
+
+function testH68zAutoMappedExecutableIsRefusedAndRunsTheControls() {
+  console.log('Testing that an auto-mapped executable is still refused and pulls in the gate controls (web-uplift-h68z)...');
+  // The suite must be one the gate ALREADY knows, or the fixture would refuse the suite too and the assertions
+  // below would be measuring two things at once. The sources are injected, so what the real file contains is
+  // irrelevant here - this case is about how the MODULE path is classified.
+  const module = 'scripts/h68z-new-tool.mjs';
+  const suite = 'tests/syntax-core.test.mjs';
+  const sources = { [suite]: "import '../scripts/h68z-new-tool.mjs';" };
+  const options = { exists: () => true, readSuite: (path) => sources[path] };
+  const controlLabel = 'Fast gate unit and integration tests';
+
+  // POSITIVE: a changed suite names the new executable, so the auto-map fires and that suite runs...
+  const named = mapFilesToTests([module, suite], options);
+  assert.deepEqual(named.autoMappedFiles, [{ path: module, suite }], 'the auto-map must record the naming suite');
+  assert(named.targets.some((t) => t.path === suite), 'the plan must select the suite the auto-map identified');
+  // ...but the file is STILL refused: the auto-map answers "was this diff tested?", not "does main carry a rule
+  // for this executable?", and it was the second question web-uplift-ebvj slipped past (the h68z re-narrowing).
+  assert.deepEqual(named.unmappedFiles, [module], 'an auto-mapped executable must still be refused until the map names it');
+  // ...and the gate's own map/completeness controls are selected, which is the half that failed for ebvj.
+  assert(named.targets.some((t) => t.label === controlLabel), 'an auto-map must select the map/completeness controls');
+
+  // NEGATIVE 1: drop the naming suite and nothing fires, so both positives above are caused by the auto-map.
+  const unnamed = mapFilesToTests([module], options);
+  assert.equal(unnamed.autoMappedFiles.length, 0, 'nothing names the executable, so nothing is auto-mapped');
+  assert.deepEqual(unnamed.unmappedFiles, [module], 'it is refused whether or not it is named');
+  assert(!unnamed.targets.some((t) => t.label === controlLabel), 'no auto-map, no control run');
+
+  // NEGATIVE 2: a module the map already carries never auto-maps, so it must not drag the control suite in.
+  const mapped = mapFilesToTests(['tests/filter-args.mjs'], options);
+  assert.equal(mapped.autoMappedFiles.length, 0, 'a mapped module does not auto-map');
+  assert.deepEqual(mapped.unmappedFiles, [], 'a mapped module is not refused');
+  assert(!mapped.targets.some((t) => t.label === controlLabel), 'a mapped module does not pull in the gate self-test');
+
+  console.log('\u2714 auto-mapped executables are refused and run the completeness controls');
+}

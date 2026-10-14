@@ -226,6 +226,10 @@ const TEST_SUPPORT_MODULES = [
   // are changing - and that control only runs when tests/test-fast.mjs itself changes. Folded here rather than
   // in its own branch because this branch already edits this map for tests/filter-args.mjs.
   { file: 'scripts/check-verdict.mjs', consumer: 'tests/verdict-provenance.test.mjs' },
+  // web-uplift-h68z: the shared credential vocabulary the redaction suite exercises directly. web-uplift-yb2a's
+  // own gate printed 'COVERAGE WARNING: 1 unmapped changed file(s): evidence/credential-terms.mjs' while
+  // claiming a pass, because absence of a rule and absence of coverage read the same in a log line.
+  { file: 'evidence/credential-terms.mjs', consumer: 'tests/redaction.test.mjs' },
   // web-uplift-dipf: the parser's own module, covered by the suite that now tests it directly, so a
   // flag change selects that suite rather than refusing on tests/test-helpers.mjs (FULL-GATE-ONLY).
   { file: 'tests/filter-args.mjs', consumer: 'tests/filter-args.test.mjs' },
@@ -804,9 +808,32 @@ export function mapFilesToTests(filePaths, options = {}) {
         const target = { type: 'node', path: suite, label: `Direct test: ${suite}`, timeoutMs: suite.endsWith('.test.mjs') ? 240000 : 120000 };
         targetsByKey.set(targetKey(target), target);
       }
+      // web-uplift-h68z: the auto-map is RECORDED AND PRINTED, and it does not excuse the missing map rule. The
+      // refusal returns before any target runs, so the naming suite does not execute either - what the mapping
+      // gives a lane is the diagnosis ("this changed suite names that path"), and what it cannot give is a
+      // verdict, because the coverage it implies is LOCAL TO THIS DIFF and evaporates on main the moment the
+      // suite stops being what you are changing. web-uplift-ebvj landed scripts/check-verdict.mjs exactly
+      // that way - named by a changed suite, so every gate stayed green - while main carried no rule for it and
+      // the gate's own completeness control was red. That is why the file stays in unmappedFiles and the CLI
+      // still REFUSES with the one next action. This deliberately re-narrows web-uplift-tp77, which let an
+      // auto-mapped path reach a green verdict to remove map-edit friction; the mapping and its print are kept
+      // (the log names the suite and the path), and the requirement is a two-line map edit.
+      remaining.push(file);
     }
     unmappedFiles.length = 0;
     unmappedFiles.push(...remaining);
+  }
+
+  // web-uplift-h68z (b): whatever the diff touched, an auto-mapped executable means the map/completeness
+  // controls must RUN - they live in the gate's own suite, so before this they only executed when
+  // tests/test-fast.mjs itself was in the changed set. Selecting the existing subsystem keeps one definition of
+  // the target, so the label and the timeout cannot drift from the ones the gate uses normally.
+  if (autoMappedFiles.length > 0) {
+    const selfTest = SUBSYSTEMS.find((sub) => sub.id === 'fast-gate-self');
+    matchedSubsystems.add(selfTest.id);
+    for (const target of selfTest.targets) {
+      targetsByKey.set(targetKey(target), target);
+    }
   }
 
   // Only a diff with nothing to map at all falls back to the baseline suite. A diff that contains an
