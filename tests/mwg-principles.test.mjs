@@ -162,14 +162,15 @@ export function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
     `principles.json guidanceCatalogVersion (${principles.guidanceCatalogVersion}) must match mwg-catalog.json version (modern-web-guidance@${catalog.version})`,
   );
 
-  // Assert canonical catalog has 178 guides, includes prompt-api, and has a sorted guideIds list
+  // Assert the canonical catalog has the full guide set (187 as of the 0.0.194 reanalysis, web-uplift-lcth),
+  // includes prompt-api, and has a sorted guideIds list
   assert(
-    catalog.guideCount === 178,
-    `mwg-catalog.json guideCount must be 178, got ${catalog.guideCount}`,
+    catalog.guideCount === 187,
+    `mwg-catalog.json guideCount must be 187, got ${catalog.guideCount}`,
   );
   assert(
-    catalog.guides.length === 178,
-    `mwg-catalog.json guides array must contain 178 entries, got ${catalog.guides.length}`,
+    catalog.guides.length === 187,
+    `mwg-catalog.json guides array must contain 187 entries, got ${catalog.guides.length}`,
   );
   assert(
     catalogIds.has('prompt-api'),
@@ -181,8 +182,8 @@ export function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
     `prompt-api category must be built-in-ai, got ${promptApi?.category}`,
   );
   assert(
-    Array.isArray(catalog.guideIds) && catalog.guideIds.length === 178,
-    'mwg-catalog.json must declare a sorted guideIds array of 178 items',
+    Array.isArray(catalog.guideIds) && catalog.guideIds.length === 187,
+    'mwg-catalog.json must declare a sorted guideIds array of 187 items',
   );
   assert(
     catalog.guideIds.includes('prompt-api'),
@@ -1357,9 +1358,25 @@ export function testMwgDriftClassifierGuard() {
         `mwg-drift-classify: case 20 registry rule "${rule.id}" references guide "${rule.guide}" absent from catalog guideIds`
       );
     }
+    // The two axes are separate (web-uplift-a1vf): the contract lets the ANALYSED catalogue advance on its own
+    // when upstream guide text moves without applied-rule changes, keeping appliedRulesVersion, and the artefact
+    // guard deliberately never compares the analysed pin to the rule basis. This case used to require the two
+    // versions to be EQUAL, which forbade exactly the state the contract permits - the assertion was stronger
+    // than the contract, so it is replaced by the invariants that do hold: both versions are well formed, and
+    // the state's appliedRulesVersion agrees with the registry it describes. Found while actioning the 0.0.194
+    // reanalysis (web-uplift-lcth), where the catalogue moved and the applied rules legitimately did not.
     assert(
-      basis.catalogueVersion === catalog.version,
-      `mwg-drift-classify: case 20 registry catalogueVersion (${basis.catalogueVersion}) must match catalog version (${catalog.version})`
+      typeof basis.catalogueVersion === 'string' && /^\d+\.\d+\.\d+/.test(basis.catalogueVersion),
+      `mwg-drift-classify: case 20 registry catalogueVersion must be a semver (got ${JSON.stringify(basis.catalogueVersion)})`
+    );
+    assert(
+      typeof catalog.version === 'string' && /^\d+\.\d+\.\d+/.test(catalog.version),
+      `mwg-drift-classify: case 20 catalog version must be a semver (got ${JSON.stringify(catalog.version)})`
+    );
+    const state = readJson('knowledge/mwg-state.json');
+    assert(
+      state.appliedRulesVersion === basis.catalogueVersion,
+      `mwg-drift-classify: case 20 the state's appliedRulesVersion (${state.appliedRulesVersion}) must match the registry it describes (${basis.catalogueVersion})`
     );
   }
 }

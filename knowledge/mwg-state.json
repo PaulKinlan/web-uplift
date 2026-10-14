@@ -1,16 +1,16 @@
 {
   "$comment": "Tracks the Modern Web Guidance catalog drift state for web-uplift. tests/mwg-drift-check.mjs maintains the lastCheck* fields across recurring upstream checks. analysedVersion and analysedAt describe the last full reanalysis and must move together with knowledge/mwg-catalog.json version and retrievedAt. Downstream mwg-train artefact fields (artifactId, catalogSha256, canonicalisation, appliedRulesVersion) define the versioned artefact contract (see docs/mwg-train-consumer-contract.md).",
   "artifactId": "web-uplift/mwg-catalog",
-  "catalogSha256": "86a4785a32f68ddbb682142f8d12c9342274e29d53809b4cd63ab80c51cbcff1",
+  "catalogSha256": "cfefb049f9d1ef347be0a8f526b47634849ee143421a4b469b120b2311ecb59d",
   "canonicalisation": "json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation; non-ASCII characters are emitted as literal UTF-8, never as \\uXXXX escapes (a serialiser that escapes them computes a different digest for the same catalog - the committed catalog contains U+2014; web-uplift-rxbh)",
-  "analysedVersion": "0.0.193",
+  "analysedVersion": "0.0.194",
   "appliedRulesVersion": "0.0.193",
-  "analysedAt": "2026-10-08T14:19:37.712Z",
+  "analysedAt": "2026-10-14T02:21:05.048Z",
   "lastCheckAt": "2026-10-14T01:01:14.760Z",
   "lastCheckUpstreamVersion": "0.0.194",
   "lastCheckSource": "https://registry.npmjs.org/modern-web-guidance/latest",
   "lastCheckResult": "delta",
-  "guideIdsSha256": "bc041692e3d9631a997427252ce2e54d8a5a0dd7e28387b4dcae6a4b9d3d5ab2",
-  "guideCount": 178,
+  "guideIdsSha256": "f17c59bfcd725643bbc58dcc66da50ab615bf4b2e42d72d58e8435e82b15f902",
+  "guideCount": 187,
   "ruleBasisSha256": "19434e44927e2afdd2bac4bcfad8d0c7a37e408f271e71f03b4c7423b3324992"
 }

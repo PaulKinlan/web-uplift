@@ -155,7 +155,7 @@
       "usedFor": "Optional memory-leak workflow for heap snapshots, baseline/target/final comparison, memlab analysis, and common leak-pattern diagnosis when an agent has Chrome DevTools MCP available."
     }
   ],
-  "guidanceCatalogVersion": "modern-web-guidance@0.0.193",
+  "guidanceCatalogVersion": "modern-web-guidance@0.0.194",
   "baselineCatalogVersion": "web-features@3.40.0",
   "appliesAnalysis": "docs/principles-analysis.md",
   "applicabilityModel": {

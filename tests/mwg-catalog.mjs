@@ -45,6 +45,11 @@ const DEFAULT_EXISTING = join(repoRoot, 'knowledge', 'mwg-catalog.json');
 // The guidance package's table entry point, relative to the unpacked package root.
 const ENTRY_RELATIVE = join('skills', 'modern-web-guidance', 'modern-web.mjs');
 const GUIDES_RELATIVE = join('skills', 'modern-web-guidance', 'guides');
+// Upstream 0.0.194 stopped shipping the table inline and now declares `var USE_CASES = loadUseCases()`,
+// where the loader reads exactly this file. It is JSON, so the same data is still available as pure DATA: no
+// evaluator and no JS parser are needed to read it, which makes this source strictly safer than parsing a
+// literal out of a module (web-uplift-lcth).
+const GUIDES_JSON_RELATIVE = join('skills', 'modern-web-guidance', 'guides.json');
 
 export class CatalogRefusal extends Error {}
 
@@ -247,6 +252,26 @@ function readLiteralAt(text, start) {
 
 // Parse a table text that must be exactly one literal, nothing after it but whitespace and
 // comments. Returns the parsed array.
+// Choose where the use-case table comes from, preferring pure data over a JS module. A package that ships
+// guides.json is read with JSON.parse; one that only ships an inline literal (every release up to and including
+// 0.0.193) still goes through the data-only literal reader below. Neither path evaluates anything.
+export function readUseCasesSource({ entryPath, guidesJsonPath }) {
+  if (existsSync(guidesJsonPath)) {
+    let parsed;
+    try {
+      parsed = JSON.parse(readFileSync(guidesJsonPath, 'utf8'));
+    } catch (error) {
+      throw new CatalogRefusal(`the package ships ${guidesJsonPath} but it is not readable JSON: ${error.message}`);
+    }
+    if (!Array.isArray(parsed)) {
+      throw new CatalogRefusal(`the package's guides.json is not an array of use cases`);
+    }
+    return { useCases: parsed, source: 'guides.json' };
+  }
+  const { value } = readUseCases(readFileSync(entryPath, 'utf8'));
+  return { useCases: value, source: 'modern-web.mjs USE_CASES literal' };
+}
+
 export function parseUseCasesTable(table) {
   const { value, end } = readLiteralAt(table, 0);
   if (table.slice(end) !== '') {
@@ -286,7 +311,7 @@ export function buildCatalog({ packageDir, version, existing = null, now = () =>
   if (!existsSync(entryPath)) {
     throw new CatalogRefusal(`no package entry point at ${entryPath} (is --package-dir an unpacked modern-web-guidance tarball?)`);
   }
-  const useCases = readUseCases(readFileSync(entryPath, 'utf8')).value;
+  const { useCases } = readUseCasesSource({ entryPath, guidesJsonPath: join(root, GUIDES_JSON_RELATIVE) });
 
   const guidesDir = join(root, GUIDES_RELATIVE);
   if (!existsSync(guidesDir)) throw new CatalogRefusal(`no guides directory at ${guidesDir}`);
