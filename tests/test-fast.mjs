@@ -1220,6 +1220,7 @@ function runAll() {
   testH68zAutoMappedExecutableIsRefusedAndRunsTheControls();
   testSelectionManifestRefusesToCertifyIncompleteRuns();
   testSelectionManifestTreeAndPathFidelity();
+  testSkippedTargetNeverCertifies();
   testOmittedRulesAreNamedAndNarrow();
   testRefusalIsActionableAndDocumented();
   testSuiteExecutionMarkers();
@@ -1381,4 +1382,36 @@ function testSelectionManifestTreeAndPathFidelity() {
     rmSync(temp, { recursive: true, force: true });
   }
   console.log('\u2714 the manifest names the tree, the merge-base and untracked paths exactly');
+}
+
+// A target whose path does not exist is reported by runTarget as ok:true with skipped:true, so that a renamed or
+// deleted suite cannot crash the gate. The certifying rule used to test only !entry.ok, which meant such a target
+// certified the tree and the '(skipped)' note in its message was dead code (web-uplift-um6b). That is the same
+// gap this manifest exists to close, one level down: a run that looks complete while part of its own selection
+// was never executed. The second half of this case is the control that keeps the first half honest - it asserts
+// the same manifest WITHOUT the skip does not raise that reason, so the case cannot pass merely because
+// certifiable happens to be false for some unrelated precondition.
+function testSkippedTargetNeverCertifies() {
+  const plan = {
+    targets: [{ type: 'node', path: 'tests/missing.test.mjs', label: 'Missing test' }],
+    unmappedFiles: [], omittedFiles: [], refusedFiles: [], autoMappedFiles: [],
+  };
+  const args = {
+    plan,
+    changed: { files: ['foo.js'], uncommitted: [] },
+    mode: 'execute',
+    head: 'a'.repeat(40),
+    tree: 'b'.repeat(40),
+  };
+  const skipped = buildSelectionManifest({ ...args, executed: [{ label: 'Missing test', path: 'tests/missing.test.mjs', ok: true, skipped: true }] });
+  assert.equal(skipped.certifiable, false, 'a target that was skipped must not certify the tree');
+  assert(
+    skipped.nonCertifyingReasons.some((r) => /SKIPPED/.test(r)),
+    `the reason must name the skip rather than being non-empty for some other cause: ${JSON.stringify(skipped.nonCertifyingReasons)}`,
+  );
+  const ran = buildSelectionManifest({ ...args, executed: [{ label: 'Missing test', path: 'tests/missing.test.mjs', ok: true, skipped: false }] });
+  assert(
+    !ran.nonCertifyingReasons.some((r) => /SKIPPED/.test(r)),
+    `a target that ran must not be reported as skipped: ${JSON.stringify(ran.nonCertifyingReasons)}`,
+  );
 }
