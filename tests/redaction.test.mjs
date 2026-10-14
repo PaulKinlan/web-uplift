@@ -45,6 +45,7 @@ import {
 } from '../evidence/cli.mjs';
 import { testLogUrlRedaction } from './log-redaction.mjs';
 import {
+  testFragmentRedactionKeepsSiblingParamsByteIdentical,
   testCompoundCredentialSpellingsAreClassified,
   testCredentialRedactorsAgree,
   testPassphraseAndPasskeyAreCredentialsAndPassengerIsNot,
@@ -834,6 +835,7 @@ export async function testDomSourceArtifactIsRedacted() {
 
 
 export const redactionTests = [
+  testFragmentRedactionKeepsSiblingParamsByteIdentical,
   testPassphraseAndPasskeyAreCredentialsAndPassengerIsNot,
   testCompoundCredentialSpellingsAreClassified,
   testRedactHeaderList,

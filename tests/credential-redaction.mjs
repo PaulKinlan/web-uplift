@@ -1326,3 +1326,52 @@ export async function testPassphraseAndPasskeyAreCredentialsAndPassengerIsNot() 
 
   console.log('✔ passphrase/passkey are credentials and the words containing pass stay ordinary');
 }
+
+// web-uplift-hjm9: the fragment redactor must rewrite ONLY the credential parameters. A fragment is not
+// form-encoded - '+' is a literal plus - so re-serialising it through URLSearchParams silently CHANGED the
+// values of its siblings ('a=1%20b' became 'a=1+b') while the function's own comment promised every other part
+// of the fragment was kept exactly as it was. This case asserts byte-identity for the siblings rather than a
+// property that would survive the rewrite, and it checks the ordinary anchors are still untouched.
+export async function testFragmentRedactionKeepsSiblingParamsByteIdentical() {
+  console.log('Testing that fragment redaction rewrites only credential parameters (P3, web-uplift-hjm9)...');
+  const cli = await import('../evidence/cli.mjs');
+  const flow = await import('../runner/flow-record.mjs');
+
+  // POSITIVE FIRST: the credential value itself must still be gone.
+  const secret = 'SECRET-VALUE-1234';
+  for (const [label, redact] of [['cli', cli.redactUrlCredentialValues], ['flow', flow.sanitizeNavUrl]]) {
+    const out = redact(`https://x.test/p#a=1%20b&token=${secret}&c=2`);
+    assert(!out.includes(secret), `the ${label} redactor must redact a credential fragment parameter (got: ${out})`);
+    assert(REDACTED.test(out), `the ${label} redactor must mark it as redacted (got: ${out})`);
+  }
+
+  // BYTE-IDENTITY for every sibling, on both redactors. Each entry is a fragment whose non-credential parts must
+  // come back exactly as written: %20 in a value, a literal '+', a lowercase escape, a valueless flag, a
+  // repeated ordinary parameter, and an encoded key that is NOT a credential name.
+  const fragments = [
+    'a=1%20b&token=SECRET&c=2',
+    'q=hello%20world&access_token=SECRET&z=%2Fslash',
+    'flag&token=SECRET&plus=a+b',
+    'lower=%2fpath&auth=SECRET&upper=%2Fpath',
+    'a=1&a=2&token=SECRET',
+    'enc%20oded=1&password=SECRET',
+  ];
+  const siblingsOf = (fragment) => fragment.split('&').filter((part) => {
+    const eq = part.indexOf('=');
+    return eq <= 0 || !['token', 'access_token', 'auth', 'password'].includes(part.slice(0, eq));
+  });
+  for (const fragment of fragments) {
+    const url = `https://x.test/p#${fragment}`;
+    const out = cli.redactUrlCredentialValues(url);
+    for (const sibling of siblingsOf(fragment)) {
+      assert(out.includes(sibling), `the sibling parameter "${sibling}" must survive byte-for-byte (got: ${out} for #${fragment})`);
+    }
+  }
+
+  // Ordinary anchors carry no '=' and must be returned untouched, as the function's own comment promises.
+  for (const anchor of ['https://x.test/p#section-2', 'https://x.test/p#/route/deep', 'https://x.test/p#a']) {
+    assert(cli.redactUrlCredentialValues(anchor) === anchor, `an ordinary anchor must survive untouched: ${anchor}`);
+  }
+
+  console.log('✔ fragment redaction rewrites only credential parameters; siblings stay byte-identical');
+}

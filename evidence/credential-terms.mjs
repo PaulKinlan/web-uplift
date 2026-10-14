@@ -460,17 +460,42 @@ function sweepUnparseableUserinfo(raw) {
 // copy is how the two paths come to disagree about what a credential is (web-uplift-lsn3). A
 // fragment is not always a parameter string - '#section-2' and '#/route' contain no '=' and are
 // returned untouched, so this cannot rewrite an ordinary anchor.
+const REDACTED_VALUE_ENCODED = '%5Bredacted%5D';
+
+// A fragment key is percent-encoded, but NOT form-encoded: '+' is a literal plus here, so the key is decoded
+// with decodeURIComponent and never with URLSearchParams. A malformed escape is not a reason to hand the value
+// over, so the raw text is classified as-is when decoding fails.
+function decodeFragmentKey(raw) {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 function redactFragmentCredentialParams(fragment) {
   if (!fragment.includes('=')) return { fragment, hit: false };
-  const params = new URLSearchParams(fragment);
+  // SIBLING PARAMETERS ARE COPIED BYTE-FOR-BYTE (web-uplift-hjm9). This used to run the whole fragment through
+  // URLSearchParams and re-serialise it, which rewrote every sibling: 'a=1%20b' came back as 'a=1+b', and that
+  // is not cosmetic - in a fragment '+' is a literal plus, not a space, so the value actually changed while the
+  // comment above promised it would be kept exactly as it was. The surgery below rebuilds only the parameters
+  // whose NAME is credential-shaped and copies every other byte verbatim, including escapes it would otherwise
+  // normalise ('%2f' stays lowercase).
+  //
+  // It also redacts EVERY occurrence of a repeated credential parameter, where the old code replaced one and
+  // left the rest (URLSearchParams.set rewrites the first match only).
+  const parts = fragment.split('&');
   let hit = false;
-  for (const [k, v] of [...params.entries()]) {
-    if (v && isCredentialName(k)) {
-      params.set(k, REDACTED_VALUE);
-      hit = true;
-    }
-  }
-  return hit ? { fragment: params.toString(), hit: true } : { fragment, hit: false };
+  const out = parts.map((part) => {
+    const eq = part.indexOf('=');
+    if (eq <= 0) return part;
+    const rawName = part.slice(0, eq);
+    if (!part.slice(eq + 1)) return part;
+    if (!isCredentialName(decodeFragmentKey(rawName))) return part;
+    hit = true;
+    return `${rawName}=${REDACTED_VALUE_ENCODED}`;
+  });
+  return hit ? { fragment: out.join('&'), hit: true } : { fragment, hit: false };
 }
 
 // Redact the VALUES of credential-named query parameters in a URL; keep the names and
