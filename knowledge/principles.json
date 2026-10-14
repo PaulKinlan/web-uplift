@@ -13,7 +13,7 @@
       "id": "modern-web-guidance",
       "type": "catalog",
       "title": "Modern Web Guidance",
-      "version": "modern-web-guidance@0.0.193",
+      "version": "modern-web-guidance@0.0.194",
       "usedFor": "Guide mappings and implementation guidance across the principle checks."
     },
     {
@@ -244,7 +244,7 @@
         },
         {
           "id": "physical-gestures",
-          "summary": "Gesture-driven interactions and entry/exit motion feel native (declarative overscroll/scroll-snap, physics-based easing, animating to intrinsic sizes, pull/swipe gestures) rather than fighting the platform with custom pointer handlers.",
+          "summary": "Gesture-driven interactions and entry/exit motion feel native (declarative overscroll/scroll-snap, physics-based easing, animating to intrinsic sizes, pull/swipe gestures) rather than fighting the platform with custom pointer handlers. A swipe-to-reveal pane is a scroll-snap container rather than a JavaScript pointer interceptor.",
           "detectableVia": "HINT: CSS inspection for scroll-snap / overscroll-behavior / physics-based easing vs custom pointermove listeners; note top-layer animations in Firefox 129+ require a runtime probe element as CSS.supports('transition-behavior', 'allow-discrete') alone is insufficient. The model chooses.",
           "guides": [
             "physics-based-easing",
@@ -257,6 +257,7 @@
             "pull-to-reveal",
             "swipe-to-remove",
             "drag",
+            "swipe-to-reveal",
             "natural gesture interaction scroll snap overscroll"
           ]
         }
@@ -292,13 +293,14 @@
         },
         {
           "id": "anchored-positioning",
-          "summary": "Tooltips, popovers and menus use CSS anchor positioning (with fallback positions) so they stay attached and reposition correctly rather than being manually positioned.",
+          "summary": "Tooltips, popovers and menus use CSS anchor positioning (with fallback positions) so they stay attached and reposition correctly rather than being manually positioned. Interest invokers with a hint popover drive hovercards so hover and focus behave the same.",
           "detectableVia": "HINT: `features` finds anchor-name / position-anchor / position-try / position-try-fallbacks on the live CSSOM; a screenshot of an open overlay near a viewport edge can show drift. The model chooses.",
           "guides": [
             "anchor-positioning-tab-underline",
             "position-aware-tooltips",
             "interest-triggered-tooltips",
             "interest-triggered-action-previews",
+            "hovercard",
             "anchor positioning tooltip popover position-try"
           ]
         },
@@ -342,7 +344,7 @@
         },
         {
           "id": "semantic-dismissible-primitives",
-          "summary": "Overlays and rich controls use the right primitive: popover (with declarative light-dismiss) for transient UI, dialog for modal flows, details for disclosure, native-but-branded selects and pickers, rather than ad-hoc divs. Popover polyfills are loaded conditionally only when 'popover' in HTMLElement.prototype is absent; CommandEvent is feature-detected with manual ARIA state synchronization.",
+          "summary": "Overlays and rich controls use the right primitive: popover (with declarative light-dismiss) for transient UI, dialog for modal flows, details for disclosure, native-but-branded selects and pickers, rather than ad-hoc divs. Popover polyfills are loaded conditionally only when 'popover' in HTMLElement.prototype is absent; CommandEvent is feature-detected with manual ARIA state synchronization. An open modal contains its own scrolling rather than locking the root document.",
           "detectableVia": "HINT: `features` censuses native dialog / [popover] / details against role=dialog, aria-modal and high z-index divs, and `a11ytree` plus `axe` show whether the overlay is actually exposed to assistive technology. The model chooses.",
           "guides": [
             "declarative-dialog-popover-control",
@@ -351,6 +353,7 @@
             "brand-consistent-forms",
             "custom-select-picker-layouts",
             "rich-media-picker",
+            "prevent-page-scroll-under-modal-dialog",
             "popover dialog light dismiss semantic overlay"
           ]
         },
@@ -510,7 +513,7 @@
         },
         {
           "id": "efficient-main-thread",
-          "summary": "The main thread is not blocked by long tasks or heavy scripting; work is deferred, chunked, prioritised, or moved off-thread.",
+          "summary": "The main thread is not blocked by long tasks or heavy scripting; work is deferred, chunked, prioritised, or moved off-thread. Post-scroll effects wait on the promise the scroll method returns rather than a guessed timeout.",
           "detectableVia": "HINT: the layout primitive records long tasks; a heap summary shows the object population; Lighthouse reports TBT. The model chooses.",
           "guides": [
             "break-up-long-tasks",
@@ -519,6 +522,7 @@
             "defer-rendering-heavy-content",
             "defer-work-until-scroll-ends",
             "cpp-on-the-web",
+            "scroll-completion-effects",
             "reduce main thread work long tasks total blocking time"
           ]
         },
@@ -564,13 +568,16 @@
       "checks": [
         {
           "id": "names-roles-labels",
-          "summary": "Interactive elements have accessible names, correct roles, and form fields have labels; images have alt text where meaningful; CSS generated content and canvas/expressive content are exposed to assistive technology; toggle controls manage aria-pressed/aria-expanded.",
+          "summary": "Interactive elements have accessible names, correct roles, and form fields have labels; images have alt text where meaningful; CSS generated content and canvas/expressive content are exposed to assistive technology; toggle controls manage aria-pressed/aria-expanded. Native form controls are used with their label association and state (checkbox, switch, range input) rather than divs styled to look like them.",
           "detectableVia": "HINT: the `a11ytree` primitive is the first-party source - the COMPUTED role and accessible name, so an aria-label overridden by aria-labelledby or a name from title is visible - with the `axe` primitive enumerating violations (vendored axe-core, works under strict CSP). Lighthouse's a11y audits corroborate; a DOM-attribute probe is the weakest form of this evidence. The model chooses.",
           "guides": [
             "accessibility",
             "expose-canvas-content-to-browser-features",
             "accessible-generated-content",
             "accessible-web-components",
+            "checkbox",
+            "switch",
+            "slider",
             "accessible name label role form field aria"
           ]
         },
@@ -767,6 +774,22 @@
             "trusted-types",
             "validate-origins",
             "hsts clickjacking frame-ancestors trusted types origin isolation referrer policy permissions policy third-party cookies"
+          ]
+        },
+        {
+          "id": "encrypt-in-the-browser",
+          "summary": "Confidential payloads encrypted in the browser use the Web Cryptography API (crypto.subtle) with an AEAD algorithm ('ChaCha20-Poly1305' or 'AES-GCM') and a fresh, cryptographically random 12-byte (96-bit) initialization vector for every encryption operation - never a reused (iv, key) pair - with shared secrets established by a key encapsulation mechanism or classical key agreement rather than a static shared key.",
+          "detectableVia": "HINT: script evaluation can wrap crypto.subtle.encrypt/generateKey/encapsulateKey to record the algorithm names, the IV length, and whether an IV repeats across calls, because key/IV reuse is the failure this guard exists for and it is invisible in the UI. The model chooses.",
+          "guides": [
+            "client-side-encryption"
+          ]
+        },
+        {
+          "id": "sign-and-verify-in-the-browser",
+          "summary": "Data signed or verified in the browser uses the Web Cryptography API (crypto.subtle) with an asymmetric algorithm - post-quantum ML-DSA ('ML-DSA-65', 'ML-DSA-44', 'ML-DSA-87') or classical ('Ed25519', 'ECDSA') - with explicit key formats ('raw-public', 'raw-seed', 'spki', 'pkcs8', 'jwk') and a domain-separation context of at most 255 bytes, so integrity and signer authenticity are verified rather than assumed.",
+          "detectableVia": "HINT: script evaluation can wrap crypto.subtle.sign/verify/importKey/exportKey to record the algorithm name, the key format, and the context length, since a context over 255 bytes rejects with an OperationError rather than failing silently. The model chooses.",
+          "guides": [
+            "digital-signatures"
           ]
         }
       ]

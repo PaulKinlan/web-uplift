@@ -4,7 +4,7 @@
   "catalogSha256": "cfefb049f9d1ef347be0a8f526b47634849ee143421a4b469b120b2311ecb59d",
   "canonicalisation": "json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation; non-ASCII characters are emitted as literal UTF-8, never as \\uXXXX escapes (a serialiser that escapes them computes a different digest for the same catalog - the committed catalog contains U+2014; web-uplift-rxbh)",
   "analysedVersion": "0.0.194",
-  "appliedRulesVersion": "0.0.193",
+  "appliedRulesVersion": "0.0.194",
   "analysedAt": "2026-10-14T02:21:05.048Z",
   "lastCheckAt": "2026-10-14T01:01:14.760Z",
   "lastCheckUpstreamVersion": "0.0.194",
@@ -12,5 +12,5 @@
   "lastCheckResult": "delta",
   "guideIdsSha256": "f17c59bfcd725643bbc58dcc66da50ab615bf4b2e42d72d58e8435e82b15f902",
   "guideCount": 187,
-  "ruleBasisSha256": "19434e44927e2afdd2bac4bcfad8d0c7a37e408f271e71f03b4c7423b3324992"
+  "ruleBasisSha256": "11a0f2ee435c3add5890b6c44a6087ce64324eaba526a42f7b5c07f5f9c49cf5"
 }

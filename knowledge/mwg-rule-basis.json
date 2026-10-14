@@ -1,6 +1,6 @@
 {
   "$comment": "Registry of verbatim textual anchors from Modern Web Guidance guides backing implemented principles.json checks and regression assertions. Used by tests/mwg-drift-classify.mjs to detect upstream reversals.",
-  "catalogueVersion": "0.0.193",
+  "catalogueVersion": "0.0.194",
   "rules": [
     {
       "id": "secure-transport-and-headers-csp",
