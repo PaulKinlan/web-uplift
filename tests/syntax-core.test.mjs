@@ -2065,6 +2065,7 @@ export function testSuiteListsMatchRegressionRegistry() {
       'testFlowPierceShadowRootBrowser',
     ],
     'tests/syntax-core.test.mjs': [
+      'testListPathFlushesItsWholeOutput',
       'testSyntaxChecks', 'testCensusDeclaredPopulationNamesATrackedFileItCannotReach', 'testWalkTraversesASymlinkedDirectoryAndBoundsACycle', 'testPackageRootImportIsSideEffectFree',
       'testIconSatisfiesMatrix', 'testFirstPartyHostMatrix', 'testPageDerivedFetchGuard', 'testSafeFetchRedirectAndSizeGuard',
       'testSafeFetchDnsRebindingGuard', 'testSafeFetchContentDecoding', 'testSchemaValidation', 'testAtomicCoverageValidator',
@@ -2213,6 +2214,7 @@ export function testWalkTraversesASymlinkedDirectoryAndBoundsACycle() {
 }
 
 export const syntaxCoreTests = [
+  testListPathFlushesItsWholeOutput,
   testHarnessScratchSkipsCannotHideTrackedModules,
   testSyntaxChecks,
   testCensusDeclaredPopulationNamesATrackedFileItCannotReach,
@@ -2296,4 +2298,69 @@ function testHarnessScratchSkipsCannotHideTrackedModules() {
   const trackedHere = DECLARED_TRACKED_MODULES.filter((f) => SKIP_DIR_PREFIXES.some((prefix) => f.split('/').some((part) => part.startsWith(prefix))));
   assert(trackedHere.length === 0, `a tracked module whose path matches a scratch prefix would be invisible to the walk: ${trackedHere.join(', ')}`);
   console.log('\u2714 the harness scratch skip list is narrow and cannot hide a tracked module');
+}
+
+// process.exit() after console.log() does not flush ASYNCHRONOUS stdout, and a pipe is asynchronous: a long
+// --list output could therefore lose its tail while the child still exited 0 with nothing on stderr. That is how
+// the registry's aggregate intermittently lost the cases of the LAST suites in sorted order (web-uplift-ecif),
+// which is the same shape as web-uplift-k81u's 178-of-194 on a clean tree.
+//
+// This case is deterministic rather than a rerun lottery: the fixture lists more names than a pipe buffer holds,
+// so an exit-after-write MUST truncate it. Before the fix the last name is reliably absent and after it reliably
+// present, and the first-name assertion keeps the case from passing merely because nothing was printed.
+function testListPathFlushesItsWholeOutput() {
+  const dir = mkdtempSync(join(tmpdir(), 'ecif-flush-'));
+  const fixture = join(dir, 'list-fixture.mjs');
+  // About 156 KB of names: more than a pipe buffer holds, so an exit-after-write cannot have already handed the
+  // whole list to the kernel, and the tail is guaranteed to still be queued in the child when it exits.
+  const NAMES = 12000;
+  const last = `testFlushFixture${String(NAMES - 1).padStart(5, '0')}`;
+  writeFileSync(fixture, [
+    `import { runSuite } from ${JSON.stringify(join(repoRoot, 'tests', 'test-helpers.mjs'))};`,
+    'const cases = [];',
+    `for (let i = 0; i < ${NAMES}; i += 1) {`,
+    '  const fn = function () {};',
+    "  Object.defineProperty(fn, 'name', { value: `testFlushFixture${String(i).padStart(5, '0')}` });",
+    '  cases.push(fn);',
+    '}',
+    'await runSuite(cases, import.meta.url, {});',
+    '',
+  ].join('\n'));
+  return new Promise((resolvePromise, rejectPromise) => {
+    // No env override: this case is about stdout flushing and must not depend on another change's helpers, so it
+    // inherits the environment the way a caller of the harness would.
+    const child = spawn(process.execPath, [fixture, '--list'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const chunks = [];
+    let stderr = '';
+    child.stderr.on('data', (c) => { stderr += c; });
+    // The stream is deliberately NOT read until after the child has had time to finish. An unread pipe is what
+    // makes the child's stdout writes queue in its own memory instead of reaching the kernel, and process.exit()
+    // then discards them rather than draining - which is the mechanism, forced here instead of waited for. With
+    // the fix the child simply waits for this reader, so the same delay costs nothing but time.
+    setTimeout(() => {
+      child.stdout.on('data', (c) => chunks.push(c));
+      child.stdout.on('end', () => {});
+      child.stdout.resume();
+    }, 400);
+    child.on('error', rejectPromise);
+    child.on('close', (code) => {
+      try {
+        const names = chunks.join('').split('\n').map((line) => line.trim()).filter(Boolean);
+        assert.equal(code, 0, `the fixture must exit 0: ${stderr}`);
+        assert(names.length > 0, 'the fixture printed nothing at all, so this case would prove nothing');
+        assert.equal(names[0], 'testFlushFixture00000', 'the FIRST name must arrive');
+        assert.equal(
+          names.length,
+          NAMES,
+          `every name must arrive: got ${names.length} of ${NAMES}, so the tail was dropped after a successful exit`,
+        );
+        assert.equal(names[names.length - 1], last, `the LAST name must survive the pipe (expected ${last})`);
+        resolvePromise();
+      } catch (error) {
+        rejectPromise(error);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
 }
