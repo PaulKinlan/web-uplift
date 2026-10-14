@@ -721,6 +721,19 @@ export async function testCredentialRedactorsAgree() {
   assertThrows(() => authorityBoundRegexesIn('const re = new RegExp(`[^${din}]`);'),
     'an interpolated template pattern must fail loudly');
 
+  // The OTHER direction of the same rule (web-uplift-rou1). An ODD number of backslashes escapes the '$', so
+  // '${' in that template is STATIC text rather than an interpolation: it must NOT be refused. Without this
+  // control the two assertions above are satisfiable for the wrong reason - a scan that ignores backslash
+  // parity entirely (returning true for every '${') throws in both of them and passes green, which is exactly
+  // how the one-directional hole was found. The source below is the twin of the escaped-backslash control
+  // above with ONE backslash-pair fewer, so the two differ in parity alone.
+  {
+    const staticFindings = authorityBoundRegexesIn('const c = "\\x2f\\x3f\\x23"; const re = new RegExp(`[^\\${c}]`);');
+    assert(staticFindings.length === 0,
+      `a template whose ${'\${'} is escaped by an odd number of backslashes is STATIC text, so it contributes no `
+      + `authority-bound finding and must not be refused; got ${JSON.stringify(staticFindings)}`);
+  }
+
   // 1. Every credential-shaped parameter the two review findings named must be
   // redacted by BOTH redactors, and neither may leave the value behind.
   const credentialParams = [
