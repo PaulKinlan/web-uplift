@@ -58,6 +58,7 @@ import {
   importingSuitesOf,
   UNWIRED_SHARED_MODULES,
   repoRoot,
+  executionSummary,
   buildSelectionManifest,
 } from '../scripts/test-fast.mjs';
 import { parseFilterArgs, gitEnv } from './test-helpers.mjs';
@@ -1225,6 +1226,7 @@ function runAll() {
   testRefusalIsActionableAndDocumented();
   testSuiteExecutionMarkers();
   testSharedModulesAreWiredOrRefused();
+  testSkippedTargetNeverHidesBehindTheSummaryLine();
   console.log('\nAll fast gate unit and integration tests passed successfully.');
 }
 
@@ -1413,5 +1415,48 @@ function testSkippedTargetNeverCertifies() {
   assert(
     !ran.nonCertifyingReasons.some((r) => /SKIPPED/.test(r)),
     `a target that ran must not be reported as skipped: ${JSON.stringify(ran.nonCertifyingReasons)}`,
+  );
+}
+// The human half of the defect web-uplift-um6b fixed in the manifest: the machine-readable result became
+// non-certifying when a target was skipped, but the line a reviewer reads still said ALL n test target(s) PASSED,
+// because the exit path tested only res.ok while runTarget reports a missing target as ok:true with skipped:true
+// (web-uplift-h6dg). The second half keeps this honest: the same function must still report total success when
+// nothing was skipped, so the case cannot pass by refusing to congratulate anything.
+//
+// This case asserts the COUNTS, not the absence of a phrase (web-uplift-xgu0, found by rev-h6dg). The first cut
+// only excluded the old "ALL n ... PASSED" literal and checked that the word SKIPPED appeared, so a line reading
+// "2 of 2 test target(s) ran and passed ... but 1 was SKIPPED" - a target that both ran and passed and never ran -
+// satisfied every assertion. A control that cannot observe the failure it exists for is not a control.
+function testSkippedTargetNeverHidesBehindTheSummaryLine() {
+  const passed = [
+    { label: 'A', path: 'tests/a.test.mjs', ok: true, skipped: false },
+    { label: 'B', path: 'tests/b.test.mjs', ok: true, skipped: false },
+  ];
+  const healthy = executionSummary(passed, 2, '4.26');
+  assert(healthy.includes('ALL 2 test target(s) PASSED'), `a run with no skips must still report total success: ${healthy}`);
+  assert(!/SKIPPED/.test(healthy), `a run with no skips must not mention skips: ${healthy}`);
+
+  const withSkip = executionSummary(
+    [...passed, { label: 'Missing test', path: 'tests/missing.test.mjs', ok: true, skipped: true }],
+    3,
+    '4.26',
+  );
+  assert(!/ALL \d+ test target\(s\) PASSED/.test(withSkip), `a skipped target must not be reported as total success: ${withSkip}`);
+  assert(withSkip.includes('SKIPPED'), `the line must name the skip: ${withSkip}`);
+  assert(withSkip.includes('Missing test') && withSkip.includes('tests/missing.test.mjs'), `the line must name WHAT was skipped and where: ${withSkip}`);
+  assert(/NOT certifying/.test(withSkip), `the line must say the run does not certify: ${withSkip}`);
+  // The counts must add up: two of the three ran and passed, one did not run at all. Counting the skipped target
+  // among the ones that ran is the contradiction this case now fails on rather than merely tolerating.
+  assert(
+    withSkip.includes('2 of 3 test target(s) ran and passed'),
+    `the line must count only the targets that RAN: ${withSkip}`,
+  );
+  assert(
+    !withSkip.includes('3 of 3 test target(s) ran and passed'),
+    `the line must not count a skipped target as having run and passed: ${withSkip}`,
+  );
+  assert(
+    withSkip.includes('1 was SKIPPED'),
+    `the line must say how many were skipped: ${withSkip}`,
   );
 }

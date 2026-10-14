@@ -1001,6 +1001,26 @@ export function mapFilesToTests(filePaths, options = {}) {
 /**
  * Execute a single test target.
  */
+// The final line a HUMAN reads. Keeping it here rather than inline in main() is deliberate: the machine-readable
+// half of this (the manifest) is only consulted by tooling, so a reviewer reading the log needs the same truth,
+// and a string built inline in an exit path cannot be tested. A target that was SKIPPED never ran, so it is not
+// evidence and the line must not read as total success - which is what it used to say, because the exit path
+// tested only res.ok (web-uplift-h6dg).
+export function executionSummary(executed, total, duration) {
+  const skipped = executed.filter((entry) => entry.skipped);
+  const timing = duration ? ` in ${duration}s` : '';
+  if (skipped.length === 0) {
+    return `\n✔ [test:fast] ALL ${total} test target(s) PASSED${timing}.`;
+  }
+  const named = skipped.map((entry) => `${entry.label} (${entry.path || entry.filter || 'its target'} does not exist)`).join(', ');
+  // Count only the targets that RAN. executed.length includes the skipped ones, so using it here made the same
+  // sentence claim both that a target ran and passed and that it was skipped - a contradiction a reader could
+  // see, and one the control did not catch because it asserted the absence of a phrase rather than the counts
+  // (web-uplift-xgu0).
+  const ranAndPassed = executed.length - skipped.length;
+  return `\n⚠ [test:fast] ${ranAndPassed} of ${total} test target(s) ran and passed${timing}, but ${skipped.length} was SKIPPED: ${named} - this run is NOT certifying, because a target that never ran is not evidence.`;
+}
+
 export function runTarget(target, repo = repoRoot) {
   let cmd;
   let args;
@@ -1156,11 +1176,15 @@ Usage:
       targets.forEach((t) => console.log(`  - ${t.label}`));
       process.exit(0);
     }
+    const ranHere = [];
     for (const target of targets) {
       const res = runTarget(target);
+      // Record the result rather than discarding it: without this the line below could not tell a skipped target
+      // from a passing one, which is exactly how it came to claim total success for a target that never ran.
+      ranHere.push({ label: target.label, path: target.path, filter: target.filter, ok: res.ok, skipped: Boolean(res.skipped) });
       if (!res.ok) process.exit(res.status || 1);
     }
-    console.log(`\n✔ [test:fast] ALL ${targets.length} test targets PASSED.`);
+    console.log(executionSummary(ranHere, targets.length));
     process.exit(0);
   }
 
@@ -1344,7 +1368,7 @@ Usage:
   }
 
   const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
-  console.log(`\n✔ [test:fast] ALL ${plan.targets.length} test target(s) PASSED in ${totalDuration}s.`);
+  console.log(executionSummary(executed, plan.targets.length, totalDuration));
   emitManifest('execute', executed);
   process.exit(0);
 }
