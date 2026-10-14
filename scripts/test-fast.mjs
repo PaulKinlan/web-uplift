@@ -19,10 +19,10 @@
  *   CHECK_FAST_TIMEOUT=300
  */
 
-import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const repoRoot = resolve(__dirname, '..');
@@ -702,6 +702,138 @@ export function printAutoMappings(plan, log = console.log) {
 }
 
 /**
+ * The exact committed tree this run observed, or null when there is none (a non-git tree, or no commits).
+ * A cached verdict is keyed to a TREE, so a run that cannot name one cannot certify anything.
+ */
+export function readHeadTree(repo = repoRoot) {
+  try {
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repo, encoding: 'utf8' }).trim();
+    return { head, tree };
+  } catch {
+    return { head: null, tree: null };
+  }
+}
+
+/**
+ * The suites that LITERALLY IMPORT a module: a static import specifier, a dynamic import() or a require().
+ * Deliberately narrower than importingSuitesOf, which over-approximates by matching any text reference, and the
+ * two directions of error are not symmetric (web-uplift-5jwc): a REFUSAL may name one consumer too many, because
+ * the cost is running the full gate, while a CERTIFICATION may not - a rule satisfiable only by avoiding every
+ * text reference would report "non-certifying" for essentially every diff, and a boolean that can never be true
+ * carries no information. A suite that LOADS the module is the evidence that it exercises it.
+ */
+export function importingSuiteSpecifiers(modulePath, repo = repoRoot) {
+  let entries;
+  try {
+    entries = readdirSync(join(repo, 'tests'));
+  } catch {
+    return [];
+  }
+  const specifierPattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"`]([^'"`\r\n]+)['"`]/g;
+  const suites = [];
+  for (const entry of [...entries].sort()) {
+    if (!entry.endsWith('.mjs')) continue;
+    const rel = `tests/${entry}`;
+    if (rel === modulePath || !isDirectRunnableTest(rel)) continue;
+    let source;
+    try {
+      source = readFileSync(join(repo, rel), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const match of source.matchAll(specifierPattern)) {
+      const spec = match[1];
+      if (!spec.startsWith('.') && !spec.startsWith('/')) continue;
+      const resolved = posix.normalize(spec.startsWith('/') ? posix.relative('/', spec) : posix.join(posix.dirname(rel), spec));
+      if (resolved === modulePath && !suites.includes(rel)) suites.push(rel);
+    }
+  }
+  return suites;
+}
+
+/**
+ * The single machine-readable selection/execution manifest (web-uplift-5jwc, per the ADR web-uplift-tdg4).
+ * A consumer of a fast verdict reads THIS rather than guessing a changed set from a branch diff or inferring
+ * coverage from suite names, and it certifies only when `certifiable` is true and `tree` matches its key.
+ *
+ * It is a pure function of its inputs - no git, no clock, no filesystem - so the contract controls below can
+ * exercise every branch of the certifying rule without a repository and without depending on machine state.
+ *
+ * `certifiable` is deliberately stricter than "the tests passed":
+ *   - only an EXECUTE run on a CLEAN working tree, whose changed set came from the diff and not from explicit
+ *     file arguments, can certify - a dirty run is iteration evidence, and tdg4 says so explicitly;
+ *   - every changed executable that a suite under tests/ IMPORTS must have that importing suite SELECTED here;
+ *     a mapped-but-underselected helper is the web-uplift-5y2w fixture, where a green verdict coexisted with
+ *     eight omitted consumers. Literal imports are used rather than the refusal path's text-reference scan,
+ *     because over-refusing is harmless for a refusal and useless for a certificate;
+ *   - unmapped, refused or omitted executable paths keep the run non-certifying even when the suites that did
+ *     run exited 0. That is the whole point: exit status is an execution observation, not coverage completeness.
+ */
+export function buildSelectionManifest({ plan, changed, mode, diffRef, head, tree, executed = [], explicitSelection = false }) {
+  const selected = plan.targets.map((target) => ({
+    kind: target.type,
+    label: target.label,
+    ...(target.path ? { path: target.path } : {}),
+    ...(target.filter ? { filter: target.filter } : {}),
+  }));
+  const selectedPaths = new Set(plan.targets.map((t) => t.path).filter(Boolean));
+  const noGitTree = !tree || !head;
+  const requiredConsumersMissing = [];
+  for (const path of changed.files || []) {
+    if (!hasCodeExtension(path) || noGitTree) continue;
+    for (const consumer of importingSuiteSpecifiers(path)) {
+      if (!selectedPaths.has(consumer)) {
+        requiredConsumersMissing.push({ path, consumer });
+      }
+    }
+  }
+  const uncommitted = changed.uncommitted || [];
+  const reasons = [];
+  if (noGitTree) reasons.push('no committed tree could be read (a non-git tree, or no commits): a verdict is keyed to a tree, so this run cannot certify one');
+  if (mode !== 'execute') reasons.push(`mode is ${mode}: only an execute run can certify`);
+  if (explicitSelection) reasons.push('the changed set came from explicit file arguments, not from the diff, so it is not a complete selection for the tree');
+  if (uncommitted.length > 0) {
+    reasons.push(`${uncommitted.length} path(s) are uncommitted (${uncommitted.map((u) => `${u.path} [${u.kind}]`).join(', ')}): the run observed the working tree, not the committed tree a cached verdict is keyed to`);
+  }
+  for (const f of plan.unmappedFiles) reasons.push(`changed executable ${f} maps to no suite, so no evidence exists for it`);
+  for (const f of plan.refusedFiles) reasons.push(`changed path ${f.path} needs the full gate, not a fast-tier subset`);
+  for (const { path, consumer } of requiredConsumersMissing) {
+    reasons.push(`${path} is named by ${consumer}, which this run did not select: a required consumer was omitted`);
+  }
+  for (const entry of executed) {
+    if (!entry.ok) reasons.push(`${entry.label} did not pass${entry.skipped ? ' (skipped)' : ''}`);
+  }
+  if (mode === 'execute' && executed.length < plan.targets.length) {
+    reasons.push(`only ${executed.length} of ${plan.targets.length} selected target(s) reported a status`);
+  }
+  return {
+    manifestVersion: 1,
+    producer: 'scripts/test-fast.mjs',
+    mode,
+    diffRef,
+    comparisonBase: changed.base || null,
+    comparisonRef: changed.resolvedRef || diffRef,
+    head: head || null,
+    tree: tree || null,
+    changed: changed.files || [],
+    uncommitted,
+    explicitSelection,
+    matchedSubsystems: plan.matchedSubsystems,
+    isBaseline: plan.isBaseline,
+    selected,
+    autoMapped: plan.autoMappedFiles,
+    omitted: plan.omittedFiles,
+    refused: plan.refusedFiles.map((f) => ({ path: f.path, consumers: f.consumers })),
+    unmapped: plan.unmappedFiles,
+    requiredConsumersMissing,
+    executed,
+    certifiable: reasons.length === 0,
+    nonCertifyingReasons: reasons,
+  };
+}
+
+/**
  * Map list of changed file paths to affected test targets.
  */
 export function mapFilesToTests(filePaths, options = {}) {
@@ -922,6 +1054,8 @@ export function main(argv = process.argv.slice(2)) {
   let dryRun = false;
   let runAll = false;
   let listSubsystems = false;
+  let manifestPath = null;
+  let manifestChanged = null;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -936,6 +1070,7 @@ Usage:
   node scripts/test-fast.mjs --all               # run all fast test targets
   node scripts/test-fast.mjs --dry-run           # print planned test targets without running
   node scripts/test-fast.mjs --list              # list known subsystems
+  node scripts/test-fast.mjs --manifest <path>   # also write the selection/execution manifest as JSON
 `);
       process.exit(0);
     } else if (arg === '--list') {
@@ -944,6 +1079,19 @@ Usage:
       dryRun = true;
     } else if (arg === '--all') {
       runAll = true;
+    } else if (arg === '--manifest') {
+      if (i + 1 < argv.length && argv[i + 1] !== '' && !argv[i + 1].startsWith('--manifest')) {
+        manifestPath = argv[++i];
+      } else {
+        console.error('error: missing argument for --manifest');
+        process.exit(1);
+      }
+    } else if (arg.startsWith('--manifest=')) {
+      manifestPath = arg.slice('--manifest='.length);
+      if (!manifestPath) {
+        console.error('error: missing value for --manifest=');
+        process.exit(1);
+      }
     } else if (arg === '--diff') {
       if (i + 1 < argv.length && !argv[i + 1].startsWith('-')) {
         diffRef = argv[++i];
@@ -1010,6 +1158,7 @@ Usage:
   if (filesToTest.length === 0) {
     const changed = getChangedFiles(repoRoot, diffRef);
     filesToTest = changed.files;
+    manifestChanged = changed;
     resolvedRefLabel = changed.resolvedRef || diffRef;
     // Name the comparison BASE and the distance behind the ref, not just the ref: the base decides how
     // large the diff is, and 'vs origin/master' named the one thing this does not compare against
@@ -1054,6 +1203,36 @@ Usage:
     }
   }
   printAutoMappings(plan);
+
+  // web-uplift-5jwc (ADR web-uplift-tdg4): emit the selection/execution manifest on EVERY exit path, the
+  // refusals included, so a consumer never has to infer from a log line why a run is not certifying.
+  const gitFacts = readHeadTree(repoRoot);
+  const emitManifest = (mode, executed) => {
+    if (!manifestPath) return;
+    const manifest = buildSelectionManifest({
+      plan,
+      changed: manifestChanged || { files: filesToTest, uncommitted: [], base: null, resolvedRef: null },
+      mode,
+      diffRef,
+      head: gitFacts.head,
+      tree: gitFacts.tree,
+      executed,
+      explicitSelection: manifestChanged === null,
+    });
+    try {
+      writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    } catch (err) {
+      console.error(`fast-gate: FAIL - could not write the selection manifest to ${manifestPath}: ${err.message}`);
+      console.error('[test:fast] A manifest that cannot be written is a FAILURE, not a warning: a consumer that reads a missing manifest as complete is the false green this whole mechanism refuses.');
+      process.exit(1);
+    }
+    if (manifest.certifiable) {
+      console.log(`[test:fast] certifiable: this run observed exact tree ${manifest.tree} (manifest written to ${manifestPath})`);
+    } else {
+      console.error(`[test:fast] NOT CERTIFIABLE (manifest written to ${manifestPath}):`);
+      for (const reason of manifest.nonCertifyingReasons) console.error(`  - ${reason}`);
+    }
+  };
   if (plan.isBaseline) {
     console.log('[test:fast] No subsystem-specific changes; running fast baseline tests.');
   }
@@ -1084,6 +1263,7 @@ Usage:
     console.error('    npm test');
     console.error('  The fast tier has no honest subset for a shared helper: a subset would either be the whole');
     console.error('  gate or a green run of cases that do not exercise the change (web-uplift-5y2w).');
+    emitManifest('execute', []);
     process.exit(1);
   }
 
@@ -1119,6 +1299,7 @@ Usage:
     console.error('      FLEET_CHECK_CONF=/home/exedev/.fleet/conf.d/web-uplift.conf fleet-check');
     console.error('    and name the command that produced the evidence in your hand-off.');
     console.error('[test:fast] No test target was executed. A baseline run is not evidence that the changed file was tested.');
+    emitManifest('execute', []);
     process.exit(1);
   }
 
@@ -1129,20 +1310,33 @@ Usage:
 
   if (dryRun) {
     console.log('\n[test:fast] Dry-run complete. Exiting without execution.');
+    emitManifest('dry-run', []);
     process.exit(0);
   }
 
   const startTime = Date.now();
+  const executed = [];
   for (const target of plan.targets) {
     const res = runTarget(target);
+    executed.push({
+      label: target.label,
+      ...(target.path ? { path: target.path } : {}),
+      ...(target.filter ? { filter: target.filter } : {}),
+      ok: res.ok,
+      status: res.status ?? null,
+      duration: res.duration ?? null,
+      skipped: Boolean(res.skipped),
+    });
     if (!res.ok) {
       console.error(`\n✖ [test:fast] STOPPED: ${target.label} failed.`);
+      emitManifest('execute', executed);
       process.exit(res.status || 1);
     }
   }
 
   const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
   console.log(`\n✔ [test:fast] ALL ${plan.targets.length} test target(s) PASSED in ${totalDuration}s.`);
+  emitManifest('execute', executed);
   process.exit(0);
 }
 

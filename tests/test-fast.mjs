@@ -38,7 +38,7 @@ import { strict as assert } from 'node:assert';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import {
   mapFilesToTests,
   isDirectRunnableTest,
@@ -58,6 +58,7 @@ import {
   importingSuitesOf,
   UNWIRED_SHARED_MODULES,
   repoRoot,
+  buildSelectionManifest,
 } from '../scripts/test-fast.mjs';
 import { parseFilterArgs } from './test-helpers.mjs';
 
@@ -1217,6 +1218,8 @@ function runAll() {
   testUnmappedExecutablePathsFailClosed();
   testChangedSuiteAutoMap();
   testH68zAutoMappedExecutableIsRefusedAndRunsTheControls();
+  testSelectionManifestRefusesToCertifyIncompleteRuns();
+  testSelectionManifestTreeAndPathFidelity();
   testOmittedRulesAreNamedAndNarrow();
   testRefusalIsActionableAndDocumented();
   testSuiteExecutionMarkers();
@@ -1260,4 +1263,122 @@ function testH68zAutoMappedExecutableIsRefusedAndRunsTheControls() {
   assert(!mapped.targets.some((t) => t.label === controlLabel), 'a mapped module does not pull in the gate self-test');
 
   console.log('\u2714 auto-mapped executables are refused and run the completeness controls');
+}
+
+// web-uplift-5jwc / ADR web-uplift-tdg4: a fast verdict must distinguish EXECUTION from CERTIFIED COVERAGE of one
+// exact committed tree. The producer is a pure function, so the certifying rule is exercised directly, with no
+// git, no clock and no machine state - and the negatives below are the cases that make the positive mean
+// something: each one is a run that exits 0 and must still refuse to certify.
+function testSelectionManifestRefusesToCertifyIncompleteRuns() {
+  console.log('Testing that the selection manifest refuses to certify incomplete or non-exact-tree runs (web-uplift-5jwc)...');
+  const helper = 'tests/log-redaction.mjs';
+  const consumer = 'tests/redaction.test.mjs';
+  const changed = { files: [helper], uncommitted: [], base: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', resolvedRef: 'origin/master' };
+  const tree = 'b'.repeat(40);
+  const head = 'a'.repeat(40);
+  const planOf = (files) => mapFilesToTests(files, { diffRef: 'origin/master', exists: () => true });
+  const build = (plan, over = {}) => buildSelectionManifest({
+    plan, changed, mode: 'execute', diffRef: 'origin/master', head, tree,
+    executed: plan.targets.map((t) => ({ label: t.label, ok: true })),
+    ...over,
+  });
+
+  // POSITIVE FIRST: a clean execute run with every naming consumer selected certifies, and says so with no reasons.
+  const full = planOf([helper]);
+  assert(full.targets.some((t) => t.path === consumer), 'the fixture must select the consumer suite, or the rest of this case is vacuous');
+  const certified = build(full);
+  assert.equal(certified.certifiable, true, `a clean execute run with every consumer selected must certify (reasons: ${certified.nonCertifyingReasons.join('; ')})`);
+  assert.deepEqual(certified.nonCertifyingReasons, [], 'a certifying manifest carries no reasons');
+  assert.equal(certified.tree, tree, 'the manifest names the exact tree it certifies');
+
+  // THE 5y2w SHAPE: the helper is mapped, a suite that NAMES it is not selected. Tests exit 0 and it must refuse.
+  const partial = { ...full, targets: full.targets.filter((t) => t.path !== consumer) };
+  const underselected = build(partial);
+  assert.equal(underselected.certifiable, false, 'a mapped helper whose naming consumer was omitted must not certify');
+  assert(underselected.requiredConsumersMissing.some((m) => m.path === helper && m.consumer === consumer),
+    'the manifest must name the omitted pair, not merely flag a problem');
+  assert(underselected.nonCertifyingReasons.some((r) => r.includes(consumer)), 'the reason must name the omitted consumer');
+
+  // A DIRTY TREE is iteration evidence: it observed the working tree, not the tree a cached verdict is keyed to.
+  const dirty = build(full, { changed: { ...changed, uncommitted: [{ path: helper, kind: 'modified' }] } });
+  assert.equal(dirty.certifiable, false, 'a run over uncommitted changes must not certify the committed tree');
+  assert(dirty.nonCertifyingReasons.some((r) => r.includes(helper) && r.includes('uncommitted')),
+    'the reason must name the uncommitted path and say why that matters');
+
+  // NO TREE: a verdict is keyed to a tree, so a run that cannot name one cannot certify one.
+  const noTree = build(full, { tree: null, head: null });
+  assert.equal(noTree.certifiable, false, 'a run that cannot read a committed tree must not certify');
+  assert(noTree.nonCertifyingReasons.some((r) => r.includes('no committed tree')), 'the reason must say the tree could not be read');
+
+  // A DRY RUN executed nothing, and an EXPLICIT-FILE selection is not a complete selection for the tree.
+  assert.equal(build(full, { mode: 'dry-run', executed: [] }).certifiable, false, 'a dry run certifies nothing');
+  assert.equal(build(full, { explicitSelection: true }).certifiable, false, 'an explicit-file selection cannot certify the tree');
+
+  // Unmapped and refused paths keep a run non-certifying even though the suites that ran exited 0.
+  assert.equal(build({ ...full, unmappedFiles: ['scripts/orphan.mjs'] }).certifiable, false, 'an unmapped changed executable must not certify');
+  assert.equal(build({ ...full, refusedFiles: [{ path: helper, consumers: [consumer] }] }).certifiable, false, 'a full-gate-only refusal must not certify');
+  // A target that reported failure, or never reported, is not a pass either.
+  assert.equal(build(full, { executed: [{ label: 'x', ok: false, status: 1 }] }).certifiable, false, 'a failed target must not certify');
+  assert.equal(build(full, { executed: [] }).certifiable, false, 'a target with no reported status must not certify');
+
+  console.log('\u2714 the selection manifest certifies only a clean, complete execute run on one exact tree');
+}
+
+// The git-facing half: the manifest must name a real tree, the merge-base it compared against, both commits of a
+// multi-commit branch (the web-uplift-1rwo mechanism), and a Unicode untracked path exactly (web-uplift-4bqu).
+function testSelectionManifestTreeAndPathFidelity() {
+  console.log('Testing that the manifest names the real tree, the merge-base, and untracked paths exactly (web-uplift-5jwc)...');
+  const temp = mkdtempSync(join(tmpdir(), 'test-fast-manifest-'));
+  const git = (...args) => execFileSync('git', args, { cwd: temp, encoding: 'utf8' }).trim();
+  try {
+    git('init', '-q', '-b', 'master');
+    git('config', 'user.email', 'test@example.invalid');
+    git('config', 'user.name', 'test');
+    mkdirSync(join(temp, 'scripts'));
+    mkdirSync(join(temp, 'docs'));
+    writeFileSync(join(temp, 'package.json'), '{"type":"module"}\n');
+    copyFileSync(join(repoRoot, 'scripts', 'test-fast.mjs'), join(temp, 'scripts', 'test-fast.mjs'));
+    writeFileSync(join(temp, 'docs', 'base.md'), 'base\n');
+    git('add', '-A'); git('commit', '-qm', 'base');
+    // A BRANCH two commits ahead of master: this is the shape web-uplift-1rwo documents, where a base resolved
+    // as a single commit lists only the last commit's files instead of the whole delta.
+    git('checkout', '-q', '-b', 'feature');
+    writeFileSync(join(temp, 'docs', 'first.md'), 'one\n');
+    git('add', '-A'); git('commit', '-qm', 'first');
+    writeFileSync(join(temp, 'docs', 'second.md'), 'two\n');
+    git('add', '-A'); git('commit', '-qm', 'second');
+
+    // A Unicode untracked path must survive the git boundary EXACTLY - a NUL-safe read, not a line split.
+    const unicodeName = 'docs/&#252;nicode \u2014 dash.md';
+    writeFileSync(join(temp, unicodeName), 'x\n');
+
+    const out = join(temp, 'manifest.json');
+    const run = spawnSync(process.execPath, [join(temp, 'scripts', 'test-fast.mjs'), '--manifest', out], { cwd: temp, encoding: 'utf8', timeout: 30000 });
+    const manifest = JSON.parse(readFileSync(out, 'utf8'));
+
+    assert.equal(manifest.tree, git('rev-parse', 'HEAD^{tree}'), 'the manifest must carry the real committed tree id');
+    assert.equal(manifest.comparisonBase, git('rev-parse', 'master'), 'the comparison base must be the MERGE-BASE of the branch, not the last commit (web-uplift-1rwo)');
+    for (const f of ['docs/first.md', 'docs/second.md']) {
+      assert(manifest.changed.includes(f), `a multi-commit branch must list ${f}, not just the last commit's files`);
+    }
+    assert(manifest.uncommitted.some((u) => u.path === unicodeName), `the untracked Unicode path ${JSON.stringify(unicodeName)} must survive exactly`);
+    assert.equal(manifest.certifiable, false, 'an untracked path means the run observed a working tree, so it cannot certify');
+    assert(manifest.nonCertifyingReasons.some((r) => r.includes('uncommitted')), 'the reason must be the uncommitted working tree');
+
+    // NEGATIVE on the same repo: once the path is committed the tree part of the reason is GONE. What this copy
+    // cannot show is a fully certifying CLI run: a temp copy has no real suite tree, so its baseline targets
+    // genuinely fail and the manifest is right to refuse. The certifying positive is asserted above against the
+    // pure function with injected clean facts, which is the same rule and needs no repository at all.
+    git('add', '-A'); git('commit', '-qm', 'third');
+    const cleanOut = join(temp, 'manifest-clean.json');
+    spawnSync(process.execPath, [join(temp, 'scripts', 'test-fast.mjs'), '--manifest', cleanOut], { cwd: temp, encoding: 'utf8', timeout: 30000 });
+    const cleanManifest = JSON.parse(readFileSync(cleanOut, 'utf8'));
+    assert.deepEqual(cleanManifest.uncommitted, [], 'a committed tree has no uncommitted paths');
+    assert(!cleanManifest.nonCertifyingReasons.some((r) => r.includes('uncommitted')),
+      `the uncommitted reason must be gone once the path is committed (reasons now: ${cleanManifest.nonCertifyingReasons.join('; ')})`);
+    assert.equal(cleanManifest.tree, git('rev-parse', 'HEAD^{tree}'), 'and the tree id must follow the new HEAD');
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+  console.log('\u2714 the manifest names the tree, the merge-base and untracked paths exactly');
 }
