@@ -125,7 +125,7 @@ is how this becomes a guess again). Paired run by run in ONE window with the loa
 - The earlier concurrency-2-vs-3 measurement (web-uplift-tb6p, 2026-10-12: mean 134.8s against 98.3s)
   is what took this off 1. Its prohibition on going above 3 rested on a 2-vCPU premise that is not this
   host (8 vCPU / 16 GiB), and on one unpaired concurrency 4 run at 94.2s. Superseded: see
-  `docs/adr-0002`.
+  `docs/adr-0002-test-concurrency-measured-setting.md`.
 - Raising concurrency was BLOCKED until web-uplift-tb6p: `testCredentialRedactorsAgree`
   asserted a wall-clock ratio between a cache-resident 160 kB measurement and a non-resident
   640 kB one, so it failed at concurrency 3 and 4 on both the split and the unsplit layouts.

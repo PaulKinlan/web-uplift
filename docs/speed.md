@@ -119,8 +119,8 @@ The ceiling that matters for the reaper is the JOB TREE's RSS, not the host's: 8
 6 against the reaper's 3 GB limb, with `MemAvailable` never below 12.6 GB. Memory was never the binding
 constraint at any setting tried.
 
-`docs/adr-0002` records this as superseding ADR 0001 decision 3's `--test-concurrency=1` mandate, whose
-2-vCPU premise is not this host.
+`docs/adr-0002-test-concurrency-measured-setting.md` records this as superseding ADR 0001 decision 3's
+`--test-concurrency=1` mandate, whose 2-vCPU premise is not this host.
 
 ### The fast gate did not move
 
