@@ -1037,19 +1037,31 @@ export async function testThrowingHandlerLogDoesNotTakeTheProcessDown() {
   console.log('handler log OK: a throwing log in a pipe event handler did not take the process down');
 }
 
+const CASES = [
+  testCdpEndpointExposure,
+  testEndpointProbesRunConcurrently,
+  testEndpointProbeRejectionStaysFailClosed,
+  testExposureProbeFailuresDoNotLeakTheBrowser,
+  testExposureVerdictIsReadOnceInsideTheTry,
+  testUnprintableProbeNoteDoesNotFailTheLaunch,
+  testTricklingPeerIsBoundedByTheTotalDeadline,
+  testThrowingLogDoesNotLeakTheSpawnedBrowser,
+  testOversizedBodyDoesNotEarnACleanVerdict,
+  testPreSpawnLogThrowDoesNotStrandTheProfileDir,
+  testThrowingHandlerLogDoesNotTakeTheProcessDown,
+];
+
+// --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the same array the
+// runner drives, so the list cannot drift from what runs. process.exitCode, not process.exit: exit()
+// does not flush asynchronous stdout on a pipe (web-uplift-ecif).
 if (process.argv[1] && resolve(process.argv[1]) === here) {
+  if (process.argv.includes('--list')) {
+    for (const fn of CASES) console.log(fn.name);
+    process.exitCode = 0;
+  } else {
+  for (const fn of CASES) await fn();
   // Run EVERY test in this file: a direct invocation must not look green while silently skipping
   // the ones added later. This ran only the first until web-uplift-690r added the concurrency
   // test - the same trap the gemini review of e93a028 found in tests/cdp-pipe-transport.mjs.
-  await testCdpEndpointExposure();
-  await testEndpointProbesRunConcurrently();
-  await testEndpointProbeRejectionStaysFailClosed();
-  await testExposureProbeFailuresDoNotLeakTheBrowser();
-  await testExposureVerdictIsReadOnceInsideTheTry();
-  await testUnprintableProbeNoteDoesNotFailTheLaunch();
-  await testTricklingPeerIsBoundedByTheTotalDeadline();
-  await testThrowingLogDoesNotLeakTheSpawnedBrowser();
-  await testOversizedBodyDoesNotEarnACleanVerdict();
-  await testPreSpawnLogThrowDoesNotStrandTheProfileDir();
-  await testThrowingHandlerLogDoesNotTakeTheProcessDown();
+  }
 }

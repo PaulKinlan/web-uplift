@@ -961,24 +961,36 @@ export function testEveryDestinationRefusalCarriesTheMarker() {
 
 // Run directly (node tests/install-copy-symlink.mjs), not when imported by the
 // regression suite, which calls the exported functions itself.
+const CASES = [
+  testInstallSkipsSymlinksInVendoredSource,
+  testInstallCopyDepthGuard,
+  testInstallFixturesTolerateLeftoversFromAKilledRun,
+  testInstallVendorsCompleteClosure,
+  testInstallRefusesDestinationSymlinks,
+  testInstallNormalDestinationWrites,
+  testGenerateVendoredSurfaceRefusesDestinationSymlinks,
+  testSyncRefusesCommittedSymlinkDestination,
+  testSyncRefusesEqualByteSymlinkDestination,
+  testInstallAsksTheSharedSymlinkGuard,
+  testInstallIncompleteExitControl,
+  testV167ControlShimNeverWritesIntoTheRepository,
+  testEveryDestinationRefusalCarriesTheMarker,
+];
+
+// --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the same array the
+// runner drives, so the list cannot drift from what runs. process.exitCode, not process.exit: exit()
+// does not flush asynchronous stdout on a pipe (web-uplift-ecif).
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  testInstallSkipsSymlinksInVendoredSource();
-  testInstallCopyDepthGuard();
+  if (process.argv.includes('--list')) {
+    for (const fn of CASES) console.log(fn.name);
+    process.exitCode = 0;
+  } else {
+  for (const fn of CASES) fn();
   // Run directly as well as under `node --test`: this one was registered in the npm-test block but
   // omitted here, so `node tests/install-copy-symlink.mjs` missed the control that proves both
   // fixtures survive the leftovers a killed run leaves (web-uplift-by7c).
-  testInstallFixturesTolerateLeftoversFromAKilledRun();
-  testInstallVendorsCompleteClosure();
-  testInstallRefusesDestinationSymlinks();
-  testInstallNormalDestinationWrites();
-  testGenerateVendoredSurfaceRefusesDestinationSymlinks();
-  testSyncRefusesCommittedSymlinkDestination();
-  testSyncRefusesEqualByteSymlinkDestination();
-  testInstallAsksTheSharedSymlinkGuard();
-  testInstallIncompleteExitControl();
-  testV167ControlShimNeverWritesIntoTheRepository();
-  testEveryDestinationRefusalCarriesTheMarker();
   console.log('tests OK');
+  }
 }
 
 // Fixture 7: the generator must keep every path a reader could have listed READABLE across a republish
