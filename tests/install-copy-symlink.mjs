@@ -452,6 +452,66 @@ export function testGenerateVendoredSurfaceRefusesDestinationSymlinks() {
       `the second generation must report the identical tracked copy as unwritten: ${JSON.stringify(secondReport)}`);
     assert(lstatSync(trackedAbs, { bigint: true }).ctimeNs === ctimeBefore,
       'an identical tracked copy must not be rewritten: the write changes only its ctime, and that is what turned the fast gate STALE');
+
+    // (c) web-uplift-7wea: the ONE subdirectory the generator sweeps and stages through gets the same
+    // question as the root. The root walk above covers `.web-uplift`'s own components, so a pre-planted
+    // `.web-uplift/scratch` symlink escaped one component down: the orphan sweep would have deleted the
+    // outside directory's `.stage-*` entries THROUGH it and staged copies would have been written through
+    // it. Its own fixture, because the refusal stops the run before the plants above are even reached.
+    const scratchTarget = mkdtempSync(join(tmpdir(), 'web-uplift-scratch-symlink-target-'));
+    const scratchOutside = mkdtempSync(join(tmpdir(), 'web-uplift-scratch-symlink-outside-'));
+    try {
+      writeVendoredSurfaceSources(scratchTarget);
+      // A stage name the sweep WOULD remove if it ran through the planted link: a pid that is certainly
+      // dead, so only the symlink itself stands between this directory and deletion.
+      const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+      const orphan = join(scratchOutside, `.stage-${deadPid}-evidence`);
+      mkdirSync(orphan, { recursive: true });
+      writeFileSync(join(orphan, 'leftover.mjs'), '// swept through the symlink before the fix\n');
+      writeFileSync(join(scratchOutside, 'sentinel.txt'), 'OUTSIDE-SENTINEL\n');
+      mkdirSync(join(scratchTarget, '.web-uplift'), { recursive: true });
+      symlinkSync(scratchOutside, join(scratchTarget, '.web-uplift', 'scratch'));
+      assert(lstatSync(join(scratchTarget, '.web-uplift', 'scratch')).isSymbolicLink(), 'the case must plant the symlink before it can claim anything about it');
+      const before = readdirSync(scratchOutside).sort().join(',');
+
+      const scratchRun = runVendoredSurfaceGenerator(scratchTarget);
+      const scratchReport = JSON.parse(scratchRun.stdout.split('REPORT=').pop().trim());
+
+      // (a) nothing DELETED through it: the orphan the sweep targets survives, and so does everything else.
+      assert(existsSync(join(orphan, 'leftover.mjs')), 'the sweep must not delete through a symlinked scratch root');
+      assert(readFileSync(join(scratchOutside, 'sentinel.txt'), 'utf8') === 'OUTSIDE-SENTINEL\n', 'no entry of the symlink target may be touched');
+      // (b) nothing STAGED through it: no new entry at all, and every vendored destination still absent,
+      // so the surface is incomplete rather than half-refreshed.
+      assert(readdirSync(scratchOutside).sort().join(',') === before, `the symlink target must receive nothing: ${readdirSync(scratchOutside).join(', ')}`);
+      assert(scratchReport.sweptOrphans.length === 0, `no sweep may be reported when the sweep was refused: ${JSON.stringify(scratchReport.sweptOrphans)}`);
+      assert(!existsSync(join(scratchTarget, '.web-uplift', 'evidence', 'cli.mjs')), 'no vendored directory may be published when staging was refused');
+      assert(!existsSync(join(scratchTarget, '.web-uplift', 'manifest.json')), 'and the run must stop rather than publish the files below the refused staging root');
+      // (c) the refusal is loud, names the symlinked component, and reaches a caller as data.
+      const scratchRefused = new Map((scratchReport.skippedSymlinks || []).map((s) => [s.path, s.symlinkComponent]));
+      assert(scratchRefused.get('.web-uplift/scratch') === '.web-uplift/scratch',
+        `the report must name .web-uplift/scratch as the refused component: ${JSON.stringify([...scratchRefused])}`);
+      assert(scratchRun.stderr.includes('refusing to write through a symlink'), `the refusal must be printed for the npm prepare path:\n${scratchRun.stderr}`);
+      assert(scratchRun.stderr.includes('.web-uplift/scratch is a symlink'), `the message must name the symlinked component:\n${scratchRun.stderr}`);
+      // CONTROL: the SAME fixture with a REAL scratch directory still generates, and still sweeps the very
+      // orphan the refusal protected. Without this half, "refuse" could be implemented as "sweep nothing".
+      const scratchControl = mkdtempSync(join(tmpdir(), 'web-uplift-scratch-control-'));
+      try {
+        writeVendoredSurfaceSources(scratchControl);
+        const controlOrphan = join(scratchControl, '.web-uplift', 'scratch', `.stage-${deadPid}-evidence`);
+        mkdirSync(controlOrphan, { recursive: true });
+        const controlRun = runVendoredSurfaceGenerator(scratchControl);
+        assert(controlRun.status === 0, `a real scratch directory must still generate:\n${controlRun.stderr}`);
+        const controlReport = JSON.parse(controlRun.stdout.split('REPORT=').pop().trim());
+        assert(!existsSync(controlOrphan), 'with a REAL scratch directory the orphan must still be swept, so the refusal above is what protected it');
+        assert(controlReport.sweptOrphans.includes(`.stage-${deadPid}-evidence`), `the control must report the sweep: ${JSON.stringify(controlReport.sweptOrphans)}`);
+        assert(existsSync(join(scratchControl, '.web-uplift', 'evidence', 'cli.mjs')), 'the control must publish the vendored directories');
+      } finally {
+        rmSync(scratchControl, { recursive: true, force: true });
+      }
+    } finally {
+      rmSync(scratchTarget, { recursive: true, force: true });
+      rmSync(scratchOutside, { recursive: true, force: true });
+    }
   } finally {
     rmSync(outside, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
