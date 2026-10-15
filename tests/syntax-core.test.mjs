@@ -1663,6 +1663,47 @@ export async function testScorecardScoringAndRender() {
   // this guards against (the single-run fixture here is why the wrapper assertion failed
   // on its first gate run).
   assert(html.includes('.history .axis{fill:var(--muted);font-size:12px}'), 'scorecard: axis labels must use the 12px floor, not the old 10px');
+  // web-uplift-36i5: the axis was not the only micro-typography in this stylesheet. The
+  // generator's own badge, effort chip and pill were .7rem (11.2px) and .72rem (11.52px) -
+  // below the SAME 12px floor. The committed evidence-out/*/scorecard.html snapshots carry
+  // the old values as historical artefacts and are covered by web-uplift-18on; this is the
+  // GENERATOR, so the next scorecard is compliant rather than fixed by hand. The floor is
+  // asserted over EVERY font-size in the emitted stylesheet, not on the three selectors
+  // alone, so a rule added later (a new badge or chip) cannot reintroduce sub-12px text
+  // beside them. 0.75rem at a 16px root is 12px; px/rem/em are the only units here, and the
+  // unparsed-value assertion is what stops a new unit from silently slipping past.
+  const style = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '';
+  const FLOOR_PX = 12;
+  const px = (value) => {
+    const m = /^([\d.]+)(rem|em|px)$/.exec(String(value).trim());
+    if (!m) return null;
+    return m[2] === 'px' ? Number(m[1]) : Number(m[1]) * 16;
+  };
+  const sizes = [...style.matchAll(/font-size\s*:\s*([^;}]+)/g)].map((m) => m[1].trim());
+  assert(sizes.length >= 10, `scorecard: expected the stylesheet's font sizes, found ${sizes.length} - a scan that silently stops seeing rules would make the floor vacuous`);
+  for (const value of sizes) {
+    const measured = px(value);
+    assert(measured !== null, `scorecard: an unparsed font-size must not slip past the floor check: ${value}`);
+    assert(measured >= FLOOR_PX, `scorecard: font-size ${value} (${measured}px) is below the ${FLOOR_PX}px legibility floor`);
+  }
+  // The three selectors the audit named, so a regression names the selector rather than only
+  // the value. The rule body is read from its own opening brace, which keeps this independent
+  // of how many rules the stylesheet holds.
+  const ruleBody = (selector) => {
+    const at = style.indexOf(selector + '{');
+    return at === -1 ? null : style.slice(at + selector.length + 1, style.indexOf('}', at));
+  };
+  for (const selector of ['.sev', '.effort', '.pill']) {
+    const body = ruleBody(selector);
+    assert(body, `scorecard: ${selector} must still exist (without it the selector half of the floor check goes vacuous)`);
+    const declared = /font-size\s*:\s*([^;}]+)/.exec(body);
+    assert(declared, `scorecard: ${selector} must declare a font-size`);
+    const measured = px(declared[1]);
+    assert(
+      measured !== null && measured >= FLOOR_PX,
+      `scorecard: ${selector}{font-size:${declared[1]}} (${measured}px) is below the ${FLOOR_PX}px legibility floor (web-uplift-36i5)`,
+    );
+  }
   const chartHtml = renderScorecard({
     host: 'example',
     generatedAt: '2026-01-01 00:00',
