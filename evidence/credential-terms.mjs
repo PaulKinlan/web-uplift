@@ -103,11 +103,36 @@ export const SENSITIVE_WORDS = new Set([...CREDENTIAL_WORDS, ...SENSITIVE_PII_WO
 // exactly instead (a bare `name` field is a person's name; `filename` is not).
 export const SHORT_PII_WORDS = new Set(['name', 'email', 'phone', 'tel']);
 
-// Singular-but-a-plural-was-written: a word also matches when stripping ONE
-// trailing 's' lands in the set ('secrets', 'apiKeys' via 'apikeys'). The strip
-// is conditional on the RESULT being in the set, so innocent plurals ('boxes',
+// Singular-but-a-plural-was-written: a word also matches when stripping its plural
+// ending lands in the set ('secrets', 'apiKeys' via 'apikeys'). The strip is
+// conditional on the RESULT being in the set, so innocent plurals ('boxes',
 // 'regions', 'fonts') never stem into a match.
-export const member = (set, w) => set.has(w) || (w.endsWith('s') && set.has(w.slice(0, -1)));
+//
+// Three endings, because '-s' is not the only plural English writes (web-uplift-8jf2):
+// '-s' ('secrets' -> 'secret'), '-es' when the singular itself ends s/x/z/ch/sh
+// ('addresses' -> 'address', 'accesses' -> 'access', 'matches' -> 'match', 'hashes' ->
+// 'hash'), and '-ies' -> '-y' ('securities' -> 'security'; the sets carry y-words:
+// security, apikey/privatekey/accesskey/secretkey/passkey, proxy). Before this, '-es'
+// stripped one 's' and stopped, so 'addresses' stemmed to 'addresse' - in no set - and
+// an addresses field was not PII at all.
+//
+// SELF-CONTAINED ON PURPOSE: runner/flow-record.mjs serializes this function into the
+// recorded page with .toString(), so it must not reference a module-level helper or
+// constant (the constraint resolveSelectorCandidate documents in runner/flow.mjs).
+export const member = (set, w) => {
+  if (set.has(w)) return true;
+  if (!w.endsWith('s')) return false;
+  // '-s': secrets -> secret, apiKeys (apikeys) -> apikey.
+  if (set.has(w.slice(0, -1))) return true;
+  // '-es': gated on the STEM's own ending, which is the rule English actually uses
+  // (a blanket -2 would also cut 'cakes' into 'cak', harmless only by luck).
+  if (w.endsWith('es')) {
+    const stem = w.slice(0, -2);
+    if (/(s|x|z|ch|sh)$/.test(stem) && set.has(stem)) return true;
+  }
+  // '-ies' -> '-y': securities -> security, proxies -> proxy.
+  return w.endsWith('ies') && set.has(w.slice(0, -3) + 'y');
+};
 
 export const isCredentialWord = (w) => member(CREDENTIAL_WORDS, w);
 export const isWeakCredentialWord = (w) => member(WEAK_CREDENTIAL_WORDS, w);

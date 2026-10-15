@@ -433,7 +433,12 @@ export async function testFlowRecordSensitiveRedaction() {
   const { isSensitiveName, isCredentialName } = await import('../evidence/credential-terms.mjs');
   const agree = testCaptureSession({ captureHidden: false, captureSensitive: false });
   const fieldCases = ['otc', 'otcCode', 'oneTimeNumber', 'otpCode', 'authCode', 'apiKey', 'csrfToken',
-    'code', 'key', 'postalCode', 'countryCode', 'sortKey', 'businessKey', 'search', 'quantity', 'email'];
+    'code', 'key', 'postalCode', 'countryCode', 'sortKey', 'businessKey', 'search', 'quantity', 'email',
+    // web-uplift-8jf2: an -es plural, driven through the page script's own classifier. Its
+    // singular 'address' is PII; before the fix the page and the module agreed on the WRONG
+    // answer ('addresses' sensitive in neither), so a one-sided fix fails this. Driven over
+    // the page's injected member (generated from the module) and the module in Node.
+    'addresses', 'passes', 'address', 'dresses'];
   let agreeIndex = 0;
   for (const name of fieldCases) {
     agree.triggerChange({ type: 'text', name, value: 'v1', id: 'agree-' + agreeIndex });
@@ -442,6 +447,14 @@ export async function testFlowRecordSensitiveRedaction() {
     assert((step.redacted === true) === isSensitiveName(name),
       `page-side and Node-side classifiers must agree on field "${name}": page=${step.redacted === true} node=${isSensitiveName(name)}`);
   }
+  assert(isSensitiveName('addresses') === true,
+    "the Node-side classifier must see an -es plural as sensitive ('addresses' -> 'address')");
+  // 'passes' stays in fieldCases for PARITY only: 'pass' is a WEAK word, and the field classifier
+  // deliberately excludes the weak class (a bare `code`/`key` field is not credential evidence),
+  // so both sides must report false here. Pinned so a future widening cannot silently change it.
+  assert(isSensitiveName('passes') === false && isCredentialName('passes') === true,
+    "'passes' is a credential NAME (the URL/HAR side) but not a field-sensitive one, like every weak word");
+  assert(isSensitiveName('dresses') === false, "an -es word whose stem is not in the set stays innocent ('dresses')");
 
   // web-uplift-fejl: assert single source of truth for sensitive field classifiers
   // 1. Mutant word test: a mutant added to wordData appears in the page set and is redacted
