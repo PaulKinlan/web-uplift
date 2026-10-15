@@ -159,8 +159,20 @@ async function main() {
   console.log('tests OK');
 }
 
+// --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk); the names are the same
+// exported cases main() drives, so the list cannot drift from what runs. process.exitCode, not
+// process.exit, so a piped list cannot lose its tail (web-uplift-ecif).
+const CASES = [
+  testNoSourceArgumentOmitsSource,
+  testAdversarialPageCannotInfluenceSource,
+  testExplicitSourceHonoursOperatorSpecifiedRoot,
+];
+
 const isDirect = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isDirect) {
+if (isDirect && process.argv.includes('--list')) {
+  for (const fn of CASES) console.log(fn.name);
+  process.exitCode = 0;
+} else if (isDirect) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);
