@@ -405,6 +405,11 @@ web-uplift flow record https://example.com --out checkout.json
 # TEXT can refuse it too, but only for a destructive verb ("Delete" yes, "Site
 # Credits" no). Pass --allow-mutations to authorize those steps against a live
 # target.
+# Replay navigates http:/https: ONLY, dry run or live: a navigate step at any other
+# scheme (file:, data:, blob:) - or a relative URL, which CDP cannot resolve - is
+# refused before the browser is driven to it, and --allow-mutations does not lift
+# that gate. The step is recorded with schemeRefused: true and a detail naming the
+# scheme. Serve a local fixture over http (e.g. npx serve) if you need to replay one.
 web-uplift flow replay checkout.json --out reports/checkout/evidence
 ```
 

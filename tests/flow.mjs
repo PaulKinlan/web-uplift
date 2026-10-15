@@ -1582,12 +1582,105 @@ export async function testFlowReplayMutationGate() {
   assert(clickedRight === true, 'the button matching descriptor must be clicked');
 }
 
+// web-uplift-w0zq: replay navigates http:/https: ONLY. A flow is untrusted input - a
+// Chrome Recorder export, a hand-authored CI file, or our own recorder's output for a
+// page we do not control - so each step is a navigation the operator never asked for:
+// file: reads the local disk and data:/blob: inject a document. The control the bead
+// asks for is that the browser is never DRIVEN to a refused URL: the client's own
+// Page.navigate log proves it, not the step's self-report. --allow-mutations does not
+// lift the gate (it authorizes a write at the audited site, not a local-file surface).
+export async function testFlowReplaySchemeGate() {
+  const { classifyReplayUrl, replayFlow } = await import('../runner/flow.mjs');
+
+  // 1. The predicate, including what a hostile flow would actually try.
+  assert(classifyReplayUrl('https://example.test/checkout').ok === true, 'https is replayable');
+  assert(classifyReplayUrl('http://example.test/').ok === true, 'http is replayable');
+  for (const bad of ['file:///etc/passwd', 'file:///tmp/flow-fixture.html', 'data:text/html,<h1>injected</h1>',
+    'blob:https://example.test/8f1', 'javascript:alert(1)', 'about:blank', 'ftp://example.test/x',
+    'chrome://settings', 'view-source:https://example.test/']) {
+    const verdict = classifyReplayUrl(bad);
+    assert(verdict.ok === false, `${bad} must not be replayable`);
+    assert(/^(the .+: scheme|a relative URL|no URL)$/.test(verdict.reason), `${bad} names why: ${verdict.reason}`);
+  }
+  for (const noUrl of [undefined, '', null, '/checkout', {}, 12]) {
+    assert(classifyReplayUrl(noUrl).ok === false, `${JSON.stringify(noUrl)} must not be replayable`);
+  }
+  assert(classifyReplayUrl('/checkout').reason.includes('relative'), 'a relative URL is refused as relative (CDP resolves a step URL against nothing)');
+
+  // 2. In the replay path: the refused steps report a named reason AND never reach
+  // the browser. A freshly built client per run keeps the two arms independent.
+  function makeClient() {
+    const navigations = [];
+    return {
+      navigations,
+      Emulation: { setDeviceMetricsOverride: async () => {} },
+      Page: {
+        captureScreenshot: async () => ({ data: 'AAAA' }),
+        navigate: async ({ url }) => { navigations.push(url); },
+        loadEventFired: () => Promise.resolve(),
+      },
+      Runtime: { evaluate: async () => ({ result: { value: 'https://example.test/current' } }) },
+    };
+  }
+
+  const REFUSED = ['file:///etc/passwd', 'data:text/html,<h1>injected</h1>', 'javascript:alert(1)'];
+  const flow = {
+    title: 'Scheme gate',
+    steps: [
+      { type: 'navigate', url: 'https://example.test/checkout' },
+      { type: 'navigate', url: REFUSED[0] },
+      { type: 'navigate', url: REFUSED[1] },
+      { type: 'navigate', url: REFUSED[2] },
+      { type: 'navigate' },
+    ],
+  };
+
+  for (const allowMutations of [false, true]) {
+    const arm = allowMutations ? '--allow-mutations' : 'dry-run';
+    const client = makeClient();
+    const res = await replayFlow(client, flow, { startUrl: 'https://example.test/', settleMs: 1, allowMutations });
+    assert(res.steps[0].ok === true, `${arm}: the http journey page still loads`);
+    assert(client.navigations.includes('https://example.test/checkout'), `${arm}: the journey page is requested`);
+    for (const i of [1, 2, 3]) {
+      const step = res.steps[i];
+      assert(step.ok === false && step.schemeRefused === true, `${arm}: step ${i} (${REFUSED[i - 1]}) refused by scheme: ${step.detail}`);
+      assert(step.detail.includes('refused: flow replay navigates http:/https: only'), `${arm}: the refusal names the rule: ${step.detail}`);
+    }
+    assert(res.steps[1].detail.includes('the file: scheme'), `the file: refusal names the scheme: ${res.steps[1].detail}`);
+    assert(res.steps[2].detail.includes('the data: scheme'), `the data: refusal names the scheme: ${res.steps[2].detail}`);
+    assert(!client.navigations.some((u) => REFUSED.includes(u)),
+      `${arm}: the browser must never be driven to a refused URL, got: ${JSON.stringify(client.navigations)}`);
+    // A step with no URL falls back to startUrl, which is http here - still allowed.
+    assert(res.steps[4].ok === true && client.navigations.includes('https://example.test/'),
+      `${arm}: a navigate step with no url uses the http startUrl: ${res.steps[4].detail}`);
+  }
+
+  // 3. A file: start URL (--url) is refused too, and nothing is navigated at all -
+  // not even the harness's own about:blank, because the step never reaches navigate().
+  const fileStartClient = makeClient();
+  const fileStartRes = await replayFlow(fileStartClient, { title: 't', steps: [{ type: 'navigate' }] },
+    { startUrl: 'file:///tmp/fixture.html', settleMs: 1 });
+  assert(fileStartRes.steps[0].ok === false && fileStartRes.steps[0].schemeRefused === true,
+    `a file: --url start is refused: ${fileStartRes.steps[0].detail}`);
+  assert(fileStartClient.navigations.length === 0,
+    `nothing must be navigated for a refused start URL, got: ${JSON.stringify(fileStartClient.navigations)}`);
+
+  // 4. A navigate step with neither a url nor a start URL is a named refusal, not an
+  // opaque CDP error.
+  const noUrlClient = makeClient();
+  const noUrlRes = await replayFlow(noUrlClient, { title: 't', steps: [{ type: 'navigate' }] }, { settleMs: 1 });
+  assert(noUrlRes.steps[0].ok === false && noUrlRes.steps[0].schemeRefused === true && noUrlRes.steps[0].detail.includes('no URL'),
+    `a url-less navigate step is named: ${noUrlRes.steps[0].detail}`);
+  assert(noUrlClient.navigations.length === 0, 'a url-less navigate step never reaches the browser');
+}
+
 // Run directly (node tests/flow.mjs), not when imported by the regression
 // suite, which calls the exported functions itself.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await testFlowNormalize();
   await testFlowRecordSensitiveRedaction();
   await testFlowReplayMutationGate();
+  await testFlowReplaySchemeGate();
   console.log('tests OK');
 }
 
