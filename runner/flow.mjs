@@ -21,7 +21,8 @@
 // only. file:, data:, blob: and every other scheme is REFUSED (schemeRefused:
 // true, step ok: false) before the browser is touched, and --allow-mutations does
 // not authorize it - that flag authorizes a write at the audited site, not a local
-// disk read or an injected document.
+// disk read or an injected document. (Our own recorder already excludes about:
+// navigations, flow-record.mjs, so nothing this tool records hits the gate.)
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
