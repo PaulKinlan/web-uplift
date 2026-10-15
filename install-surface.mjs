@@ -336,9 +336,21 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   // it is one component away from escaping, so the run refuses once instead of repeating itself.
   if (refusesSymlink(vendorRoot)) return { skippedTrackedCopies: [], skippedIdentical: [], skippedSymlinks, sweptOrphans: [] };
   mkdirSync(vendorRoot, { recursive: true });
+  // The ONE subdirectory this generator SWEEPS and STAGES through (web-uplift-7wea). The root check
+  // above walks the root's own components only, so a pre-planted `.web-uplift/scratch` symlink escaped
+  // one component down: sweepOrphanedStages() would have DELETED the outside directory's `.stage-*`
+  // entries through it, and every staged copy would have been written through it, outside the target
+  // root - the class web-uplift-7caa closed for the root, left open here. Refused BEFORE the sweep and
+  // before the first staged copy, and the run STOPS rather than continuing to the files and tracked
+  // copies below: publishing those while every vendored directory stayed stale is a half-refreshed
+  // surface, which is the "incomplete rather than silently wrong" direction this refusal is for. The
+  // refusal goes through the same collector, so the direct run still exits 1 (and `npm run prepare`,
+  // which ignores the return value, still prints it).
+  const scratchRoot = join(vendorRoot, 'scratch');
+  if (refusesSymlink(scratchRoot)) return { skippedTrackedCopies: [], skippedIdentical: [], skippedSymlinks, sweptOrphans: [] };
   // Before anything is staged: a run that crashed earlier left its staged tree behind, and this is the only
   // place that can clear it (web-uplift-8fus).
-  const sweptOrphans = sweepOrphanedStages(join(vendorRoot, 'scratch'));
+  const sweptOrphans = sweepOrphanedStages(scratchRoot);
 
   for (const dir of VENDORED_DIRS) {
     const src = join(targetRoot, dir.source);
@@ -347,7 +359,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     // Staged OUTSIDE everything a repository walk can see: the staging directory is named `scratch`, which the
     // walk skips by name anywhere in the tree, so a census running concurrently cannot observe the staged copy
     // as an extra set of source files (web-uplift-c6i1).
-    const staged = join(vendorRoot, 'scratch', `.stage-${process.pid}-${dir.dest}`);
+    const staged = join(scratchRoot, `.stage-${process.pid}-${dir.dest}`);
     rmSync(staged, { recursive: true, force: true });
     mkdirSync(staged, { recursive: true });
     if (existsSync(src)) copyDir(src, staged);
