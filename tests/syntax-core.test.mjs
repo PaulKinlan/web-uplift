@@ -60,6 +60,9 @@ import {
 // omitted it. It is a repo-wide structural check - every target a static census names must resolve
 // to a tracked path - which is what this suite is for.
 import { testCensusTargetsAreTracked } from './census-targets.mjs';
+// The fast gate also runs targets that are not *.test.mjs files; SUBSYSTEMS is where it defines them
+// (web-uplift-yfbk). Importing scripts/test-fast.mjs is safe: it guards main() behind process.argv[1].
+import { SUBSYSTEMS } from '../scripts/test-fast.mjs';
 
 // Parse each file independently in one bounded process. Strip only a leading hashbang (as node --check
 // accepts it), without executing imports; errors identify the exact file rather than hiding a miss.
@@ -1958,13 +1961,45 @@ export function testSuiteListsMatchRegressionRegistry() {
       .filter((line) => /^test[A-Za-z0-9_]+$/.test(line));
   };
 
-  const suiteFiles = readdirSync(join(repoRoot, 'tests'))
-    .filter((name) => name.endsWith('.test.mjs'))
-    .sort();
+  // The population is every suite the gate RUNS, which is not the same as every *.test.mjs file: the gate
+  // also runs targets like tests/test-fast.mjs, tests/credential-redaction.mjs and tests/flow.mjs. Omitting
+  // them meant their cases were unguarded while the map looked complete (web-uplift-yfbk).
+  // Some targets are browser-type entries with no path; only node targets name a suite file.
+  const gateTargets = [...new Set(SUBSYSTEMS.flatMap((sub) => sub.targets.map((t) => t.path)))]
+    .filter((path) => typeof path === 'string' && path.startsWith('tests/'))
+    .map((path) => path.replace(/^tests\//, ''));
+  const suiteFiles = [...new Set([
+    ...readdirSync(join(repoRoot, 'tests')).filter((name) => name.endsWith('.test.mjs')),
+    ...gateTargets,
+  ])].sort();
 
+  // Targets the gate runs that have NO case list to declare, each with the reason. A register entry is a
+  // deliberate decision rather than an omission: the check below requires every gate target to be EITHER
+  // declared above with the cases it must keep listing OR registered here with a reason, so a target cannot
+  // be silently absent - and an entry with an EMPTY declaration list is refused, because that is the shape
+  // that looks complete while guarding nothing (web-uplift-yfbk).
+  const REGISTERED_NON_CASE_TARGETS = {
+    'batch-resume-isolation.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'cdp-copy-sync.mjs': 'one behaviour: the copy check it performs. It has no direct-run guard and is imported by nine files, so wrapping it would change import-time behaviour; it is exercised as the case of testCdpCopySyncGuard in install-package.test.mjs.',
+    'changelog-version-check.mjs': 'one behaviour: whether CHANGELOG.md records the current version. Its check runs at import so the gate and its importers both see the failure; there is no case to name.',
+    'flow-shadow-browser.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'flow.mjs': 'a case LIBRARY: 3 of its 3 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'install-copy-symlink.mjs': 'a case LIBRARY, not a standalone suite: it exports the install/sync cases that tests/install-package.test.mjs lists and runs, and its direct-run guard is a convenience. Duplicating them here would trip the one-owner check.',
+    'mwg-artefact.mjs': 'tooling entry point (update/verify) rather than a case list; its invariants are asserted by the mwg suites.',
+    'mwg-catalog-extract.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/mwg-principles.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'safe-fetch.mjs': 'a case LIBRARY: 2 of its 2 --list names are also listed and run by tests/syntax-core.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'skill-write-contract.mjs': 'one behaviour: the skill write contract, exercised as a whole rather than in named cases.',
+    'snapshot-run.mjs': 'a case LIBRARY: 4 of its 4 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'source-tree-symlink.mjs': 'a case LIBRARY: 4 of its 4 --list names are also listed and run by tests/syntax-core.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+  };
   const byName = new Map();
+  const namesByFile = new Map();
   for (const file of suiteFiles) {
+    // A registered target has no case list by definition, so it is not asked for one: its protection is the
+    // register entry (a reason) rather than a list of names (web-uplift-yfbk).
+    if (file in REGISTERED_NON_CASE_TARGETS) continue;
     const names = listOf([join(repoRoot, 'tests', file), '--list']);
+    namesByFile.set(file, names);
     // A suite that registers nothing would satisfy every check below while running nothing at all,
     // which is the clean-versus-blind shape this project keeps having to correct.
     assert(names.length > 0, `tests/${file} lists no tests at all, so it cannot be shown to run anything`);
@@ -2018,7 +2053,10 @@ export function testSuiteListsMatchRegressionRegistry() {
   // These two numbers ARE the pin. A failure here does not mean the tree is broken; it means the gate's
   // population changed without saying so. When a case or a suite file is added or removed deliberately,
   // update the number in the same commit and say why in the message.
-  const EXPECTED_SUITE_FILES = 17;
+  // 17 *.test.mjs suites plus the 13 gate targets that are not *.test.mjs files (web-uplift-yfbk). The
+// constant catches a change in the NUMBER of things the gate runs, which is what makes a silently dropped
+// suite visible; it is not the count of test files.
+const EXPECTED_SUITE_FILES = 30;
   // web-uplift-rkcs: the case population is DECLARED BY NAME PER SUITE FILE, for the web-uplift-j3go
   // reason. A count cannot tell an addition in one file from a removal in another, and the reviewer showed a
   // global floor still passing after exactly that pair of edits (add a case, drop a preexisting one). Every
@@ -2125,6 +2163,33 @@ export function testSuiteListsMatchRegressionRegistry() {
       'testThisProjectsVerdictIsAccepted', 'testForeignCommandIsRefused', 'testForeignProjectIsRefused', 'testAnotherWorktreeOfTheSameProjectIsAccepted',
       'testUnresolvableRepoPathIsAcceptedWithACaveat', 'testRecordWithNoRepoIsAcceptedWithTheCaveat', 'testRecordWithNoCommandIsRefused', 'testFindRecordMatchesTheRealCacheNaming',
     ],
+    // Gate targets added by web-uplift-yfbk. Only a target whose cases no suite lists needs a declaration
+    // here: tests/syntax-core.test.mjs imports and lists most standalone suites' cases, and the one-owner check
+    // below refuses a name listed twice, so those are registered with that fact as the reason instead.
+    'tests/test-fast.mjs': [
+      'testSubsystemMappings',
+      'testNonTestExclusion',
+      'testAllRegressionFiltersAreValid',
+      'testDeduplicationAndFallback',
+      'testChangedFilesUseMergeBase',
+      'testDiffProvenanceIsReported',
+      'testCliDryRunAndListAndAll',
+      'testRegressionFilterCli',
+      'testMissingTargetSkippedCleanly',
+      'testFailingTargetExitsNonZero',
+      'testSlowTargetTimesOutWithExit124',
+      'testUnmappedExecutablePathsFailClosed',
+      'testChangedSuiteAutoMap',
+      'testH68zAutoMappedExecutableIsRefusedAndRunsTheControls',
+      'testSelectionManifestRefusesToCertifyIncompleteRuns',
+      'testSelectionManifestTreeAndPathFidelity',
+      'testSkippedTargetNeverCertifies',
+      'testOmittedRulesAreNamedAndNarrow',
+      'testRefusalIsActionableAndDocumented',
+      'testSuiteExecutionMarkers',
+      'testSharedModulesAreWiredOrRefused',
+      'testSkippedTargetNeverHidesBehindTheSummaryLine',
+    ],
   };
   assert(
     suiteFiles.length === EXPECTED_SUITE_FILES,
@@ -2134,11 +2199,32 @@ export function testSuiteListsMatchRegressionRegistry() {
   // guards nothing for the file it omits, while still looking deliberate. EXPECTED_SUITE_FILES catches a
   // change in the NUMBER of suite files, not a swap of one for another, so every suite file the gate runs must
   // be declared BY NAME (web-uplift-rkcs).
-  const undeclaredSuites = suiteFiles.filter((file) => !(`tests/${file}` in DECLARED_SUITE_CASES));
+  const undeclaredSuites = suiteFiles.filter((file) =>
+    !(`tests/${file}` in DECLARED_SUITE_CASES) && !(file in REGISTERED_NON_CASE_TARGETS));
   assert(
     undeclaredSuites.length === 0,
-    `${undeclaredSuites.length} suite file(s) the gate runs have no entry in DECLARED_SUITE_CASES, so every case in them is unguarded even though the map above looks complete: ${undeclaredSuites.join(', ')}. Add each one with the case names it must keep listing (web-uplift-rkcs).`,
+    `${undeclaredSuites.length} suite file(s) the gate runs are neither declared in DECLARED_SUITE_CASES nor registered in REGISTERED_NON_CASE_TARGETS, so every case in them is unguarded even though the map above looks complete: ${undeclaredSuites.join(', ')}. Declare each one with the case names it must keep listing, or register it with the reason it has none (web-uplift-rkcs, web-uplift-yfbk).`,
   );
+  for (const [file, reason] of Object.entries(REGISTERED_NON_CASE_TARGETS)) {
+    assert(
+      suiteFiles.includes(file),
+      `${file} is registered as having no case list but the gate does not run it, so the register is out of date: remove it, or declare its cases if it is a real suite (web-uplift-yfbk).`,
+    );
+    assert(
+      typeof reason === 'string' && reason.length > 20,
+      `${file} is registered without a reason. An unexplained entry is the silent omission this register exists to prevent (web-uplift-yfbk).`,
+    );
+    assert(
+      !(`tests/${file}` in DECLARED_SUITE_CASES),
+      `${file} is BOTH registered as having no cases and declared in DECLARED_SUITE_CASES. Pick one: a declaration that lists nothing would guard nothing (web-uplift-yfbk).`,
+    );
+  }
+  for (const [file, declared] of Object.entries(DECLARED_SUITE_CASES)) {
+    assert(
+      declared.length > 0,
+      `${file} is declared with an EMPTY case list. That satisfies a completeness check while guarding nothing, which is the failure mode this map exists to close (web-uplift-yfbk).`,
+    );
+  }
   for (const [file, declared] of Object.entries(DECLARED_SUITE_CASES)) {
     assert(
       suiteFiles.includes(file.replace(/^tests\//, '')),
@@ -2167,13 +2253,25 @@ export function testSuiteListsMatchRegressionRegistry() {
       .map(([name, count]) => `${name} x${count}`)
       .join(', ')}), so those cases run more than once per gate run`,
   );
+  // The registry is the FULL suite (tests/regression.mjs). Every *.test.mjs suite's cases must be in it -
+  // that is the protection this comparison always was - but a gate TARGET like tests/test-fast.mjs is the
+  // fast gate's own test file and legitimately holds cases the full suite does not run. Targets are guarded
+  // by the population and register checks above, so this compares against the *.test.mjs population rather
+  // than every file the gate runs (web-uplift-yfbk).
+  const fullSuiteNames = new Set();
+  for (const file of suiteFiles.filter((name) => name.endsWith('.test.mjs'))) {
+    for (const name of namesByFile.get(file) || []) fullSuiteNames.add(name);
+  }
   assert(
-    registry.length === byName.size,
-    `the registry lists ${registry.length} case name(s) and the suite files list ${byName.size} distinct one(s), so the registry is not exactly the union of the suite lists`,
+    registry.length === fullSuiteNames.size,
+    `the registry lists ${registry.length} case name(s) and the *.test.mjs suites list ${fullSuiteNames.size} distinct one(s), so the registry is not exactly the union of the full suite's case lists`,
   );
 
   const onlyInRegistry = [...registryCounts.keys()].filter((name) => !byName.has(name));
-  const onlyInFiles = [...byName.keys()].filter((name) => !registryCounts.has(name));
+  // Scoped to the full suite's own population for the same reason as the equality above: a gate target that
+  // only the fast gate runs (tests/test-fast.mjs) is EXPECTED to hold cases --only cannot select from the
+  // full suite, and those are guarded by the population and register checks instead (web-uplift-yfbk).
+  const onlyInFiles = [...fullSuiteNames].filter((name) => !registryCounts.has(name));
 
   assert(
     onlyInRegistry.length === 0,
