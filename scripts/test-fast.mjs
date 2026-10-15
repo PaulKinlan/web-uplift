@@ -650,11 +650,16 @@ export function getChangedFiles(repo = repoRoot, diffRef = 'origin/master') {
     for (const path of splitGitPaths(untracked.stdout)) files.add(path);
   }
 
-  // Which of those paths exist only in the working tree, not in HEAD (see getUncommittedChanges).
+  // EVERY path git status reports as dirty, taken straight from getUncommittedChanges and NOT intersected with
+  // the changed-path selection above (web-uplift-tdg4). Those two sets are not the same question: 'files' is the
+  // merge-base -> working-tree diff, while this is 'does the working tree differ from HEAD'. A path can be dirty
+  // against HEAD and absent from the former by an ordinary action - commit a change on a branch, then restore
+  // the working tree to the merge-base version, and git status reports it modified while that diff omits it.
+  // Intersecting them made 'uncommitted' EMPTY on a demonstrably dirty tree, so certifiable came out true and
+  // the run claimed to have observed the exact HEAD tree while the execution saw contents that are not in it.
   const uncommittedKinds = getUncommittedChanges(repo);
-  const uncommitted = Array.from(files)
-    .filter((path) => uncommittedKinds.has(path))
-    .map((path) => ({ path, kind: uncommittedKinds.get(path) }));
+  const uncommitted = [...uncommittedKinds].map(([path, kind]) => ({ path, kind }));
+  uncommitted.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
   return { files: Array.from(files), resolvedRef, base, uncommitted };
 }

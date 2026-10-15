@@ -1368,6 +1368,27 @@ function testSelectionManifestTreeAndPathFidelity() {
     assert.equal(manifest.certifiable, false, 'an untracked path means the run observed a working tree, so it cannot certify');
     assert(manifest.nonCertifyingReasons.some((r) => r.includes('uncommitted')), 'the reason must be the uncommitted working tree');
 
+    // THE INVERSE DIFF (web-uplift-tdg4): a path that is dirty against HEAD but INVISIBLE to the changed-path
+    // selection. Commit a change on the branch, then restore the WORKING TREE to the merge-base version. git
+    // status reports the file modified, while the merge-base -> worktree diff omits it. Building 'uncommitted'
+    // as the INTERSECTION of that diff with git status therefore left it EMPTY, certifiable true, and the log
+    // able to claim the exact HEAD tree while the execution observed different contents. The discriminating
+    // assertion is that the path is NAMED as uncommitted: on the intersection it was absent by construction.
+    writeFileSync(join(temp, 'docs', 'base.md'), 'changed on the branch\n');
+    git('add', 'docs/base.md'); git('commit', '-qm', 'change base.md on the branch');
+    writeFileSync(join(temp, 'docs', 'base.md'), 'base\n'); // back to the MERGE-BASE contents, uncommitted
+    assert(git('status', '--porcelain').includes('M docs/base.md'), 'the fixture must leave docs/base.md dirty against HEAD');
+    assert(!git('diff', '--name-only', 'master').split('\n').includes('docs/base.md'),
+      'the fixture must be the INVERSE case: omitted from the merge-base diff while dirty against HEAD');
+    const inverseOut = join(temp, 'manifest-inverse.json');
+    spawnSync(process.execPath, [join(temp, 'scripts', 'test-fast.mjs'), '--manifest', inverseOut], { cwd: temp, encoding: 'utf8', timeout: 30000 });
+    const inverse = JSON.parse(readFileSync(inverseOut, 'utf8'));
+    assert(inverse.uncommitted.some((u) => u.path === 'docs/base.md'),
+      'a path dirty against HEAD but absent from the merge-base diff must STILL be reported uncommitted (web-uplift-tdg4)');
+    assert.equal(inverse.certifiable, false, 'an inverse-diff dirty path must not certify the HEAD tree');
+    assert(inverse.nonCertifyingReasons.some((r) => r.includes('uncommitted')), 'the reason must be the uncommitted working tree');
+    git('checkout', '--', 'docs/base.md');
+
     // NEGATIVE on the same repo: once the path is committed the tree part of the reason is GONE. What this copy
     // cannot show is a fully certifying CLI run: a temp copy has no real suite tree, so its baseline targets
     // genuinely fail and the manifest is right to refuse. The certifying positive is asserted above against the
