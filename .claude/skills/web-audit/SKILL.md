@@ -330,6 +330,14 @@ during recording, hand-authoring test values in `flow.json`, or passing
 `--allow-mutations` during replay (redacted fields are skipped during replay by
 default to prevent clearing DOM values).
 
+**Replay scheme invariant:** Replay navigates http:/https: only. A `navigate` step
+at any other scheme (`file:`, `data:`, `blob:`) - or a relative URL, which CDP
+cannot resolve - is refused before the browser is driven to it, and
+`--allow-mutations` does not authorize it, because that flag authorizes a write at
+the audited site, not a local-file read or an injected document. A refused step is
+recorded with `schemeRefused: true`, `ok: false`, and a detail naming the scheme.
+Serve a local fixture over http if you need to replay one.
+
 ### 2. Build the check manifest and plan evidence, per check
 
 First generate the full `(principleId, checkId)` manifest required by the atomic

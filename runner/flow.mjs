@@ -16,6 +16,12 @@
 // controls) are protected by default in dry-run mode (mutationBlocked: true).
 // Passing --allow-mutations is required to execute real form submissions against
 // live targets.
+//
+// Replay scheme gate (web-uplift-w0zq): a navigate step is driven at http:/https:
+// only. file:, data:, blob: and every other scheme is REFUSED (schemeRefused:
+// true, step ok: false) before the browser is touched, and --allow-mutations does
+// not authorize it - that flag authorizes a write at the audited site, not a local
+// disk read or an injected document.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -350,6 +356,24 @@ export function isSubmitControl(el) {
   return !!findMutatingControl(el);
 }
 
+// Replay navigates http:/https: ONLY (web-uplift-w0zq). A flow.json is untrusted
+// input - a Chrome Recorder export, a hand-authored CI file, or our own recorder's
+// output for a page we do not control - and one of its steps is a NAVIGATION the
+// operator never asked for. `file:` reads the local disk into the browser, and
+// `data:`/`blob:` inject a document the flow chooses, so neither is a surface a web
+// audit may be driven to. A relative URL is refused too: CDP resolves a step URL
+// against nothing, so `/checkout` cannot load anyway (the recorder and Recorder
+// exports emit absolute URLs). Refused whatever --allow-mutations says, because that
+// flag authorizes a WRITE at the audited site, not a surface that is not the web.
+export const REPLAY_URL_SCHEMES = new Set(['http:', 'https:']);
+export function classifyReplayUrl(raw) {
+  if (!raw || typeof raw !== 'string') return { ok: false, reason: 'no URL' };
+  let u;
+  try { u = new URL(raw); } catch { return { ok: false, reason: `a relative URL (${String(raw).slice(0, 80)})` }; }
+  if (!REPLAY_URL_SCHEMES.has(u.protocol)) return { ok: false, reason: `the ${u.protocol.replace(/:$/, '')}: scheme` };
+  return { ok: true };
+}
+
 // --- replay -----------------------------------------------------------------
 
 export async function replayFlow(client, flow, { startUrl, outDir, log = () => {}, settleMs = 1200, allowMutations = false } = {}) {
@@ -368,21 +392,34 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
             deviceScaleFactor: step.deviceScaleFactor || 1, mobile: !!step.isMobile,
           });
           break;
-        case 'navigate':
+        case 'navigate': {
+          // http(s) only, whatever --allow-mutations says (web-uplift-w0zq): a
+          // file:/data: step is refused BY SCHEME, not authorized by a flag.
+          const target = step.url || startUrl;
+          const verdict = classifyReplayUrl(target);
+          if (!verdict.ok) {
+            outcome = {
+              ok: false,
+              schemeRefused: true,
+              detail: `refused: flow replay navigates http:/https: only, got ${verdict.reason} - not navigated (web-uplift-w0zq)`,
+            };
+            break;
+          }
           // A dry run MUST be able to follow the journey's pages (a top-level GET is
           // read-only by the HTTP contract), so navigation is allowed - except a URL
           // that names a write, because a GET that deletes is still a delete
           // (web-uplift-d31).
-          if (!allowMutations && isWriteUrl(step.url || startUrl)) {
+          if (!allowMutations && isWriteUrl(target)) {
             outcome = {
               ok: true,
               mutationBlocked: true,
-              detail: `dry-run: navigation to a URL that names a write (${step.url || startUrl}) prevented (use --allow-mutations)`,
+              detail: `dry-run: navigation to a URL that names a write (${target}) prevented (use --allow-mutations)`,
             };
             break;
           }
-          await navigate(client, step.url || startUrl, { settleMs, log });
+          await navigate(client, target, { settleMs, log });
           break;
+        }
         case 'click':
         case 'doubleClick':
           outcome = await pageAction(client, step.selectors, `
@@ -495,6 +532,7 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
       ok: outcome.ok,
       detail: outcome.detail || '',
       mutationBlocked: !!outcome.mutationBlocked,
+      schemeRefused: !!outcome.schemeRefused,
       skipped: !!outcome.skipped,
       screenshot: shot,
       url: await currentUrl(client)
