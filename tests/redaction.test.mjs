@@ -244,6 +244,40 @@ export async function testCredentialRedactionHelpers() {
     assert(!isCredentialName(name), `redaction: innocent plural '${name}' must NOT be treated as a credential (over-redaction costs evidence)`);
   }
 
+  // 8b. -es AND -ies PLURALS (web-uplift-8jf2). Section 8 stripped ONE trailing 's' and
+  //     stopped, so a plural whose singular itself ends s/x/z/ch/sh stemmed to a non-word:
+  //     'addresses' -> 'addresse', which is in no set, and an addresses field was not PII
+  //     at all - the person's address reached the artifact.
+  const terms = await import('../evidence/credential-terms.mjs');
+  assert(terms.isPiiWord('addresses'), "the -es plural of a PII word must match: 'addresses' must stem to 'address'");
+  assert(terms.isSensitiveWord('addresses'), 'so the flow classifier treats an addresses field as sensitive');
+  assert(terms.isWeakCredentialWord('passes'), "the -es plural of a weak credential word must match: 'passes' -> 'pass'");
+  assert(isCredentialName('passes'), 'and it is a credential NAME, the way every other plural is');
+  // The sets carry y-words (security, apikey/privatekey/accesskey/secretkey/passkey), so their
+  // -ies plurals must stem as well.
+  assert(terms.isCredentialWord('securities'), "'securities' -> 'security'");
+  assert(isCredentialName('securities'), "'securities' -> 'security' as a NAME");
+  // The RULE itself, on a synthetic set (the word list is deliberately not widened): '-es' is
+  // gated on the stem's own ending, and '-ies' maps to '-y'. A blanket '-2'/'ies' strip passes
+  // the positives below and fails the two negatives in the DIRECTION CHECK after them.
+  for (const [plural, singular] of [['matches', 'match'], ['hashes', 'hash'], ['boxes', 'box'], ['addresses', 'address']]) {
+    assert(terms.member(new Set([singular]), plural), `plural rule: '${plural}' must stem to '${singular}'`);
+  }
+  for (const [plural, singular] of [['policies', 'policy'], ['securities', 'security']]) {
+    assert(terms.member(new Set([singular]), plural), `plural rule: '${plural}' must stem to '${singular}'`);
+  }
+  // The gate, not just the strip: 'cakes'/'pizzas' have a real word at -2, but '-es' is not how
+  // their singular ends, so a set holding that cut word must NOT match them. A blanket -2 strip
+  // fails this.
+  assert(!terms.member(new Set(['cak']), 'cakes'), "the -es rule must be gated on the stem's ending, not a blanket -2 ('cakes')");
+  assert(terms.member(new Set(['boxes']), 'boxes'), 'control: identity still matches whatever the plural rule does');
+  // DIRECTION CHECK, second table: an -es/-ies word whose stem is NOT in the set is still
+  // innocent. Over-redaction costs evidence, so these are as load-bearing as the positives.
+  for (const name of ['dresses', 'processes', 'guesses', 'messes', 'cakes', 'notes', 'policies', 'stories', 'cookies']) {
+    assert(!isCredentialName(name) && !terms.isPiiWord(name) && !terms.isWeakCredentialWord(name) && !terms.isCredentialWord(name),
+      `redaction: innocent -es/-ies word '${name}' must NOT be treated as sensitive`);
+  }
+
   // FIDELITY: the assertion that catches BOTH classes of corruption. The redacted body must be
   // byte-identical to the input EXCEPT at the redacted spans - so a body that still round-trips
   // with a credential in it fails, and so does a body that lost a field or changed a number.
