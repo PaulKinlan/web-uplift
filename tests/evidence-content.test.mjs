@@ -93,6 +93,15 @@ export async function testEvidenceTruncationReporting() {
       `truncation: a complete CSS sample was not reported as complete: ${JSON.stringify({ cssChars: under.page.cssChars, shown: under.page.css.length, truncated: under.page.cssTruncated })}`,
     );
 
+    // A --selector list is split, trimmed and used as the computed-style keys
+    // (web-uplift-js42): that split/trim/filter only runs when a selector is asked
+    // for, and the keys are the contract a model reads.
+    const selected = await gather('dom', `${base}/under-cap`, { quiet: true, wait: 250, selector: ' h1 , .missing , ' });
+    assert(
+      Object.keys(selected.page.computed).join('|') === 'h1|.missing',
+      `dom --selector must trim, drop empties and key the computed styles by selector: ${JSON.stringify(Object.keys(selected.page.computed))}`,
+    );
+
     // The list caps report the same way: 40 images on the page, 30 listed.
     const images = await gather('images', `${base}/many-images`, { quiet: true, wait: 250 });
     assert(images.totalImages === 40, `truncation: images total is wrong: ${images.totalImages}`);

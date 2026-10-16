@@ -25,11 +25,17 @@ import { gather, isFirstPartyHost } from '../evidence/cli.mjs';
 // known tracker on such a host.
 
 export async function testTrackersThirdPartySuffix() {
+  // The third-party requests are ordered so the insertion order is ASCENDING by
+  // request count (web-uplift-js42): the ranking assertion below then fails if the
+  // primitive stops sorting, instead of passing on an order the fixture happened to
+  // hand it already.
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(
       '<!doctype html><title>trackers-fixture</title><link rel="icon" href="data:,">' +
+        '<img src="http://tracker.invalid:9/beacon.gif" alt="">' +
         '<img src="http://notlocalhost:9/tracker.js" alt="">' +
+        '<img src="http://notlocalhost:9/tracker-again.js" alt="">' +
         '<img src="http://sub.localhost:9/sub.js" alt=""><h1>trackers fixture</h1>',
     );
   });
@@ -41,6 +47,14 @@ export async function testTrackersThirdPartySuffix() {
     assert(
       result.firstParty === 'localhost',
       `trackers must record the page hostname as firstParty, got ${result.firstParty}`,
+    );
+    // The fixture inserts the busier origin SECOND, so an unsorted list would put
+    // tracker.invalid first and this fails: the ranking, not the insertion order, is
+    // what is being asserted (web-uplift-js42).
+    const top = result.topThirdPartyByRequests || [];
+    assert(
+      top.length >= 2 && top[0].origin === 'notlocalhost' && top[0].requests === 2 && top[1].requests === 1,
+      `third-party origins must be ranked by request count, busiest first: ${JSON.stringify(top)}`,
     );
     assert(
       third.includes('notlocalhost'),
