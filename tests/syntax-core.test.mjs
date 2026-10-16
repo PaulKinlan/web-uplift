@@ -2107,7 +2107,7 @@ export function testSuiteListsMatchRegressionRegistry() {
       'testFixWriteScopeDiffing', 'testFixModeRefusesOutOfScopeWrites', 'testFixModeScopeEdgeCases', 'testFixIsolationAssertion',
       'testFixIsolatedRunPublishes', 'testSnapshotRunStructure', 'testSnapshotRunCopiesArtifacts', 'testSnapshotRunMissingArtifactsBestEffort',
       'testSnapshotRunCopyErrorTolerance', 'testBatchWriteScope', 'testBatchResumeIsolation', 'testWriteScopeCoversExecutedTrees',
-      'testBatchIntegrityGateAbortsOnTamperedExecutedTree', 'testFlowNormalize', 'testFlowRecordSensitiveRedaction', 'testFlowReplayMutationGate',
+      'testBatchIntegrityGateAbortsOnTamperedExecutedTree', 'testFlowNormalize', 'testFlowRecordSensitiveRedaction', 'testFlowReplayMutationGate', 'testFlowReplaySchemeGate',
       'testFlowPierceShadowRootBrowser',
     ],
     'tests/syntax-core.test.mjs': [
