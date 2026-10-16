@@ -30,6 +30,8 @@ export async function testTrackersThirdPartySuffix() {
     res.end(
       '<!doctype html><title>trackers-fixture</title><link rel="icon" href="data:,">' +
         '<img src="http://notlocalhost:9/tracker.js" alt="">' +
+        '<img src="http://notlocalhost:9/tracker-again.js" alt="">' +
+        '<img src="http://tracker.invalid:9/beacon.gif" alt="">' +
         '<img src="http://sub.localhost:9/sub.js" alt=""><h1>trackers fixture</h1>',
     );
   });
@@ -41,6 +43,15 @@ export async function testTrackersThirdPartySuffix() {
     assert(
       result.firstParty === 'localhost',
       `trackers must record the page hostname as firstParty, got ${result.firstParty}`,
+    );
+    // Two third-party origins with DIFFERENT request counts (web-uplift-js42): the
+    // ranking is built by a sort and a map that only run with two or more, so
+    // without this the list order is untested and the busier origin could be
+    // reported second without any assertion noticing.
+    const top = result.topThirdPartyByRequests || [];
+    assert(
+      top.length >= 2 && top[0].origin === 'notlocalhost' && top[0].requests > top[1].requests,
+      `third-party origins must be ranked by request count, busiest first: ${JSON.stringify(top)}`,
     );
     assert(
       third.includes('notlocalhost'),

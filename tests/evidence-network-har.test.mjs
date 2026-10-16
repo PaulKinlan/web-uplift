@@ -95,8 +95,22 @@ export async function testHarRedirects() {
   // body-fetch pool's in-flight limit, so the pool has to recycle its workers,
   // and the redirect entry must still end up with no body attached.
   const BODY_COUNT = 12;
+  // A 1x1 PNG and a cross-origin request (web-uplift-js42): the binary body is what
+  // exercises the base64 content path, and asking for it on `localhost` while the
+  // page is served on `127.0.0.1` makes it a genuine third-party origin, which is
+  // what runs the origins ranking and the third-party byte/count totals. The dead
+  // image on a closed port is what makes the transport-failure path fire.
+  const PNG = Uint8Array.from(
+    atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/AF+8QAAAABJRU5ErkJggg=='),
+    (c) => c.charCodeAt(0),
+  );
   const server = http.createServer((req, res) => {
     const path = (req.url || '').split('?')[0];
+    if (path === '/pic.png') {
+      res.writeHead(200, { 'Content-Type': 'image/png' });
+      res.end(PNG);
+      return;
+    }
     if (path === '/start') {
       res.writeHead(302, { Location: '/final' });
       res.end('redirecting');
@@ -109,7 +123,8 @@ export async function testHarRedirects() {
     }
     res.writeHead(200, { 'Content-Type': 'text/html' });
     const scripts = Array.from({ length: BODY_COUNT }, (_, i) => `<script src="/s${i}.js"></script>`).join('');
-    res.end(`<!doctype html><title>ok</title><link rel="icon" href="data:,">${scripts}ok`);
+    const crossHost = String(req.headers.host || '').replace('127.0.0.1', 'localhost');
+    res.end(`<!doctype html><title>ok</title><link rel="icon" href="data:,">${scripts}<img src="http://${crossHost}/pic.png" alt=""><img src="http://127.0.0.1:9/dead.png" alt="">ok`);
   });
 
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
@@ -139,8 +154,8 @@ export async function testHarRedirects() {
     const har = JSON.parse(readFileSync(out, 'utf8'));
     const withBody = har.log.entries.filter((e) => e.response?.content?.text !== undefined);
     assert(
-      withBody.length === BODY_COUNT + 1,
-      `--bodies must capture ${BODY_COUNT + 1} bodies (document + ${BODY_COUNT} scripts), got ${withBody.length}`,
+      withBody.length === BODY_COUNT + 2,
+      `--bodies must capture ${BODY_COUNT + 2} bodies (document + ${BODY_COUNT} scripts + the PNG), got ${withBody.length}`,
     );
     for (let i = 0; i < BODY_COUNT; i++) {
       const entry = har.log.entries.find((e) => e.request.url.endsWith(`/s${i}.js`));
@@ -153,6 +168,17 @@ export async function testHarRedirects() {
     assert(redirectEntry?.response?.content?.text == null, '--bodies must not attach a body to the redirect entry');
     const documentEntry = har.log.entries.find((e) => e.request.url.endsWith('/final'));
     assert(documentEntry?.response?.content?.text?.includes('ok'), '--bodies must capture the document body');
+    // A binary body arrives base64-encoded, and its reported size must be the
+    // DECODED size rather than the base64 length (web-uplift-js42).
+    const picEntry = har.log.entries.find((e) => e.request.url.endsWith('/pic.png'));
+    assert(
+      picEntry?.response?.content?.encoding === 'base64' && picEntry.response.content.size === PNG.length,
+      `--bodies must record a binary body as base64 with its true decoded size (${PNG.length} bytes): ${JSON.stringify(picEntry?.response?.content)}`,
+    );
+    assert(
+      summary.thirdParty?.thirdPartyRequestCount > 0 && summary.thirdParty?.thirdPartyTransferredBytes > 0,
+      `the cross-origin image must be counted as third-party traffic: ${JSON.stringify(summary.thirdParty)}`,
+    );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
