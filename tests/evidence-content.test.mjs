@@ -7,9 +7,10 @@
 // reordered, and every case remains independent (it builds its own server and browser).
 
 import http from 'node:http';
-import { readdirSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { assert, run, runAsync, repoRoot, runSuite } from './test-helpers.mjs';
+import { assert, run, runAsync, repoRoot, runSuite, tmp } from './test-helpers.mjs';
 import {
   gather,
   parseArgs,
@@ -874,6 +875,101 @@ export function testAwaitCensus() {
   }
 }
 
+// web-uplift-zf00: heap and video were the only two primitives that NO suite executed - measured
+// at 0.00% function coverage across all 201 union-gate cases, with neither name appearing anywhere
+// under tests/, while both are reachable CLI verbs (evidence/cli.mjs:158-159). The await census was
+// never an execution census (it classifies await sites by regex), which is why they had no case.
+// Both are browser-session primitives, so this case rides the fixture shape the rest of this file
+// already uses: its own server, its own browser, artifact writes only into the per-run tmp dir.
+// video's MP4 assembly needs ffmpeg - README.md documents it as the prerequisite for the video
+// primitive - so when it is missing this case fails on that STATED dependency (asserting the
+// explicit no-artifact note) rather than passing silently; the screencast contract is asserted
+// either way, because the frames are what the primitive itself collects.
+export async function testHeapAndVideoPrimitives() {
+  const page = '<!doctype html><html><head><title>heap and video</title></head><body>' +
+    '<p>Fixture for the two primitives no suite executed.</p><button id="b">b</button></body></html>';
+
+  const server = http.createServer((req, res) => {
+    const path = (req.url || '').split('?')[0];
+    if (path === '/favicon.ico') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(page);
+  });
+
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  let browser = null;
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    // One browser for both primitives (web-uplift-t2mr's rule): each gather still opens its own
+    // session/target, so the two primitives cannot leak per-target CDP state into each other.
+    browser = await launchChrome({ log: () => {} });
+
+    // HeapProfiler.takeHeapSnapshot -> a parsed summary. The model reads the summary,
+    // never the raw snapshot, so the summary's totals and its artifact are the contract.
+    const heapOut = join(tmp, 'heap-summary.json');
+    const heap = await gather('heap', `${base}/`, { quiet: true, wait: 250, out: heapOut, browser });
+    assert(
+      heap.artifact === heapOut && existsSync(heapOut),
+      `heap: the summary artifact was not written to the requested path: ${JSON.stringify({ artifact: heap.artifact, heapOut })}`,
+    );
+    const summary = JSON.parse(readFileSync(heapOut, 'utf8'));
+    assert(
+      summary.totals?.nodeCount > 0 && summary.totals?.edgeCount > 0 && summary.totals?.totalSelfSizeBytes > 0,
+      `heap: a snapshot of a live page must report node, edge and retained-size totals: ${JSON.stringify(summary.totals)}`,
+    );
+    assert(
+      summary.totals.nodeCount === heap.nodeCount && summary.totals.totalSelfSizeBytes === heap.totalSelfSizeBytes,
+      `heap: the artifact must agree with the returned totals: ${JSON.stringify({ artifact: summary.totals, returned: { nodeCount: heap.nodeCount, totalSelfSizeBytes: heap.totalSelfSizeBytes } })}`,
+    );
+    assert(
+      Array.isArray(summary.topNodeTypesBySize) && summary.topNodeTypesBySize.length > 0 &&
+        Array.isArray(summary.topConstructorsBySize) && summary.topConstructorsBySize.length > 0,
+      `heap: a snapshot must name the top node types and constructors: ${JSON.stringify(Object.keys(summary))}`,
+    );
+
+    // Page.startScreencast -> ffmpeg-assembled MP4. A short window keeps the case cheap:
+    // the contract is that frames arrive, the requested duration is honoured, and the
+    // container is a real MP4 rather than a renamed frame.
+    const videoOut = join(tmp, 'transition.mp4');
+    const rec = await gather('video', `${base}/`, {
+      quiet: true,
+      wait: 250,
+      duration: 600,
+      out: videoOut,
+      browser,
+      interact: "document.querySelector('#b').textContent = 'clicked'",
+    });
+    assert(
+      rec.durationMs === 600 && rec.frames > 0,
+      `video: the screencast must run for the requested window and capture frames: ${JSON.stringify({ durationMs: rec.durationMs, frames: rec.frames })}`,
+    );
+    const ffmpeg = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' });
+    if (ffmpeg.status === 0) {
+      assert(
+        rec.artifact === videoOut && existsSync(videoOut) && statSync(videoOut).size > 0,
+        `video: ffmpeg is present, so the MP4 must be assembled: ${JSON.stringify({ artifact: rec.artifact, note: rec.note })}`,
+      );
+      // An MP4 container carries the 'ftyp' box type at bytes 4-8; a PNG renamed .mp4
+      // would pass a bare size check.
+      const boxType = readFileSync(videoOut).subarray(4, 8).toString('latin1');
+      assert(boxType === 'ftyp', `video: the assembled artifact is not an MP4 container (box type ${JSON.stringify(boxType)})`);
+    } else {
+      assert(
+        rec.artifact === null && /ffmpeg/.test(rec.note || ''),
+        `video: without ffmpeg the result must carry an explicit note, not a silent pass: ${JSON.stringify({ artifact: rec.artifact, note: rec.note })}`,
+      );
+    }
+  } finally {
+    if (browser) await browser.close();
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
 export const evidenceContentTests = [
   testEvidenceTruncationReporting,
   testFeaturesPrimitive,
@@ -886,6 +982,7 @@ export const evidenceContentTests = [
   testNoSourceArgumentOmitsSource,
   testAdversarialPageCannotInfluenceSource,
   testExplicitSourceHonoursOperatorSpecifiedRoot,
+  testHeapAndVideoPrimitives,
 ];
 
 export {
