@@ -1,3 +1,15 @@
+// NEUTRALISED SAMPLE (web-uplift-auxp, the sibling of the web-uplift-17q
+// neutralisation). This file is the provenance record of the probe the model-led run
+// authored to inventory the catalogue page's structure, semantics and error surfaces
+// (PROVENANCE.md documents that the scratch probes are the agent's own), kept under its
+// original name and otherwise unchanged. The 17q fix neutralised the contact-lead
+// sibling and MISSED this one, which kept a live state-changing POST to /cart; that
+// line is now DISABLED - commented out below - so re-running or copying this file
+// cannot mutate a real cart. The remaining fetches are read-only GETs (the evidence
+// record of the endpoint survey, including the read-only GET /cart on the line above)
+// and stay executable. testCommittedSiblingProbesAreInert sweeps every committed
+// scratch probe for executable state-changing requests so the next sibling cannot be
+// missed. To probe a target you own and are authorised to test, uncomment the POST.
 (async () => {
   const snip = (t, n = 240) => (t || '').replace(/\s+/g, ' ').trim().slice(0, n);
   const get = async (u, init) => {
@@ -28,7 +40,7 @@
   const fd = new URLSearchParams({ item: 'Bearing 12mm', quantity: '1' });
   const flows = await Promise.all([
     get('/'), get('/cart'), get('/search?q=bearing'), get('/search?page=2'), get('/search'),
-    get('/cart', { method: 'POST', body: fd, headers: { 'content-type': 'application/x-www-form-urlencoded' } }),
+    //   get('/cart', { method: 'POST', body: fd, headers: { 'content-type': 'application/x-www-form-urlencoded' } }),
     get('/robots.txt'), get('/sitemap.xml'), get('/catalogue/bearing-12mm'), get('/no-such-page-xyz'),
   ]);
   const nav = performance.getEntriesByType('navigation')[0];

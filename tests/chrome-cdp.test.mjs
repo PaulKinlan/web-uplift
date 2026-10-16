@@ -32,6 +32,7 @@ import {
   listFiles,
   assertProbeFileInert,
   assertUnknownRawSurface,
+  executableLines,
   cleanStaleNpxRegressionTrees,
   packTarball,
   noUpdateEnv,
@@ -944,19 +945,78 @@ export function testCommittedProbeIsInert() {
 
 
 export function testCommittedSiblingProbesAreInert() {
-  const scratch = join(repoRoot, 'evidence-out', 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch');
+  // web-uplift-auxp: the 17q fix neutralised ONE committed scratch probe (contact-lead)
+  // and missed its catalogue sibling, which kept a live POST to /cart. So this case no
+  // longer pins the single directory it happened to know about: the defect is "a
+  // committed sample with a live state-changing request", which is a property of the
+  // whole scratch surface, and pinning one file is what let the second one be missed.
+  const STATE_CHANGING = [
+    /\bmethod:\s*['"](POST|PUT|PATCH|DELETE)['"]/,
+    /\brequestSubmit\s*\(/,
+    /\bfetch\s*\([^)]*\bmethod:\s*['"](POST|PUT|PATCH|DELETE)['"]/,
+  ];
+  const outRoot = join(repoRoot, 'evidence-out');
+  // This walk does NOT use the shared listFiles helper, and that is the point: listFiles
+  // skips directories named `scratch` (SKIP_DIRS), which is the right default for a walk
+  // of the shipped tree and exactly wrong for this one, since the committed probes under
+  // test live in those directories. Descend into them; skip only what is never a source
+  // file. (testHarnessScratchSkipsCannotHideTrackedModules guards the other direction.)
+  const NEVER_SOURCE = new Set(['.git', 'node_modules']);
+  const walked = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (NEVER_SOURCE.has(entry.name)) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) walked.push(full);
+    }
+  };
+  walk(join(outRoot, 'web-uplift-cpa', 'model-led'));
+  const probes = walked.filter((p) => /[\\/]scratch[\\/]/.test(p));
+  // Non-vacuity: a walk that silently returns nothing would pass every check below,
+  // so the known probes must be IN the swept set, not merely absent from it.
+  assert(
+    probes.length >= 10,
+    `the sweep must find the committed scratch probes, found ${probes.length} of ${walked.length} walked files`,
+  );
+  for (const known of [
+    join(outRoot, 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch', 'flow-probe.js'),
+    join(outRoot, 'web-uplift-cpa', 'model-led', 'catalogue', 'scratch', 'flow-probe.js'),
+  ]) {
+    assert(probes.includes(known), `the sweep must include the probe it exists to guard: ${relative(outRoot, known)}`);
+  }
+  for (const file of probes) {
+    const live = executableLines(readFileSync(file, 'utf8'));
+    for (const re of STATE_CHANGING) {
+      assert(
+        !re.test(live),
+        `${relative(outRoot, file)} must stay inert: an executable state-changing request (${re}) is live again:\n${live}`,
+      );
+    }
+  }
+
+  // The 17q samples keep their non-request guarantees too: the paths write-scope.json
+  // references survive, the sample email stays an RFC 2606 placeholder and no sample PII
+  // is present.
+  const scratch = join(outRoot, 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch');
   for (const name of ['submit.js', 'flow-probe.js']) {
     assert(existsSync(join(scratch, name)), `the neutralised probe must keep the path write-scope.json references: ${name}`);
   }
   assertProbeFileInert(join(scratch, 'submit.js'), { forbid: [/\brequestSubmit\s*\(/, /\bfetch\s*\(/] });
   assertProbeFileInert(join(scratch, 'flow-probe.js'), { forbid: [/method:\s*'POST'/] });
-  // Negative control: a live probe shape (uncommented requestSubmit plus the
-  // original sample data, no placeholder) must trip the checks.
+
+  // Negative control: a live probe shape (uncommented requestSubmit plus a live POST)
+  // must trip the same checks the sweep applies to every walked file, or the sweep
+  // passing says nothing about the files it walks.
   const fixture = join(tmp, 'live-probe-shape.js');
   writeFileSync(
     fixture,
-    "(() => {\n  document.getElementById('email').value = 'jo@example.com';\n  document.getElementById('enquiry-form').requestSubmit();\n})()\n",
+    "(() => {\n  document.getElementById('email').value = 'jo@example.com';\n  document.getElementById('enquiry-form').requestSubmit();\n  return fetch('/cart', { method: 'POST' });\n})()\n",
   );
+  const fixtureLive = executableLines(readFileSync(fixture, 'utf8'));
+  for (const re of STATE_CHANGING) {
+    assert(re.test(fixtureLive), `negative control: the sweep must fire on a live state-changing shape (${re})`);
+  }
   let fired = false;
   try {
     assertProbeFileInert(fixture, { forbid: [/\brequestSubmit\s*\(/] });
