@@ -2065,7 +2065,7 @@ export function testSuiteListsMatchRegressionRegistry() {
     'tests/evidence-content.test.mjs': [
       'testEvidenceTruncationReporting', 'testFeaturesPrimitive', 'testDiscoverabilityHelpers', 'testDiscoverabilityH1InRaw',
       'testDiscoverabilitySettleKeepsTheSpaDefaultAndHonoursAnExplicitWait', 'testTargetsPrimitive', 'testA11yTreePrimitive', 'testAwaitCensus',
-      'testNoSourceArgumentOmitsSource', 'testAdversarialPageCannotInfluenceSource', 'testExplicitSourceHonoursOperatorSpecifiedRoot',
+      'testNoSourceArgumentOmitsSource', 'testAdversarialPageCannotInfluenceSource', 'testExplicitSourceHonoursOperatorSpecifiedRoot', 'testHeapAndVideoPrimitives',
     ],
     'tests/evidence-network-har.test.mjs': [
       'testHarReadsRequestContentTypeAndRedirectLocationRegardlessOfCase', 'testHarRedirects', 'testHarWaitsForPendingResponses',
