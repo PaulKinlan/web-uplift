@@ -73,6 +73,20 @@ The only host requirements: Node, `google-chrome-stable` (override `CHROME_BIN`)
   duplicate merge conflicts (web-uplift-diaq). Run `npm run sync:vendored` (or
   `node tests/cdp-copy-sync.mjs --sync`) to resync copies. The test gate
   (`npm test`) enforces byte identity via `testCdpCopySyncGuard`.
+- Bead comments are APPEND-ONLY, so never paste a live-looking secret into one
+  (web-uplift-246z). Verified on bd 1.3.1: `bd comments` offers `add` and the list
+  form only, with no edit and no delete; `bd update` rewrites the description
+  alone; and `bd dolt` has no `sql` verb, so there is no supported command that
+  can correct a comment. It also leaves this machine: the Dolt database that
+  carries the comment is published to `origin` as `refs/dolt/data` by
+  `bd dolt push`, so a token-shaped comment is public rather than local.
+  `scripts/beads-export.mjs` and `tests/beads-export-redaction.mjs` protect the
+  tracked export FILE only, never the database.
+- Check any body before you post it, with the rule the redactor itself uses (an
+  empty array is clean):
+  `node -e "import('./evidence/credential-terms.mjs').then((m) => console.log(m.findTokenShapesInText(process.argv[1])))" '<text>'`
+  If a shape is already written, rotate the credential: no edit can recall bytes
+  that the published ref history keeps.
 
 ## Codex specifics
 
