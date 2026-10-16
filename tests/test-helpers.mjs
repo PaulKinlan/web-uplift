@@ -257,20 +257,12 @@ export function packTarball() {
 // executable - GETs are not the defect class; the POST is. The negative
 // control proves the checks FIRE on a live probe shape rather than vacuously
 // passing.
-// The lines of a probe that can actually RUN. A neutralised sample keeps its request
-// COMMENTED OUT, so every inertness check has to read executable lines only - and it
-// has to be the same definition everywhere, or a per-file check and a directory sweep
-// can disagree about what inert means (web-uplift-auxp).
-export function executableLines(text) {
-  return text
+export function assertProbeFileInert(file, { forbid }) {
+  const text = readFileSync(file, 'utf8');
+  const live = text
     .split('\n')
     .filter((line) => !line.trimStart().startsWith('//'))
     .join('\n');
-}
-
-export function assertProbeFileInert(file, { forbid }) {
-  const text = readFileSync(file, 'utf8');
-  const live = executableLines(text);
   for (const re of forbid) {
     assert(!re.test(live), `${file} must stay inert (${re}) in executable lines:\n${live}`);
   }

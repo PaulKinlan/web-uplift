@@ -32,7 +32,6 @@ import {
   listFiles,
   assertProbeFileInert,
   assertUnknownRawSurface,
-  executableLines,
   cleanStaleNpxRegressionTrees,
   packTarball,
   noUpdateEnv,
@@ -945,6 +944,18 @@ export function testCommittedProbeIsInert() {
 
 
 export function testCommittedSiblingProbesAreInert() {
+  // The lines of a probe that can actually RUN: a neutralised sample keeps its request
+  // commented out, so an inertness check has to read executable lines only. This mirrors
+  // the filter inside assertProbeFileInert rather than exporting that rule from
+  // tests/test-helpers.mjs, deliberately: that module is named by 19 suites, so touching it
+  // turns a test-side check into a full-gate change (the fast tier refuses it by name -
+  // "a shared module whose consumers are most of the fast tier"), and one consumer does not
+  // justify that. The two must agree, so the 17q probes below are checked by BOTH.
+  const executableLines = (text) =>
+    text
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .join('\n');
   // web-uplift-auxp: the 17q fix neutralised ONE committed scratch probe (contact-lead)
   // and missed its catalogue sibling, which kept a live POST to /cart. So this case no
   // longer pins the single directory it happened to know about: the defect is "a
