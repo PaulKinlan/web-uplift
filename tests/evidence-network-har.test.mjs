@@ -149,6 +149,17 @@ export async function testHarRedirects() {
       `HAR summary missed redirect hygiene entry: ${JSON.stringify(summary.hygiene.redirects)}`,
     );
 
+    // Every cacheable type without cache-control/expires lands in the missing-cache
+    // list, and that list is ranked by transferred size (web-uplift-js42): the
+    // fixture's 12 scripts and the PNG qualify, so more than one entry is expected
+    // and the ordering is the contract a model reads.
+    const missingCache = summary.hygiene.missingCacheHeaders || [];
+    assert(
+      summary.hygiene.missingCacheHeadersTotal >= 2 &&
+        missingCache.every((e, i) => i === 0 || missingCache[i - 1].transferredBytes >= e.transferredBytes),
+      `the missing-cache list must rank every cacheable response without cache headers by size: ${JSON.stringify(missingCache)}`,
+    );
+
     // --bodies must attach every retrievable body, including past the pool's
     // concurrency limit, and must not attach one to the redirect entry.
     const har = JSON.parse(readFileSync(out, 'utf8'));
