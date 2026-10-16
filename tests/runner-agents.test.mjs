@@ -46,7 +46,7 @@ import {
   testSnapshotRunMissingArtifactsBestEffort,
   testSnapshotRunCopyErrorTolerance,
 } from './snapshot-run.mjs';
-import { testFlowNormalize, testFlowRecordSensitiveRedaction, testFlowReplayMutationGate } from './flow.mjs';
+import { testFlowNormalize, testFlowRecordSensitiveRedaction, testFlowReplayMutationGate, testFlowReplaySchemeGate } from './flow.mjs';
 import { testFlowPierceShadowRootBrowser } from './flow-shadow-browser.mjs';
 
 // The headless Claude allowlist must name the intended invocations, not the
@@ -1818,6 +1818,7 @@ export const runnerAgentsTests = [
   testFlowNormalize,
   testFlowRecordSensitiveRedaction,
   testFlowReplayMutationGate,
+  testFlowReplaySchemeGate,
   testFlowPierceShadowRootBrowser,
 ];
 
@@ -1830,6 +1831,7 @@ export {
   testFlowNormalize,
   testFlowRecordSensitiveRedaction,
   testFlowReplayMutationGate,
+  testFlowReplaySchemeGate,
   testFlowPierceShadowRootBrowser,
 };
 
