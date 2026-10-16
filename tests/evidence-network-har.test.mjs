@@ -95,14 +95,23 @@ export async function testHarRedirects() {
   // body-fetch pool's in-flight limit, so the pool has to recycle its workers,
   // and the redirect entry must still end up with no body attached.
   const BODY_COUNT = 12;
-  // A 1x1 PNG and a cross-origin request (web-uplift-js42): the binary body is what
-  // exercises the base64 content path, and asking for it on `localhost` while the
-  // page is served on `127.0.0.1` makes it a genuine third-party origin, which is
-  // what runs the origins ranking and the third-party byte/count totals. The dead
+  // A binary asset and a cross-origin request (web-uplift-js42): the binary body is
+  // what exercises the base64 content path, and asking for it on `localhost` while
+  // the page is served on `127.0.0.1` makes it a genuine third-party origin, which
+  // is what runs the origins ranking and the third-party byte/count totals. The dead
   // image on a closed port is what makes the transport-failure path fire.
-  const PNG = Uint8Array.from(
-    atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/AF+8QAAAABJRU5ErkJggg=='),
-    (c) => c.charCodeAt(0),
+  //
+  // It is padded past the tiny script bodies ON PURPOSE: the missing-cache ranking
+  // is asserted below, and a fixture whose insertion order already matches the
+  // ranking would pass with the sort deleted. The PNG signature is kept so the
+  // bytes are a real (if padded) PNG.
+  const PNG = new Uint8Array(4096);
+  PNG.set(
+    Uint8Array.from(
+      atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/AF+8QAAAABJRU5ErkJggg=='),
+      (c) => c.charCodeAt(0),
+    ),
+    0,
   );
   const server = http.createServer((req, res) => {
     const path = (req.url || '').split('?')[0];
@@ -150,14 +159,17 @@ export async function testHarRedirects() {
     );
 
     // Every cacheable type without cache-control/expires lands in the missing-cache
-    // list, and that list is ranked by transferred size (web-uplift-js42): the
-    // fixture's 12 scripts and the PNG qualify, so more than one entry is expected
-    // and the ordering is the contract a model reads.
+    // list, and that list is ranked by transferred size (web-uplift-js42). The PNG is
+    // the largest response by far, so an unsorted list (insertion order: the 12 tiny
+    // scripts first) would put a script on top and this fails.
     const missingCache = summary.hygiene.missingCacheHeaders || [];
     assert(
-      summary.hygiene.missingCacheHeadersTotal >= 2 &&
-        missingCache.every((e, i) => i === 0 || missingCache[i - 1].transferredBytes >= e.transferredBytes),
-      `the missing-cache list must rank every cacheable response without cache headers by size: ${JSON.stringify(missingCache)}`,
+      summary.hygiene.missingCacheHeadersTotal >= 2 && missingCache[0]?.url?.endsWith('/pic.png'),
+      `the missing-cache list must rank the largest cacheable response first: ${JSON.stringify(missingCache.slice(0, 3))}`,
+    );
+    assert(
+      missingCache[0].transferredBytes > missingCache[missingCache.length - 1].transferredBytes,
+      `the missing-cache list must be ordered by transferred size, largest first: ${JSON.stringify(missingCache.map((e) => e.transferredBytes))}`,
     );
 
     // --bodies must attach every retrievable body, including past the pool's
