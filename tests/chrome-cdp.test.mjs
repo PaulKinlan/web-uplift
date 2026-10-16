@@ -944,19 +944,100 @@ export function testCommittedProbeIsInert() {
 
 
 export function testCommittedSiblingProbesAreInert() {
-  const scratch = join(repoRoot, 'evidence-out', 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch');
+  // The lines of a probe that can actually RUN: a neutralised sample keeps its request
+  // commented out, so an inertness check has to read executable lines only. This mirrors
+  // the filter inside assertProbeFileInert rather than exporting that rule from
+  // tests/test-helpers.mjs, deliberately: that module is named by 19 suites, so touching it
+  // turns a test-side check into a full-gate change (the fast tier refuses it by name -
+  // "a shared module whose consumers are most of the fast tier"), and one consumer does not
+  // justify that. The two must agree, so the 17q probes below are checked by BOTH.
+  const executableLines = (text) =>
+    text
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .join('\n');
+  // web-uplift-auxp: the 17q fix neutralised ONE committed scratch probe (contact-lead)
+  // and missed its catalogue sibling, which kept a live POST to /cart. So this case no
+  // longer pins the single directory it happened to know about: the defect is "a
+  // committed sample with a live state-changing request", which is a property of the
+  // whole scratch surface, and pinning one file is what let the second one be missed.
+  const STATE_CHANGING = [
+    /\bmethod:\s*['"](POST|PUT|PATCH|DELETE)['"]/,
+    /\brequestSubmit\s*\(/,
+    /\bfetch\s*\([^)]*\bmethod:\s*['"](POST|PUT|PATCH|DELETE)['"]/,
+  ];
+  const outRoot = join(repoRoot, 'evidence-out');
+  // This walk does NOT use the shared listFiles helper, and that is the point: listFiles
+  // skips directories named `scratch` (SKIP_DIRS), which is the right default for a walk
+  // of the shipped tree and exactly wrong for this one, since the committed probes under
+  // test live in those directories. Descend into them; skip only what is never a source
+  // file. (testHarnessScratchSkipsCannotHideTrackedModules guards the other direction.)
+  const NEVER_SOURCE = new Set(['.git', 'node_modules']);
+  const walked = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (NEVER_SOURCE.has(entry.name)) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) walked.push(full);
+    }
+  };
+  walk(outRoot);
+  const probes = walked.filter((p) => /[\\/]scratch[\\/]/.test(p));
+  // The population is compared against what git actually has COMMITTED under any
+  // evidence-out scratch directory, not against a count someone remembered to update:
+  // a new run directory full of probes is then swept the day it is committed, which is
+  // the failure mode that let 17q neutralise one sibling and miss the other.
+  const committed = run('git', ['ls-files', 'evidence-out/**/scratch/**']);
+  assert(committed.status === 0, `git ls-files failed: ${committed.stderr}`);
+  const committedProbes = committed.stdout.split('\n').filter(Boolean).map((p) => join(repoRoot, p));
+  // Non-vacuity: the sweep must find at least the committed probes, or passing says
+  // nothing. The known defects are included by name below for the same reason.
+  assert(
+    committedProbes.length >= 10 && probes.length >= committedProbes.length,
+    `the sweep must cover every committed scratch probe (committed ${committedProbes.length}, walked ${probes.length} of ${walked.length} files)`,
+  );
+  for (const file of committedProbes) {
+    assert(probes.includes(file), `the sweep must cover every committed scratch probe, missed: ${relative(outRoot, file)}`);
+  }
+  for (const known of [
+    join(outRoot, 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch', 'flow-probe.js'),
+    join(outRoot, 'web-uplift-cpa', 'model-led', 'catalogue', 'scratch', 'flow-probe.js'),
+  ]) {
+    assert(probes.includes(known), `the sweep must include the probe it exists to guard: ${relative(outRoot, known)}`);
+  }
+  for (const file of probes) {
+    const live = executableLines(readFileSync(file, 'utf8'));
+    for (const re of STATE_CHANGING) {
+      assert(
+        !re.test(live),
+        `${relative(outRoot, file)} must stay inert: an executable state-changing request (${re}) is live again:\n${live}`,
+      );
+    }
+  }
+
+  // The 17q samples keep their non-request guarantees too: the paths write-scope.json
+  // references survive, the sample email stays an RFC 2606 placeholder and no sample PII
+  // is present.
+  const scratch = join(outRoot, 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch');
   for (const name of ['submit.js', 'flow-probe.js']) {
     assert(existsSync(join(scratch, name)), `the neutralised probe must keep the path write-scope.json references: ${name}`);
   }
   assertProbeFileInert(join(scratch, 'submit.js'), { forbid: [/\brequestSubmit\s*\(/, /\bfetch\s*\(/] });
   assertProbeFileInert(join(scratch, 'flow-probe.js'), { forbid: [/method:\s*'POST'/] });
-  // Negative control: a live probe shape (uncommented requestSubmit plus the
-  // original sample data, no placeholder) must trip the checks.
+
+  // Negative control: a live probe shape (uncommented requestSubmit plus a live POST)
+  // must trip the same checks the sweep applies to every walked file, or the sweep
+  // passing says nothing about the files it walks.
   const fixture = join(tmp, 'live-probe-shape.js');
   writeFileSync(
     fixture,
-    "(() => {\n  document.getElementById('email').value = 'jo@example.com';\n  document.getElementById('enquiry-form').requestSubmit();\n})()\n",
+    "(() => {\n  document.getElementById('email').value = 'jo@example.com';\n  document.getElementById('enquiry-form').requestSubmit();\n  return fetch('/cart', { method: 'POST' });\n})()\n",
   );
+  const fixtureLive = executableLines(readFileSync(fixture, 'utf8'));
+  for (const re of STATE_CHANGING) {
+    assert(re.test(fixtureLive), `negative control: the sweep must fire on a live state-changing shape (${re})`);
+  }
   let fired = false;
   try {
     assertProbeFileInert(fixture, { forbid: [/\brequestSubmit\s*\(/] });
