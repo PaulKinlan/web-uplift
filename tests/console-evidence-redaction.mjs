@@ -292,11 +292,20 @@ export async function testConsoleEvidenceRedaction() {
   assert(attachConsoleEvidence(stubClient(), {}) === null, 'a client with no collector yields no block');
 }
 
+// --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk); process.exitCode, not
+// process.exit, so a piped list cannot lose its tail (web-uplift-ecif).
+const CASES = [testConsoleEvidenceRedaction];
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  testConsoleEvidenceRedaction()
-    .then(() => console.log('tests/console-evidence-redaction.mjs: tests OK'))
-    .catch((err) => {
-      console.error(err);
-      process.exit(1);
-    });
+  if (process.argv.includes('--list')) {
+    for (const fn of CASES) console.log(fn.name);
+    process.exitCode = 0;
+  } else {
+    testConsoleEvidenceRedaction()
+      .then(() => console.log('tests/console-evidence-redaction.mjs: tests OK'))
+      .catch((err) => {
+        console.error(err);
+        process.exit(1);
+      });
+  }
 }

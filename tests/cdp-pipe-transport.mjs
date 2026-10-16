@@ -143,15 +143,27 @@ export async function testSilentPipeReadinessIsBounded() {
     `the readiness wait must be bounded by its budget rather than by the child's lifetime, took ${elapsed}ms`);
 }
 
+const CASES = [
+  testCdpPipeTransport,
+  testSilentPipeReadinessIsBounded,
+  testClosedPipeRejectsPendingSends,
+  testPipeReadinessThenExitFailsTheLaunch,
+];
+
+// --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the same array the
+// runner drives, so the list cannot drift from what runs. process.exitCode, not process.exit: exit()
+// does not flush asynchronous stdout on a pipe (web-uplift-ecif).
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv.includes('--list')) {
+    for (const fn of CASES) console.log(fn.name);
+    process.exitCode = 0;
+  } else {
+  for (const fn of CASES) await fn();
   // Run EVERY test in this file. Only the first ran here until web-uplift-py0e: the fix for that rode a
   // branch that was withdrawn, so a direct invocation could still look green while skipping the later
   // tests entirely.
-  await testCdpPipeTransport();
-  await testSilentPipeReadinessIsBounded();
-  await testClosedPipeRejectsPendingSends();
-  await testPipeReadinessThenExitFailsTheLaunch();
   console.log('cdp-pipe-transport OK: no endpoint published, the control sees one, a silent browser fails bounded, a closed pipe rejects its pending sends, and a browser that dies right after answering is rejected and retried');
+  }
 }
 
 // A pipe that closes must reject the commands still in flight (web-uplift-h6yn). Without it, a Chrome

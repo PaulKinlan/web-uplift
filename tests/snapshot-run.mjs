@@ -285,10 +285,22 @@ export function testSnapshotRunCopyErrorTolerance() {
   }
 }
 
+const CASES = [
+  testSnapshotRunStructure,
+  testSnapshotRunCopiesArtifacts,
+  testSnapshotRunMissingArtifactsBestEffort,
+  testSnapshotRunCopyErrorTolerance,
+];
+
+// --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the same array the
+// runner drives, so the list cannot drift from what runs. process.exitCode, not process.exit: exit()
+// does not flush asynchronous stdout on a pipe (web-uplift-ecif).
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  testSnapshotRunStructure();
-  testSnapshotRunCopiesArtifacts();
-  testSnapshotRunMissingArtifactsBestEffort();
-  testSnapshotRunCopyErrorTolerance();
+  if (process.argv.includes('--list')) {
+    for (const fn of CASES) console.log(fn.name);
+    process.exitCode = 0;
+  } else {
+  for (const fn of CASES) fn();
   console.log('snapshotRun unit tests: OK');
+  }
 }

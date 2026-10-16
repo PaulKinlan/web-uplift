@@ -163,7 +163,19 @@ export async function testFlowPierceShadowRootBrowser() {
 
 // Run directly (node tests/flow-shadow-browser.mjs), not when imported by the
 // regression suite, which calls the exported function itself.
+const CASES = [
+  testFlowPierceShadowRootBrowser,
+];
+
+// --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the same array the
+// runner drives, so the list cannot drift from what runs. process.exitCode, not process.exit: exit()
+// does not flush asynchronous stdout on a pipe (web-uplift-ecif).
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await testFlowPierceShadowRootBrowser();
+  if (process.argv.includes('--list')) {
+    for (const fn of CASES) console.log(fn.name);
+    process.exitCode = 0;
+  } else {
+  for (const fn of CASES) await fn();
   console.log('tests OK');
+  }
 }

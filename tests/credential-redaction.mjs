@@ -1248,9 +1248,24 @@ export async function testCredentialRedactorsAgree() {
 
 // Run directly (node tests/credential-redaction.mjs), not when imported by the
 // regression suite, which calls the exported function itself.
+// --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk). The four are independent
+// exported cases and the regression suite calls each of them individually; listing and running the same
+// array keeps the list from drifting. process.exitCode, not process.exit (web-uplift-ecif).
+const CASES = [
+  testCredentialRedactorsAgree,
+  testCompoundCredentialSpellingsAreClassified,
+  testPassphraseAndPasskeyAreCredentialsAndPassengerIsNot,
+  testFragmentRedactionKeepsSiblingParamsByteIdentical,
+];
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await testCredentialRedactorsAgree();
-  console.log('tests OK');
+  if (process.argv.includes('--list')) {
+    for (const fn of CASES) console.log(fn.name);
+    process.exitCode = 0;
+  } else {
+    for (const fn of CASES) await fn();
+    console.log('tests OK');
+  }
 }
 
 // web-uplift-yb2a: the weak word 'pass' matched the WHOLE name only, so db_pass / proxy_pass / user_pass /
