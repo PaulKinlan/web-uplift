@@ -971,14 +971,24 @@ export function testCommittedSiblingProbesAreInert() {
       else if (entry.isFile()) walked.push(full);
     }
   };
-  walk(join(outRoot, 'web-uplift-cpa', 'model-led'));
+  walk(outRoot);
   const probes = walked.filter((p) => /[\\/]scratch[\\/]/.test(p));
-  // Non-vacuity: a walk that silently returns nothing would pass every check below,
-  // so the known probes must be IN the swept set, not merely absent from it.
+  // The population is compared against what git actually has COMMITTED under any
+  // evidence-out scratch directory, not against a count someone remembered to update:
+  // a new run directory full of probes is then swept the day it is committed, which is
+  // the failure mode that let 17q neutralise one sibling and miss the other.
+  const committed = run('git', ['ls-files', 'evidence-out/**/scratch/**']);
+  assert(committed.status === 0, `git ls-files failed: ${committed.stderr}`);
+  const committedProbes = committed.stdout.split('\n').filter(Boolean).map((p) => join(repoRoot, p));
+  // Non-vacuity: the sweep must find at least the committed probes, or passing says
+  // nothing. The known defects are included by name below for the same reason.
   assert(
-    probes.length >= 10,
-    `the sweep must find the committed scratch probes, found ${probes.length} of ${walked.length} walked files`,
+    committedProbes.length >= 10 && probes.length >= committedProbes.length,
+    `the sweep must cover every committed scratch probe (committed ${committedProbes.length}, walked ${probes.length} of ${walked.length} files)`,
   );
+  for (const file of committedProbes) {
+    assert(probes.includes(file), `the sweep must cover every committed scratch probe, missed: ${relative(outRoot, file)}`);
+  }
   for (const known of [
     join(outRoot, 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch', 'flow-probe.js'),
     join(outRoot, 'web-uplift-cpa', 'model-led', 'catalogue', 'scratch', 'flow-probe.js'),
