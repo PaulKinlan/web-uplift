@@ -1707,6 +1707,93 @@ export async function testScorecardScoringAndRender() {
       `scorecard: ${selector}{font-size:${declared[1]}} (${measured}px) is below the ${FLOOR_PX}px legibility floor (web-uplift-36i5)`,
     );
   }
+  // web-uplift-utri: every interactive control in the generated scorecard must have an
+  // explicit :focus-visible ring and an :active press state. Modern Web Guidance
+  // (accessibility -> "Focus indicators") asks for :focus-visible rather than :focus, an
+  // outline rather than a box-shadow, and an offset so the ring is separate from the
+  // control; the contrast floor below is WCAG 2.1 SC 1.4.11's 3:1 for non-text UI. The
+  // checks PARSE the emitted stylesheet and compute the contrast from the tokens in it, so
+  // swapping --accent for something invisible fails here rather than in a keyboard user's
+  // hands. Factored out so the negative controls at the end can prove each check fires.
+  const styleRules = (css) => {
+    const found = [];
+    for (let i = 0; i < css.length; i += 1) {
+      if (css[i] !== '{') continue;
+      let start = i - 1;
+      while (start >= 0 && !'};'.includes(css[start])) start -= 1;
+      const end = css.indexOf('}', i);
+      if (end === -1) break;
+      found.push({ selector: css.slice(start + 1, i).trim(), body: css.slice(i + 1, end) });
+      i = end;
+    }
+    return found;
+  };
+  const hexToken = (css, name) => new RegExp(`${name.replace(/-/g, '\\-')}\\s*:\\s*(#[0-9a-fA-F]{6})`).exec(css)?.[1] ?? null;
+  const channel = (c) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (hex) => {
+    const n = Number.parseInt(hex.slice(1), 16);
+    return 0.2126 * channel((n >> 16) & 255) + 0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255);
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const CONTROL = ['.action', '.outcome', '.fitem', '.tab', '.dialog-head .x'];
+  const mentions = (selector, control) => new RegExp(`${control.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(selector);
+  const checkInteractionStates = (css) => {
+    const rules = styleRules(css);
+    const focus = rules.filter((r) => /:focus-visible/.test(r.selector));
+    const active = rules.filter((r) => /:active/.test(r.selector));
+    assert(focus.length >= CONTROL.length - 4, `scorecard: expected explicit :focus-visible rules in the stylesheet, found ${focus.length} - a scan that stops seeing rules would make every check below vacuous`);
+    const backgrounds = [hexToken(css, '--bg'), hexToken(css, '--panel')];
+    assert(backgrounds.every(Boolean), `scorecard: the stylesheet must still define --bg and --panel so the ring contrast can be computed: ${JSON.stringify(backgrounds)}`);
+    for (const control of CONTROL) {
+      const rule = focus.find((r) => mentions(r.selector, control));
+      assert(rule, `scorecard: ${control} has no :focus-visible rule - a control with only :hover is invisible to a keyboard user (web-uplift-utri)`);
+      const outline = /outline\s*:\s*([^;}]+)/.exec(rule.body)?.[1]?.trim() ?? '';
+      assert(outline && !/^none\b/i.test(outline), `scorecard: ${control}:focus-visible must declare an outline, not outline:none: ${JSON.stringify(outline)}`);
+      const width = /^([\d.]+)px\b/.exec(outline);
+      assert(width && Number(width[1]) >= 2, `scorecard: ${control}:focus-visible outline must be at least 2px: ${JSON.stringify(outline)}`);
+      assert(/\b(solid|dashed|dotted|double)\b/.test(outline), `scorecard: ${control}:focus-visible outline needs a visible style: ${JSON.stringify(outline)}`);
+      const offset = /outline-offset\s*:\s*([^;}]+)/.exec(rule.body)?.[1];
+      assert(offset && Number.parseFloat(offset) >= 1, `scorecard: ${control}:focus-visible must set a positive outline-offset so the ring is visibly separate: ${JSON.stringify(offset)}`);
+      const declared = outline.replace(/^[\d.]+px\s+\w+\s+/, '').trim();
+      const ring = /^#[0-9a-fA-F]{6}$/.test(declared) ? declared : hexToken(css, (/var\((--[\w-]+)\)/.exec(declared) || [])[1] || '');
+      assert(ring, `scorecard: ${control}:focus-visible outline colour must resolve to a hex value or token: ${JSON.stringify(outline)}`);
+      for (const bg of backgrounds) {
+        const measured = contrast(ring, bg);
+        assert(measured >= 3, `scorecard: ${control}:focus-visible ring ${ring} is ${measured.toFixed(2)}:1 against ${bg}, below the 3:1 a focus indicator needs (WCAG 2.1 SC 1.4.11)`);
+      }
+      const pressed = active.find((r) => mentions(r.selector, control));
+      assert(pressed, `scorecard: ${control} has no :active press state (web-uplift-utri)`);
+      assert(/(transform\s*:|background\s*:|border-color\s*:|color\s*:)/.test(pressed.body), `scorecard: ${control}:active must change geometry, surface or colour: ${JSON.stringify(pressed.body)}`);
+    }
+  };
+  checkInteractionStates(style);
+  // Negative controls: the checks must actually fire when a rule is dropped, or they are
+  // measuring the fixture's willingness to pass.
+  const withoutFocus = style.replace(/:where\([^)]*\):focus-visible\{[^}]*\}/, '');
+  assert(withoutFocus !== style, 'negative control: the grouped focus rule must be removable for this check to have a subject');
+  let focusFired = false;
+  try {
+    checkInteractionStates(withoutFocus);
+  } catch {
+    focusFired = true;
+  }
+  assert(focusFired, 'negative control: dropping the :focus-visible rule must fail the interaction-state check');
+  const withoutPress = style.replace(/\.action:active[^{]*\{[^}]*\}/, '');
+  assert(withoutPress !== style, 'negative control: the .action press rule must be removable for this check to have a subject');
+  let pressFired = false;
+  try {
+    checkInteractionStates(withoutPress);
+  } catch {
+    pressFired = true;
+  }
+  assert(pressFired, 'negative control: dropping a control\u2019s :active rule must fail the interaction-state check');
+
   const chartHtml = renderScorecard({
     host: 'example',
     generatedAt: '2026-01-01 00:00',
