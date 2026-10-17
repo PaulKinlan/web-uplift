@@ -1,15 +1,15 @@
 {
-  "$comment": "Tracks the Modern Web Guidance catalog drift state for web-uplift. tests/mwg-drift-check.mjs maintains the lastCheck* fields across recurring upstream checks. analysedVersion and analysedAt describe the last full reanalysis and must move together with knowledge/mwg-catalog.json version and retrievedAt. lastAnalysis records WHAT that reanalysis found (the catalog delta, the guide text changes it had to read, and what it did to the pins); a version bump with no lastAnalysis for it is a heartbeat, not an analysis, and tests/mwg-principles.test.mjs requires the two to agree (web-uplift-b1p5). Downstream mwg-train artefact fields (artifactId, catalogSha256, canonicalisation, appliedRulesVersion) define the versioned artefact contract (see docs/mwg-train-consumer-contract.md).",
+  "$comment": "Tracks the Modern Web Guidance catalog drift state for web-uplift. tests/mwg-drift-check.mjs maintains the lastCheck* fields across recurring upstream checks. analysedVersion and analysedAt describe the last full reanalysis and must move together with knowledge/mwg-catalog.json version and retrievedAt. lastAnchorCheck records that the rule-basis anchors were verified against the guide text of lastCheckUpstreamVersion (web-uplift-m9o3), which is a different fact from the version comparison. lastAnalysis records WHAT that reanalysis found (the catalog delta, the guide text changes it had to read, and what it did to the pins); a version bump with no lastAnalysis for it is a heartbeat, not an analysis, and tests/mwg-principles.test.mjs requires the two to agree (web-uplift-b1p5). Downstream mwg-train artefact fields (artifactId, catalogSha256, canonicalisation, appliedRulesVersion) define the versioned artefact contract (see docs/mwg-train-consumer-contract.md).",
   "artifactId": "web-uplift/mwg-catalog",
   "catalogSha256": "cfefb049f9d1ef347be0a8f526b47634849ee143421a4b469b120b2311ecb59d",
   "canonicalisation": "json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation; non-ASCII characters are emitted as literal UTF-8, never as \\uXXXX escapes (a serialiser that escapes them computes a different digest for the same catalog - the committed catalog contains U+2014; web-uplift-rxbh)",
   "analysedVersion": "0.0.194",
   "appliedRulesVersion": "0.0.194",
   "analysedAt": "2026-10-14T02:21:05.048Z",
-  "lastCheckAt": "2026-10-17T12:37:25.630Z",
+  "lastCheckAt": "2026-10-17T15:07:52.518Z",
   "lastCheckUpstreamVersion": "0.0.194",
   "lastCheckSource": "https://registry.npmjs.org/modern-web-guidance/latest",
-  "lastCheckResult": "in-sync",
+  "lastCheckResult": "anchor-broken",
   "lastAnalysis": {
     "fromVersion": "0.0.193",
     "toVersion": "0.0.194",
@@ -49,5 +49,13 @@
   },
   "guideIdsSha256": "f17c59bfcd725643bbc58dcc66da50ab615bf4b2e42d72d58e8435e82b15f902",
   "guideCount": 187,
-  "ruleBasisSha256": "11a0f2ee435c3add5890b6c44a6087ce64324eaba526a42f7b5c07f5f9c49cf5"
+  "ruleBasisSha256": "11a0f2ee435c3add5890b6c44a6087ce64324eaba526a42f7b5c07f5f9c49cf5",
+  "lastAnchorCheck": {
+    "upstreamVersion": "0.0.194",
+    "result": "anchor-broken",
+    "rules": 8,
+    "anchors": 16,
+    "checkedAt": "2026-10-17T15:07:52.518Z",
+    "source": "https://registry.npmjs.org/modern-web-guidance/-/modern-web-guidance-0.0.194.tgz"
+  }
 }

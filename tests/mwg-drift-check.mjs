@@ -4,7 +4,8 @@
 // to the analysed version stored in knowledge/mwg-state.json (cross-checked
 // against knowledge/mwg-catalog.json).
 //
-// Dependency-free: Node builtins only (node:fs, node:path, node:url).
+// Dependency-free: Node builtins only (node:fs, node:path, node:url), plus `tar` for the
+// upstream package the anchor verification reads.
 //
 // Usage:
 //   node tests/mwg-drift-check.mjs [--write] [--json]
@@ -34,16 +35,37 @@
 //      change and a fresh analysedAt must not buy it a grace window.
 //  64: Usage error (unknown flags, invalid arguments).
 //
+// Exit 4 (anchor-broken) is deliberately NOT 1, 2 or 3: the check ran, the versions may even
+// agree, and what failed is the basis those versions are supposed to carry. Folding it into the
+// delta condition would hide a registry that needs re-anchoring behind an ordinary version bump,
+// and folding it into the staleness condition would tell an operator to refresh a heartbeat that
+// is already current (web-uplift-m9o3, and the three-way distinction vc4h established).
+//
 // Environment variable overrides (fixtures, tests, offline runs):
 //   MWG_DRIFT_STATE: Path to state JSON (default: knowledge/mwg-state.json).
 //   MWG_DRIFT_CATALOG: Path to catalog JSON (default: knowledge/mwg-catalog.json).
+//   MWG_DRIFT_BASIS: Path to the rule basis JSON (default: knowledge/mwg-rule-basis.json).
 //   MWG_DRIFT_UPSTREAM_FILE: Local JSON file used instead of network fetch.
+//   MWG_DRIFT_UPSTREAM_CORPUS: Corpus JSON ({version, guides:{id:text}}) used as the upstream
+//     guide text. Required with MWG_DRIFT_UPSTREAM_FILE (a version fixture carries no text, and
+//     silently skipping the anchor verification there would be the opt-in hole of web-uplift-70im).
+//     On the real path it is NOT needed: the check downloads the resolved version's tarball.
 //   MWG_DRIFT_REGISTRY_URL: Override npm registry URL (default: https://registry.npmjs.org/modern-web-guidance/latest).
-//   MWG_DRIFT_TIMEOUT_MS: Fetch timeout in milliseconds (default: 10000).
+//   MWG_DRIFT_TIMEOUT_MS: Fetch timeout in milliseconds (default: 10000; the tarball gets 4x).
+//
+// The anchor verification (web-uplift-m9o3): comparing versions is not enough, because a release
+// can rewrite guide bodies without changing any version we track. 0.0.194 rewrote 31 existing
+// guides and one of them was a rule-basis anchor. So every run reads the rule basis, fetches the
+// guide text for the SAME upstream version it resolved, and requires each anchor to still be
+// verbatim in its guide. A violation is its own condition - result "anchor-broken", exit 4 - and
+// is never reported as in-sync, stale heartbeat, or delta-unactioned, because the repairs differ.
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { basisAnchorViolations } from './mwg-basis.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -166,6 +188,89 @@ const catalogPath = process.env.MWG_DRIFT_CATALOG
   ? resolve(process.cwd(), process.env.MWG_DRIFT_CATALOG)
   : join(repoRoot, 'knowledge', 'mwg-catalog.json');
 
+const basisPath = process.env.MWG_DRIFT_BASIS
+  ? resolve(process.cwd(), process.env.MWG_DRIFT_BASIS)
+  : join(repoRoot, 'knowledge', 'mwg-rule-basis.json');
+
+// Upstream guide text, for the anchor verification. Fixture mode must supply it explicitly: a
+// version fixture carries no text, and quietly skipping the verification when no corpus is given
+// would recreate the opt-in hole that web-uplift-70im closed (a check that runs only when an
+// optional input is present). The real path downloads the tarball of the version it resolved.
+function readCorpusGuides(corpusPath) {
+  let corpus;
+  try {
+    corpus = JSON.parse(readFileSync(corpusPath, 'utf8'));
+  } catch (err) {
+    console.error(`FAIL: cannot read or parse the upstream corpus at ${corpusPath}: ${err.message}`);
+    process.exit(1);
+  }
+  if (!corpus || typeof corpus !== 'object' || Array.isArray(corpus) || !corpus.guides || typeof corpus.guides !== 'object') {
+    console.error(`FAIL: upstream corpus at ${corpusPath} has no guides map (expected {version, guides:{id:text}})`);
+    process.exit(1);
+  }
+  return corpus.guides;
+}
+
+// Pull the guide markdown out of the same published tarball the version check resolved, so the
+// text verified is the text that version actually ships. Only the guides subtree is extracted;
+// the package's multi-megabyte model shards are never written to disk.
+async function fetchUpstreamGuides(registryDoc, version, timeoutMs) {
+  const tarballUrl = registryDoc?.dist?.tarball;
+  if (typeof tarballUrl !== 'string' || tarballUrl === '') {
+    console.error(`FAIL: the upstream document names no dist.tarball, so the guide text for ${version} cannot be read and the anchors cannot be verified`);
+    process.exit(1);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs * 4);
+  let buffer;
+  try {
+    const response = await fetch(tarballUrl, { signal: controller.signal });
+    if (!response.ok) {
+      console.error(`FAIL: fetching the upstream tarball returned HTTP ${response.status} ${response.statusText}`);
+      process.exit(1);
+    }
+    buffer = Buffer.from(await response.arrayBuffer());
+  } catch (err) {
+    console.error(`FAIL: fetching the upstream tarball failed: ${err.message}`);
+    process.exit(1);
+  } finally {
+    clearTimeout(timer);
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'mwg-anchors-'));
+  try {
+    const tarball = join(dir, 'package.tgz');
+    writeFileSync(tarball, buffer);
+    const tar = spawnSync(
+      'tar',
+      ['-xzf', tarball, '-C', dir, 'package/skills/modern-web-guidance/guides'],
+      { encoding: 'utf8', timeout: 120000 },
+    );
+    if (tar.error || tar.status !== 0) {
+      console.error(`FAIL: cannot extract the published package (tar): ${tar.error?.message ?? tar.stderr ?? tar.status}`);
+      process.exit(1);
+    }
+    const guidesRoot = join(dir, 'package', 'skills', 'modern-web-guidance', 'guides');
+    const guides = {};
+    const walk = (current) => {
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const full = join(current, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.isFile() && entry.name.endsWith('.md')) {
+          guides[basename(entry.name, '.md')] = readFileSync(full, 'utf8');
+        }
+      }
+    };
+    walk(guidesRoot);
+    if (Object.keys(guides).length === 0) {
+      console.error('FAIL: the published package contains no guide markdown, so the anchors cannot be verified');
+      process.exit(1);
+    }
+    return guides;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // Freshness mode
 if (freshnessOnly) {
   let maxAgeMs = 26 * 60 * 60 * 1000; // default 26h
@@ -189,6 +294,19 @@ if (freshnessOnly) {
   if (!state || typeof state !== 'object' || Array.isArray(state)) {
     console.error(`FAIL: state file at ${statePath} is not a valid JSON object`);
     process.exit(1);
+  }
+
+  // A broken anchor is its OWN condition (web-uplift-m9o3), checked before any age logic and
+  // reported with its own exit code: the check ran, the heartbeat may be perfectly fresh, and the
+  // repair is re-anchoring the registry, not refreshing a timestamp or reanalysing a version. If
+  // this were left to the staleness branch the operator would be told to refresh a heartbeat that
+  // is already current, and if it were folded into delta-unactioned it would hide behind a version
+  // bump that may not even have happened.
+  if (state.lastCheckResult === 'anchor-broken') {
+    console.error(
+      `ANCHOR-BROKEN: the last check recorded that the rule basis no longer verifies against upstream ${JSON.stringify(state.lastCheckUpstreamVersion ?? null)}; the registry needs re-anchoring (the check log names the rule and the anchor). A fresh heartbeat cannot repair this and is not the condition being reported.`
+    );
+    process.exit(4);
   }
 
   // A detected-but-unactioned delta is NOT fresh, however recently the check ran. --write advances
@@ -346,6 +464,9 @@ if (state.analysedVersion !== catalog.version) {
 // Obtain upstream version
 let upstreamVersion;
 let source;
+// The resolved registry document, kept for the anchor verification: it names the dist.tarball of
+// the version this run is about. Null in fixture mode, where the corpus is supplied explicitly.
+let upstreamDoc = null;
 
 if (process.env.MWG_DRIFT_UPSTREAM_FILE) {
   const upstreamPath = resolve(process.cwd(), process.env.MWG_DRIFT_UPSTREAM_FILE);
@@ -400,6 +521,7 @@ if (process.env.MWG_DRIFT_UPSTREAM_FILE) {
     process.exit(1);
   }
   upstreamVersion = data.version;
+  upstreamDoc = data;
 }
 
 const analysedVersion = state.analysedVersion;
@@ -412,15 +534,60 @@ let result;
 let exitCode;
 let message;
 
-if (upstreamVersion === analysedVersion) {
+// The anchor verification (web-uplift-m9o3). Versions agreeing says nothing about whether the
+// guide text they name still contains the excerpts our registry depends on: 0.0.194 rewrote 31
+// existing guide bodies and one of them was an anchor. So the basis is checked against the text of
+// the version this run resolved, every run, and a violation is its own result.
+let basis;
+try {
+  basis = JSON.parse(readFileSync(basisPath, 'utf8'));
+} catch (err) {
+  console.error(`FAIL: cannot read or parse the rule basis at ${basisPath}: ${err.message}`);
+  process.exit(1);
+}
+if (!basis || typeof basis !== 'object' || !Array.isArray(basis.rules) || basis.rules.length === 0) {
+  console.error(`FAIL: the rule basis at ${basisPath} declares no rules, so the anchor verification would be vacuous and in-sync would mean less than it says`);
+  process.exit(1);
+}
+let upstreamGuides;
+let anchorTextSource;
+if (process.env.MWG_DRIFT_UPSTREAM_CORPUS) {
+  const corpusPath = resolve(process.cwd(), process.env.MWG_DRIFT_UPSTREAM_CORPUS);
+  upstreamGuides = readCorpusGuides(corpusPath);
+  anchorTextSource = corpusPath;
+} else if (upstreamDoc === null) {
+  // Fixture mode carries a version and nothing else. Failing here rather than skipping is the whole
+  // lesson of web-uplift-70im: a verification that quietly does not run is worse than one that says
+  // it cannot run.
+  console.error('FAIL: fixture mode (MWG_DRIFT_UPSTREAM_FILE) supplies no guide text, so the rule-basis anchors cannot be verified; set MWG_DRIFT_UPSTREAM_CORPUS to a corpus JSON rather than letting the check pass without checking');
+  process.exit(1);
+} else {
+  upstreamGuides = await fetchUpstreamGuides(upstreamDoc, upstreamVersion, Number(process.env.MWG_DRIFT_TIMEOUT_MS) || 10000);
+  anchorTextSource = String(upstreamDoc.dist?.tarball ?? 'upstream tarball');
+}
+const anchorViolations = basisAnchorViolations(basis, upstreamGuides);
+const anchorCount = basis.rules.reduce((n, rule) => n + (Array.isArray(rule.anchors) ? rule.anchors.length : 0), 0);
+const anchorResult = anchorViolations.length === 0 ? 'ok' : 'anchor-broken';
+
+if (anchorViolations.length > 0) {
+  result = 'anchor-broken';
+  exitCode = 4;
+  message = `ANCHOR-BROKEN: ${anchorViolations.length} rule-basis anchor problem(s) against upstream ${upstreamVersion}`;
+  // The header goes to stderr with its violations so a log reader and the workflow's subject both
+  // see the condition next to the evidence, not detached from it on stdout.
+  console.error(message);
+  for (const violation of anchorViolations) {
+    console.error(`  - ${violation}`);
+  }
+} else if (upstreamVersion === analysedVersion) {
   result = 'in-sync';
   exitCode = 0;
-  message = `IN-SYNC: upstream version ${upstreamVersion} matches analysed version ${analysedVersion}`;
+  message = `IN-SYNC: upstream version ${upstreamVersion} matches analysed version ${analysedVersion}, and all ${anchorCount} rule-basis anchor(s) across ${basis.rules.length} rule(s) are still verbatim in that release`;
 } else {
   result = 'delta';
   exitCode = 2;
   const direction = cmp === null ? 'different from' : cmp > 0 ? 'newer than' : cmp < 0 ? 'older than' : 'distinct but numerically equal to';
-  message = `DELTA: upstream version ${upstreamVersion} is ${direction} analysed version ${analysedVersion}`;
+  message = `DELTA: upstream version ${upstreamVersion} is ${direction} analysed version ${analysedVersion}, and all ${anchorCount} rule-basis anchor(s) across ${basis.rules.length} rule(s) still resolve in it`;
 }
 
 if (writeState) {
@@ -428,6 +595,14 @@ if (writeState) {
   state.lastCheckUpstreamVersion = upstreamVersion;
   state.lastCheckSource = source;
   state.lastCheckResult = result;
+  state.lastAnchorCheck = {
+    upstreamVersion,
+    result: anchorResult,
+    rules: basis.rules.length,
+    anchors: anchorCount,
+    checkedAt,
+    source: anchorTextSource,
+  };
   try {
     writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n', 'utf8');
   } catch (err) {
@@ -444,6 +619,13 @@ if (jsonMode) {
     upstreamVersion,
     checkedAt,
     source,
+    anchorCheck: {
+      result: anchorResult,
+      rules: basis.rules.length,
+      anchors: anchorCount,
+      violations: anchorViolations,
+      source: anchorTextSource,
+    },
   }));
 }
 
