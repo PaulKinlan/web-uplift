@@ -502,6 +502,54 @@ export function testMwgDriftCheckGuard() {
       validResults.has(committedState.lastCheckResult),
       `mwg-drift: case 12 lastCheckResult (${committedState.lastCheckResult}) must be one of never-run, in-sync, delta`
     );
+    // web-uplift-b1p5: a version bump is not an analysis. The state must carry the recorded
+    // delta analysis for the version it claims to have analysed, and that record must agree
+    // with the catalog it describes - otherwise "analysedVersion 0.0.194 / in-sync" is a
+    // heartbeat with nothing behind it. This is the invariant that was MISSING when 0.0.194
+    // was recorded as analysed: 31 guide bodies had changed and one rule-basis anchor no
+    // longer existed verbatim, and no assertion asked what the analysis had found.
+    const analysis = committedState.lastAnalysis;
+    assert(analysis && typeof analysis === 'object', 'mwg-drift: case 12 the state must record the delta analysis (lastAnalysis) for the analysed version - a heartbeat alone is not evidence of an analysed basis');
+    assert(
+      analysis.toVersion === committedState.analysedVersion,
+      `mwg-drift: case 12 lastAnalysis.toVersion (${analysis.toVersion}) must be the analysed version (${committedState.analysedVersion}); an analysis of a different release does not describe this one`
+    );
+    assert(
+      typeof analysis.fromVersion === 'string' && analysis.fromVersion !== analysis.toVersion,
+      `mwg-drift: case 12 lastAnalysis.fromVersion must name the release the analysis came FROM, got ${JSON.stringify(analysis.fromVersion)}`
+    );
+    assert(
+      typeof analysis.analysedAt === 'string' && !Number.isNaN(Date.parse(analysis.analysedAt)),
+      `mwg-drift: case 12 lastAnalysis.analysedAt must be a parseable timestamp, got ${JSON.stringify(analysis.analysedAt)}`
+    );
+    assert(
+      analysis.catalogDelta && analysis.catalogDelta.guideCount === catalog.guideCount,
+      `mwg-drift: case 12 lastAnalysis.catalogDelta.guideCount (${analysis.catalogDelta?.guideCount}) must match the committed catalog (${catalog.guideCount})`
+    );
+    // The record must be internally consistent: its own guide arithmetic has to land on the
+    // guide count the catalog actually has, so a half-recorded delta cannot pass as analysis.
+    const added = analysis.catalogDelta.addedGuides;
+    assert(
+      Array.isArray(added) && typeof analysis.catalogDelta.fromGuideCount === 'number' && analysis.catalogDelta.fromGuideCount + added.length - analysis.catalogDelta.removedGuides === catalog.guideCount,
+      `mwg-drift: case 12 lastAnalysis must add up: fromGuideCount + addedGuides - removedGuides must equal ${catalog.guideCount}, got ${analysis.catalogDelta.fromGuideCount} + ${Array.isArray(added) ? added.length : 'n/a'} - ${analysis.catalogDelta.removedGuides}`
+    );
+    // Every added guide must really be in the catalog: the record is a claim about the delta,
+    // not a free-text note, and a guide it names that the catalog does not have is drift in
+    // the record itself.
+    const catalogIds = new Set(catalog.guideIds);
+    const missingFromCatalog = added.filter((id) => !catalogIds.has(id));
+    assert(
+      missingFromCatalog.length === 0,
+      `mwg-drift: case 12 lastAnalysis.catalogDelta.addedGuides names guide(s) the catalog does not contain: ${missingFromCatalog.join(', ')}`
+    );
+    // The verdict has to say something (the bead asked for an analysis, not a timestamp), and
+    // the two pin sections are what a future version bump will need to revisit.
+    for (const field of ['verdict']) {
+      assert(typeof analysis[field] === 'string' && analysis[field].trim().length >= 20, `mwg-drift: case 12 lastAnalysis.${field} must state the finding, not just a version`);
+    }
+    for (const pin of ['ruleBasis', 'principles']) {
+      assert(typeof analysis.pins?.[pin] === 'string' && analysis.pins[pin].trim().length >= 20, `mwg-drift: case 12 lastAnalysis.pins.${pin} must record what the analysis did to that pin`);
+    }
   }
 
   // 13. upstream version with a trailing newline -> exit 1 (JS `$` matches
