@@ -174,29 +174,49 @@ jobs:
           # formatDuration cannot emit them (it switches to the next unit rather than composing), so
           # accepting them would only make the pattern look more general than the data it reads. A unit
           # added to formatDuration means adding it here.
-          if printf '%s\n' "$OUT" | grep -qF 'unsubstantiated in-sync claim'; then
+          # ANCHORED EXTRACTION (web-uplift-igdk). Every age below is read only from a line the guard emits
+          # as a MEASURED age, matched end to end. The previous patterns began with '.*', so 'last check was
+          # 35.5h ago' matched INSIDE an invalid lastCheckAt value the guard had just declared unusable - the
+          # alert then reported a measurement it never made, about a field it knew was invalid. Anchoring is
+          # what makes the extraction honest: if the output is not the guard's measured-age sentence there is
+          # no age, and the subject says so instead of inventing one.
+          #
+          # An unusable lastCheckAt is classified FIRST and carries NO age: a number there would be fiction,
+          # however plausible it looks.
+          if printf '%s\n' "$OUT" | grep -qF 'lastCheckAt in state file is not a valid timestamp'; then
+            CONDITION=heartbeat-invalid
+            TAG="MWG drift check heartbeat invalid"
+            TITLE="$TAG - lastCheckAt is not a timestamp, so no age can be measured"
+          elif printf '%s\n' "$OUT" | grep -qE '^STALE: lastCheckAt is .* in the FUTURE'; then
+            CONDITION=heartbeat-invalid
+            TAG="MWG drift check heartbeat invalid"
+            TITLE="$TAG - lastCheckAt is in the future, so no age can be measured"
+          elif printf '%s\n' "$OUT" | grep -qF 'unsubstantiated in-sync claim'; then
             CONDITION=unsubstantiated
             TAG="MWG drift: in-sync claim cannot be substantiated"
             TITLE="$TAG"
-          elif printf '%s\n' "$OUT" | grep -qF 'that analysis is'; then
+          elif printf '%s\n' "$OUT" | grep -qE '^STALE: .*, and that analysis is ([0-9]+(\.[0-9])?(ms|s|m|h|d)) old, exceeding max-age threshold'; then
             CONDITION=unactioned-delta
             TAG="MWG drift: unactioned delta"
-            # the age of the ANALYSIS (measured from analysedAt), which is the age this condition turns on
-            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/.*that analysis is ([0-9]+(\.[0-9])?(ms|s|m|h|d)) old.*/\1/p' | head -1)
+            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/^STALE: .*, and that analysis is ([0-9]+(\.[0-9])?(ms|s|m|h|d)) old, exceeding max-age threshold.*$/\1/p' | head -1)
             if [ -n "$AGE" ]; then
               TITLE="$TAG - analysis ${AGE} old, upstream has moved on"
             else
               TITLE="$TAG - the latest analysis is older than max-age"
             fi
-          elif printf '%s\n' "$OUT" | grep -qE 'last check was .* ago|lastCheckAt|no recorded check timestamp'; then
+          elif printf '%s\n' "$OUT" | grep -qE '^STALE: last check was ([0-9]+(\.[0-9])?(ms|s|m|h|d)) ago, exceeding max-age threshold'; then
             CONDITION=heartbeat-stale
             TAG="MWG drift check heartbeat stale"
-            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/.*last check was ([0-9]+(\.[0-9])?(ms|s|m|h|d)) ago.*/\1/p' | head -1)
+            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/^STALE: last check was ([0-9]+(\.[0-9])?(ms|s|m|h|d)) ago, exceeding max-age threshold.*$/\1/p' | head -1)
             if [ -n "$AGE" ]; then
               TITLE="$TAG - last check ${AGE} ago"
             else
               TITLE="$TAG - no usable last-check timestamp"
             fi
+          elif printf '%s\n' "$OUT" | grep -qF 'no recorded check timestamp'; then
+            CONDITION=heartbeat-missing
+            TAG="MWG drift check heartbeat stale"
+            TITLE="$TAG - no usable last-check timestamp"
           else
             # Anything else is the guard failing to run at all (exit 1) or a shape this classifier does
             # not know. Say that rather than borrowing the heartbeat title for it.
