@@ -60,12 +60,12 @@
 // verbatim in its guide. A violation is its own condition - result "anchor-broken", exit 4 - and
 // is never reported as in-sync, stale heartbeat, or delta-unactioned, because the repairs differ.
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { basisAnchorViolations } from './mwg-basis.mjs';
+import { basisAnchorViolations, guidesFromTree } from './mwg-basis.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -249,23 +249,17 @@ async function fetchUpstreamGuides(registryDoc, version, timeoutMs) {
       console.error(`FAIL: cannot extract the published package (tar): ${tar.error?.message ?? tar.stderr ?? tar.status}`);
       process.exit(1);
     }
-    const guidesRoot = join(dir, 'package', 'skills', 'modern-web-guidance', 'guides');
-    const guides = {};
-    const walk = (current) => {
-      for (const entry of readdirSync(current, { withFileTypes: true })) {
-        const full = join(current, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.isFile() && entry.name.endsWith('.md')) {
-          guides[basename(entry.name, '.md')] = readFileSync(full, 'utf8');
-        }
-      }
-    };
-    walk(guidesRoot);
-    if (Object.keys(guides).length === 0) {
-      console.error('FAIL: the published package contains no guide markdown, so the anchors cannot be verified');
+    // The flattening to basenames is only sound while they are unique. The classifier resolves a
+    // duplicate by PROVENANCE (a guide located through the package's USE_CASES table keeps
+    // precedence over a disk scan), but this check has no provenance to justify a preference, and
+    // picking a winner here could verify an anchor against a same-named sibling's text. So it
+    // refuses instead of choosing (web-uplift-m9o3 review finding).
+    try {
+      return guidesFromTree(join(dir, 'package', 'skills', 'modern-web-guidance', 'guides'));
+    } catch (err) {
+      console.error(`FAIL: cannot build the upstream guide map, so the anchors cannot be verified: ${err.message}`);
       process.exit(1);
     }
-    return guides;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

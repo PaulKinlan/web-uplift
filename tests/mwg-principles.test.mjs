@@ -17,6 +17,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { CANONICALISATION_RULE, computeSha256 } from './mwg-artefact.mjs';
+import { guidesFromTree } from './mwg-basis.mjs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';

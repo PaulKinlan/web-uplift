@@ -20,6 +20,9 @@
  * @param {Record<string, string>} guides  guide id -> guide text
  * @returns {string[]} violations; empty means every anchor is still verbatim
  */
+import { readFileSync, readdirSync } from 'node:fs';
+import { basename, join } from 'node:path';
+
 export function basisAnchorViolations(basis, guides) {
   const violations = [];
   for (const rule of basis.rules) {
@@ -35,4 +38,47 @@ export function basisAnchorViolations(basis, guides) {
     }
   }
   return violations;
+}
+
+/**
+ * Read a guide tree (the extracted `.../guides` directory of a published package) into
+ * guide id -> text.
+ *
+ * Guide ids are BASENAMES, because that is how the catalog, the corpus and the basis name guides.
+ * That flattening is only safe while the basenames are unique, so a collision is REFUSED rather
+ * than letting one guide silently overwrite another: an anchor could then be verified against the
+ * WRONG guide's text, or a guide that vanished upstream could be masked by a same-named sibling.
+ * Both are this repository's least favourite failure - a check that passes for the wrong reason
+ * (reviewer finding on web-uplift-m9o3). The classifier's extraction keeps a PROVENANCE-based
+ * precedence instead (USE_CASES entry before disk scan); refusing is the right answer here because
+ * anchor verification has no provenance to prefer one candidate over another.
+ *
+ * @param {string} guidesRoot
+ * @returns {Record<string, string>}
+ * @throws when two guide files share a basename, or when the tree holds no guides
+ */
+export function guidesFromTree(guidesRoot) {
+  const found = new Map();
+  const walk = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        const id = basename(entry.name, '.md');
+        const previous = found.get(id);
+        if (previous !== undefined) {
+          throw new Error(
+            `two guide files share the id "${id}" (${previous} and ${full}); guide ids are basenames, so one would silently overwrite the other and an anchor could be verified against the wrong text`,
+          );
+        }
+        found.set(id, full);
+      }
+    }
+  };
+  walk(guidesRoot);
+  if (found.size === 0) throw new Error(`no guide markdown found under ${guidesRoot}`);
+  const guides = {};
+  for (const [id, file] of found) guides[id] = readFileSync(file, 'utf8');
+  return guides;
 }
