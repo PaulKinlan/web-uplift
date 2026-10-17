@@ -17,7 +17,7 @@
       "where": "knowledge/principles.json: be-private-and-secure / defensive-browser-policies; tests/regression.mjs: testPrinciplesMwgCatalogSyncAndChangedGuidance",
       "anchors": [
         "Content-Security-Policy: require-trusted-types-for 'script';",
-        "trustedTypes.createPolicy('my-no-pretzel-policy'"
+        "You create it using `trustedTypes.createPolicy()`"
       ]
     },
     {
