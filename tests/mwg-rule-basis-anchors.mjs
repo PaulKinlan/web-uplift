@@ -51,49 +51,68 @@ export function testRuleBasisAnchorsArePinnedPerAppliedVersion() {
   console.log(`\u2714 anchor set pinned for ${state.appliedRulesVersion} (${basis.rules.length} rule(s), ${anchorCount} anchor(s))`);
 }
 
-// The re-record path itself: a same-version rules revision must stay REFUSED unless the caller states, in words
-// that are recorded, why the applied rules are unchanged. This cannot be exercised on the committed tree, whose
-// state already records the current hash - there would be no revision to accept - so it runs against a throwaway
-// copy of the tree with the state rolled back to the hash this re-anchor replaced. Nothing in the repo is
-// mutated, which is also why the copy is deleted in a finally (web-uplift-7bld).
-export function testRulesRevisionRequiresARecordedReason() {
-  console.log('Testing that a rules re-record under an unchanged version requires a recorded reason...');
-  const tmp = mkdtempSync(join(tmpdir(), 'mwg-revision-'));
+// The re-record contract, DERIVED rather than trusted (web-uplift-p71b). --accept-rules-revision is a request
+// the tool verifies, not a permission it grants: it may only re-record a revision in which the RULE digest is
+// provably unchanged and only the ANCHOR digest moved. The regression below is p71b's exact finding - a real
+// rule rewritten while claiming "only evidence changed" - which the previous, trust-the-string version accepted.
+//
+// It runs against a throwaway copy because the committed tree has no revision left to accept, and because the
+// point is to mutate rules and anchors freely. Nothing in the repo is touched; the copy goes in a finally.
+export function testRulesRevisionRequiresProvableEvidenceOnly() {
+  console.log('Testing that a same-version rules re-record must PROVE only the evidence moved...');
+  const makeCopy = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mwg-revision-'));
+    cpSync(join(repoRoot, 'knowledge'), join(dir, 'knowledge'), { recursive: true });
+    mkdirSync(join(dir, 'tests'), { recursive: true });
+    cpSync(join(repoRoot, 'tests', 'mwg-artefact.mjs'), join(dir, 'tests', 'mwg-artefact.mjs'));
+    return dir;
+  };
+  const runUpdate = (dir, extra) => {
+    try {
+      return { status: 0, output: execFileSync(process.execPath, [join(dir, 'tests', 'mwg-artefact.mjs'), 'update', ...extra], { encoding: 'utf8', stdio: 'pipe' }) };
+    } catch (err) {
+      return { status: err.status, output: `${err.stdout ?? ''}${err.stderr ?? ''}` };
+    }
+  };
+  const editJson = (dir, rel, mutate) => {
+    const path = join(dir, 'knowledge', rel);
+    const value = JSON.parse(readFileSync(path, 'utf8'));
+    mutate(value);
+    writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
+  };
+
+  // (A) p71b's repro: a real RULE changes, the caller claims only the evidence did. Must be REFUSED.
+  const ruleDir = makeCopy();
   try {
-    cpSync(join(repoRoot, 'knowledge'), join(tmp, 'knowledge'), { recursive: true });
-    mkdirSync(join(tmp, 'tests'), { recursive: true });
-    cpSync(join(repoRoot, 'tests', 'mwg-artefact.mjs'), join(tmp, 'tests', 'mwg-artefact.mjs'));
-    const statePath = join(tmp, 'knowledge', 'mwg-state.json');
-    const state = JSON.parse(readFileSync(statePath, 'utf8'));
-    state.ruleBasisSha256 = '11a0f2ee435c3add5890b6c44a6087ce64324eaba526a42f7b5c07f5f9c49cf5'; // the pre-re-anchor hash
-    delete state.lastRulesRevision;
-    writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n');
-
-    const cli = join(tmp, 'tests', 'mwg-artefact.mjs');
-    const runUpdate = (extra) => {
-      try {
-        return { status: 0, output: execFileSync(process.execPath, [cli, 'update', ...extra], { encoding: 'utf8', stdio: 'pipe' }) };
-      } catch (err) {
-        return { status: err.status, output: `${err.stdout ?? ''}${err.stderr ?? ''}` };
-      }
-    };
-
-    const refused = runUpdate([]);
-    assert.notEqual(refused.status, 0, 'a rules change under an unchanged version must be refused');
-    assert(refused.output.includes('applied rules changed'), `the refusal must say what changed, got: ${refused.output.slice(0, 200)}`);
-
-    const emptyReason = runUpdate(['--accept-rules-revision', '   ']);
-    assert.notEqual(emptyReason.status, 0, 'an empty --accept-rules-revision must never be read as consent');
-    assert(emptyReason.output.includes('needs a non-empty reason'), `an empty reason must be named, got: ${emptyReason.output.slice(0, 200)}`);
-
-    const accepted = runUpdate(['--accept-rules-revision', 'test: the rule is unchanged, only its evidence moved (web-uplift-7bld)']);
-    assert.equal(accepted.status, 0, `a reasoned re-record must be accepted, got: ${accepted.output.slice(0, 300)}`);
-    const recorded = JSON.parse(readFileSync(statePath, 'utf8')).lastRulesRevision;
-    assert(recorded && recorded.reason.includes('only its evidence moved'), 'the reason must be recorded in the state file');
-    assert(recorded.fromRuleBasisSha256 !== recorded.toRuleBasisSha256, 'the record must name both hashes');
-
-    console.log('\u2714 a same-version rules re-record is refused without a reason and auditable with one');
+    editJson(ruleDir, 'principles.json', (principles) => {
+      principles.principles[0].description = 'Never honor prefers-color-scheme; force light mode only.';
+    });
+    const rewritten = runUpdate(ruleDir, ['--accept-rules-revision', 'Only evidence changed']);
+    assert.notEqual(rewritten.status, 0, 'rewriting a rule and claiming evidence-only must FAIL');
+    assert(
+      rewritten.output.includes('refusing --accept-rules-revision'),
+      `the refusal must name the flag and the derived digests, got: ${rewritten.output.slice(0, 300)}`,
+    );
+    assert(rewritten.output.includes('rulesSha256'), 'the refusal must show the rule digest evidence it derived');
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    rmSync(ruleDir, { recursive: true, force: true });
   }
+
+  // (B) The legitimate case the flag exists for: only a quoted anchor moves. Must be ACCEPTED and recorded.
+  const anchorDir = makeCopy();
+  try {
+    editJson(anchorDir, 'mwg-rule-basis.json', (basis) => {
+      basis.rules[0].anchors = [`${basis.rules[0].anchors[0]} (re-pointed)`, ...basis.rules[0].anchors.slice(1)];
+    });
+    const evidenceOnly = runUpdate(anchorDir, ['--accept-rules-revision', 'test: the rule is unchanged, only its evidence moved']);
+    assert.equal(evidenceOnly.status, 0, `an evidence-only re-record must be accepted, got: ${evidenceOnly.output.slice(0, 300)}`);
+    const state = JSON.parse(readFileSync(join(anchorDir, 'knowledge', 'mwg-state.json'), 'utf8'));
+    assert(state.lastRulesRevision && state.lastRulesRevision.reason.includes('only its evidence moved'), 'the reason must be recorded');
+    assert(state.lastRulesRevision.fromRuleBasisSha256 !== state.lastRulesRevision.toRuleBasisSha256, 'the record must name both hashes');
+    assert.equal(state.rulesSha256, JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-state.json'), 'utf8')).rulesSha256, 'an evidence-only revision must leave the RULE digest identical');
+  } finally {
+    rmSync(anchorDir, { recursive: true, force: true });
+  }
+
+  console.log('\u2714 a rules re-record is refused unless the tool can prove only the evidence moved');
 }

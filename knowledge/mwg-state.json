@@ -56,5 +56,7 @@
     "fromRuleBasisSha256": "11a0f2ee435c3add5890b6c44a6087ce64324eaba526a42f7b5c07f5f9c49cf5",
     "toRuleBasisSha256": "3ac3b2bb1eb94a47f08eb0c60db56dd24c44cb852457f774594076045bc269d7",
     "reason": "Re-anchored defensive-browser-policies-trusted-types from an example 0.0.194 rewrote to the sentence that states the rule; the rule itself is unchanged and the new anchor is verbatim in both 0.0.193 and 0.0.194 corpora (web-uplift-7bld)"
-  }
+  },
+  "rulesSha256": "38d4480d289d10bd660028668ef59d463a85055d11383a209614b545d881ebd9",
+  "basisSha256": "916b436bb91c955c91e817eb9537cc2a8360579780c91047a7c250235d6a4eea"
 }
