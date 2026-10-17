@@ -186,9 +186,22 @@ function readRuleSources() {
   // principles content EXCLUDING guidanceCatalogVersion, and the guard never compares the analysed pin to the
   // rule basis.
   const { guidanceCatalogVersion: _analysedCataloguePin, ...appliedPrinciples } = principles;
+  // THE APPLIED-RULES AXIS IS TWO DIGESTS, NOT ONE (web-uplift-p71b). A single hash over rules+anchors cannot
+  // tell "the quoted EVIDENCE moved" from "the RULE moved", so any caller-supplied justification for a
+  // same-version re-record was an assertion the tool could not check - and a rewritten rule summary passed it.
+  // Splitting the derivation is what makes the property assertable instead of claimed:
+  //   rulesSha256   the rules themselves: ids, their guide and where, and the applied principles content.
+  //                 Nothing in it quotes guide text, so re-pointing an anchor cannot move it.
+  //   basisSha256   the quoted anchors only - the evidence each rule rests on.
+  // ruleBasisSha256 stays as the combined digest so existing verify paths keep their meaning.
+  const stripAnchors = (rules) => rules.map(({ anchors: _anchors, ...rest }) => rest);
+  const rulesSha256 = computeSha256({ rules: stripAnchors(ruleBasis.rules), appliedPrinciples });
+  const basisSha256 = computeSha256({ anchors: ruleBasis.rules.map((rule) => [rule.id, rule.anchors]) });
   return {
     catalogueVersion: ruleBasis.catalogueVersion,
     ruleBasisSha256: computeSha256({ ruleBasis, appliedPrinciples }),
+    rulesSha256,
+    basisSha256,
   };
 }
 
@@ -196,18 +209,25 @@ const isDirectRun = process.argv[1] && resolve(process.argv[1]) === resolve(file
 
 if (isDirectRun) {
   const args = process.argv.slice(2);
-  if (args.length !== 1) {
-    console.error(`FAIL: expected exactly one command (compute|verify|update), got ${args.length} arguments`);
+  // update may carry an explicit, reasoned re-record of the applied-rules axis (web-uplift-7bld). A rules
+  // revision that leaves appliedRulesVersion alone is refused by default - see the guard below - because it is
+  // indistinguishable from the missed bump s52q exists to catch. This flag is how a caller says, in words that
+  // are recorded in the state file, that the rules themselves did not change.
+  const revisionFlagAt = args.indexOf('--accept-rules-revision');
+  const revisionReason = revisionFlagAt === -1 ? null : (args[revisionFlagAt + 1] ?? '');
+  const commandArgs = revisionFlagAt === -1 ? args : args.filter((_, i) => i !== revisionFlagAt && i !== revisionFlagAt + 1);
+  if (commandArgs.length !== 1) {
+    console.error(`FAIL: expected exactly one command (compute|verify|update), got ${commandArgs.length} arguments`);
     console.error(
       'Usage:\n' +
       '  node tests/mwg-artefact.mjs compute\n' +
       '  node tests/mwg-artefact.mjs verify\n' +
-      '  node tests/mwg-artefact.mjs update'
+      '  node tests/mwg-artefact.mjs update [--accept-rules-revision "<why the applied rules are unchanged>"]'
     );
     process.exit(64);
   }
 
-  const command = args[0];
+  const command = commandArgs[0];
   if (command !== 'compute' && command !== 'verify' && command !== 'update') {
     console.error(`FAIL: unrecognized command "${command}"`);
     console.error(
@@ -357,15 +377,51 @@ if (isDirectRun) {
       );
       process.exit(1);
     }
-    if (previousRulesSha !== rules.ruleBasisSha256 && state.appliedRulesVersion === rules.catalogueVersion) {
+    const rulesRevisionUnderSameVersion = previousRulesSha !== rules.ruleBasisSha256 && state.appliedRulesVersion === rules.catalogueVersion;
+    // DERIVED, NOT TRUSTED (web-uplift-p71b). --accept-rules-revision is not a permission: it is a request the
+    // tool then verifies. A re-record is allowed only if the RULE digest is provably unchanged and only the
+    // ANCHOR digest moved, which is the one thing the flag claims. A rewritten rule summary moves rulesSha256,
+    // so it is refused no matter what the reason string says.
+    const previousRulesDigest = state.rulesSha256;
+    const previousBasisDigest = state.basisSha256;
+    const canProveEvidenceOnly =
+      typeof previousRulesDigest === 'string' && SHA256_PATTERN.test(previousRulesDigest) &&
+      typeof previousBasisDigest === 'string' && SHA256_PATTERN.test(previousBasisDigest) &&
+      previousRulesDigest === rules.rulesSha256 &&
+      previousBasisDigest !== rules.basisSha256;
+    if (rulesRevisionUnderSameVersion && revisionReason === null) {
       console.error(
         `FAIL: the applied rules changed (ruleBasisSha256 ${rules.ruleBasisSha256}) but appliedRulesVersion is unchanged at ${JSON.stringify(state.appliedRulesVersion)}; bump the version deliberately in knowledge/mwg-state.json AND knowledge/mwg-rule-basis.json AND knowledge/principles.json, or revert the rules edit - update will not absorb a rules change under an unchanged version (web-uplift-s52q)`
+      );
+      console.error(
+        'If the RULES did not change and only their EVIDENCE did - an anchor re-pointed at a sentence upstream has not rewritten - re-run with --accept-rules-revision "<why the applied rules are unchanged>"; the reason is recorded in the state file so the decision is auditable rather than absorbed'
+      );
+      process.exit(1);
+    }
+    if (rulesRevisionUnderSameVersion && revisionReason.trim() === '') {
+      console.error('FAIL: --accept-rules-revision needs a non-empty reason: it is recorded in knowledge/mwg-state.json as the justification for re-recording the applied-rules axis under an unchanged version (web-uplift-7bld)');
+      process.exit(1);
+    }
+    if (rulesRevisionUnderSameVersion && !canProveEvidenceOnly) {
+      console.error(
+        `FAIL: refusing --accept-rules-revision. The flag may only re-record a revision in which the RULES are unchanged and only their EVIDENCE moved, and this tool cannot prove that here: state.rulesSha256=${JSON.stringify(previousRulesDigest ?? null)} computed=${JSON.stringify(rules.rulesSha256)}, state.basisSha256=${JSON.stringify(previousBasisDigest ?? null)} computed=${JSON.stringify(rules.basisSha256)}. If the rules genuinely changed - a summary, a principle, a rule added or removed - bump appliedRulesVersion deliberately in knowledge/mwg-state.json AND knowledge/mwg-rule-basis.json AND knowledge/principles.json, or revert the edit. A reason string cannot make a rules change safe (web-uplift-p71b)`
       );
       process.exit(1);
     }
 
+    if (rulesRevisionUnderSameVersion) {
+      state.lastRulesRevision = {
+        at: new Date().toISOString(),
+        appliedRulesVersion: rules.catalogueVersion,
+        fromRuleBasisSha256: previousRulesSha,
+        toRuleBasisSha256: rules.ruleBasisSha256,
+        reason: revisionReason.trim(),
+      };
+    }
     state.appliedRulesVersion = rules.catalogueVersion;
     state.ruleBasisSha256 = rules.ruleBasisSha256;
+    state.rulesSha256 = rules.rulesSha256;
+    state.basisSha256 = rules.basisSha256;
     state.catalogSha256 = computed;
     state.guideIdsSha256 = ids.guideIdsSha256;
     state.guideCount = ids.guideCount;
