@@ -166,6 +166,14 @@ jobs:
           OUT="$FRESHNESS_OUTPUT"
 
           # The failed condition is chosen by the guard's own wording, most specific first.
+          #
+          # AGE SHAPES (web-uplift-dsl2): formatDuration emits `${ms}ms` below a second and then
+          # toFixed(1) for s/m/h/d, so a FRACTIONAL value is the NORMAL shape - '5.2d' and '35.5h' are what
+          # a real alert carries. The regexes below therefore accept an optional one-decimal fraction and
+          # the units ms|s|m|h|d. They deliberately do NOT accept 'w' or compound forms like '1h 30m':
+          # formatDuration cannot emit them (it switches to the next unit rather than composing), so
+          # accepting them would only make the pattern look more general than the data it reads. A unit
+          # added to formatDuration means adding it here.
           if printf '%s\n' "$OUT" | grep -qF 'unsubstantiated in-sync claim'; then
             CONDITION=unsubstantiated
             TAG="MWG drift: in-sync claim cannot be substantiated"
@@ -174,7 +182,7 @@ jobs:
             CONDITION=unactioned-delta
             TAG="MWG drift: unactioned delta"
             # the age of the ANALYSIS (measured from analysedAt), which is the age this condition turns on
-            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/.*that analysis is ([0-9]+[smhd]) old.*/\1/p' | head -1)
+            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/.*that analysis is ([0-9]+(\.[0-9])?(ms|s|m|h|d)) old.*/\1/p' | head -1)
             if [ -n "$AGE" ]; then
               TITLE="$TAG - analysis ${AGE} old, upstream has moved on"
             else
@@ -183,7 +191,7 @@ jobs:
           elif printf '%s\n' "$OUT" | grep -qE 'last check was .* ago|lastCheckAt|no recorded check timestamp'; then
             CONDITION=heartbeat-stale
             TAG="MWG drift check heartbeat stale"
-            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/.*last check was ([0-9]+[smhd]) ago.*/\1/p' | head -1)
+            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/.*last check was ([0-9]+(\.[0-9])?(ms|s|m|h|d)) ago.*/\1/p' | head -1)
             if [ -n "$AGE" ]; then
               TITLE="$TAG - last check ${AGE} ago"
             else
