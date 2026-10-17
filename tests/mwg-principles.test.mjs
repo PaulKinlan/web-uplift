@@ -1588,6 +1588,7 @@ export const mwgPrinciplesTests = [
   testMwgDriftExtractPipe,
   testMwgDriftBasisFloor,
   testMwgDriftAlertNamesTheConditionItReports,
+  testRuleBasisAnchorsArePinnedPerAppliedVersion,
   testGuidanceUsage,
   testGuidanceVersionPinnedInDocs,
   testMwgCatalogRegenerateAgreement,
