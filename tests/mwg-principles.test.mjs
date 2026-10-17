@@ -41,6 +41,7 @@ import {
 import { AGENTS } from '../runner/agents.mjs';
 import { testMwgDriftExtractPipe } from './mwg-drift-extract-pipe.mjs';
 import { testMwgDriftBasisFloor } from './mwg-drift-basis-floor.mjs';
+import { testMwgDriftAlertNamesTheConditionItReports } from './mwg-drift-alert.mjs';
 import { testMwgCatalogExtract } from './mwg-catalog-extract.mjs';
 
 export function testGuidanceUsage() {
@@ -1538,6 +1539,7 @@ export const mwgPrinciplesTests = [
   testMwgArtefactAppliedRulesAxisFailsClosed,
   testMwgDriftExtractPipe,
   testMwgDriftBasisFloor,
+  testMwgDriftAlertNamesTheConditionItReports,
   testGuidanceUsage,
   testGuidanceVersionPinnedInDocs,
   testMwgCatalogRegenerateAgreement,
