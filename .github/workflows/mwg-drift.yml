@@ -148,27 +148,104 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: File stale heartbeat issue
+      - name: Classify the freshness failure and file one issue
         if: steps.run_freshness.outputs.exit_code != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FRESHNESS_OUTPUT: ${{ steps.run_freshness.outputs.freshness_output }}
         run: |
-          OPEN_COUNT=$(gh issue list --state open --search "in:title \"MWG drift check heartbeat stale\"" --json title --jq length)
-          if [ "$OPEN_COUNT" = "0" ]; then
-            cat << 'EOF' > /tmp/issue-body.md
-          The Modern Web Guidance drift check heartbeat is stale (exceeded 30h max age).
+          # The freshness guard exits non-zero for SEVERAL different conditions, not just a stale
+          # heartbeat: a stale heartbeat, a delta that nobody has acted on (where the age that matters
+          # is the ANALYSIS's, so a fresh heartbeat cannot rescue it), and an in-sync claim the state
+          # cannot substantiate. The subject line is the part that survives into a notification, so it
+          # has to name the condition that actually fired - a woken reader told "heartbeat stale" when
+          # the heartbeat is fresh learns to dismiss a real unactioned delta as noise (web-uplift-vc4h).
+          #
+          # Every value below is parsed out of the guard's OWN output. Nothing is invented: if the
+          # guard did not print it, it is not in the title.
+          OUT="$FRESHNESS_OUTPUT"
 
-          Check output:
-          ```
-          EOF
-            printf '%s\n' "$FRESHNESS_OUTPUT" >> /tmp/issue-body.md
-            cat << 'EOF' >> /tmp/issue-body.md
-          ```
-          EOF
-            gh issue create \
-              --title "MWG drift check heartbeat stale" \
-              --body-file /tmp/issue-body.md
+          # The failed condition is chosen by the guard's own wording, most specific first.
+          #
+          # AGE SHAPES (web-uplift-dsl2): formatDuration emits `${ms}ms` below a second and then
+          # toFixed(1) for s/m/h/d, so a FRACTIONAL value is the NORMAL shape - '5.2d' and '35.5h' are what
+          # a real alert carries. The regexes below therefore accept an optional one-decimal fraction and
+          # the units ms|s|m|h|d. They deliberately do NOT accept 'w' or compound forms like '1h 30m':
+          # formatDuration cannot emit them (it switches to the next unit rather than composing), so
+          # accepting them would only make the pattern look more general than the data it reads. A unit
+          # added to formatDuration means adding it here.
+          # ANCHORED EXTRACTION (web-uplift-igdk). Every age below is read only from a line the guard emits
+          # as a MEASURED age, matched end to end. The previous patterns began with '.*', so 'last check was
+          # 35.5h ago' matched INSIDE an invalid lastCheckAt value the guard had just declared unusable - the
+          # alert then reported a measurement it never made, about a field it knew was invalid. Anchoring is
+          # what makes the extraction honest: if the output is not the guard's measured-age sentence there is
+          # no age, and the subject says so instead of inventing one.
+          #
+          # An unusable lastCheckAt is classified FIRST and carries NO age: a number there would be fiction,
+          # however plausible it looks.
+          if printf '%s\n' "$OUT" | grep -qF 'lastCheckAt in state file is not a valid timestamp'; then
+            CONDITION=heartbeat-invalid
+            TAG="MWG drift check heartbeat invalid"
+            TITLE="$TAG - lastCheckAt is not a timestamp, so no age can be measured"
+          elif printf '%s\n' "$OUT" | grep -qE '^STALE: lastCheckAt is .* in the FUTURE'; then
+            CONDITION=heartbeat-invalid
+            TAG="MWG drift check heartbeat invalid"
+            TITLE="$TAG - lastCheckAt is in the future, so no age can be measured"
+          elif printf '%s\n' "$OUT" | grep -qF 'unsubstantiated in-sync claim'; then
+            CONDITION=unsubstantiated
+            TAG="MWG drift: in-sync claim cannot be substantiated"
+            TITLE="$TAG"
+          elif printf '%s\n' "$OUT" | grep -qE '^STALE: .*, and that analysis is ([0-9]+(\.[0-9])?(ms|s|m|h|d)) old, exceeding max-age threshold'; then
+            CONDITION=unactioned-delta
+            TAG="MWG drift: unactioned delta"
+            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/^STALE: .*, and that analysis is ([0-9]+(\.[0-9])?(ms|s|m|h|d)) old, exceeding max-age threshold.*$/\1/p' | head -1)
+            if [ -n "$AGE" ]; then
+              TITLE="$TAG - analysis ${AGE} old, upstream has moved on"
+            else
+              TITLE="$TAG - the latest analysis is older than max-age"
+            fi
+          elif printf '%s\n' "$OUT" | grep -qE '^STALE: last check was ([0-9]+(\.[0-9])?(ms|s|m|h|d)) ago, exceeding max-age threshold'; then
+            CONDITION=heartbeat-stale
+            TAG="MWG drift check heartbeat stale"
+            AGE=$(printf '%s\n' "$OUT" | sed -nE 's/^STALE: last check was ([0-9]+(\.[0-9])?(ms|s|m|h|d)) ago, exceeding max-age threshold.*$/\1/p' | head -1)
+            if [ -n "$AGE" ]; then
+              TITLE="$TAG - last check ${AGE} ago"
+            else
+              TITLE="$TAG - no usable last-check timestamp"
+            fi
+          elif printf '%s\n' "$OUT" | grep -qF 'no recorded check timestamp'; then
+            CONDITION=heartbeat-missing
+            TAG="MWG drift check heartbeat stale"
+            TITLE="$TAG - no usable last-check timestamp"
+          else
+            # Anything else is the guard failing to run at all (exit 1) or a shape this classifier does
+            # not know. Say that rather than borrowing the heartbeat title for it.
+            CONDITION=check-failed
+            TAG="MWG drift check could not complete"
+            TITLE="$TAG - freshness guard reported an unrecognised failure"
+          fi
+
+          echo "condition=$CONDITION" >> "$GITHUB_STEP_SUMMARY"
+          echo "title=$TITLE" >> "$GITHUB_STEP_SUMMARY"
+
+          # Dedupe is PER CONDITION, on the stable tag each branch sets. Searching one hard-coded title
+          # suppressed the other condition entirely: an open "heartbeat stale" issue would swallow a real
+          # unactioned delta, which is the failure this bead is about, one level down (web-uplift-vc4h).
+          OPEN_COUNT=$(gh issue list --state open --search "in:title \"${TAG}\"" --json title --jq length)
+          if [ "$OPEN_COUNT" = "0" ]; then
+            {
+              echo "This is a **${CONDITION}** alert, not a heartbeat-stale alert unless it says so."
+              echo
+              echo "Condition: ${CONDITION}"
+              echo
+              echo "Guard output:"
+              echo '```'
+              printf '%s\n' "$OUT"
+              echo '```'
+            } > /tmp/issue-body.md
+            gh issue create --title "$TITLE" --body-file /tmp/issue-body.md
+          else
+            echo "An open MWG drift issue already exists; not filing another."
           fi
 
       - name: Freshness status
