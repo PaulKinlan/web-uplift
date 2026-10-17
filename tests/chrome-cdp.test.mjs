@@ -961,10 +961,31 @@ export function testCommittedSiblingProbesAreInert() {
   // longer pins the single directory it happened to know about: the defect is "a
   // committed sample with a live state-changing request", which is a property of the
   // whole scratch surface, and pinning one file is what let the second one be missed.
+  // web-uplift-nz0l: the key may be spelled with quotes ('method', "method", `method`)
+  // and may carry whitespace before the colon. The auxp version of this guard only matched
+  // `method:` written bare, so `{ 'method': 'POST' }` - the same live request, ordinary
+  // formatting - slipped past it. The key pattern is shared by the object-literal and
+  // fetch checks so the two spellings cannot drift apart again.
+  //
+  // CAUGHT: a literal method value next to a literal key, however the key is quoted or
+  // spaced - `method: 'POST'`, `method:"POST"`, `method : 'PUT'`, `'method': 'PATCH'`,
+  // `"method" : "DELETE"`, `` `method`: 'POST' `` - and the same inside a fetch options
+  // object, as long as that literal holds no nested `)`.
+  //
+  // NOT CAUGHT, by construction, and stated here rather than implied away: a computed key
+  // (`{ ['method']: 'POST' }`, `{ ['me'+'thod']: 'POST' }`, `Object.assign(o, {...})`), a
+  // value held in a variable or built by a helper (`method: verb`, `method: 'PO' + 'ST'`),
+  // `XMLHttpRequest.open('POST', url)`, `navigator.sendBeacon(url, body)` (always a POST),
+  // and `form.submit()` which bypasses the requestSubmit check. Catching those needs data
+  // flow, not a lexer. This is a tripwire for the shapes a stored probe actually uses; the
+  // neutralisation header plus review is what covers the rest, and the bead records it.
+  const QUOTE = "['\"`]";
+  const METHOD_KEY = `(?:^|[^\\w$])(?:${QUOTE}method${QUOTE}|method)\\s*:\\s*${QUOTE}`;
+  const METHOD = '(?:POST|PUT|PATCH|DELETE)';
   const STATE_CHANGING = [
-    /\bmethod:\s*['"](POST|PUT|PATCH|DELETE)['"]/,
+    new RegExp(`${METHOD_KEY}${METHOD}`),
     /\brequestSubmit\s*\(/,
-    /\bfetch\s*\([^)]*\bmethod:\s*['"](POST|PUT|PATCH|DELETE)['"]/,
+    new RegExp(`\\bfetch\\s*\\([^)]*${METHOD_KEY}${METHOD}`),
   ];
   const outRoot = join(repoRoot, 'evidence-out');
   // This walk does NOT use the shared listFiles helper, and that is the point: listFiles
@@ -1024,7 +1045,9 @@ export function testCommittedSiblingProbesAreInert() {
     assert(existsSync(join(scratch, name)), `the neutralised probe must keep the path write-scope.json references: ${name}`);
   }
   assertProbeFileInert(join(scratch, 'submit.js'), { forbid: [/\brequestSubmit\s*\(/, /\bfetch\s*\(/] });
-  assertProbeFileInert(join(scratch, 'flow-probe.js'), { forbid: [/method:\s*'POST'/] });
+  // The same patterns the sweep uses, not a hand-written single spelling: this call is the
+  // per-file half of the guard, and it had the identical unquoted-key blind spot (nz0l).
+  assertProbeFileInert(join(scratch, 'flow-probe.js'), { forbid: STATE_CHANGING });
 
   // Negative control: a live probe shape (uncommented requestSubmit plus a live POST)
   // must trip the same checks the sweep applies to every walked file, or the sweep
@@ -1037,6 +1060,25 @@ export function testCommittedSiblingProbesAreInert() {
   const fixtureLive = executableLines(readFileSync(fixture, 'utf8'));
   for (const re of STATE_CHANGING) {
     assert(re.test(fixtureLive), `negative control: the sweep must fire on a live state-changing shape (${re})`);
+  }
+  // web-uplift-nz0l: the fixture above spells the key one way. The guard now claims every
+  // quoting and spacing of the key, so every one of them gets its own live shape - the
+  // single-spelling control is precisely what let the quoted-key gap survive.
+  const liveShapes = [
+    "{ method: 'POST' }",
+    "{ 'method': 'POST' }",
+    '{ "method": "POST" }',
+    "{ `method`: 'POST' }",
+    "{ method : 'PUT' }",
+    '{method:"PATCH"}',
+    "{ 'method' : 'DELETE' }",
+    "{ 'method': 'POST', body: new FormData(f) }",
+  ];
+  for (const shape of liveShapes) {
+    const shapeText = executableLines(`(() => {\n  return fetch('/cart', ${shape});\n})()`);
+    for (const re of STATE_CHANGING.filter((r) => !/requestSubmit/.test(String(r)))) {
+      assert(re.test(shapeText), `negative control: the sweep must fire on the live shape ${shape} (${re})`);
+    }
   }
   let fired = false;
   try {
