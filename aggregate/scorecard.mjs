@@ -888,6 +888,16 @@ main{max-width:1000px;margin:0 auto;padding:22px}
 .effort{font-size:.75rem;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:1px 7px}
 .history-scroll{overflow-x:auto;margin-bottom:16px}
 .history-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Focus ring and press state for every control (web-uplift-utri). Explicit :focus-visible
+   rather than :focus, so a pointer press does not leave a ring behind; an outline rather
+   than a box-shadow, so a forced-colors mode keeps it; and an offset, so the ring sits
+   clear of the control instead of merging into its border. --accent is above 5:1 against
+   both --bg and --panel; testScorecardScoringAndRender computes that contrast from the
+   emitted stylesheet rather than trusting this comment. */
+:where(.action,.outcome,.fitem,.tab,.dialog-head .x):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.action:active,.outcome:active,.fitem:active{transform:translateY(1px);border-color:var(--accent)}
+.tab:active{transform:translateY(1px);color:var(--txt)}
+.dialog-head .x:active{transform:translateY(1px);background:var(--line)}
 .history{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
 .history .grid{stroke:var(--line)}.history .axis{fill:var(--muted);font-size:12px}
 .history .area{fill:rgba(91,141,239,.12)}
