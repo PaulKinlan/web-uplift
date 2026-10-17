@@ -417,6 +417,46 @@ export function testMwgDriftCheckGuard() {
     assert(/MWG_DRIFT_UPSTREAM_CORPUS/.test(res.stderr), `mwg-drift: case 1d must name the missing input: ${res.stderr}`);
   }
 
+  // 1e. web-uplift-m9o3 review: guide ids are BASENAMES, so two guide files with the same name in
+  // different categories would silently overwrite each other and an anchor could be verified
+  // against the wrong guide's text. guidesFromTree() refuses the collision, and this case is what
+  // keeps that refusal from being deletable: the fixture corpora bypass the tarball reader, so
+  // without a direct test of the reader nothing exercises it (the first attempt at this commit
+  // shipped the import and no case, which is exactly the hole the reviewer caught).
+  {
+    const tree = join(tmp, 'dup-guides');
+    mkdirSync(join(tree, 'forms'), { recursive: true });
+    mkdirSync(join(tree, 'ui-components'), { recursive: true });
+    writeFileSync(join(tree, 'forms', 'duplicate.md'), '# one');
+    writeFileSync(join(tree, 'ui-components', 'duplicate.md'), '# two');
+    let refused = null;
+    try {
+      guidesFromTree(tree);
+    } catch (err) {
+      refused = err.message;
+    }
+    assert(refused !== null, 'mwg-drift: case 1e a duplicate guide id must be refused, not silently overwritten');
+    assert(
+      /share the id "duplicate"/.test(refused) && /forms/.test(refused) && /ui-components/.test(refused),
+      `mwg-drift: case 1e the refusal must name the id and both files: ${refused}`,
+    );
+    // A unique tree still reads, so the guard is not simply refusing everything.
+    const okTree = join(tmp, 'ok-guides');
+    mkdirSync(join(okTree, 'forms'), { recursive: true });
+    writeFileSync(join(okTree, 'forms', 'unique.md'), '# only');
+    const ok = guidesFromTree(okTree);
+    assert(Object.keys(ok).length === 1 && ok.unique === '# only', `mwg-drift: case 1e must still read a unique tree: ${JSON.stringify(ok)}`);
+    // And an empty tree is a BLIND check (exit 1 territory), not an anchor break: distinct repairs.
+    let emptyRefused = null;
+    mkdirSync(join(tmp, 'empty-guides'), { recursive: true });
+    try {
+      guidesFromTree(join(tmp, 'empty-guides'));
+    } catch (err) {
+      emptyRefused = err.message;
+    }
+    assert(emptyRefused !== null && /no guide markdown/.test(emptyRefused), `mwg-drift: case 1e an empty guide tree must be refused: ${emptyRefused}`);
+  }
+
   // 2. upstream-newer -> exit 2, stdout mentions the delta and "0.0.200".
   {
     const res = runCheck([], {
