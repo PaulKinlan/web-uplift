@@ -20,7 +20,7 @@
 // Usage:
 //   node tests/mwg-drift-classify.mjs --old-corpus <file> --new-corpus <file> [--basis <file>] [--json]
 //   node tests/mwg-drift-classify.mjs --extract <package-dir> --version <x.y.z> [-o <file>]
-//   node tests/mwg-drift-classify.mjs --verify-basis <corpus-file> [--basis <file>] [--catalog <file>]
+//   node tests/mwg-drift-classify.mjs --verify-basis <corpus-file> --catalog <file> [--basis <file>]
 //
 // Exit codes:
 //    0: No delta between old and new corpora, or successful extraction/verification.
@@ -50,7 +50,7 @@ function printUsageAndExit(code = 64) {
   const msg = `Usage:
   node tests/mwg-drift-classify.mjs --old-corpus <file> --new-corpus <file> [--basis <file>] [--json]
   node tests/mwg-drift-classify.mjs --extract <package-dir> --version <x.y.z> [-o <file>]
-  node tests/mwg-drift-classify.mjs --verify-basis <corpus-file> [--basis <file>] [--catalog <file>]
+  node tests/mwg-drift-classify.mjs --verify-basis <corpus-file> --catalog <file> [--basis <file>]
 
 Options:
   --old-corpus <file>      Path to baseline corpus JSON
@@ -61,9 +61,11 @@ Options:
   --version <x.y.z>        Version tag to record in extracted corpus
   -o, --out <file>         Destination file for extracted corpus (default: stdout)
   --verify-basis <file>    Verify all basis registry anchors against given corpus JSON
-  --catalog <file>         With --verify-basis: also validate that every registered
-                           guide id exists in the catalog's guide set and that the
-                           registry catalogueVersion matches the catalog version
+                           (requires --catalog: without it the registry cannot be
+                           checked against the catalog, so omitting it is a usage error
+                           rather than a check that silently does not run - 70im)
+  --catalog <file>         REQUIRED with --verify-basis: the catalog whose guide set and
+                           version the registry is verified against
 `;
   if (code === 0) {
     console.log(msg);
@@ -392,16 +394,20 @@ function verifyBasisAgainstCorpus(corpusPath, basisPath, catalogPath) {
     process.exit(1);
   }
 
-  if (catalogPath) {
-    const catalog = readJsonFile(catalogPath, 'catalog file');
-    const catViolations = basisCatalogViolations(basis, catalog);
-    if (catViolations.length > 0) {
-      console.error(`FAIL: ${catViolations.length} basis-vs-catalog violation(s):`);
-      for (const v of catViolations) {
-        console.error(`  - ${v}`);
-      }
-      process.exit(1);
+  // The caller refuses a missing catalog (web-uplift-70im); this invariant is the second
+  // line of defence, so a future caller cannot reintroduce the silent skip by passing null
+  // or an empty string instead of reaching the usage error above.
+  if (typeof catalogPath !== 'string' || catalogPath === '') {
+    throw new Error('verifyBasisAgainstCorpus: a catalog path is required (web-uplift-70im)');
+  }
+  const catalog = readJsonFile(catalogPath, 'catalog file');
+  const catViolations = basisCatalogViolations(basis, catalog);
+  if (catViolations.length > 0) {
+    console.error(`FAIL: ${catViolations.length} basis-vs-catalog violation(s):`);
+    for (const v of catViolations) {
+      console.error(`  - ${v}`);
     }
+    process.exit(1);
   }
 
   const violations = basisCorpusViolations(basis, corpus);
@@ -808,6 +814,18 @@ if (mode === 'extract') {
   }
   process.exit(0);
 } else if (mode === 'verify_basis') {
+  // web-uplift-70im: the registry-vs-catalog check used to run only when --catalog was
+  // passed, so `--verify-basis` without it answered OK for a registry guide that had gone
+  // missing from the catalog - a check reporting success without checking. Omitting a
+  // required input is a usage error, never a skipped validation, the same rule case 17e
+  // already pins for an EMPTY --catalog value. Refuse before verifying anything and name
+  // what is missing.
+  if (catalogArg === null) {
+    console.error(
+      'FAIL: --verify-basis requires --catalog <file>: without it the registry cannot be checked against the catalog guide set, so reporting OK would claim verification that did not happen (web-uplift-70im). Pass the catalog this registry is bound to, e.g. knowledge/mwg-catalog.json.',
+    );
+    process.exit(64);
+  }
   verifyBasisAgainstCorpus(verifyCorpusArg, basisArg, catalogArg);
 } else if (mode === 'classify') {
   if (catalogArg !== null) {

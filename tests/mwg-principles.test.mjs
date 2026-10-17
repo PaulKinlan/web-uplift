@@ -1140,6 +1140,7 @@ export function testMwgDriftClassifierGuard() {
     const res = runClassifier([
       '--verify-basis', corpusOld,
       '--basis', copyPath,
+      '--catalog', join(fixDir, 'catalog-fixture-set.json'),
     ]);
     assert(res.status === 1, `mwg-drift-classify: case 9 (sabotaged anchor) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
   }
@@ -1149,6 +1150,7 @@ export function testMwgDriftClassifierGuard() {
     const res = runClassifier([
       '--verify-basis', corpusOld,
       '--basis', basisFixture,
+      '--catalog', join(fixDir, 'catalog-fixture-set.json'),
     ]);
     assert(res.status === 0, `mwg-drift-classify: case 10 must exit 0, got ${res.status}:\n${res.stderr || res.stdout}`);
   }
@@ -1279,6 +1281,7 @@ export function testMwgDriftClassifierGuard() {
     const resV = runClassifier([
       '--verify-basis', corpusOld,
       '--basis', staleBasis,
+      '--catalog', join(fixDir, 'catalog-fixture-set.json'),
     ]);
     assert(resV.status === 1, `mwg-drift-classify: case 16b (verify-basis, stale registry version) must exit 1, got ${resV.status}`);
   }
@@ -1338,6 +1341,19 @@ export function testMwgDriftClassifierGuard() {
       '--catalog', '',
     ]);
     assert(emptyRes.status === 64, `mwg-drift-classify: case 17e (empty --catalog) must exit 64, got ${emptyRes.status}`);
+
+    // 17f. web-uplift-70im: OMITTING --catalog is the same class of error as passing an empty
+    // one - a usage error, never a skipped validation. It used to exit 0 and print "OK: basis
+    // verified" for a registry guide that had gone missing from the catalog, because the
+    // registry-vs-catalog check only ran when the option was present. Assert the refusal, its
+    // code, that it names the missing input, and that it does NOT report success.
+    const noCatRes = runClassifier([
+      '--verify-basis', corpusOld,
+      '--basis', basisFixture,
+    ]);
+    assert(noCatRes.status === 64, `mwg-drift-classify: case 17f (omitted --catalog) must be a usage error 64, got ${noCatRes.status}: ${noCatRes.stderr || noCatRes.stdout}`);
+    assert(/requires --catalog/.test(noCatRes.stderr), `mwg-drift-classify: case 17f must name the missing input: ${noCatRes.stderr}`);
+    assert(!/OK: basis verified/.test(noCatRes.stdout), `mwg-drift-classify: case 17f must not report success without verifying: ${noCatRes.stdout}`);
   }
 
   // 19. A registry WITHOUT catalogueVersion fails validation: the binding
@@ -1350,6 +1366,7 @@ export function testMwgDriftClassifierGuard() {
     const res = runClassifier([
       '--verify-basis', corpusOld,
       '--basis', noVerBasis,
+      '--catalog', join(fixDir, 'catalog-fixture-set.json'),
     ]);
     assert(res.status === 1, `mwg-drift-classify: case 19 (missing catalogueVersion) must exit 1, got ${res.status}`);
     const resC = runClassifier([

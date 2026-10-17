@@ -144,7 +144,7 @@ If the new corpus has an empty `guides` object while the baseline corpus is non-
 - `0`: No delta detected between old and new corpora, or successful `--verify-basis` / `--extract` execution.
 - `1`: Classifier is blind or inputs are invalid: missing or unparseable files, invalid corpus schema, invalid semver strings, empty target corpus against non-empty baseline, zero guides extracted, or failed basis verification.
 - `2`: Version delta detected and classified (one or more REVERSED, CHANGED, or NEW guides).
-- `64`: Usage error (unknown flags, missing arguments, or incompatible mode options).
+- `64`: Usage error (unknown flags, missing arguments, or incompatible mode options). An OMITTED `--catalog` with `--verify-basis` is one of these, not a skipped check: without the catalog the registry cannot be verified against its guide set, and the run used to answer `OK: basis verified` anyway (web-uplift-70im).
 
 ### Maintaining the Rule Basis Registry
 
@@ -157,5 +157,6 @@ The reanalysis lane maintains `knowledge/mwg-rule-basis.json` to keep reversal d
    ```sh
    node tests/mwg-drift-classify.mjs --verify-basis corpus-<version>.json --catalog knowledge/mwg-catalog.json
    ```
+   `--catalog` is required, not optional: it is the input the registry-vs-catalog comparison needs, so leaving it out is a usage error (exit 64) rather than a verification that silently skips that half of the check.
    The registry is bound to one catalog version: classifying or verifying with a registry whose `catalogueVersion` differs from the baseline corpus version fails loud (exit 1), and so does a registry that declares no rules at all, so a stale or empty registry can never silently disable reversal detection. On a version bump, set `catalogueVersion` to the new catalog version as part of the reanalysis commit.
 

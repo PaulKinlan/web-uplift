@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "guideIds": [
+    "implemented-rule-guide",
+    "plain-guide",
+    "withdrawn-guide",
+    "a-guide-that-is-not-in-the-corpus"
+  ],
+  "guides": [
+    {
+      "id": "implemented-rule-guide"
+    },
+    {
+      "id": "plain-guide"
+    },
+    {
+      "id": "withdrawn-guide"
+    },
+    {
+      "id": "a-guide-that-is-not-in-the-corpus"
+    }
+  ]
+}

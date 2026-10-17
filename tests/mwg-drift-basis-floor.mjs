@@ -16,6 +16,10 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const here = fileURLToPath(import.meta.url);
 const CLI = join(repoRoot, 'tests', 'mwg-drift-classify.mjs');
 const FIXTURES = join(repoRoot, 'tests', 'fixtures', 'mwg-drift');
+// web-uplift-70im: --verify-basis requires --catalog now, so the fixture registries are
+// verified against the fixture catalog. The absent-guide case uses a catalog that CONTAINS
+// that guide, so its catalog check passes and the corpus violation it pins still fires.
+const CATALOG = join(FIXTURES, 'catalog-fixture-set.json');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -42,7 +46,7 @@ export async function testMwgDriftBasisFloor() {
   try {
     // 1. THE CONTROL: with the fixture registry the reversal IS detected, so the refusal below is
     // not simply "classification always fails".
-    const control = await runCli(['--verify-basis', corpusOld, '--basis', goodBasis]);
+    const control = await runCli(['--verify-basis', corpusOld, '--basis', goodBasis, '--catalog', CATALOG]);
     assert(control.code === 0, `the fixture registry must still verify: ${control.code} ${control.err}`);
     assert(/1 rule\(s\) verified/.test(control.out), `verification must report the rule it checked: ${control.out}`);
     const controlClassify = await runCli(['--old-corpus', corpusOld, '--new-corpus', reversal, '--basis', goodBasis, '--json']);
@@ -51,7 +55,7 @@ export async function testMwgDriftBasisFloor() {
     assert(summary.reversed.length === 1, `the fixture registry must detect the reversal: ${JSON.stringify(summary.reversed)}`);
 
     // 2. An empty registry is refused by verification...
-    const emptyVerify = await runCli(['--verify-basis', corpusOld, '--basis', empty]);
+    const emptyVerify = await runCli(['--verify-basis', corpusOld, '--basis', empty, '--catalog', CATALOG]);
     assert(emptyVerify.code === 1, `an empty registry must not verify OK: exit ${emptyVerify.code} ${emptyVerify.out}`);
     assert(/declares no rules/.test(emptyVerify.err) && /REVERSED/.test(emptyVerify.err),
       `the refusal must name the empty registry and what it disables: ${emptyVerify.err}`);
@@ -71,7 +75,7 @@ export async function testMwgDriftBasisFloor() {
       catalogueVersion: '1.0.0',
       rules: [{ id: 'r-absent', guide: 'a-guide-that-is-not-in-the-corpus', where: 'nowhere', anchors: ['any anchor text'] }],
     }, null, 2)}\n`, 'utf8');
-    const absentVerify = await runCli(['--verify-basis', corpusOld, '--basis', absent]);
+    const absentVerify = await runCli(['--verify-basis', corpusOld, '--basis', absent, '--catalog', join(FIXTURES, 'catalog-with-absent-guide.json')]);
     assert(absentVerify.code === 1 && /does not exist in corpus/.test(absentVerify.err),
       `verification must refuse a rule whose guide is missing: ${absentVerify.code} ${absentVerify.err}`);
     const absentClassify = await runCli(['--old-corpus', corpusOld, '--new-corpus', reversal, '--basis', absent, '--json']);
@@ -81,7 +85,7 @@ export async function testMwgDriftBasisFloor() {
 
     // 5. A registry with no rules field at all is refused too, and the message distinguishes the
     // two cases rather than lumping them together.
-    const noField = await runCli(['--verify-basis', corpusOld, '--basis', missing]);
+    const noField = await runCli(['--verify-basis', corpusOld, '--basis', missing, '--catalog', CATALOG]);
     assert(noField.code === 1 && /rules field must be an array/.test(noField.err),
       `a registry without a rules field must be refused by name: ${noField.code} ${noField.err}`);
   } finally {
