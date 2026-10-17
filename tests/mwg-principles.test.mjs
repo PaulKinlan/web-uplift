@@ -458,6 +458,151 @@ export function testMwgDriftCheckGuard() {
     assert(emptyRefused !== null && /no guide markdown/.test(emptyRefused), `mwg-drift: case 1e an empty guide tree must be refused: ${emptyRefused}`);
   }
 
+  // 1f. web-uplift-6f8x: the check now emits its own anchor-broken condition, but the WORKFLOW that
+  // consumes it has to tell that story. This drives the workflow's own classification block - not a
+  // paraphrase of it - with a fixture whose state is IN-SYNC and whose anchor is broken, which is the
+  // exact shape that hid for three days of green "in-sync".
+  {
+    const brokenBasis = join(tmp, 'basis-broken-for-subject.json');
+    const basis = JSON.parse(readFileSync(join(fixDir, 'basis-fixture.json'), 'utf8'));
+    basis.rules[0].anchors = ['An anchor sentence that appears in no guide at all'];
+    writeFileSync(brokenBasis, JSON.stringify(basis, null, 2));
+    const stateCopy = join(tmp, 'state-subject.json');
+    writeFileSync(stateCopy, JSON.stringify(JSON.parse(readFileSync(stateFixture, 'utf8')), null, 2));
+    // --write, because the freshness pass repeats the RECORDED condition: without it the state has
+    // no timestamp and freshness would report a missing heartbeat instead (case 1b does the same).
+    const checkRun = runCheck(['--write'], {
+      MWG_DRIFT_STATE: stateCopy,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+      MWG_DRIFT_BASIS: brokenBasis,
+    });
+    assert(checkRun.status === 4, `mwg-drift: case 1f fixture must exit 4, got ${checkRun.status}: ${checkRun.stderr}`);
+    const guardOutput = `${checkRun.stderr}${checkRun.stdout}`;
+    const ruleId = basis.rules[0].id;
+
+    // (i) The subject script, which both workflow jobs call.
+    const subject = spawnSync(process.execPath, [join(repoRoot, 'tests', 'mwg-drift-anchor-subject.mjs'), '--json'], {
+      input: guardOutput,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    assert(subject.status === 0, `mwg-drift: case 1f the subject script must recognise the guard's own header, got ${subject.status}: ${subject.stderr}`);
+    const parsed = JSON.parse(subject.stdout);
+    assert(parsed.condition === 'anchor-broken', `mwg-drift: case 1f condition must be anchor-broken, got ${parsed.condition}`);
+    assert(parsed.tag === 'MWG rule-basis anchor broken', `mwg-drift: case 1f tag must be the anchor tag, got ${parsed.tag}`);
+    assert(new RegExp(ruleId).test(parsed.title) && /guide [a-z0-9-]+/i.test(parsed.title),
+      `mwg-drift: case 1f the title must name the broken rule and its guide: ${parsed.title}`);
+    // The whole point of the bead: never the heartbeat or delta story.
+    assert(!/heartbeat|stale|unactioned delta|reanalysis needed/i.test(parsed.title), `mwg-drift: case 1f the anchor title must not borrow another condition: ${parsed.title}`);
+    // A second, non-anchor report must be refused by the script rather than mislabelled.
+    const subjectOf = (text) => spawnSync(process.execPath, [join(repoRoot, 'tests', 'mwg-drift-anchor-subject.mjs'), '--json'], {
+      input: text,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    const notAnchor = subjectOf('IN-SYNC: upstream version 0.0.193 matches analysed version 0.0.193\n');
+    assert(notAnchor.status === 3, `mwg-drift: case 1f an in-sync report must not be classified as anchor-broken, got ${notAnchor.status}`);
+    // ANCHORED, not a bare substring grab (the igdk rule). A mention of the phrase inside a line the
+    // guard did not emit is not the condition: neither a quoted previous alert nor a "0 problems"
+    // report may be turned into one.
+    const proseMention = subjectOf('NOTE: an earlier alert said "ANCHOR-BROKEN: 1 rule-basis anchor problem(s) against upstream 0.0.193" but it was repaired.\n');
+    assert(proseMention.status === 3, `mwg-drift: case 1f a mid-line mention must not be classified as anchor-broken, got ${proseMention.status}: ${proseMention.stdout}`);
+    const zeroProblems = subjectOf('ANCHOR-BROKEN: 0 rule-basis anchor problem(s) against upstream 0.0.193\n');
+    assert(zeroProblems.status === 3, `mwg-drift: case 1f "0 problems" is not this condition, got ${zeroProblems.status}: ${zeroProblems.stdout}`);
+
+    // The freshness pass emits a DIFFERENT ANCHOR-BROKEN shape (the recorded condition, no count).
+    // Driving the real freshness run here is what caught the first version of the wiring, which only
+    // matched the check-pass shape and would have filed "could not complete" for a real anchor break.
+    const freshRun = runCheck(['--freshness-only', '--max-age', '30h'], { MWG_DRIFT_STATE: stateCopy });
+    assert(freshRun.status === 4, `mwg-drift: case 1f freshness fixture must exit 4, got ${freshRun.status}: ${freshRun.stderr}`);
+    const freshSubject = subjectOf(`${freshRun.stderr}${freshRun.stdout}`);
+    assert(freshSubject.status === 0, `mwg-drift: case 1f the subject script must recognise the freshness shape, got ${freshSubject.status}: ${freshSubject.stderr}`);
+    const freshParsed = JSON.parse(freshSubject.stdout);
+    assert(freshParsed.condition === 'anchor-broken' && freshParsed.problemCount === null,
+      `mwg-drift: case 1f the freshness shape must classify without inventing a count: ${freshSubject.stdout}`);
+    assert(new RegExp(freshParsed.upstreamVersion.replace(/\./g, '\\.')).test(freshParsed.title),
+      `mwg-drift: case 1f the recorded-condition title must name the upstream version: ${freshParsed.title}`);
+
+    // (ii) The workflow's freshness classifier, executed as bash with a stub gh. Extracted from the
+    // YAML rather than copied, so the test follows the workflow instead of drifting from it.
+    const workflowText = readFileSync(join(repoRoot, '.github', 'workflows', 'mwg-drift.yml'), 'utf8');
+    const stepMarker = '      - name: Classify the freshness failure and file one issue';
+    const start = workflowText.indexOf(stepMarker);
+    assert(start !== -1, 'mwg-drift: case 1f cannot find the freshness classification step in .github/workflows/mwg-drift.yml');
+    const afterStep = workflowText.indexOf('\n        run: |\n', start);
+    assert(afterStep !== -1, 'mwg-drift: case 1f cannot find the run block of the freshness classification step');
+    const bodyStart = afterStep + '\n        run: |\n'.length;
+    const nextStep = workflowText.indexOf('\n      - name:', bodyStart);
+    assert(nextStep !== -1, 'mwg-drift: case 1f cannot find the end of the freshness classification run block');
+    const classifyBlock = workflowText.slice(bodyStart, nextStep).split('\n').map((line) => (line.startsWith('          ') ? line.slice(10) : line)).join('\n');
+
+    const binDir = join(tmp, 'gh-bin');
+    mkdirSync(binDir, { recursive: true });
+    const titleLog = join(tmp, 'gh-created-titles.txt');
+    writeFileSync(join(binDir, 'gh'), [
+      '#!/bin/sh',
+      'if [ "$1 $2" = "issue list" ]; then echo 0; exit 0; fi',
+      'if [ "$1 $2" = "issue create" ]; then printf "%s\\n" "$@" >> "' + titleLog + '"; exit 0; fi',
+      'exit 0',
+    ].join('\n'), { mode: 0o755 });
+
+    const classify = (output) => {
+      rmSync(titleLog, { force: true });
+      const summary = join(tmp, `step-summary-${Math.random().toString(36).slice(2)}.txt`);
+      writeFileSync(summary, '');
+      const env = {
+        PATH: `${binDir}:${process.env.PATH}`,
+        GH_TOKEN: 'stub',
+        GITHUB_STEP_SUMMARY: summary,
+        FRESHNESS_OUTPUT: output,
+        HOME: process.env.HOME,
+        // The block pipes the guard text into the subject script, which lives in the repo.
+        PWD: repoRoot,
+      };
+      const res = spawnSync('bash', ['-e', '-c', classifyBlock], { cwd: repoRoot, encoding: 'utf8', env, timeout: 30_000 });
+      return {
+        status: res.status,
+        title: existsSync(titleLog) ? readFileSync(titleLog, 'utf8') : '',
+        summary: readFileSync(summary, 'utf8'),
+        stderr: res.stderr,
+      };
+    };
+
+    const anchorClassified = classify(guardOutput);
+    assert(anchorClassified.status === 0, `mwg-drift: case 1f the freshness classifier must succeed, got ${anchorClassified.status}: ${anchorClassified.stderr}`);
+    assert(/--title\nMWG rule-basis anchor broken: /.test(anchorClassified.title),
+      `mwg-drift: case 1f the workflow must title an anchor-broken run as anchor-broken, filed: ${JSON.stringify(anchorClassified.title)}`);
+    assert(new RegExp(ruleId).test(anchorClassified.title), `mwg-drift: case 1f the workflow title must name the broken rule: ${anchorClassified.title}`);
+    assert(/condition=anchor-broken/.test(anchorClassified.summary), `mwg-drift: case 1f the step summary must say anchor-broken: ${anchorClassified.summary}`);
+    assert(!/heartbeat|unactioned/i.test(anchorClassified.title), `mwg-drift: case 1f the workflow must not fold the anchor into the heartbeat: ${anchorClassified.title}`);
+
+    // The freshness shape must also classify through the WORKFLOW block, not just through the script.
+    const anchorFreshnessClassified = classify(`${freshRun.stderr}${freshRun.stdout}`);
+    assert(anchorFreshnessClassified.status === 0, `mwg-drift: case 1f the freshness classifier must succeed on the recorded shape, got ${anchorFreshnessClassified.status}: ${anchorFreshnessClassified.stderr}`);
+    assert(/--title\nMWG rule-basis anchor broken against upstream /.test(anchorFreshnessClassified.title),
+      `mwg-drift: case 1f the workflow must not call a recorded anchor break "could not complete", filed: ${JSON.stringify(anchorFreshnessClassified.title)}`);
+
+    // Negative control: an ordinary stale heartbeat still gets the heartbeat title, so "anchor first"
+    // did not become "everything is an anchor problem".
+    const stale = classify('STALE: last check was 35.5h ago, exceeding max-age threshold of 30h\n');
+    assert(/MWG drift check heartbeat stale/.test(stale.title) && !/anchor/i.test(stale.title),
+      `mwg-drift: case 1f a stale heartbeat must keep its own title, filed: ${JSON.stringify(stale.title)}`);
+
+    // And the check job's wiring: persist on 4, pass the job on 4, and file the anchor issue before
+    // Run status decides the outcome.
+    const persist = /name: Persist check state[\s\S]*?if: ([^\n]+)\n/.exec(workflowText);
+    assert(persist !== null && /'4'/.test(persist[1]), `mwg-drift: case 1f the workflow must persist state on exit 4, found: ${persist && persist[1]}`);
+    const status = /name: Run status[\s\S]*?run: \|\n([\s\S]*?)\n\n/.exec(workflowText);
+    assert(status !== null && /"4"/.test(status[1]), 'mwg-drift: case 1f Run status must treat exit 4 as work to do, not a job failure');
+    assert(workflowText.indexOf('name: File anchor-broken issue') !== -1, 'mwg-drift: case 1f the workflow must file an anchor-broken issue');
+    const anchorStep = /name: File anchor-broken issue[\s\S]*?(?=\n      - name:)/.exec(workflowText);
+    assert(anchorStep !== null && /mwg-drift-anchor-subject\.mjs/.test(anchorStep[0]),
+      'mwg-drift: case 1f the anchor issue step must derive its subject from the testable classifier, not a hand-rolled title');
+    assert(anchorStep !== null && /--body-file/.test(anchorStep[0]),
+      'mwg-drift: case 1f the anchor issue step must file the body the classifier wrote');
+  }
+
   // 2. upstream-newer -> exit 2, stdout mentions the delta and "0.0.200".
   {
     const res = runCheck([], {

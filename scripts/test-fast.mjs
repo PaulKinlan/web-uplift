@@ -367,6 +367,10 @@ export const SUBSYSTEMS = [
     match: (f) =>
       f.startsWith('knowledge/') ||
       f.startsWith('docs/mwg-') ||
+      // The drift workflow is READ by tests/mwg-principles.test.mjs (case 1f drives its classifier
+      // block), so a change to it must select these tests: an unread workflow could otherwise drift
+      // away from the conditions it is supposed to file (web-uplift-6f8x).
+      f === '.github/workflows/mwg-drift.yml' ||
       /^tests\/mwg-.*\.mjs$/.test(f),
     targets: [
       { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
