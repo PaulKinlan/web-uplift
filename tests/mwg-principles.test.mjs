@@ -104,6 +104,10 @@ export function testGuidanceVersionPinnedInDocs() {
     // stale once (web-uplift-xkax) and nothing was watching it (web-uplift-yfbk).
     '.claude/skills/web-audit/SKILL.md',
     '.pi/skills/web-audit/SKILL.md',
+    // PLAN.md is where an operator reads what is pinned and why (Open questions), so a bump that leaves it
+    // pointing at the superseded catalog sends the reader to the wrong version. It drifted once
+    // (web-uplift-l69l) and nothing was watching it, which is the same shape as the skill twin above.
+    'PLAN.md',
   ];
   for (const rel of docs) {
     const text = readFileSync(join(repoRoot, rel), 'utf8');
