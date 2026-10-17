@@ -1,5 +1,5 @@
 {
-  "$comment": "Tracks the Modern Web Guidance catalog drift state for web-uplift. tests/mwg-drift-check.mjs maintains the lastCheck* fields across recurring upstream checks. analysedVersion and analysedAt describe the last full reanalysis and must move together with knowledge/mwg-catalog.json version and retrievedAt. Downstream mwg-train artefact fields (artifactId, catalogSha256, canonicalisation, appliedRulesVersion) define the versioned artefact contract (see docs/mwg-train-consumer-contract.md).",
+  "$comment": "Tracks the Modern Web Guidance catalog drift state for web-uplift. tests/mwg-drift-check.mjs maintains the lastCheck* fields across recurring upstream checks. analysedVersion and analysedAt describe the last full reanalysis and must move together with knowledge/mwg-catalog.json version and retrievedAt. lastAnalysis records WHAT that reanalysis found (the catalog delta, the guide text changes it had to read, and what it did to the pins); a version bump with no lastAnalysis for it is a heartbeat, not an analysis, and tests/mwg-principles.test.mjs requires the two to agree (web-uplift-b1p5). Downstream mwg-train artefact fields (artifactId, catalogSha256, canonicalisation, appliedRulesVersion) define the versioned artefact contract (see docs/mwg-train-consumer-contract.md).",
   "artifactId": "web-uplift/mwg-catalog",
   "catalogSha256": "cfefb049f9d1ef347be0a8f526b47634849ee143421a4b469b120b2311ecb59d",
   "canonicalisation": "json: recursive lexicographic key sort; array order preserved; compact (no insignificant whitespace); UTF-8; sha256 hex; object keys are emitted in JS property-enumeration order (integer-like keys sort ascending numeric, not lexicographic); tests/mwg-artefact.mjs is the normative implementation; non-ASCII characters are emitted as literal UTF-8, never as \\uXXXX escapes (a serialiser that escapes them computes a different digest for the same catalog - the committed catalog contains U+2014; web-uplift-rxbh)",
@@ -10,6 +10,43 @@
   "lastCheckUpstreamVersion": "0.0.194",
   "lastCheckSource": "https://registry.npmjs.org/modern-web-guidance/latest",
   "lastCheckResult": "in-sync",
+  "lastAnalysis": {
+    "fromVersion": "0.0.193",
+    "toVersion": "0.0.194",
+    "analysedAt": "2026-10-17T12:34:26.000Z",
+    "recordedBy": "web-uplift-b1p5",
+    "catalogDelta": {
+      "fromGuideCount": 178,
+      "guideCount": 187,
+      "addedGuides": [
+        "checkbox",
+        "hovercard",
+        "slider",
+        "switch",
+        "prevent-page-scroll-under-modal-dialog",
+        "scroll-completion-effects",
+        "swipe-to-reveal",
+        "client-side-encryption",
+        "digital-signatures"
+      ],
+      "removedGuides": 0
+    },
+    "guideTextChanges": {
+      "count": 31,
+      "ruleBasisGuides": [
+        "local-network-access",
+        "restrict-outbound-connections",
+        "trusted-types",
+        "validate-origins"
+      ],
+      "note": "The earlier analysis recorded the id-level delta only (9 added, 0 removed). Comparing the two tarballs guide by guide also shows 31 existing guide bodies changed, so this record carries both. They are example and clarification edits rather than reversals, but an example is exactly what a verbatim anchor can quote, and one did."
+    },
+    "pins": {
+      "ruleBasis": "1 of 16 anchors is NO LONGER PRESENT VERBATIM in 0.0.194 and is NOT fixed in this commit: rule defensive-browser-policies-trusted-types quotes trustedTypes.createPolicy('my-no-pretzel-policy'), and 0.0.194 rewrote that example (DOMPurify, policy named 'sanitize-html'). Evidence: extracting a corpus from the real 0.0.194 tarball and running tests/mwg-drift-classify.mjs --verify-basis corpus-0.0.194.json --basis knowledge/mwg-rule-basis.json --catalog knowledge/mwg-catalog.json exits 1 with 'anchor not found in guide text'. The obvious fix - anchor on the sentence that states the rule instead of an example, 'You create it using `trustedTypes.createPolicy()`', which is unchanged in 0.0.193 and 0.0.194 - was prepared and then withheld: the artefact contract (web-uplift-s52q) requires state.appliedRulesVersion === rule-basis catalogueVersion === the corpus/catalog version, and it refuses a rule-basis edit that changes ruleBasisSha256 under an unchanged appliedRulesVersion, so an anchor revision against the SAME catalog version has no expressible pin. Fixing it needs that contract decision first (filed as its own bead). Until then the next classification run over 0.0.194 refuses loudly rather than silently losing reversal detection for that rule.",
+      "principles": "The 9 new guides needed principle coverage; it was authored in c7526fd (web-uplift-9jaj) and the catalog-coverage test passes. principles.json checks are prose summaries rather than verbatim guide quotes, so a guide text edit cannot mechanically invalidate them - unlike the rule basis, which is why only the basis needed a change here."
+    },
+    "verdict": "The catalog delta itself is benign: no guide withdrawn and no recommendation reversed, so principles coverage needed only the 9 new guides (authored in c7526fd, web-uplift-9jaj). It is NOT benign for the rule basis: one of our 16 anchors quoted an example that 0.0.194 rewrote, so --verify-basis against a real 0.0.194 corpus fails for that rule until it is re-anchored. That is the difference between 'the version matches' and 'the basis was analysed', and it is why this record exists rather than a bare timestamp."
+  },
   "guideIdsSha256": "f17c59bfcd725643bbc58dcc66da50ab615bf4b2e42d72d58e8435e82b15f902",
   "guideCount": 187,
   "ruleBasisSha256": "11a0f2ee435c3add5890b6c44a6087ce64324eaba526a42f7b5c07f5f9c49cf5"
