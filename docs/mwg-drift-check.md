@@ -50,7 +50,12 @@ Comparing versions cannot see a release that rewrites guide bodies without movin
 
 Fixture mode (`MWG_DRIFT_UPSTREAM_FILE`) must supply `MWG_DRIFT_UPSTREAM_CORPUS`; without guide text the check FAILS rather than skipping the verification, because a check that runs only when an optional input is present is the false green `web-uplift-70im` removed.
 
-The workflow needs one mapping change to give this condition its own voice: persist the state on exit `4` as well as `0`/`2` (so `lastCheckAt` stays honest and the freshness job does not age it into a stale-heartbeat alert), and file an issue with its own title rather than the delta or check-failure titles. Until that lands, `.github/workflows/mwg-drift.yml` fails the job on exit `4` (loud, not silent) but files no issue.
+The workflow gives this condition its own voice (web-uplift-6f8x). `.github/workflows/mwg-drift.yml`:
+
+- **persists the state on exit `4` as well as `0`/`2`**, so `lastCheckAt` keeps advancing and the freshness job cannot age a known condition into a stale-heartbeat alert. A broken anchor is work to do (re-anchoring), tracked by its own issue, not a reason to stop recording that the check ran.
+- **files an issue titled from the condition itself**, e.g. `MWG rule-basis anchor broken: defensive-browser-policies-trusted-types (guide trusted-types)`, with the stable tag `MWG rule-basis anchor broken` used for dedupe. The subject is derived by `tests/mwg-drift-anchor-subject.mjs` from the guard's own `ANCHOR-BROKEN` wording, parsed field by field, so a fixture can drive the classification and no title can be invented from a message the guard did not print.
+- **treats exit `4` as work to do rather than a job failure**, like the delta outcome: the job passes and the issue carries the alert, so the freshness job also runs against the state this job just persisted. Exit `1` (the guard could not run) keeps the job red.
+- **classifies the anchor condition FIRST in the freshness job**, before every `STALE` branch, so an anchor problem can never be read out as a stale heartbeat or an unactioned delta. There are two `ANCHOR-BROKEN` shapes and both are matched anchored end to end: the check pass lists a problem count, and the freshness pass repeats the recorded condition without one.
 
 ## The Trigger: Delta-Gated, Not Clock-Driven
 

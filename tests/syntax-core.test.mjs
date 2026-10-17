@@ -138,7 +138,7 @@ const DECLARED_TRACKED_MODULES = [
   'tests/flow-shadow-browser.mjs', 'tests/flow.mjs', 'tests/install-copy-symlink.mjs',
   'tests/install-package.test.mjs', 'tests/launch-loop.mjs', 'tests/log-redaction.mjs',
   'tests/mwg-artefact.mjs', 'tests/mwg-basis.mjs', 'tests/mwg-catalog-extract.mjs', 'tests/mwg-catalog.mjs',
-  'tests/mwg-drift-basis-floor.mjs', 'tests/mwg-drift-check.mjs', 'tests/mwg-drift-classify.mjs',
+  'tests/mwg-drift-anchor-subject.mjs', 'tests/mwg-drift-basis-floor.mjs', 'tests/mwg-drift-check.mjs', 'tests/mwg-drift-classify.mjs',
   'tests/mwg-drift-extract-pipe.mjs', 'tests/mwg-principles.test.mjs', 'tests/no-orphan-browser.mjs',
   'tests/redaction.test.mjs', 'tests/regression.mjs', 'tests/runner-agents.test.mjs',
   'tests/safe-fetch.mjs', 'tests/secrets-coverage.mjs', 'tests/skill-write-contract.mjs',

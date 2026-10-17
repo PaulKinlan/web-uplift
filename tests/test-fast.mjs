@@ -200,6 +200,13 @@ function testSubsystemMappings() {
     'and it must select the guard that reads the census, named by its own filter: a green gate that never ran that guard looks like a green gate that did');
   // Negative direction: the entry names ONE file, so an unrelated changed file must not pull the census
   // guard into its plan. Without this the entry could silently become a directory- or prefix-wide match.
+  // The drift workflow is read by the mwg suite, so it must map to it; otherwise a workflow edit lands
+  // with a gate that never ran the test that reads it (web-uplift-6f8x).
+  const workflowPlan = mapFilesToTests(['.github/workflows/mwg-drift.yml']);
+  assert(workflowPlan.matchedSubsystems.includes('mwg'),
+    'the mwg-drift workflow must select the mwg subsystem: the suite reads it');
+  assert(workflowPlan.targets.some((t) => t.path === 'tests/mwg-principles.test.mjs'),
+    'a workflow change must run the suite that reads it');
   const unrelatedPlan = mapFilesToTests(['evidence/cdp.mjs']);
   assert(!unrelatedPlan.matchedSubsystems.includes('census-targets'),
     'an unrelated changed file must NOT select the census subsystem: the entry names one file, not tests/');

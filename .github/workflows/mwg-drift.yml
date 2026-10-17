@@ -48,7 +48,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Persist check state
-        if: steps.run_check.outputs.exit_code == '0' || steps.run_check.outputs.exit_code == '2'
+        # 4 (anchor-broken) persists too (web-uplift-6f8x): the check wrote lastAnchorCheck and
+        # lastCheckResult, so leaving the state behind would freeze lastCheckAt and then let the
+        # freshness job age a KNOWN condition into a stale-heartbeat alert. A broken anchor is work
+        # to do, tracked by its own issue - not a reason to stop recording that we looked.
+        if: steps.run_check.outputs.exit_code == '0' || steps.run_check.outputs.exit_code == '2' || steps.run_check.outputs.exit_code == '4'
         run: |
           if ! git diff --quiet knowledge/mwg-state.json; then
             git config user.name "github-actions[bot]"
@@ -110,10 +114,40 @@ jobs:
               --body-file /tmp/issue-body.md
           fi
 
+      - name: File anchor-broken issue
+        # always(): a failed state push must not suppress the anchor alert either.
+        # The subject is derived by tests/mwg-drift-anchor-subject.mjs from the guard's OWN
+        # ANCHOR-BROKEN wording, anchored and parsed field by field, so a fixture can drive it
+        # (web-uplift-6f8x) and so no title can be invented from a message the guard did not print.
+        if: always() && steps.run_check.outputs.exit_code == '4'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_OUTPUT: ${{ steps.run_check.outputs.check_output }}
+        run: |
+          printf '%s\n' "$CHECK_OUTPUT" > /tmp/anchor-check-output.txt
+          SUBJECT=$(node tests/mwg-drift-anchor-subject.mjs --output /tmp/anchor-check-output.txt --body-file /tmp/issue-body.md)
+          TAG=$(printf '%s\n' "$SUBJECT" | sed -n 's/^TAG=//p' | head -1)
+          TITLE=$(printf '%s\n' "$SUBJECT" | sed -n 's/^TITLE=//p' | head -1)
+          if [ -z "$TITLE" ]; then
+            echo "::error::the check exited 4 but tests/mwg-drift-anchor-subject.mjs found no ANCHOR-BROKEN subject in its output"
+            exit 1
+          fi
+          echo "title=$TITLE" >> "$GITHUB_STEP_SUMMARY"
+          # Dedupe per condition on the stable tag, the same tag the freshness job uses.
+          OPEN_COUNT=$(gh issue list --state open --search "in:title \"${TAG}\"" --json title --jq length)
+          if [ "$OPEN_COUNT" = "0" ]; then
+            gh issue create --title "$TITLE" --body-file /tmp/issue-body.md
+          else
+            echo "An open anchor-broken issue already exists; not filing another."
+          fi
+
       - name: Run status
+        # 4 passes the job like 2 does: an anchor that no longer resolves is work to do (re-anchor),
+        # surfaced by its own issue, not the guard failing to run. Exit 1 keeps the job red. Passing
+        # on 4 also lets the freshness job run against the state this job just persisted.
         if: always()
         run: |
-          if [ "${{ steps.run_check.outputs.exit_code }}" = "0" ] || [ "${{ steps.run_check.outputs.exit_code }}" = "2" ]; then
+          if [ "${{ steps.run_check.outputs.exit_code }}" = "0" ] || [ "${{ steps.run_check.outputs.exit_code }}" = "2" ] || [ "${{ steps.run_check.outputs.exit_code }}" = "4" ]; then
             exit 0
           else
             exit 1
@@ -183,7 +217,28 @@ jobs:
           #
           # An unusable lastCheckAt is classified FIRST and carries NO age: a number there would be fiction,
           # however plausible it looks.
-          if printf '%s\n' "$OUT" | grep -qF 'lastCheckAt in state file is not a valid timestamp'; then
+          # ANCHOR FIRST (web-uplift-6f8x). The drift check exits 4 for a rule basis whose anchors no
+          # longer resolve, and the freshness pass repeats that condition. This branch is checked before
+          # every STALE branch, so an anchor problem can never be read out as a stale heartbeat or an
+          # unactioned delta - the two conditions web-uplift-vc4h spent three rounds separating. The
+          # subject comes from the same script the check job uses, on the same stable tag, so the two
+          # jobs cannot open two issues for one condition.
+          # Two anchored shapes, both the guard's own: the check pass lists a problem count, the
+          # freshness pass repeats the recorded condition without one. Either way the condition is
+          # anchor-broken; neither shape is a bare mention of the phrase.
+          if printf '%s\n' "$OUT" | grep -qE '^ANCHOR-BROKEN: [1-9][0-9]* rule-basis anchor problem\(s\) against upstream [^ ]+$|^ANCHOR-BROKEN: the last check recorded that the rule basis no longer verifies against upstream [^ ;]+;'; then
+            if SUBJECT=$(printf '%s\n' "$OUT" | node tests/mwg-drift-anchor-subject.mjs 2>/dev/null); then
+              CONDITION=$(printf '%s\n' "$SUBJECT" | sed -n 's/^CONDITION=//p' | head -1)
+              TAG=$(printf '%s\n' "$SUBJECT" | sed -n 's/^TAG=//p' | head -1)
+              TITLE=$(printf '%s\n' "$SUBJECT" | sed -n 's/^TITLE=//p' | head -1)
+            else
+              # Exit 4 without the guard's own wording is a classifier bug, not an unrecognised failure:
+              # name the condition and do not borrow the heartbeat title for it.
+              CONDITION=anchor-broken
+              TAG="MWG rule-basis anchor broken"
+              TITLE="$TAG - freshness guard reported anchor-broken without a parseable violation"
+            fi
+          elif printf '%s\n' "$OUT" | grep -qF 'lastCheckAt in state file is not a valid timestamp'; then
             CONDITION=heartbeat-invalid
             TAG="MWG drift check heartbeat invalid"
             TITLE="$TAG - lastCheckAt is not a timestamp, so no age can be measured"
