@@ -196,18 +196,25 @@ const isDirectRun = process.argv[1] && resolve(process.argv[1]) === resolve(file
 
 if (isDirectRun) {
   const args = process.argv.slice(2);
-  if (args.length !== 1) {
-    console.error(`FAIL: expected exactly one command (compute|verify|update), got ${args.length} arguments`);
+  // update may carry an explicit, reasoned re-record of the applied-rules axis (web-uplift-7bld). A rules
+  // revision that leaves appliedRulesVersion alone is refused by default - see the guard below - because it is
+  // indistinguishable from the missed bump s52q exists to catch. This flag is how a caller says, in words that
+  // are recorded in the state file, that the rules themselves did not change.
+  const revisionFlagAt = args.indexOf('--accept-rules-revision');
+  const revisionReason = revisionFlagAt === -1 ? null : (args[revisionFlagAt + 1] ?? '');
+  const commandArgs = revisionFlagAt === -1 ? args : args.filter((_, i) => i !== revisionFlagAt && i !== revisionFlagAt + 1);
+  if (commandArgs.length !== 1) {
+    console.error(`FAIL: expected exactly one command (compute|verify|update), got ${commandArgs.length} arguments`);
     console.error(
       'Usage:\n' +
       '  node tests/mwg-artefact.mjs compute\n' +
       '  node tests/mwg-artefact.mjs verify\n' +
-      '  node tests/mwg-artefact.mjs update'
+      '  node tests/mwg-artefact.mjs update [--accept-rules-revision "<why the applied rules are unchanged>"]'
     );
     process.exit(64);
   }
 
-  const command = args[0];
+  const command = commandArgs[0];
   if (command !== 'compute' && command !== 'verify' && command !== 'update') {
     console.error(`FAIL: unrecognized command "${command}"`);
     console.error(
@@ -357,13 +364,30 @@ if (isDirectRun) {
       );
       process.exit(1);
     }
-    if (previousRulesSha !== rules.ruleBasisSha256 && state.appliedRulesVersion === rules.catalogueVersion) {
+    const rulesRevisionUnderSameVersion = previousRulesSha !== rules.ruleBasisSha256 && state.appliedRulesVersion === rules.catalogueVersion;
+    if (rulesRevisionUnderSameVersion && revisionReason === null) {
       console.error(
         `FAIL: the applied rules changed (ruleBasisSha256 ${rules.ruleBasisSha256}) but appliedRulesVersion is unchanged at ${JSON.stringify(state.appliedRulesVersion)}; bump the version deliberately in knowledge/mwg-state.json AND knowledge/mwg-rule-basis.json AND knowledge/principles.json, or revert the rules edit - update will not absorb a rules change under an unchanged version (web-uplift-s52q)`
       );
+      console.error(
+        'If the RULES did not change and only their EVIDENCE did - an anchor re-pointed at a sentence upstream has not rewritten - re-run with --accept-rules-revision "<why the applied rules are unchanged>"; the reason is recorded in the state file so the decision is auditable rather than absorbed'
+      );
+      process.exit(1);
+    }
+    if (rulesRevisionUnderSameVersion && revisionReason.trim() === '') {
+      console.error('FAIL: --accept-rules-revision needs a non-empty reason: it is recorded in knowledge/mwg-state.json as the justification for re-recording the applied-rules axis under an unchanged version (web-uplift-7bld)');
       process.exit(1);
     }
 
+    if (rulesRevisionUnderSameVersion) {
+      state.lastRulesRevision = {
+        at: new Date().toISOString(),
+        appliedRulesVersion: rules.catalogueVersion,
+        fromRuleBasisSha256: previousRulesSha,
+        toRuleBasisSha256: rules.ruleBasisSha256,
+        reason: revisionReason.trim(),
+      };
+    }
     state.appliedRulesVersion = rules.catalogueVersion;
     state.ruleBasisSha256 = rules.ruleBasisSha256;
     state.catalogSha256 = computed;
