@@ -216,13 +216,35 @@ export function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
     JSON.stringify(catalog.guideIds) === JSON.stringify(sortedIds),
     'mwg-catalog.json guideIds must be sorted ascending',
   );
-  if (catalog.guideIdsSha256) {
-    const computedHash = createHash('sha256').update(catalog.guideIds.join('\n')).digest('hex');
-    assert(
-      catalog.guideIdsSha256 === computedHash,
-      `mwg-catalog.json guideIdsSha256 must match sha256 of newline-joined guideIds (expected ${computedHash}, got ${catalog.guideIdsSha256})`,
-    );
-  }
+  // The identity fields are REQUIRED and cross-checked against each other (web-uplift-plp9). The previous form
+  // was wrapped in 'if (catalog.guideIdsSha256)', so DELETING the field skipped the assertion and the case went
+  // green while the value it claims to protect was gone - the js42 round-1 / nz0l shape, an assertion that
+  // passes for the wrong reason. A missing identity field is now a failure, not an opt-out.
+  assert(
+    typeof catalog.guideIdsSha256 === 'string' && /^[0-9a-f]{64}$/.test(catalog.guideIdsSha256),
+    `mwg-catalog.json must declare guideIdsSha256 as a sha256 hex digest, got ${JSON.stringify(catalog.guideIdsSha256)}. It is required: an optional identity field is one that can be dropped without any gate noticing (web-uplift-plp9).`,
+  );
+  const computedHash = createHash('sha256').update(catalog.guideIds.join('\n')).digest('hex');
+  assert(
+    catalog.guideIdsSha256 === computedHash,
+    `mwg-catalog.json guideIdsSha256 must match sha256 of newline-joined guideIds (expected ${computedHash}, got ${catalog.guideIdsSha256})`,
+  );
+
+  // And guideIds must be the SAME SET as guides[].id, checked in BOTH directions. Length, sorted-ness and an
+  // includes('prompt-api') test all pass for a guideIds array that is a DIFFERENT set of 187 ids, so none of
+  // them tie the identity list to the guides it claims to identify (web-uplift-plp9).
+  const guideIdsSet = new Set(catalog.guideIds);
+  const guidesIdSet = new Set(catalog.guides.map((g) => g.id));
+  const inGuidesButNotIds = [...guidesIdSet].filter((id) => !guideIdsSet.has(id));
+  assert(
+    inGuidesButNotIds.length === 0,
+    `mwg-catalog.json guideIds is missing ${inGuidesButNotIds.length} guide(s) that guides[] declares: ${inGuidesButNotIds.slice(0, 5).join(', ')}. guideIds must be the same set as guides[].id (web-uplift-plp9).`,
+  );
+  const inIdsButNotGuides = [...guideIdsSet].filter((id) => !guidesIdSet.has(id));
+  assert(
+    inIdsButNotGuides.length === 0,
+    `mwg-catalog.json guideIds declares ${inIdsButNotGuides.length} id(s) that no guides[] entry has: ${inIdsButNotGuides.slice(0, 5).join(', ')}. guideIds must be the same set as guides[].id (web-uplift-plp9).`,
+  );
 
   // 1. Every catalog guide is covered by exact ID in principles.json, and no unknown guide IDs exist
   const coveredGuides = new Set();
