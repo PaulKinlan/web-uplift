@@ -22,7 +22,8 @@ The state file tracks both the last in-depth analysis and recurring upstream che
 - `lastCheckAt` (string or null, ISO 8601): Timestamp of the most recent drift check execution that ran with `--write`. Null before the first check run.
 - `lastCheckUpstreamVersion` (string or null): Upstream version observed during the most recent check run.
 - `lastCheckSource` (string or null): URL or file path queried during the last check run (for example, the npm registry URL or a local fixture path).
-- `lastCheckResult` (string): Outcome of the last check run. One of `"never-run"`, `"in-sync"`, or `"delta"`.
+- `lastCheckResult` (string): Outcome of the last check run. One of `"never-run"`, `"in-sync"`, `"delta"`, or `"anchor-broken"` (the registry no longer verifies against the upstream guide text; its own condition, exit `4`).
+- `lastAnchorCheck` (object, written with `--write`): `upstreamVersion`, `result` (`"ok"` or `"anchor-broken"`), `rules`, `anchors`, `checkedAt` and the `source` of the guide text. It records that the anchors were actually read against that release, so "the versions match" and "the basis was checked" are separate facts in the state.
 - `lastAnalysis` (object): What the last full reanalysis FOUND, not just when it ran (`web-uplift-b1p5`). `fromVersion` and `toVersion` name the releases the analysis crossed (and `toVersion` must equal `analysedVersion`), `analysedAt` is when the analysis completed, `catalogDelta` records the guide additions and removals with arithmetic that has to land on `guideCount` and ids that have to exist in the catalog, `guideTextChanges` records how many EXISTING guide bodies changed between the two releases, and `pins` records what the analysis did to the rule basis and the principles. `tests/mwg-principles.test.mjs` case 12 requires the record and checks it against the committed catalog, so a version bump with no analysis behind it fails the suite instead of reading as `in-sync`. The distinction matters because a version comparison cannot see a text change: 0.0.194 added 9 guides and ALSO rewrote 31 existing guide bodies, one of which our rule basis quoted.
 
 Note: the artefact fields (`artifactId`, `catalogSha256`, `guideIdsSha256`, `guideCount`, `canonicalisation`, `appliedRulesVersion`) landed in web-uplift-vbv; the three derived values (`catalogSha256`, `guideIdsSha256`, `guideCount`) are refreshed by `tests/mwg-artefact.mjs update` at reanalysis time.
@@ -31,11 +32,25 @@ Note: the artefact fields (`artifactId`, `catalogSha256`, `guideIdsSha256`, `gui
 
 `tests/mwg-drift-check.mjs` returns the following status codes:
 
-- `0`: In sync (upstream version matches `analysedVersion`), or (in `--freshness-only` mode) the recorded heartbeat is fresh.
+- `0`: In sync (upstream version matches `analysedVersion`) **and** every rule-basis anchor is still verbatim in that upstream release, or (in `--freshness-only` mode) the recorded heartbeat is fresh and the last check did not record a broken anchor. A version match alone is no longer sufficient (web-uplift-m9o3): see the anchor verification below.
 - `1`: Check failure (loud sabotage/absence signal). The check itself could not run or sanity checks failed: state file missing/unparseable, catalog missing/unparseable, state `analysedVersion` does not match catalog `version`, upstream registry unreachable or timed out, or upstream payload empty/unparseable/missing a semver string. A blind check must never exit 0.
 - `2`: Version delta detected (upstream version differs from `analysedVersion`). Output indicates whether upstream is newer or older. This exit code serves as the signal to trigger full reanalysis.
 - `3`: Freshness guard failed (`--freshness-only` mode only): `lastCheckAt` is missing, null, unparseable, implausibly future-dated, or older than `--max-age`. A never-run state has no heartbeat, so it counts as stale. Also reported in two further cases, which are deliberately NOT the same. A detected delta that nobody actioned: the recorded upstream version differs from `analysedVersion` (or a delta is recorded with no usable upstream version at all) and `analysedAt` is unreadable, implausibly future-dated, or older than `--max-age` - there the age that matters is the analysis's, so a fresh heartbeat cannot rescue it. And a claim that cannot be substantiated: the state says `in-sync` while the two versions cannot be shown to agree, which is REJECTED OUTRIGHT and never age-gated, because a corrupt or hand-edited claim is not a recently-detected change and a fresh `analysedAt` must not buy it a grace window.
+- `4`: **Anchor-broken** (its own condition, deliberately not folded into 1, 2 or 3). The check ran, the versions may even agree, and the rule basis (`knowledge/mwg-rule-basis.json`) no longer verifies against the upstream guide text: a registered guide is absent, or one of its verbatim anchors is gone. The output names the rule, the guide and the anchor, and `--write` records `lastCheckResult: "anchor-broken"` plus a `lastAnchorCheck` block. In `--freshness-only` mode the same condition exits 4 with an `ANCHOR-BROKEN` line and never as `STALE`, because the repair is re-anchoring the registry, not refreshing a heartbeat or reanalysing a version.
 - `64`: Usage error (unrecognized CLI flags or invalid duration formats).
+
+## Anchor Verification (Every Run)
+
+Comparing versions cannot see a release that rewrites guide bodies without moving any version this repository tracks, and that is not hypothetical: `0.0.194` rewrote 31 existing guide bodies, one of which our rule basis quoted, so the check reported `in-sync` for three days while the registry no longer verified against upstream (`web-uplift-m9o3`). Every run therefore:
+
+1. reads the rule basis from `MWG_DRIFT_BASIS` (default `knowledge/mwg-rule-basis.json`) and fails closed if it declares no rules;
+2. obtains the guide text of the SAME upstream version it resolved - by downloading that version's published tarball and extracting only `skills/modern-web-guidance/guides` (the multi-megabyte model shards are never written), or from `MWG_DRIFT_UPSTREAM_CORPUS` when a corpus file is supplied;
+3. requires every anchor in every rule to be verbatim present in its guide, using the same implementation the classifier uses (`tests/mwg-basis.mjs`), so the two can never disagree about whether an anchor resolves;
+4. reports `anchor-broken` (exit `4`) as its own result when any anchor does not.
+
+Fixture mode (`MWG_DRIFT_UPSTREAM_FILE`) must supply `MWG_DRIFT_UPSTREAM_CORPUS`; without guide text the check FAILS rather than skipping the verification, because a check that runs only when an optional input is present is the false green `web-uplift-70im` removed.
+
+The workflow needs one mapping change to give this condition its own voice: persist the state on exit `4` as well as `0`/`2` (so `lastCheckAt` stays honest and the freshness job does not age it into a stale-heartbeat alert), and file an issue with its own title rather than the delta or check-failure titles. Until that lands, `.github/workflows/mwg-drift.yml` fails the job on exit `4` (loud, not silent) but files no issue.
 
 ## The Trigger: Delta-Gated, Not Clock-Driven
 

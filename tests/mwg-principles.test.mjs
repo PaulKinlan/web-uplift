@@ -17,6 +17,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { CANONICALISATION_RULE, computeSha256 } from './mwg-artefact.mjs';
+import { guidesFromTree } from './mwg-basis.mjs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -334,11 +335,16 @@ export function testMwgDriftCheckGuard() {
   const catalogFixture = join(fixDir, 'catalog-0.0.193.json');
   const stateFixture = join(fixDir, 'state-in-sync.json');
 
+  // web-uplift-m9o3: the check now verifies the rule-basis anchors against the upstream guide
+  // text, so every fixture-mode run needs a basis and a corpus. Defaults here rather than repeated
+  // at nine call sites; a caller that wants a broken (or absent) corpus overrides them explicitly.
   const runCheck = (args, envOverrides) => {
     return spawnSync(process.execPath, [script, ...args], {
       encoding: 'utf8',
       env: {
         ...process.env,
+        MWG_DRIFT_BASIS: join(fixDir, 'basis-fixture.json'),
+        MWG_DRIFT_UPSTREAM_CORPUS: join(fixDir, 'corpus-old.json'),
         ...envOverrides,
       },
     });
@@ -352,6 +358,104 @@ export function testMwgDriftCheckGuard() {
       MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
     });
     assert(res.status === 0, `mwg-drift: case 1 (in-sync) failed:\n${res.stderr || res.stdout}`);
+  }
+
+  // 1b. web-uplift-m9o3: an in-sync VERSION with a broken ANCHOR must not report in-sync. The
+  // state and upstream agree (upstream-same.json), exactly as they did for three days while
+  // 0.0.194 had rewritten the text our registry quotes; before this bead the check answered
+  // IN-SYNC and exited 0. The anchor condition must also be its OWN result - not delta, not stale.
+  {
+    const brokenBasis = join(tmp, 'basis-broken-anchor.json');
+    const basis = JSON.parse(readFileSync(join(fixDir, 'basis-fixture.json'), 'utf8'));
+    basis.rules[0].anchors = ['An anchor sentence that appears in no guide at all'];
+    writeFileSync(brokenBasis, JSON.stringify(basis, null, 2));
+    const stateCopy = join(tmp, 'state-anchor-broken.json');
+    writeFileSync(stateCopy, JSON.stringify(JSON.parse(readFileSync(stateFixture, 'utf8')), null, 2));
+    const res = runCheck(['--write'], {
+      MWG_DRIFT_STATE: stateCopy,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+      MWG_DRIFT_BASIS: brokenBasis,
+    });
+    assert(res.status === 4, `mwg-drift: case 1b (in-sync version, broken anchor) must exit 4, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/ANCHOR-BROKEN/.test(res.stderr), `mwg-drift: case 1b must name the anchor condition: ${res.stderr}`);
+    assert(/anchor not found in guide text/.test(res.stderr), `mwg-drift: case 1b must name the anchor that broke: ${res.stderr}`);
+    assert(!/IN-SYNC/.test(res.stdout), `mwg-drift: case 1b must not report in-sync with a broken anchor: ${res.stdout}`);
+    const written = JSON.parse(readFileSync(stateCopy, 'utf8'));
+    assert(written.lastCheckResult === 'anchor-broken', `mwg-drift: case 1b must record its own result, got ${JSON.stringify(written.lastCheckResult)}`);
+    assert(written.lastAnchorCheck && written.lastAnchorCheck.result === 'anchor-broken', `mwg-drift: case 1b must record the anchor check, got ${JSON.stringify(written.lastAnchorCheck)}`);
+    // The freshness path reports the same condition as itself, NOT as a stale heartbeat: the
+    // heartbeat was just refreshed by the --write above, so telling an operator to refresh it
+    // would be the folding-together this bead exists to prevent.
+    const fresh = runCheck(['--freshness-only', '--max-age', '30h'], { MWG_DRIFT_STATE: stateCopy });
+    assert(fresh.status === 4, `mwg-drift: case 1b freshness must exit 4 (anchor-broken), got ${fresh.status}: ${fresh.stderr}`);
+    assert(/ANCHOR-BROKEN/.test(fresh.stderr), `mwg-drift: case 1b freshness must name the anchor condition: ${fresh.stderr}`);
+    assert(!/STALE/.test(fresh.stderr), `mwg-drift: case 1b freshness must not call a broken anchor stale: ${fresh.stderr}`);
+  }
+
+  // 1c. control: the same state and upstream version with an INTACT basis reports in-sync and says
+  // the anchors were checked, so 1b is measuring the anchor and not the fixture.
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+    });
+    assert(res.status === 0, `mwg-drift: case 1c control must exit 0: ${res.stderr || res.stdout}`);
+    assert(/IN-SYNC/.test(res.stdout) && /anchor/.test(res.stdout), `mwg-drift: case 1c must report that the anchors were verified: ${res.stdout}`);
+  }
+
+  // 1d. Fixture mode with no guide text must FAIL, not skip the verification: a check that runs
+  // only when an optional input is present is the hole web-uplift-70im closed.
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+      MWG_DRIFT_UPSTREAM_CORPUS: '',
+    });
+    assert(res.status === 1, `mwg-drift: case 1d (no guide text in fixture mode) must fail closed, got ${res.status}: ${res.stdout}`);
+    assert(/MWG_DRIFT_UPSTREAM_CORPUS/.test(res.stderr), `mwg-drift: case 1d must name the missing input: ${res.stderr}`);
+  }
+
+  // 1e. web-uplift-m9o3 review: guide ids are BASENAMES, so two guide files with the same name in
+  // different categories would silently overwrite each other and an anchor could be verified
+  // against the wrong guide's text. guidesFromTree() refuses the collision, and this case is what
+  // keeps that refusal from being deletable: the fixture corpora bypass the tarball reader, so
+  // without a direct test of the reader nothing exercises it (the first attempt at this commit
+  // shipped the import and no case, which is exactly the hole the reviewer caught).
+  {
+    const tree = join(tmp, 'dup-guides');
+    mkdirSync(join(tree, 'forms'), { recursive: true });
+    mkdirSync(join(tree, 'ui-components'), { recursive: true });
+    writeFileSync(join(tree, 'forms', 'duplicate.md'), '# one');
+    writeFileSync(join(tree, 'ui-components', 'duplicate.md'), '# two');
+    let refused = null;
+    try {
+      guidesFromTree(tree);
+    } catch (err) {
+      refused = err.message;
+    }
+    assert(refused !== null, 'mwg-drift: case 1e a duplicate guide id must be refused, not silently overwritten');
+    assert(
+      /share the id "duplicate"/.test(refused) && /forms/.test(refused) && /ui-components/.test(refused),
+      `mwg-drift: case 1e the refusal must name the id and both files: ${refused}`,
+    );
+    // A unique tree still reads, so the guard is not simply refusing everything.
+    const okTree = join(tmp, 'ok-guides');
+    mkdirSync(join(okTree, 'forms'), { recursive: true });
+    writeFileSync(join(okTree, 'forms', 'unique.md'), '# only');
+    const ok = guidesFromTree(okTree);
+    assert(Object.keys(ok).length === 1 && ok.unique === '# only', `mwg-drift: case 1e must still read a unique tree: ${JSON.stringify(ok)}`);
+    // And an empty tree is a BLIND check (exit 1 territory), not an anchor break: distinct repairs.
+    let emptyRefused = null;
+    mkdirSync(join(tmp, 'empty-guides'), { recursive: true });
+    try {
+      guidesFromTree(join(tmp, 'empty-guides'));
+    } catch (err) {
+      emptyRefused = err.message;
+    }
+    assert(emptyRefused !== null && /no guide markdown/.test(emptyRefused), `mwg-drift: case 1e an empty guide tree must be refused: ${emptyRefused}`);
   }
 
   // 2. upstream-newer -> exit 2, stdout mentions the delta and "0.0.200".
@@ -499,7 +603,7 @@ export function testMwgDriftCheckGuard() {
       committedState.analysedAt === catalog.retrievedAt,
       `mwg-drift: case 12 analysedAt (${committedState.analysedAt}) must match catalog.retrievedAt (${catalog.retrievedAt})`
     );
-    const validResults = new Set(['never-run', 'in-sync', 'delta']);
+    const validResults = new Set(['never-run', 'in-sync', 'delta', 'anchor-broken']);
     assert(
       validResults.has(committedState.lastCheckResult),
       `mwg-drift: case 12 lastCheckResult (${committedState.lastCheckResult}) must be one of never-run, in-sync, delta`

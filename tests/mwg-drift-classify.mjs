@@ -36,6 +36,7 @@
 import { readFileSync, writeFileSync, writeSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { basisAnchorViolations } from './mwg-basis.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 // Anchored: a version is the whole string, so a payload smuggling a newline or
@@ -366,20 +367,10 @@ function basisCatalogViolations(basis, catalog) {
 // classification ran on and reported the reversed guide as an ordinary change - the same silent
 // loss of reversal detection as an empty registry, one level up.
 function basisCorpusViolations(basis, corpus) {
-  const violations = [];
-  for (const rule of basis.rules) {
-    if (!Object.prototype.hasOwnProperty.call(corpus.guides, rule.guide)) {
-      violations.push(`Rule "${rule.id}": registered guide "${rule.guide}" does not exist in corpus`);
-      continue;
-    }
-    const guideText = corpus.guides[rule.guide];
-    for (const anchor of rule.anchors) {
-      if (!guideText.includes(anchor)) {
-        violations.push(`Rule "${rule.id}" for guide "${rule.guide}": anchor not found in guide text: ${JSON.stringify(anchor)}`);
-      }
-    }
-  }
-  return violations;
+  // The anchor rule itself lives in tests/mwg-basis.mjs so the drift check cannot grow a second,
+  // subtly different answer to the same question (web-uplift-m9o3). The words are unchanged, so
+  // the messages the suite and docs quote still come from here.
+  return basisAnchorViolations(basis, corpus.guides);
 }
 
 function verifyBasisAgainstCorpus(corpusPath, basisPath, catalogPath) {
