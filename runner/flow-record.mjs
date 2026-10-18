@@ -625,8 +625,21 @@ export function makeCaptureJs({ captureHidden = false, captureSensitive = false,
     const bar = document.createElement('div');
     bar.id = '__wu_bar';
     bar.setAttribute('style', 'position:fixed;z-index:2147483647;top:12px;right:12px;background:#171b21;color:#e6e9ee;font:14px system-ui;border:1px solid #5b8def;border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.4);display:flex;gap:10px;align-items:center');
-    bar.innerHTML = '<span style="color:#f04438">\\u25CF</span> Recording your journey' +
-      '<button id="__wu_done" style="background:#5b8def;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit">Done</button>';
+    // Built with createElement rather than innerHTML (web-uplift-usil). On a page that sends
+    // require-trusted-types-for 'script' an innerHTML assignment throws, and this overlay is the operator's
+    // ONLY way to end a recording - so the sink silently disabled the end control on precisely the strict-CSP
+    // sites most worth auditing. Creating nodes directly needs no Trusted Types policy, and minting a
+    // permissive one from this script would be worse than the sink it worked around.
+    const dot = document.createElement('span');
+    dot.setAttribute('style', 'color:#f04438');
+    dot.textContent = '\u25CF';
+    bar.appendChild(dot);
+    bar.appendChild(document.createTextNode(' Recording your journey'));
+    const doneButton = document.createElement('button');
+    doneButton.id = '__wu_done';
+    doneButton.setAttribute('style', 'background:#5b8def;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit');
+    doneButton.textContent = 'Done';
+    bar.appendChild(doneButton);
     document.documentElement.appendChild(bar);
     document.getElementById('__wu_done').addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();

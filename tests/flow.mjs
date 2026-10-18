@@ -18,7 +18,8 @@
 // This file is the fast, browser-free foreground check. Run it directly:
 //   node tests/flow.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 function assert(condition, message) {
@@ -160,17 +161,27 @@ export async function testFlowRecordSensitiveRedaction() {
       observe() {}
       disconnect() { observerDisconnected = true; }
     }
+    const createdById = new Map();
     const mockDoc = {
       addEventListener: (evt, fn) => { listeners[evt] = fn; },
-      createElement: () => {
-        const el = { setAttribute: () => {}, addEventListener: () => {}, isConnected: true };
+      createElement: (tagName) => {
+        // The overlay is built from created nodes rather than innerHTML (web-uplift-usil), so the stub has to
+        // support appending children - and remember the Done control by id, which mount() then looks up.
+        const el = {
+          tagName,
+          setAttribute: () => {},
+          addEventListener: () => {},
+          appendChild: (child) => { if (child && child.id) createdById.set(child.id, child); return child; },
+          isConnected: true,
+        };
         return el;
       },
+      createTextNode: (data) => ({ nodeType: 3, data }),
       body: {},
       documentElement: { appendChild: (c) => { barEl = c; if (barEl) barEl.isConnected = true; } },
       getElementById: (id) => {
         if (id === '__wu_bar') return barEl;
-        return mockElem;
+        return createdById.get(id) || mockElem;
       },
     };
     const mockWin = {
@@ -1690,6 +1701,7 @@ export async function testFlowReplaySchemeGate() {
 // Run directly (node tests/flow.mjs), not when imported by the regression
 // suite, which calls the exported functions itself.
 const CASES = [
+  testFlowRecorderOverlayNeverAssignsInnerHTML,
   testFlowNormalize,
   testFlowRecordSensitiveRedaction,
   testFlowReplayMutationGate,
@@ -1699,6 +1711,26 @@ const CASES = [
 // --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the same array the
 // runner drives, so the list cannot drift from what runs. process.exitCode, not process.exit: exit()
 // does not flush asynchronous stdout on a pipe (web-uplift-ecif).
+// Trusted Types: a page that sends `require-trusted-types-for 'script'` makes any innerHTML assignment throw a
+// TypeError, and the overlay that carries the Done control is the operator's ONLY way to end a recording. So the
+// production path must never assign innerHTML, and must build the control from created nodes instead
+// (web-uplift-usil). This asserts the shipped source rather than a re-implementation of it: driving the injected
+// script through a stubbed DOM was the other option, but the stub then has to mirror every DOM method the
+// recorder touches, and a test that breaks when the harness drifts says nothing about Trusted Types. The
+// assertions below are exactly the properties the fix promises, and they FAIL on the pre-fix source.
+export function testFlowRecorderOverlayNeverAssignsInnerHTML() {
+  console.log('Testing that the recorder overlay is built without innerHTML (Trusted Types)...');
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+  const source = readFileSync(join(repoRoot, 'runner', 'flow-record.mjs'), 'utf8');
+
+  const assignment = source.match(/\.innerHTML\s*=/);
+  assert(!assignment, 'the recorder must never assign innerHTML: a page enforcing Trusted Types throws, and the overlay is then never built, so the operator has no Done control (web-uplift-usil)');
+  assert(/createElement\('button'\)/.test(source), 'the Done control must be a created element, not markup parsed from a string');
+  assert(/bar\.appendChild\(/.test(source), 'the overlay children must be appended as nodes');
+  assert(/if \(!e\.isTrusted\) return;/.test(source), 'the isTrusted guard must survive the rewrite: it is what stops a page ending a recording programmatically');
+  assert(/id = '__wu_done'/.test(source) || /setAttribute\('id', '__wu_done'\)/.test(source), 'the Done control must keep its id, which the removal observer and the tests key on');
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.includes('--list')) {
     for (const fn of CASES) console.log(fn.name);
