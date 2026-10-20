@@ -6,12 +6,35 @@
 // and checks the labels cannot collide with the plot area.
 // Raw CDP via evidence/cdp.mjs; no Playwright/Puppeteer.
 import { launchChrome, newSession, navigate, evaluate, sleep } from '../../evidence/cdp.mjs';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const FIXTURES = {
-  before: 'file:///tmp/yh6-before.html',
-  after: 'file:///tmp/yh6-after.html',
+  before: new URL('./yh6-before.html', import.meta.url).href,
+  after: new URL('./yh6-after.html', import.meta.url).href,
 };
+// Both pages this probe measures were /tmp artefacts of the run that produced it and were NEVER committed:
+// `git log --all --diff-filter=A` over this directory returns only the probe, result.json and the PNGs. A fresh
+// clone therefore cannot measure anything, and fabricating the two fixtures would make the probe test pages it
+// wrote itself - the self-agreement shape this project keeps correcting. So the probe names the precondition it
+// needs and exits 2, instead of dying on a navigation error that reads like a harness failure (web-uplift-bdnk).
+const missingFixtures = Object.entries(FIXTURES)
+  .filter(([, href]) => !existsSync(fileURLToPath(href)))
+  .map(([state, href]) => `  ${state}: ${fileURLToPath(href)}`);
+if (missingFixtures.length > 0) {
+  console.error(
+    [
+      'FAIL-PRECONDITION: this probe needs two fixture pages beside it and they are not there:',
+      ...missingFixtures,
+      'They are the pre-fix and post-fix renderings of the scorecard history chart, and result.json in this',
+      'directory records what they measured (axis label rendered height at 1280 and 400 CSS px). Create them',
+      'from any scorecard page (aggregate/scorecard.mjs renders the post-fix form: .history .axis font-size 12px',
+      'and min-width:<640>px on the chart SVG; the pre-fix form used font-size 10px and no min-width), save them',
+      'as yh6-before.html and yh6-after.html beside this probe, and re-run it. It is not silently skipped.',
+    ].join('\n'),
+  );
+  process.exit(2);
+}
 const VIEWPORTS = [
   { label: 'wide', width: 1280, height: 900 },
   { label: 'narrow', width: 400, height: 900 },
@@ -58,7 +81,9 @@ const measure = (client) => evaluate(client, `(() => {
 
 const chrome = await launchChrome({ log });
 try {
-  const session = await newSession(chrome.port, { log });
+  // `chrome.port ?? chrome`: the harness defaults to the PIPE transport (web-uplift-j3re), where the launch
+  // handle carries no port, so passing `chrome.port` alone dialled 127.0.0.1:9222 and died with ECONNREFUSED.
+  const session = await newSession(chrome.port ?? chrome, { log });
   const { client } = session;
   for (const [state, url] of Object.entries(FIXTURES)) {
     for (const vp of VIEWPORTS) {

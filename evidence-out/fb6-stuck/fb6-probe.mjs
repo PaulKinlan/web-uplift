@@ -5,7 +5,12 @@
 import { launchChrome, newSession, navigate, evaluate, sleep } from '../../evidence/cdp.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
-const URL_ = 'file:///tmp/fb6-scorecard.html';
+// Both the page and the output tree are addressed RELATIVE to this file, so the probe replays from any clone at
+// any absolute path. The page used to be 'file:///tmp/fb6-scorecard.html', a copy only the authoring lane had,
+// even though the scorecard is committed beside this probe (web-uplift-bdnk, web-uplift-suni).
+const URL_ = new URL('./fb6-scorecard.html', import.meta.url).href;
+// Screenshots stay outside the repository on purpose: the committed PNGs beside this probe are the record of
+// the original run, and a replay must not overwrite them with today's rendering.
 const OUT = '/tmp/fb6-evidence';
 mkdirSync(OUT, { recursive: true });
 const log = (m) => console.log(m);
@@ -35,7 +40,9 @@ async function shot(session, name) {
 
 const chrome = await launchChrome({ log });
 try {
-  const session = await newSession(chrome.port, { log });
+  // `chrome.port ?? chrome`: the harness defaults to the PIPE transport (web-uplift-j3re), where the launch
+  // handle carries no port, so passing `chrome.port` alone dialled 127.0.0.1:9222 and died with ECONNREFUSED.
+  const session = await newSession(chrome.port ?? chrome, { log });
   const { client } = session;
   await navigate(client, URL_, { log, settleMs: 900 });
 

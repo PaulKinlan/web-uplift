@@ -6,9 +6,46 @@
 //             view still swaps with no error, which is the required fallback.
 // Raw CDP via evidence/cdp.mjs; no Playwright/Puppeteer.
 import { launchChrome, newSession, navigate, evaluate, sleep } from '../../evidence/cdp.mjs';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const URL_ = 'http://127.0.0.1:8123/';
+// The page this probe drives is the repository's own playground, which the acceptance ran behind a static
+// server on 127.0.0.1:8123. NOTHING in the repository ever started that server, so the probe could not be
+// replayed anywhere (web-uplift-bdnk). It now serves ../../playground/ itself, on an ephemeral loopback port,
+// and closes the server in a finally, so a clone at any absolute path can run it (web-uplift-suni).
+const PLAYGROUND = fileURLToPath(new URL('../../playground/', import.meta.url));
+const CONTENT_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+};
+const server = createServer((req, res) => {
+  const pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
+  const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const file = normalize(join(PLAYGROUND, rel));
+  const root = PLAYGROUND.endsWith(sep) ? PLAYGROUND : PLAYGROUND + sep;
+  if (!file.startsWith(root)) {
+    res.writeHead(403).end('forbidden');
+    return;
+  }
+  try {
+    // Read once per request, synchronously: the probe serves a handful of small files from a local
+    // directory, and a cache would hide a page edit between runs.
+    const body = readFileSync(file);
+    res.writeHead(200, { 'content-type': CONTENT_TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' }).end(body);
+  } catch {
+    res.writeHead(404).end('not found');
+  }
+});
+await new Promise((resolve, reject) => {
+  server.once('error', reject);
+  server.listen(0, '127.0.0.1', resolve);
+});
+const URL_ = `http://127.0.0.1:${server.address().port}/`;
 const OUT = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 mkdirSync(OUT, { recursive: true });
 const log = (m) => console.log(m);
@@ -67,7 +104,9 @@ async function runSession(label, strip, reduced = false) {
   console.log(`\n=== ${label} ===`);
   const chrome = await launchChrome({ log });
   try {
-    const session = await newSession(chrome.port, { log });
+    // `chrome.port ?? chrome`: the harness defaults to the PIPE transport (web-uplift-j3re), where the launch
+    // handle carries no port, so passing `chrome.port` alone dialled 127.0.0.1:9222 and died with ECONNREFUSED.
+    const session = await newSession(chrome.port ?? chrome, { log });
     const { client } = session;
     if (reduced) {
       // Emulate the OS-level reduced-motion preference before any page script runs.
@@ -129,9 +168,13 @@ async function runSession(label, strip, reduced = false) {
   }
 }
 
-await runSession('native', false);
-await runSession('no-support', true);
-await runSession('reduced-motion', false, true);
+try {
+  await runSession('native', false);
+  await runSession('no-support', true);
+  await runSession('reduced-motion', false, true);
+} finally {
+  await new Promise((resolve) => server.close(resolve));
+}
 results.passed = passed; results.failed = failed;
 writeFileSync(`${OUT}/result.json`, JSON.stringify(results, null, 2));
 console.log(`\nPROBE TALLY: ${passed} passed, ${failed} failed`);
