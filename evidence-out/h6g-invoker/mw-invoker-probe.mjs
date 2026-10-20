@@ -5,9 +5,12 @@
 //   B) fallback path: commandForElement deleted from the prototype before page
 //      scripts run, so the guarded imperative fallback must open the dialog.
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { launchChrome, newSession, navigate, evaluate, sleep } from '/home/exedev/worktrees/web-uplift-mw-invoker/evidence/cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep } from '../../evidence/cdp.mjs';
 
-const URL = 'file:///tmp/mw-invoker-scorecard.html';
+// The scorecard is committed beside this probe and is addressed RELATIVE to it, so the probe replays from any
+// clone at any absolute path instead of needing a /tmp copy only the authoring lane had (web-uplift-suni).
+// Not named `URL`: that would shadow the global this line needs, which failed at import.
+const SCORECARD_URL = new URL('./mw-invoker-scorecard.html', import.meta.url).href;
 const OUT = '/tmp/mw-invoker-evidence';
 mkdirSync(OUT, { recursive: true });
 
@@ -64,10 +67,13 @@ async function runSession(label, beforeLoad, expectSupport) {
   console.log(`\n=== ${label} ===`);
   const chrome = await launchChrome({ log });
   try {
-    const session = await newSession(chrome.port, { log });
+    // `chrome.port ?? chrome`: the harness defaults to the PIPE transport (web-uplift-j3re), where the launch
+    // handle carries no port at all, so passing `chrome.port` alone dialled 127.0.0.1:9222 and the probe died
+    // with ECONNREFUSED before touching the page. newSession takes either a port or the handle.
+    const session = await newSession(chrome.port ?? chrome, { log });
     const { client } = session;
     if (beforeLoad) await beforeLoad(client);
-    await navigate(client, URL, { log, settleMs: 800 });
+    await navigate(client, SCORECARD_URL, { log, settleMs: 800 });
     await shot(session, `${label}-initial.png`);
 
     // The findings list lives behind the "findings" tab panel; activate it
