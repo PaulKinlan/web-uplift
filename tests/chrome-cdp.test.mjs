@@ -1090,6 +1090,101 @@ export function testCommittedSiblingProbesAreInert() {
 }
 
 
+// A committed probe under evidence-out/ exists so that whoever reads the finding can RE-RUN it and see the
+// behaviour for themselves, on a fresh clone at whatever path they happen to use. An import written as an
+// absolute worktree path (`/home/exedev/worktrees/web-uplift-mw-invoker/evidence/cdp.mjs`) resolves only on
+// the one machine, in the one directory, of the one lane that wrote it: the worktree is deleted after the
+// landing and the probe then cannot be executed anywhere, so "this probe demonstrates the behaviour" is no
+// longer reproducible (web-uplift-suni). Measured at origin/master, exactly two probes carried that line in
+// import position - evidence-out/i5q-closedby/i5q-probe.mjs and evidence-out/h6g-invoker/mw-invoker-probe.mjs
+// - while five sibling probes already imported '../../evidence/cdp.mjs', which is why this pins the shape the
+// tree already uses instead of inventing a convention.
+//
+// SCOPE: import POSITION only. The same absolute path is fine inside a comment or a recorded stdout log, and
+// those artefacts are left alone: they are a record of a past run, not a script anyone is meant to execute.
+// What is checked is the two properties a re-run needs - the specifier is not absolute, and a relative one
+// RESOLVES from the file's own directory to a real file inside this repository.
+export function testCommittedEvidenceProbesImportByRelativePath() {
+  const IMPORT_FORMS = [
+    /\bfrom\s*(['"])([^'"\r\n]+)\1/g, // import x from '...' / export { x } from '...'
+    /\bimport\s*\(\s*(['"])([^'"\r\n]+)\1/g, // dynamic import('...')
+    /(?:^|[^\w$.])import\s+(['"])([^'"\r\n]+)\1/g, // side-effect import '...'
+  ];
+  const specifiersIn = (text) => {
+    const found = new Set();
+    for (const re of IMPORT_FORMS) for (const m of text.matchAll(re)) found.add(m[2]);
+    return [...found];
+  };
+  // Returns the reason this specifier cannot be honoured from `file`, or null when it can. Deliberately NOT
+  // regex-only: a specifier is judged by whether it RESOLVES, so a plausible-looking relative path that points
+  // at nothing fails here rather than at the reader's terminal.
+  const specifierProblem = (spec, file) => {
+    if (/^file:\/\//.test(spec)) return `is an absolute file URL (${spec})`;
+    if (/^[A-Za-z]:[\\/]/.test(spec)) return `is an absolute Windows path (${spec})`;
+    if (spec.startsWith('/')) return `is an absolute path (${spec})`;
+    if (!spec.startsWith('.')) return null; // node: and package specifiers are the reader's own install
+    const target = resolve(dirname(file), spec);
+    if (!existsSync(target)) return `does not resolve from this file (${spec} -> ${target})`;
+    const inside = relative(repoRoot, target);
+    if (inside.startsWith('..') || resolve(target) === resolve(repoRoot)) {
+      return `resolves outside this repository (${spec} -> ${target})`;
+    }
+    return null;
+  };
+
+  // The population is what git actually has committed, not a count someone remembered: a new probe is swept
+  // the day it lands.
+  const committed = run('git', ['ls-files', 'evidence-out/**/*.mjs', 'evidence-out/*.mjs']);
+  assert(committed.status === 0, `git ls-files failed: ${committed.stderr}`);
+  const probes = committed.stdout.split('\n').filter(Boolean).sort();
+  assert(probes.length > 0, 'the sweep must find the committed probes, or passing says nothing');
+  // Non-vacuity, by name: the two probes this guard was built for, one from each shape (a plain probe and a
+  // probe that also reads runner/agents.mjs). A population that stopped reaching them would otherwise pass.
+  for (const known of ['evidence-out/i5q-closedby/i5q-probe.mjs', 'evidence-out/h6g-invoker/mw-invoker-probe.mjs']) {
+    assert(probes.includes(known), `the sweep must cover the probe it exists to guard: ${known}`);
+  }
+
+  for (const rel of probes) {
+    const file = join(repoRoot, rel);
+    const specs = specifiersIn(readFileSync(file, 'utf8'));
+    assert(specs.length > 0, `${rel} must import something (node:fs at the least), so the sweep is reading a module and not a stub`);
+    for (const spec of specs) {
+      const problem = specifierProblem(spec, file);
+      assert(
+        problem === null,
+        `${rel} has an import that cannot be honoured from another clone: it ${problem}. A committed probe must import the harness by a path RELATIVE to itself (its siblings use '../../evidence/cdp.mjs'), so it runs on any clone at any absolute path (web-uplift-suni).`,
+      );
+    }
+  }
+
+  // Negative control: the exact line that was committed must still be REFUSED by this detector, and the
+  // sibling convention must still be ACCEPTED, so a detector that silently stopped matching cannot pass.
+  const probeFile = join(repoRoot, 'evidence-out/i5q-closedby/i5q-probe.mjs');
+  const wasCommitted = '/home/exedev/worktrees/web-uplift-mw-invoker/evidence/cdp.mjs';
+  assert(
+    specifierProblem(wasCommitted, probeFile) !== null,
+    'negative control: the absolute worktree import this bead fixed must be refused',
+  );
+  const controlText = `import { launchChrome } from '${wasCommitted}';\n`;
+  assert(
+    specifiersIn(controlText).includes(wasCommitted) && specifierProblem(specifiersIn(controlText)[0], probeFile) !== null,
+    'negative control: the detector must find an absolute specifier in import POSITION and refuse it',
+  );
+  assert(
+    specifierProblem('../../evidence/cdp.mjs', probeFile) === null,
+    'the relative convention the sibling probes use must be accepted',
+  );
+  assert(
+    specifierProblem('../../evidence/does-not-exist.mjs', probeFile) !== null,
+    'negative control: a relative specifier that resolves to nothing must be refused',
+  );
+  assert(
+    specifierProblem('node:fs', probeFile) === null,
+    'a node: builtin is not a path and must not be refused',
+  );
+}
+
+
 export const chromeCdpTests = [
   testCdpEndpointExposure,
   testEndpointProbesRunConcurrently,
@@ -1116,6 +1211,7 @@ export const chromeCdpTests = [
   testNoOrphanBrowser,
   testCommittedProbeIsInert,
   testCommittedSiblingProbesAreInert,
+  testCommittedEvidenceProbesImportByRelativePath,
 ];
 
 export {

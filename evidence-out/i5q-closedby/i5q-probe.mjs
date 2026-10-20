@@ -5,10 +5,14 @@
 //   FALLBACK: HTMLDialogElement.prototype.closedBy deleted before page scripts, so the
 //             gate is false and the imperative backdrop listener must dismiss instead.
 // Also checks Esc dismissal (platform behaviour) on the native path.
-import { launchChrome, newSession, navigate, evaluate, sleep } from '/home/exedev/worktrees/web-uplift-mw-invoker/evidence/cdp.mjs';
+import { launchChrome, newSession, navigate, evaluate, sleep } from '../../evidence/cdp.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
-const URL_ = 'file:///tmp/i5q-scorecard.html';
+// The page this probe drives is committed beside it, and it is addressed RELATIVE to this file so the probe
+// runs from any clone at any absolute path. It used to be 'file:///tmp/i5q-scorecard.html', a copy that only
+// existed in the lane that made it, so the probe could not be replayed by anyone reading the finding
+// (web-uplift-suni).
+const URL_ = new URL('./i5q-scorecard.html', import.meta.url).href;
 const OUT = '/tmp/i5q-evidence';
 mkdirSync(OUT, { recursive: true });
 const log = (m) => console.log(m);
@@ -66,7 +70,10 @@ async function runSession(label, stripClosedBy) {
   console.log(`\n=== ${label} ===`);
   const chrome = await launchChrome({ log });
   try {
-    const session = await newSession(chrome.port, { log });
+    // `chrome.port ?? chrome`: the harness defaults to the PIPE transport (web-uplift-j3re), where the launch
+    // handle carries no port at all, so passing `chrome.port` alone dialled 127.0.0.1:9222 and the probe died
+    // with ECONNREFUSED before touching the page. newSession takes either a port or the handle.
+    const session = await newSession(chrome.port ?? chrome, { log });
     const { client } = session;
     if (stripClosedBy) {
       await client.Page.addScriptToEvaluateOnNewDocument({ source: 'delete HTMLDialogElement.prototype.closedBy;' });
