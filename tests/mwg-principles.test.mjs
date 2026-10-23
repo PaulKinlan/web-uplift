@@ -338,13 +338,24 @@ export function testMwgDriftCheckGuard() {
   // web-uplift-m9o3: the check now verifies the rule-basis anchors against the upstream guide
   // text, so every fixture-mode run needs a basis and a corpus. Defaults here rather than repeated
   // at nine call sites; a caller that wants a broken (or absent) corpus overrides them explicitly.
+  //
+  // web-uplift-kapa: the corpus carries its OWN release label and the check now requires it to be the
+  // release under test, so a case has to pair its corpus with its upstream fixture instead of relying
+  // on one unlabelled default. corpusFor(version) writes the shared guide text labelled with that
+  // version; the default is 0.0.193, the version of upstream-same.json.
+  const corpusFor = (version) => {
+    const source = JSON.parse(readFileSync(join(fixDir, 'corpus-old.json'), 'utf8'));
+    const path = join(tmp, `mwg-drift-corpus-${version.replace(/[^\w.-]/g, '_')}.json`);
+    writeFileSync(path, JSON.stringify({ ...source, version }, null, 2));
+    return path;
+  };
   const runCheck = (args, envOverrides) => {
     return spawnSync(process.execPath, [script, ...args], {
       encoding: 'utf8',
       env: {
         ...process.env,
         MWG_DRIFT_BASIS: join(fixDir, 'basis-fixture.json'),
-        MWG_DRIFT_UPSTREAM_CORPUS: join(fixDir, 'corpus-old.json'),
+        MWG_DRIFT_UPSTREAM_CORPUS: corpusFor('0.0.193'),
         ...envOverrides,
       },
     });
@@ -706,12 +717,119 @@ export function testMwgDriftCheckGuard() {
     assert(!/IN-SYNC/.test(res.stdout), `mwg-drift: case 1i must not report in-sync: ${res.stdout}`);
   }
 
+  // 1j. web-uplift-kapa, the bead's own repro: a corpus from the WRONG release. A corpus labelled
+  // 0.0.192 paired with an upstream 0.0.193 used to report IN-SYNC with every anchor "verified"
+  // against text from a release nobody asked about - the same shape as m4ae (no inputs read as no
+  // problems), one level up. The corpus label must be bound to the version under test, and the
+  // mismatch must be its OWN failure: never IN-SYNC, and not anchor-broken either, because
+  // "re-anchor the registry" is the wrong repair for evidence from the wrong release.
+  {
+    const stateCopy = join(tmp, 'mwg-drift-state-corpus-mismatch.json');
+    writeFileSync(stateCopy, readFileSync(stateFixture, 'utf8'), 'utf8');
+    const before = JSON.parse(readFileSync(stateCopy, 'utf8'));
+    const res = runCheck(['--write'], {
+      MWG_DRIFT_STATE: stateCopy,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+      MWG_DRIFT_UPSTREAM_CORPUS: corpusFor('0.0.192'),
+    });
+    assert(res.status === 1, `mwg-drift: case 1j (corpus from the wrong release) must fail closed with exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/corpus-version-mismatch/.test(res.stderr), `mwg-drift: case 1j must name the condition: ${res.stderr}`);
+    assert(res.stderr.includes('0.0.192') && res.stderr.includes('0.0.193'),
+      `mwg-drift: case 1j must name BOTH versions, the corpus's and the resolved one: ${res.stderr}`);
+    assert(!/IN-SYNC/.test(res.stdout) && !/IN-SYNC/.test(res.stderr), `mwg-drift: case 1j must never report in-sync: ${res.stdout}${res.stderr}`);
+    assert(!/ANCHOR-BROKEN/.test(res.stdout) && !/ANCHOR-BROKEN/.test(res.stderr), `mwg-drift: case 1j must not be folded into anchor-broken: ${res.stdout}${res.stderr}`);
+    // A check that could not bind its evidence must not look like a completed check: no state write.
+    const after = JSON.parse(readFileSync(stateCopy, 'utf8'));
+    assert(after.lastCheckResult === before.lastCheckResult && after.lastCheckAt === before.lastCheckAt,
+      `mwg-drift: case 1j must not persist a result for a run whose evidence belonged to another release, got ${JSON.stringify({ result: after.lastCheckResult, at: after.lastCheckAt })}`);
+  }
+
+  // 1k. The same binding catches the fixture pairing that shipped: corpus-old.json says 1.0.0 while
+  // upstream-same.json says 0.0.193, and every drift case passed on that pair before this bead. It is
+  // the shipped-corpus version, not a hand-crafted mutant, so a fix that only rejects a suspicious
+  // 0.0.19x value fails here.
+  {
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+      MWG_DRIFT_UPSTREAM_CORPUS: join(fixDir, 'corpus-old.json'),
+    });
+    assert(res.status === 1, `mwg-drift: case 1k (shipped 1.0.0 corpus against upstream 0.0.193) must fail closed, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/corpus-version-mismatch/.test(res.stderr), `mwg-drift: case 1k must name the condition: ${res.stderr}`);
+    assert(!/IN-SYNC/.test(res.stdout), `mwg-drift: case 1k must not report in-sync: ${res.stdout}`);
+  }
+
+  // 1l. A corpus with NO version identity fails closed. The tempting behaviour is to assume the
+  // version we resolved, which is the same silence as not checking; an unlabelled corpus cannot be
+  // shown to be the release under test.
+  {
+    const noVersion = join(tmp, 'mwg-drift-corpus-no-version.json');
+    const corpus = JSON.parse(readFileSync(join(fixDir, 'corpus-old.json'), 'utf8'));
+    delete corpus.version;
+    writeFileSync(noVersion, JSON.stringify(corpus, null, 2));
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+      MWG_DRIFT_UPSTREAM_CORPUS: noVersion,
+    });
+    assert(res.status === 1, `mwg-drift: case 1l (corpus with no version) must fail closed, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/corpus-version-mismatch/.test(res.stderr) && /no usable version/.test(res.stderr),
+      `mwg-drift: case 1l must name the missing identity: ${res.stderr}`);
+    assert(!/IN-SYNC/.test(res.stdout), `mwg-drift: case 1l must not report in-sync: ${res.stdout}`);
+  }
+
+  // 1m. The real path has the same hole one level down: the registry document names a version and a
+  // dist.tarball, and nothing reconciled the two, so a tarball from another release would be read as
+  // evidence for the version the DOCUMENT named. Driven end to end with data: URLs (no server, so
+  // spawnSync cannot deadlock on a blocked event loop) and a tarball built here; the packaged
+  // manifest's version must match the document's before its guide text is used.
+  {
+    const pkgRoot = join(tmp, 'mwg-drift-tarball');
+    const guidesDir = join(pkgRoot, 'package', 'skills', 'modern-web-guidance', 'guides');
+    mkdirSync(guidesDir, { recursive: true });
+    const corpus = JSON.parse(readFileSync(join(fixDir, 'corpus-old.json'), 'utf8'));
+    // The basis quotes one anchor from implemented-rule-guide, so that guide's text is what the
+    // control run verifies.
+    writeFileSync(join(guidesDir, 'implemented-rule-guide.md'), corpus.guides['implemented-rule-guide']);
+    const registryWith = (packageVersion) => {
+      writeFileSync(join(pkgRoot, 'package', 'package.json'), JSON.stringify({ name: 'modern-web-guidance', version: packageVersion }));
+      const tarballPath = join(tmp, `mwg-drift-pkg-${packageVersion.replace(/[^\w.-]/g, '_')}.tgz`);
+      const tar = spawnSync('tar', ['-czf', tarballPath, '-C', pkgRoot, 'package'], { encoding: 'utf8' });
+      assert(tar.status === 0, `mwg-drift: case 1m could not build its tarball fixture: ${tar.stderr}`);
+      const tarballUrl = `data:application/gzip;base64,${readFileSync(tarballPath).toString('base64')}`;
+      const doc = { version: '0.0.193', dist: { tarball: tarballUrl } };
+      return `data:application/json,${encodeURIComponent(JSON.stringify(doc))}`;
+    };
+    const viaRegistry = (packageVersion) => runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_REGISTRY_URL: registryWith(packageVersion),
+      MWG_DRIFT_UPSTREAM_FILE: '',
+      MWG_DRIFT_UPSTREAM_CORPUS: '',
+    });
+    const mismatched = viaRegistry('0.0.199');
+    assert(mismatched.status === 1, `mwg-drift: case 1m (tarball from another release) must fail closed, got ${mismatched.status}:\n${mismatched.stderr || mismatched.stdout}`);
+    assert(/corpus-version-mismatch/.test(mismatched.stderr), `mwg-drift: case 1m must name the condition: ${mismatched.stderr}`);
+    assert(mismatched.stderr.includes('0.0.193') && mismatched.stderr.includes('0.0.199'),
+      `mwg-drift: case 1m must name the document's version and the tarball's: ${mismatched.stderr}`);
+    assert(!/IN-SYNC/.test(mismatched.stdout), `mwg-drift: case 1m must not report in-sync: ${mismatched.stdout}`);
+    // Control: the same path with a tarball that DOES name the resolved version still verifies and
+    // reports IN-SYNC, so 1m is measuring the binding and not the fixture harness.
+    const matched = viaRegistry('0.0.193');
+    assert(matched.status === 0, `mwg-drift: case 1m control (matching tarball) must exit 0, got ${matched.status}:\n${matched.stderr || matched.stdout}`);
+    assert(/IN-SYNC/.test(matched.stdout) && /anchor/.test(matched.stdout), `mwg-drift: case 1m control must report the anchors were verified: ${matched.stdout}`);
+  }
+
   // 2. upstream-newer -> exit 2, stdout mentions the delta and "0.0.200".
   {
     const res = runCheck([], {
       MWG_DRIFT_STATE: stateFixture,
       MWG_DRIFT_CATALOG: catalogFixture,
       MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-newer.json'),
+      MWG_DRIFT_UPSTREAM_CORPUS: corpusFor('0.0.200'),
     });
     assert(res.status === 2, `mwg-drift: case 2 (upstream-newer) must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
     assert(res.stdout.includes('delta') || res.stdout.includes('DELTA'), `mwg-drift: case 2 stdout must mention delta:\n${res.stdout}`);
@@ -724,6 +842,7 @@ export function testMwgDriftCheckGuard() {
       MWG_DRIFT_STATE: stateFixture,
       MWG_DRIFT_CATALOG: catalogFixture,
       MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-older.json'),
+      MWG_DRIFT_UPSTREAM_CORPUS: corpusFor('0.0.150'),
     });
     assert(res.status === 2, `mwg-drift: case 3 (upstream-older) must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
   }
@@ -796,6 +915,7 @@ export function testMwgDriftCheckGuard() {
       MWG_DRIFT_STATE: copyPath,
       MWG_DRIFT_CATALOG: catalogFixture,
       MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-newer.json'),
+      MWG_DRIFT_UPSTREAM_CORPUS: corpusFor('0.0.200'),
     });
     assert(res.status === 2, `mwg-drift: case 10 (--write) must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
     const written = JSON.parse(readFileSync(copyPath, 'utf8'));
@@ -932,6 +1052,7 @@ export function testMwgDriftCheckGuard() {
       MWG_DRIFT_STATE: hugeState,
       MWG_DRIFT_CATALOG: hugeCatalog,
       MWG_DRIFT_UPSTREAM_FILE: hugeUpstream,
+      MWG_DRIFT_UPSTREAM_CORPUS: corpusFor('9007199254740993.0.0'),
     });
     assert(res.status === 2, `mwg-drift: case 14 (distinct huge versions) must exit 2, got ${res.status}:\n${res.stderr || res.stdout}`);
     assert(
