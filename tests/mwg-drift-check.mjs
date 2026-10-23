@@ -50,6 +50,10 @@
 //     guide text. Required with MWG_DRIFT_UPSTREAM_FILE (a version fixture carries no text, and
 //     silently skipping the anchor verification there would be the opt-in hole of web-uplift-70im).
 //     On the real path it is NOT needed: the check downloads the resolved version's tarball.
+//     Its `version` is REQUIRED and must equal the version this run resolved, or the run fails
+//     closed as corpus-version-mismatch (web-uplift-kapa): text from another release cannot show
+//     what this release says. The same binding applies to a downloaded tarball, whose own
+//     package/package.json must name the version the registry document claimed.
 //   MWG_DRIFT_REGISTRY_URL: Override npm registry URL (default: https://registry.npmjs.org/modern-web-guidance/latest).
 //   MWG_DRIFT_TIMEOUT_MS: Fetch timeout in milliseconds (default: 10000; the tarball gets 4x).
 //
@@ -196,7 +200,14 @@ const basisPath = process.env.MWG_DRIFT_BASIS
 // version fixture carries no text, and quietly skipping the verification when no corpus is given
 // would recreate the opt-in hole that web-uplift-70im closed (a check that runs only when an
 // optional input is present). The real path downloads the tarball of the version it resolved.
-function readCorpusGuides(corpusPath) {
+//
+// The corpus's OWN version is read here and bound to the version this run resolved (web-uplift-kapa).
+// Guide text is EVIDENCE: evidence from another release cannot show that THIS release still says what
+// our registry quotes, and the honest answer when the two disagree is that the check could not run,
+// not that the anchors held. Before this, corpus.version was parsed and thrown away, so a corpus
+// labelled 0.0.192 paired with upstream 0.0.193 reported IN-SYNC with every anchor "verified"
+// against text from a release nobody asked about.
+function readCorpus(corpusPath) {
   let corpus;
   try {
     corpus = JSON.parse(readFileSync(corpusPath, 'utf8'));
@@ -208,7 +219,51 @@ function readCorpusGuides(corpusPath) {
     console.error(`FAIL: upstream corpus at ${corpusPath} has no guides map (expected {version, guides:{id:text}})`);
     process.exit(1);
   }
-  return corpus.guides;
+  // Fails CLOSED on a corpus with no version identity: an unlabelled corpus cannot be bound to the
+  // release under test, and the temptation is to treat "no version declared" as "assume the one we
+  // resolved", which is the same silence as not checking at all.
+  if (!isValidVersion(corpus.version)) {
+    console.error(
+      `FAIL: corpus-version-mismatch: the upstream corpus at ${corpusPath} declares no usable version (got ${JSON.stringify(corpus.version ?? null)}), so the guide text it carries cannot be shown to be the release under test`
+    );
+    process.exit(1);
+  }
+  return { version: corpus.version, guides: corpus.guides };
+}
+
+// The published tarball's own manifest has to name the version the registry document claims
+// (web-uplift-kapa). The registry document and its dist.tarball are two separate claims that nothing
+// else reconciles: a document whose tarball points at a different release would have its guide text
+// verified while the run reports the version the DOCUMENT named. Fails closed when the manifest
+// cannot be read, for the same reason the corpus binding does.
+function packageVersionFromTarball(dir, tarball, version) {
+  const manifest = spawnSync('tar', ['-xzf', tarball, '-C', dir, 'package/package.json'], { encoding: 'utf8', timeout: 60000 });
+  if (manifest.error || manifest.status !== 0) {
+    console.error(
+      `FAIL: corpus-version-mismatch: cannot read package/package.json from the upstream tarball, so the guide text cannot be shown to be release ${version} (${manifest.error?.message ?? manifest.stderr ?? manifest.status})`
+    );
+    process.exit(1);
+  }
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(join(dir, 'package', 'package.json'), 'utf8'));
+  } catch (err) {
+    console.error(`FAIL: corpus-version-mismatch: the upstream tarball's package.json is unreadable, so the guide text cannot be bound to release ${version}: ${err.message}`);
+    process.exit(1);
+  }
+  if (!isValidVersion(pkg?.version)) {
+    console.error(
+      `FAIL: corpus-version-mismatch: the upstream tarball's package.json declares no usable version (got ${JSON.stringify(pkg?.version ?? null)}), so the guide text cannot be bound to release ${version}`
+    );
+    process.exit(1);
+  }
+  if (pkg.version !== version) {
+    console.error(
+      `FAIL: corpus-version-mismatch: the upstream registry document names release ${version} but its tarball's package.json says ${pkg.version}, so the guide text read from it belongs to another release and the anchors were not verified against ${version}`
+    );
+    process.exit(1);
+  }
+  return pkg.version;
 }
 
 // Pull the guide markdown out of the same published tarball the version check resolved, so the
@@ -249,6 +304,9 @@ async function fetchUpstreamGuides(registryDoc, version, timeoutMs) {
       console.error(`FAIL: cannot extract the published package (tar): ${tar.error?.message ?? tar.stderr ?? tar.status}`);
       process.exit(1);
     }
+    // The tarball must be the release the registry document named before its text is used as
+    // evidence for that release (web-uplift-kapa).
+    packageVersionFromTarball(dir, tarball, version);
     // The flattening to basenames is only sound while they are unique. The classifier resolves a
     // duplicate by PROVENANCE (a guide located through the package's USE_CASES table keeps
     // precedence over a disk scan), but this check has no provenance to justify a preference, and
@@ -547,7 +605,20 @@ let upstreamGuides;
 let anchorTextSource;
 if (process.env.MWG_DRIFT_UPSTREAM_CORPUS) {
   const corpusPath = resolve(process.cwd(), process.env.MWG_DRIFT_UPSTREAM_CORPUS);
-  upstreamGuides = readCorpusGuides(corpusPath);
+  const corpus = readCorpus(corpusPath);
+  // Bound to the version this run RESOLVED, not to the analysed one: the drift check deliberately
+  // reads the text of a release we have not analysed yet (that is how it gives early warning), so
+  // the corpus must be the version under test, and the analysed/original version is a separate axis
+  // the state-vs-catalog cross-check already covers. A mismatch is its OWN failure - never IN-SYNC,
+  // and deliberately not folded into anchor-broken, whose repair (re-anchor the registry) would be
+  // the wrong advice for evidence from the wrong release (web-uplift-kapa).
+  if (corpus.version !== upstreamVersion) {
+    console.error(
+      `FAIL: corpus-version-mismatch: the upstream corpus at ${corpusPath} is release ${corpus.version} but this run resolved release ${upstreamVersion}, so the anchors would be verified against another release's guide text`
+    );
+    process.exit(1);
+  }
+  upstreamGuides = corpus.guides;
   anchorTextSource = corpusPath;
 } else if (upstreamDoc === null) {
   // Fixture mode carries a version and nothing else. Failing here rather than skipping is the whole
