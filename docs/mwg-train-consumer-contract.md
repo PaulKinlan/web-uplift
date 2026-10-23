@@ -38,7 +38,13 @@ The contract explicitly distinguishes `analysedVersion` from `appliedRulesVersio
 Downstream consumer `mwg-train` must observe the following operational constraints:
 
 ### Pinning Discipline
-`mwg-train` pins `catalogSha256`, `guideIdsSha256`, `guideCount`, `analysedVersion`, `appliedRulesVersion`, and `ruleBasisSha256` (the hash of the applied rules themselves, so a rules change is a new pin even when guide text has not moved; `node tests/mwg-artefact.mjs verify` fails closed on a missing, mismatched or unrecorded value) - web-uplift-s52q. The catalog snapshot and the state descriptor are committed directly in the consumer repository.
+`mwg-train` pins `catalogSha256`, `guideIdsSha256`, `guideCount`, `analysedVersion`, `appliedRulesVersion`, and the applied-rules axis. That axis is TWO digests, not one (web-uplift-7bld, p71b): `rulesSha256` covers the rules themselves (ids, their guide and where, and the applied principles content) and `basisSha256` covers only the quoted anchors. `ruleBasisSha256` remains as the combined digest, so an existing pin keeps its meaning. The split is what makes a same-version evidence-only re-record ASSERTABLE: `update --accept-rules-revision` may re-record the axis only when the tool can prove that `rulesSha256` is unchanged and only `basisSha256` moved. `node tests/mwg-artefact.mjs verify` fails closed on a missing, mismatched or unrecorded value - web-uplift-s52q - and it now CHECKS both split digests, naming the axis that moved. The catalog snapshot and the state descriptor are committed directly in the consumer repository.
+
+### Legacy Artefacts (recorded before the digest split)
+A state recorded before `web-uplift-7bld` carries the combined digest and neither split digest, so the split cannot verify it. Such an artefact is **not** reported as verified: `verify` exits `4` with a `LEGACY-UNVERIFIED` line naming the missing digests, deliberately distinct from `1` (a mismatch or a check that could not run) so a gate can act on it. There are exactly two defined dispositions, and doing nothing is not one of them (web-uplift-nlem):
+
+- **Migrate it deliberately**: `node tests/mwg-artefact.mjs update --accept-legacy-split "<why the recorded rules are still the intended ones>"`. This is only accepted while the combined `ruleBasisSha256` still equals the computed one, because that is the only available proof that NEITHER axis moved since the artefact was recorded; the acceptance and its reason are stored in the state as `lastLegacySplitAcceptance`. If the combined digest has moved, the flag is REFUSED - a single hash cannot say which axis moved - and the artefact has to be re-recorded through the reviewed path instead (bump `appliedRulesVersion` in the state, the rule basis and the principles together, then `update`). A plain `update` never establishes the split digests, because that would record a claim nobody verified.
+- **Mark it unverified on purpose**: keep it out of the gate and say so where the pin is consumed.
 
 ### Set Identity, Not Count
 A guide count is not an identity: two catalog versions can share a count while holding different guide sets (this exact defect hid the `prompt-api` divergence tracked in `web-uplift-968`). The artefact therefore carries `guideIdsSha256`, the sha256 (UTF-8, hex) of the catalog's guide ids sorted lexicographically and joined by single LF newlines with no trailing newline, alongside `guideCount`. This is deliberately the SAME construction the catalog itself declares in its own `guideIdsSha256` field: one construction, one hash; two different values must never claim to identify the same set. Consumers must compare SETS: recompute `guideIdsSha256` from the committed catalog snapshot and fail closed on any mismatch, then use the catalog's own `guides[].id` list as the set to diff against their extractor's set. Never accept a bare count match as proof of identity.
@@ -91,11 +97,18 @@ The reference implementation for this procedure is provided in `tests/mwg-artefa
 # Compute canonical sha256 of the catalog
 node tests/mwg-artefact.mjs compute
 
-# Verify state file catalogSha256 against catalog
+# Verify state file catalogSha256 against catalog (exit 4 = a pre-split artefact that cannot be
+# split-verified, see 'Legacy Artefacts' above; never a silent pass)
 node tests/mwg-artefact.mjs verify
 
 # Update state file catalogSha256 from catalog
 node tests/mwg-artefact.mjs update
+
+# Record a same-version re-record whose RULE digest is provably unchanged (evidence moved only)
+node tests/mwg-artefact.mjs update --accept-rules-revision "<why the applied rules are unchanged>"
+
+# Migrate a state recorded before the two-digest split
+node tests/mwg-artefact.mjs update --accept-legacy-split "<why the recorded rules are still the intended ones>"
 ```
 
 ## Pin Handover Process
