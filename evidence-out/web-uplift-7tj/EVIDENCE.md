@@ -51,7 +51,9 @@ Raw outputs: `ab-old-allowlist.json`, `ab-new-allowlist.json` (full argv,
 exit code, result text, permission_denials). Under the old allowlist every
 attempt was refused by the permission system (the CLI itself recorded all six
 tool_use ids); under the new one every attempt executed (usage output, exit
-clean) and nothing was denied.
+clean) and nothing was denied. Those two files are the record of this run; a
+replay of `ab-probe.mjs` writes its own copies to `/tmp/web-uplift-7tj-ab`
+rather than overwriting them (web-uplift-k0ga).
 
 ## Bounded real audit attempt (same day, follow-up)
 

@@ -1252,22 +1252,36 @@ export function testCommittedEvidenceProbesImportByRelativePath() {
 // clone) and evidence-out/yh6-axis-labels/yh6-probe.mjs (latent: that probe exits 2 until its two fixture
 // pages exist, and this was the line that would have dirtied the tree on the first replay to reach it).
 //
-// WHAT THIS CATCHES: an OUTPUT-NAMED constant derived from the probe's OWN directory. NOT CAUGHT, by
-// construction and stated rather than implied away: a repo-relative artefact literal or a helper-computed path
-// (evidence-out/web-uplift-7tj/ab-probe.mjs writes two committed JSON records that way: web-uplift-k0ga), a
-// directory assembled by string concatenation of import.meta.url, and an output variable whose name says
-// nothing about output. Catching those needs data flow, not a name-based tripwire. The population and the rule
-// are both named here so a green result cannot be read as more than it is.
+// WHAT THIS CATCHES, two shapes that both end in the same dirty clone: (1) an OUTPUT-NAMED constant derived
+// from the probe's OWN directory, and (2) a file-creating or file-writing call whose target names the repository
+// - an 'evidence-out/' literal or `repoRoot` (evidence-out/web-uplift-7tj/ab-probe.mjs wrote two COMMITTED JSON
+// records that way, web-uplift-k0ga). NOT CAUGHT, by construction and stated rather than implied away: a
+// directory assembled by string concatenation of import.meta.url, a path built through a helper whose name says
+// nothing about output, and a write through a variable assigned somewhere else. Catching those needs data flow,
+// not a text tripwire. One further limit worth naming: a write target of `new URL('./x.json', import.meta.url)`
+// is accepted here - the evidence-out/web-uplift-cpa scratch `manifest.mjs` generators write their committed
+// manifest that way on purpose, and they REGENERATE a file rather than record a run. The population and both
+// rules are named here so a green result cannot be read as more than it is.
 export function testCommittedEvidenceProbesWriteOutsideTheRepository() {
   const OUTPUT_NAMED =
     /^(?:OUT|OUTPUT|OUT_DIR|OUTPUT_DIR|ARTIFACTS?|ARTIFACT_DIR|SHOTS?|SHOT_DIR|SCREENSHOTS?|SCREENSHOT_DIR|EVIDENCE|EVIDENCE_DIR)$/;
   const OWN_DIRECTORY = /new\s+URL\s*\(\s*(['"])\.\1\s*,\s*import\.meta\.url\s*\)/;
-  const ownDirectoryOutputs = (text) => {
+  const WRITES = /\b(?:writeFileSync|appendFileSync|writeFile|createWriteStream|mkdirSync|mkdtempSync|copyFileSync|renameSync)\s*\(/g;
+  // The first argument slice: from the opener to the first comma or close paren on the same line. A nested call
+  // (join(repoRoot, ...)) is cut short at ITS first comma, which is enough for these rules because the token
+  // they look for is in the leading part.
+  const IN_REPOSITORY = /'evidence-out\/|"evidence-out\/|`evidence-out\/|\brepoRoot\b|'evidence-out'|"evidence-out"/;
+  const insideRepositoryWrites = (text) => {
     const found = [];
     // `const NAME = <rest of the line>`: the declaration, not the write call, because that is where the
     // derivation happens and where the two probes carried it.
     for (const m of text.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]*)/g)) {
       if (OUTPUT_NAMED.test(m[1]) && OWN_DIRECTORY.test(m[2])) found.push(`${m[1]} = ${m[2].trim()}`);
+    }
+    for (const m of text.matchAll(WRITES)) {
+      const rest = text.slice(m.index + m[0].length);
+      const arg = rest.split(/\n/)[0].split(/[,)]/)[0];
+      if (IN_REPOSITORY.test(arg)) found.push(`${m[0].trim()}${arg.trim()}`);
     }
     return found;
   };
@@ -1276,42 +1290,51 @@ export function testCommittedEvidenceProbesWriteOutsideTheRepository() {
   assert(committed.status === 0, `git ls-files failed: ${committed.stderr}`);
   const probes = committed.stdout.split('\n').filter(Boolean).sort();
   assert(probes.length > 0, 'the sweep must find the committed probes, or passing says nothing');
-  // Non-vacuity by name: both probes this rule was measured on, plus the one that already stated it correctly.
+  // Non-vacuity by name: every probe these rules were measured on, plus the one that already stated it correctly.
   for (const known of [
     'evidence-out/omh-view-transition/omh-probe.mjs',
     'evidence-out/yh6-axis-labels/yh6-probe.mjs',
     'evidence-out/fb6-stuck/fb6-probe.mjs',
+    'evidence-out/web-uplift-7tj/ab-probe.mjs',
   ]) {
     assert(probes.includes(known), `the sweep must cover the probe this rule is built on: ${known}`);
   }
   const offenders = [];
   for (const rel of probes) {
-    for (const found of ownDirectoryOutputs(readFileSync(join(repoRoot, rel), 'utf8'))) {
+    for (const found of insideRepositoryWrites(readFileSync(join(repoRoot, rel), 'utf8'))) {
       offenders.push(`${rel}: ${found}`);
     }
   }
   assert(
     offenders.length === 0,
-    `a committed probe must write its artefacts OUTSIDE the repository, or a replay overwrites the committed record it sits beside and dirties the reader's clone (web-uplift-8arj). Point the output directory at /tmp the way fb6-probe.mjs does: ${offenders.join('; ')}`,
+    `a committed probe must write its artefacts OUTSIDE the repository, or a replay overwrites the committed record it sits beside and dirties the reader's clone (web-uplift-8arj, web-uplift-k0ga). Point the output directory at /tmp the way fb6-probe.mjs does: ${offenders.join('; ')}`,
   );
 
-  // Negative controls: the exact line the bead fixed must be REFUSED, and the neighbouring shapes that are
+  // Negative controls: the exact lines the two beads fixed must be REFUSED, and the neighbouring shapes that are
   // legitimately about the probe's own directory - the PAGE it drives, and the /tmp output fb6 uses - must be
-  // ACCEPTED, so a detector that simply refused every import.meta.url would fail here instead of passing.
+  // ACCEPTED, so a detector that simply refused every import.meta.url or every write would fail here.
   assert(
-    ownDirectoryOutputs("const OUT = new URL('.', import.meta.url).pathname.replace(/\\/$/, '');").length === 1,
+    insideRepositoryWrites("const OUT = new URL('.', import.meta.url).pathname.replace(/\\/$/, '');").length === 1,
     'negative control: an output directory derived from the probe own directory must be refused',
   );
   assert(
-    ownDirectoryOutputs("const OUT = '/tmp/fb6-evidence';").length === 0,
+    insideRepositoryWrites("writeFileSync('evidence-out/web-uplift-7tj/ab-old-allowlist.json', body);").length === 1,
+    'negative control: a repo-relative artefact LITERAL must be refused (web-uplift-k0ga)',
+  );
+  assert(
+    insideRepositoryWrites("mkdirSync(join(repoRoot, 'evidence-out/web-uplift-7tj'), { recursive: true });").length === 1,
+    'negative control: a directory under repoRoot must be refused (web-uplift-k0ga)',
+  );
+  assert(
+    insideRepositoryWrites("const OUT = '/tmp/fb6-evidence';\nwriteFileSync(`${OUT}/${name}`, bytes);").length === 0,
     'the /tmp output directory this rule asks for must be accepted',
   );
   assert(
-    ownDirectoryOutputs("const URL_ = new URL('./fb6-scorecard.html', import.meta.url).href;").length === 0,
+    insideRepositoryWrites("const URL_ = new URL('./fb6-scorecard.html', import.meta.url).href;").length === 0,
     'the PAGE a probe drives is not an output path: addressing it relative to the probe must stay accepted',
   );
   assert(
-    ownDirectoryOutputs("const HERE = new URL('.', import.meta.url);").length === 0,
+    insideRepositoryWrites("const HERE = new URL('.', import.meta.url);").length === 0,
     'a directory constant not named like an output is outside this tripwire stated reach, and pinning that keeps the limit honest',
   );
 }

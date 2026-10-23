@@ -89,16 +89,21 @@ function run(label, allowedTools) {
   };
 }
 
-mkdirSync(join(repoRoot, 'evidence-out/web-uplift-7tj'), { recursive: true });
+// Output stays OUTSIDE the repository, the rule fb6-probe.mjs states and this probe used to break: the two JSON
+// records committed beside it are the RECORD of the reviewed A/B run, so a replay must not overwrite them with
+// today's derivation (and should not dirty the reader's clone either). This probe used to mkdir and write under
+// repoRoot with repo-relative literals (web-uplift-k0ga).
+const OUT = '/tmp/web-uplift-7tj-ab';
+mkdirSync(OUT, { recursive: true });
 
 const oldArm = run('OLD allowlist (5a04a88^)', OLD_RULES);
-writeFileSync('evidence-out/web-uplift-7tj/ab-old-allowlist.json', JSON.stringify(oldArm, null, 2));
+writeFileSync(`${OUT}/ab-old-allowlist.json`, JSON.stringify(oldArm, null, 2));
 
 // The NEW allowlist exactly as production derives it for this root.
 const prodArgs = AGENTS.claude.args('x', { maxTurns: 30, root: repoRoot });
 const NEW_RULES = prodArgs[prodArgs.indexOf('--allowedTools') + 1];
 const newArm = run('NEW allowlist (5a04a88, derived)', NEW_RULES);
-writeFileSync('evidence-out/web-uplift-7tj/ab-new-allowlist.json', JSON.stringify(newArm, null, 2));
+writeFileSync(`${OUT}/ab-new-allowlist.json`, JSON.stringify(newArm, null, 2));
 
 function verdicts(arm) {
   const lines = String(arm.result).split('\n').filter((l) => /^\s*\d:\s*(ALLOWED|DENIED)/.test(l));
