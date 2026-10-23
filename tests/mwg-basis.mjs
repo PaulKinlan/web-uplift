@@ -18,7 +18,9 @@
 /**
  * @param {{rules: Array<{id: string, guide: string, anchors: string[]}>}} basis
  * @param {Record<string, string>} guides  guide id -> guide text
- * @returns {string[]} violations; empty means every anchor is still verbatim
+ * @returns {string[]} violations; empty means every rule declared usable anchors and every one of
+ *   them is still verbatim. A rule that declares no usable anchor is a violation, not a pass:
+ *   otherwise an unverifiable rule reports as intact (web-uplift-m4ae).
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -30,8 +32,28 @@ export function basisAnchorViolations(basis, guides) {
       violations.push(`Rule "${rule.id}": registered guide "${rule.guide}" does not exist in corpus`);
       continue;
     }
+    // A rule that can never fail is not a rule (web-uplift-m4ae). With an empty or absent
+    // `anchors` list the loop below runs zero times, so both callers reported the rule as intact
+    // and the drift check printed "IN-SYNC ... all 0 rule-basis anchor(s)" - the same false green
+    // as an empty registry, one level down. A missing key was worse than vacuous: it threw a bare
+    // TypeError out of the iteration instead of naming the defect. Vacuity is therefore a
+    // VIOLATION here rather than an early exit, so it reaches the caller that knows what a
+    // violation means (drift check: exit 4, anchor-broken, recorded in state) instead of hiding a
+    // malformed registry in a different failure mode.
+    if (!Array.isArray(rule.anchors) || rule.anchors.length === 0) {
+      violations.push(`Rule "${rule.id}" for guide "${rule.guide}": declares no anchors, so nothing could be verified and the rule would pass vacuously`);
+      continue;
+    }
     const guideText = guides[rule.guide];
-    for (const anchor of rule.anchors) {
+    for (let i = 0; i < rule.anchors.length; i += 1) {
+      const anchor = rule.anchors[i];
+      // An anchor has to be usable text, not just present: `includes('')` is true against any
+      // guide, and a non-string would either be coerced or throw. Both would let a rule claim an
+      // anchor while verifying nothing, which is the condition this whole check is for.
+      if (typeof anchor !== 'string' || anchor.trim().length === 0) {
+        violations.push(`Rule "${rule.id}" for guide "${rule.guide}": anchor at index ${i} is not usable text (empty or not a string), so it would match any guide text`);
+        continue;
+      }
       if (!guideText.includes(anchor)) {
         violations.push(`Rule "${rule.id}" for guide "${rule.guide}": anchor not found in guide text: ${JSON.stringify(anchor)}`);
       }

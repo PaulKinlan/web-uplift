@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { CANONICALISATION_RULE, computeSha256 } from './mwg-artefact.mjs';
-import { guidesFromTree } from './mwg-basis.mjs';
+import { basisAnchorViolations, guidesFromTree } from './mwg-basis.mjs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -601,6 +601,109 @@ export function testMwgDriftCheckGuard() {
       'mwg-drift: case 1f the anchor issue step must derive its subject from the testable classifier, not a hand-rolled title');
     assert(anchorStep !== null && /--body-file/.test(anchorStep[0]),
       'mwg-drift: case 1f the anchor issue step must file the body the classifier wrote');
+  }
+
+  // 1g. web-uplift-m4ae: a rule that declares NO anchors must not report in-sync. The version
+  // comparison never looked at the anchor list's LENGTH, so `anchors: []` ran the loop zero times
+  // and the check printed "IN-SYNC ... all 0 rule-basis anchor(s) across 1 rule(s)" and exited 0 -
+  // the same false green as an empty registry (case 5 of the basis floor), one level down. A rule
+  // that cannot fail is not a rule, and the scheduled workflow persists whatever this says.
+  {
+    const noAnchorsBasis = join(tmp, 'basis-no-anchors.json');
+    const basis = JSON.parse(readFileSync(join(fixDir, 'basis-fixture.json'), 'utf8'));
+    basis.rules[0].anchors = [];
+    writeFileSync(noAnchorsBasis, JSON.stringify(basis, null, 2));
+    const stateCopy = join(tmp, 'state-no-anchors.json');
+    writeFileSync(stateCopy, JSON.stringify(JSON.parse(readFileSync(stateFixture, 'utf8')), null, 2));
+    const res = runCheck(['--write'], {
+      MWG_DRIFT_STATE: stateCopy,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+      MWG_DRIFT_BASIS: noAnchorsBasis,
+    });
+    assert(res.status === 4, `mwg-drift: case 1g (rule with no anchors) must exit 4, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/ANCHOR-BROKEN/.test(res.stderr), `mwg-drift: case 1g must name the anchor condition: ${res.stderr}`);
+    assert(/declares no anchors/.test(res.stderr) && new RegExp(basis.rules[0].id).test(res.stderr),
+      `mwg-drift: case 1g must name the rule and what is wrong with it: ${res.stderr}`);
+    assert(!/IN-SYNC/.test(res.stdout) && !/all 0 rule-basis anchor/.test(res.stdout),
+      `mwg-drift: case 1g must never report in-sync over zero anchors: ${res.stdout}`);
+    const written = JSON.parse(readFileSync(stateCopy, 'utf8'));
+    assert(written.lastCheckResult === 'anchor-broken' && written.lastAnchorCheck.result === 'anchor-broken',
+      `mwg-drift: case 1g must record the condition it reported, got ${JSON.stringify(written.lastCheckResult)}/${JSON.stringify(written.lastAnchorCheck)}`);
+    // The alert subject has to name the rule, or the issue is unactionable. This is the third
+    // violation shape and it is read end to end, like the other two.
+    const subject = spawnSync(process.execPath, [join(repoRoot, 'tests', 'mwg-drift-anchor-subject.mjs'), '--json'], {
+      input: `${res.stderr}${res.stdout}`,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    assert(subject.status === 0, `mwg-drift: case 1g the subject script must recognise the no-anchors violation, got ${subject.status}: ${subject.stderr}`);
+    const parsed = JSON.parse(subject.stdout);
+    assert(new RegExp(basis.rules[0].id).test(parsed.title) && parsed.violations[0].kind === 'no-anchors',
+      `mwg-drift: case 1g the alert must name the rule that declares no anchors: ${subject.stdout}`);
+    // The shared verifier's own invariant, called directly. Both current callers validate the basis
+    // structurally at some level (the classifier in validateBasis), so this is the defence in depth
+    // that stops a FUTURE caller from inheriting the vacuous pass - which is the reason the anchor
+    // question lives in one shared module at all.
+    const direct = basisAnchorViolations(
+      { rules: [{ id: 'r-direct', guide: 'implemented-rule-guide', anchors: [] }] },
+      { 'implemented-rule-guide': 'the guide text' },
+    );
+    assert(direct.some((v) => /declares no anchors/.test(v) && /r-direct/.test(v)),
+      `mwg-drift: case 1g basisAnchorViolations must treat zero anchors as a violation, got ${JSON.stringify(direct)}`);
+    const directBlank = basisAnchorViolations(
+      { rules: [{ id: 'r-blank', guide: 'implemented-rule-guide', anchors: ['   '] }] },
+      { 'implemented-rule-guide': 'the guide text' },
+    );
+    assert(directBlank.some((v) => /not usable text/.test(v) && /r-blank/.test(v)),
+      `mwg-drift: case 1g basisAnchorViolations must reject a blank anchor, got ${JSON.stringify(directBlank)}`);
+  }
+
+  // 1h. The likelier regression is the anchors KEY going missing entirely (the bead's repro only
+  // empties the list). Pre-fix that did not report somehow-wrong: it threw `rule.anchors is not
+  // iterable` out of the shared verifier, so the failure mode was an uncaught TypeError from a
+  // module, not the named condition an operator can act on. Same requirement: exit 4, ANCHOR-BROKEN,
+  // no in-sync, and the state records it.
+  {
+    const missingAnchorsBasis = join(tmp, 'basis-missing-anchors.json');
+    const basis = JSON.parse(readFileSync(join(fixDir, 'basis-fixture.json'), 'utf8'));
+    delete basis.rules[0].anchors;
+    writeFileSync(missingAnchorsBasis, JSON.stringify(basis, null, 2));
+    const stateCopy = join(tmp, 'state-missing-anchors.json');
+    writeFileSync(stateCopy, JSON.stringify(JSON.parse(readFileSync(stateFixture, 'utf8')), null, 2));
+    const res = runCheck(['--write'], {
+      MWG_DRIFT_STATE: stateCopy,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+      MWG_DRIFT_BASIS: missingAnchorsBasis,
+    });
+    assert(res.status === 4, `mwg-drift: case 1h (rule with no anchors key) must exit 4, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/ANCHOR-BROKEN/.test(res.stderr) && /declares no anchors/.test(res.stderr),
+      `mwg-drift: case 1h must report the condition, not crash on the iteration: ${res.stderr}`);
+    assert(!/TypeError/.test(res.stderr), `mwg-drift: case 1h must not surface an internal TypeError: ${res.stderr}`);
+    assert(!/IN-SYNC/.test(res.stdout), `mwg-drift: case 1h must not report in-sync: ${res.stdout}`);
+    const written = JSON.parse(readFileSync(stateCopy, 'utf8'));
+    assert(written.lastCheckResult === 'anchor-broken', `mwg-drift: case 1h must record anchor-broken, got ${JSON.stringify(written.lastCheckResult)}`);
+  }
+
+  // 1i. An anchor that is present but UNUSABLE is the same hole wearing a hat: `includes('')` is
+  // true against every guide, so `anchors: ['']` claims to verify something and verifies nothing.
+  // The fix must not be satisfiable by a list that merely has a length.
+  {
+    const emptyAnchorBasis = join(tmp, 'basis-empty-anchor.json');
+    const basis = JSON.parse(readFileSync(join(fixDir, 'basis-fixture.json'), 'utf8'));
+    basis.rules[0].anchors = [''];
+    writeFileSync(emptyAnchorBasis, JSON.stringify(basis, null, 2));
+    const res = runCheck([], {
+      MWG_DRIFT_STATE: stateFixture,
+      MWG_DRIFT_CATALOG: catalogFixture,
+      MWG_DRIFT_UPSTREAM_FILE: join(fixDir, 'upstream-same.json'),
+      MWG_DRIFT_BASIS: emptyAnchorBasis,
+    });
+    assert(res.status === 4, `mwg-drift: case 1i (empty-string anchor) must exit 4, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/not usable text/.test(res.stderr) && /anchor at index 0/.test(res.stderr),
+      `mwg-drift: case 1i must name the unusable anchor by index: ${res.stderr}`);
+    assert(!/IN-SYNC/.test(res.stdout), `mwg-drift: case 1i must not report in-sync: ${res.stdout}`);
   }
 
   // 2. upstream-newer -> exit 2, stdout mentions the delta and "0.0.200".
