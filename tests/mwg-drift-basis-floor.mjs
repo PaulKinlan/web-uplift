@@ -88,6 +88,38 @@ export async function testMwgDriftBasisFloor() {
     const noField = await runCli(['--verify-basis', corpusOld, '--basis', missing, '--catalog', CATALOG]);
     assert(noField.code === 1 && /rules field must be an array/.test(noField.err),
       `a registry without a rules field must be refused by name: ${noField.code} ${noField.err}`);
+
+    // 6. The rule-level floor (web-uplift-m4ae): the empty-registry argument applies to ONE rule as
+    // well. A rule with an empty anchors list verifies nothing, so a reversal it was meant to catch
+    // would be re-filed as an ordinary change. The classifier already had this structural guard
+    // (`validateBasis`); the scheduled check did NOT, which is how `anchors: []` reported IN-SYNC.
+    // Both are pinned: this case keeps the classifier's refusal from being deletable, and cases
+    // 1g/1h of the drift-check guard cover the scheduled path through the shared verifier
+    // (tests/mwg-basis.mjs).
+    const ruleNoAnchors = join(tmp, 'basis-rule-no-anchors.json');
+    writeFileSync(ruleNoAnchors, `${JSON.stringify({
+      catalogueVersion: '1.0.0',
+      rules: [{ id: 'rule-csp-object-src', guide: 'implemented-rule-guide', where: 'tests/fixtures/mwg-drift', anchors: [] }],
+    }, null, 2)}\n`, 'utf8');
+    const vacuousVerify = await runCli(['--verify-basis', corpusOld, '--basis', ruleNoAnchors, '--catalog', CATALOG]);
+    assert(vacuousVerify.code === 1 && /anchors must be a non-empty array/.test(vacuousVerify.err) && /rule-csp-object-src/.test(vacuousVerify.err),
+      `verification must refuse a rule that declares no anchors, naming it: ${vacuousVerify.code} ${vacuousVerify.err}`);
+    assert(!/all anchors intact/.test(vacuousVerify.out), `verification must not report intact anchors over zero anchors: ${vacuousVerify.out}`);
+    const vacuousClassify = await runCli(['--old-corpus', corpusOld, '--new-corpus', reversal, '--basis', ruleNoAnchors, '--json']);
+    assert(vacuousClassify.code === 1 && /anchors must be a non-empty array/.test(vacuousClassify.err),
+      `classification must refuse it too instead of downgrading the reversal to a change: ${vacuousClassify.code} ${vacuousClassify.out}${vacuousClassify.err}`);
+    assert(!/CHANGED \(1\)/.test(vacuousClassify.out), `no classification output may be produced: ${vacuousClassify.out}`);
+    // ...and the key being ABSENT is the same refusal, not an internal TypeError (the pre-fix
+    // behaviour of the shared verifier: `rule.anchors is not iterable`).
+    const ruleMissingAnchors = join(tmp, 'basis-rule-missing-anchors.json');
+    writeFileSync(ruleMissingAnchors, `${JSON.stringify({
+      catalogueVersion: '1.0.0',
+      rules: [{ id: 'rule-csp-object-src', guide: 'implemented-rule-guide', where: 'tests/fixtures/mwg-drift' }],
+    }, null, 2)}\n`, 'utf8');
+    const missingKeyVerify = await runCli(['--verify-basis', corpusOld, '--basis', ruleMissingAnchors, '--catalog', CATALOG]);
+    assert(missingKeyVerify.code === 1 && /anchors must be a non-empty array/.test(missingKeyVerify.err),
+      `an absent anchors key must be refused by name, not thrown out of the verifier: ${missingKeyVerify.code} ${missingKeyVerify.err}`);
+    assert(!/is not iterable/.test(missingKeyVerify.err), `the refusal must not be an internal TypeError: ${missingKeyVerify.err}`);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

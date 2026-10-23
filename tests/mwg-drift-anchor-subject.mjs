@@ -94,6 +94,12 @@ const HEADER_RECORDED = /^ANCHOR-BROKEN: the last check recorded that the rule b
 // half-read out of a longer message.
 const NOT_FOUND = /^ {2}- Rule "([^"]+)" for guide "([^"]+)": anchor not found in guide text: (.*)$/gm;
 const GUIDE_MISSING = /^ {2}- Rule "([^"]+)": registered guide "([^"]+)" does not exist in corpus$/gm;
+// web-uplift-m4ae: a rule that declares no anchors verifies nothing, and an anchor that is not
+// usable text matches any guide. The verifier emits both as violations, so both must be readable
+// here or the alert would fire with a problem count and no rule to name - the same generic title a
+// human cannot act on.
+const NO_ANCHORS = /^ {2}- Rule "([^"]+)" for guide "([^"]+)": declares no anchors, so nothing could be verified and the rule would pass vacuously$/gm;
+const UNUSABLE_ANCHOR = /^ {2}- Rule "([^"]+)" for guide "([^"]+)": anchor at index ([0-9]+) is not usable text \(empty or not a string\), so it would match any guide text$/gm;
 
 const header = HEADER.exec(text);
 const recorded = header === null ? HEADER_RECORDED.exec(text) : null;
@@ -112,6 +118,12 @@ for (const match of text.matchAll(NOT_FOUND)) {
 }
 for (const match of text.matchAll(GUIDE_MISSING)) {
   violations.push({ rule: match[1], guide: match[2], anchor: null, kind: 'guide-missing' });
+}
+for (const match of text.matchAll(NO_ANCHORS)) {
+  violations.push({ rule: match[1], guide: match[2], anchor: null, kind: 'no-anchors' });
+}
+for (const match of text.matchAll(UNUSABLE_ANCHOR)) {
+  violations.push({ rule: match[1], guide: match[2], anchor: null, anchorIndex: Number(match[3]), kind: 'unusable-anchor' });
 }
 
 // ONE stable tag for dedupe. The check job and the freshness job both use it, so the same
@@ -132,6 +144,13 @@ if (violations.length === 1) {
   title = `${TAG} against upstream ${upstreamVersion}`;
 }
 
+const describeViolation = (v) => {
+  if (v.kind === 'guide-missing') return `rule \`${v.rule}\`, guide \`${v.guide}\` (guide missing from the corpus)`;
+  if (v.kind === 'no-anchors') return `rule \`${v.rule}\`, guide \`${v.guide}\` (rule declares no anchors, so it verified nothing)`;
+  if (v.kind === 'unusable-anchor') return `rule \`${v.rule}\`, guide \`${v.guide}\`, anchor #${v.anchorIndex} (empty or not a string)`;
+  return `rule \`${v.rule}\`, guide \`${v.guide}\`, anchor ${v.anchor}`;
+};
+
 const body = [
   `This is an **${CONDITION}** alert. It is NOT a stale-heartbeat alert and NOT an unactioned-delta alert: the drift check ran, and what failed is the rule basis it verifies.`,
   '',
@@ -146,7 +165,7 @@ const body = [
   'versions may already agree.',
   '',
   ...(violations.length > 0
-    ? ['Violations:', '', ...violations.map((v) => `- rule \`${v.rule}\`, guide \`${v.guide}\`${v.anchor === null ? ' (guide missing from the corpus)' : `, anchor ${v.anchor}`}`), '']
+    ? ['Violations:', '', ...violations.map((v) => `- ${describeViolation(v)}`), '']
     : []),
   'Drift-check output:',
   '```',
