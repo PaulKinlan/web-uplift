@@ -1119,16 +1119,101 @@ export function testCommittedEvidenceProbesImportByRelativePath() {
   // /a|b/ needs a lexer that knows strings, template literals and regex literals apart, and blanking live
   // code by mistake would make the sweep green by silence, which is the failure this guard exists to
   // prevent. A gap that may only be whitespace or a comment cannot reach from a keyword into anything but
-  // its own specifier: the alternatives start on distinct characters and none of them matches a quote.
-  const GAP = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*)*`;
-  const IMPORT_FORMS = [
-    new RegExp(String.raw`\bfrom${GAP}(['"])([^'"\r\n]+)\1`, 'g'), // import x from '...' / export { x } from '...'
-    new RegExp(String.raw`\bimport${GAP}\(${GAP}(['"])([^'"\r\n]+)\1`, 'g'), // dynamic import('...')
-    new RegExp(String.raw`(?:^|[^\w$.])import${GAP}(['"])([^'"\r\n]+)\1`, 'g'), // side-effect import '...'
-  ];
+  // its own specifier: every step either consumes trivia or stops at the quote it is looking for.
+  //
+  // web-uplift-wkg7: the gap is read by an explicit scanner, not by a repeated alternation, because as a
+  // regex it is EXPONENTIAL on text an author can commit - measured on this VM before this change,
+  // `'import x from ' + '/'*42` took 15.1s and `'import x from ' + '/*x*/'*40 + 'Z'` did not finish in 20s,
+  // since the outer star can re-split the same run of slashes or comments at every boundary and the engine
+  // explores all of it. The unrolled block-comment alternative that fixes the comment shape
+  // (`\/\*(?:[^*]|\*(?!\/))*\*\/`: 1000 comments in 0.18ms) does NOT fix the slash shape - that same
+  // GAP still took 15.1s on 42 slashes - so the gap is walked one character at a time here: each character
+  // is visited once, a comment is skipped with a single indexOf and never re-entered, and there is nothing
+  // left to backtrack into. This is the lsn3 lesson one level down: a committed probe is author-controlled
+  // text that EVERY fast-gate run reads, so a slow matcher there is a hang waiting for fifty characters.
+  const WHITESPACE = new Set([
+    ' ', '\t', '\n', '\r', '\v', '\f', '\u00a0', '\u1680', '\u2000', '\u2001', '\u2002', '\u2003',
+    '\u2004', '\u2005', '\u2006', '\u2007', '\u2008', '\u2009', '\u200a', '\u2028', '\u2029', '\u202f',
+    '\u205f', '\u3000', '\ufeff',
+  ]);
+  const isQuote = (ch) => ch === "'" || ch === '"';
+  // `dead` memoises "no block-comment closer / no line end after position P". Without it, N keywords each
+  // followed by one unterminated comment would each re-scan to the end of the file, which is the same
+  // quadratic defect in a different dress. A memo is only ever set by a search that reached EOF, and it is
+  // consulted with `i >= dead.<x>` so the guarantee (nothing at or after dead.<x> + 2) covers index i + 2.
+  const skipTrivia = (text, from, dead) => {
+    let i = from;
+    for (;;) {
+      if (i >= text.length) return -1;
+      const ch = text[i];
+      if (WHITESPACE.has(ch)) {
+        i += 1;
+        continue;
+      }
+      if (ch !== '/') return i;
+      if (text[i + 1] === '*') {
+        if (dead.noBlockClose !== -1 && i >= dead.noBlockClose) return -1;
+        const end = text.indexOf('*/', i + 2);
+        if (end === -1) {
+          dead.noBlockClose = i;
+          return -1;
+        }
+        i = end + 2;
+        continue;
+      }
+      if (text[i + 1] === '/') {
+        if (dead.noLineEnd !== -1 && i >= dead.noLineEnd) return -1;
+        const lf = text.indexOf('\n', i + 2);
+        const cr = text.indexOf('\r', i + 2);
+        const end = lf === -1 ? cr : cr === -1 ? lf : Math.min(lf, cr);
+        if (end === -1) {
+          dead.noLineEnd = i;
+          return -1;
+        }
+        i = end + 1;
+        continue;
+      }
+      return i; // a lone `/` is not trivia (it starts a regex or a division)
+    }
+  };
+  // The specifier between a quote and the SAME quote, with no line terminator inside and at least one
+  // character: exactly what the three forms this replaces matched. A different quote is not the closer.
+  const quotedSpecifier = (text, at) => {
+    const quote = text[at];
+    let i = at + 1;
+    while (i < text.length && text[i] !== quote && text[i] !== '\n' && text[i] !== '\r') i += 1;
+    if (i >= text.length || text[i] !== quote || i === at + 1) return null;
+    return text.slice(at + 1, i);
+  };
   const specifiersIn = (text) => {
     const found = new Set();
-    for (const re of IMPORT_FORMS) for (const m of text.matchAll(re)) found.add(m[2]);
+    const dead = { noBlockClose: -1, noLineEnd: -1 };
+    // import x from '...' / export { x } from '...'
+    for (const m of text.matchAll(/\bfrom\b/g)) {
+      const at = skipTrivia(text, m.index + 4, dead);
+      if (at === -1 || !isQuote(text[at])) continue;
+      const spec = quotedSpecifier(text, at);
+      if (spec !== null) found.add(spec);
+    }
+    for (const m of text.matchAll(/\bimport\b/g)) {
+      const after = skipTrivia(text, m.index + 6, dead);
+      if (after === -1) continue;
+      if (text[after] === '(') {
+        // dynamic import('...')
+        const inner = skipTrivia(text, after + 1, dead);
+        if (inner !== -1 && isQuote(text[inner])) {
+          const spec = quotedSpecifier(text, inner);
+          if (spec !== null) found.add(spec);
+        }
+        continue;
+      }
+      // side-effect import '...', only when `import` is its own token (not `myimport`, `a.import`, `$import`).
+      const before = m.index === 0 ? '' : text[m.index - 1];
+      if (before !== '' && /[\w$.]/.test(before)) continue;
+      if (!isQuote(text[after])) continue;
+      const spec = quotedSpecifier(text, after);
+      if (spec !== null) found.add(spec);
+    }
     return [...found];
   };
   // Returns the reason this specifier cannot be honoured from `file`, or null when it can. Deliberately NOT
@@ -1239,6 +1324,31 @@ export function testCommittedEvidenceProbesImportByRelativePath() {
     relativeAfterComment.includes('../../evidence/cdp.mjs') && specifierProblem(relativeAfterComment[0], probeFile) === null,
     `the relative convention must still be found and accepted after a comment, found ${JSON.stringify(relativeAfterComment)}`,
   );
+
+  // web-uplift-wkg7: the gap must stay LINEAR on text an author can commit. Both of the first two shapes
+  // were exponential for the repeated-alternation form this replaces - on this VM 42 slashes took 15.1s and
+  // 40 block comments did not finish in 20s - while this scanner finishes each of them in well under a
+  // millisecond. The budget is deliberately generous (1500ms) so a loaded machine cannot fail it: it can
+  // only trip if the gap starts backtracking again, which costs seconds to minutes at these lengths. Each
+  // shape must also yield NO specifier: an unterminated run of trivia is not an import.
+  {
+    const shapes = [
+      ['a run of slashes after the keyword', `import x from ${'/'.repeat(42)}`],
+      ['a run of block comments after the keyword', `import x from ${'/*x*/'.repeat(40)}Z`],
+      ['a run of slashes inside a dynamic import', `import(${'/'.repeat(42)}`],
+      ['an unterminated block comment', `import x from /*${'*'.repeat(200)}`],
+    ];
+    for (const [name, text] of shapes) {
+      const started = performance.now();
+      const found = specifiersIn(text);
+      const elapsed = performance.now() - started;
+      assert(
+        elapsed < 1500,
+        `the comment gap must stay linear: ${name} took ${elapsed.toFixed(0)}ms against a 1500ms budget, which is the exponential backtracking of web-uplift-wkg7 coming back`,
+      );
+      assert(found.length === 0, `the gap must not invent a specifier from ${name}: ${JSON.stringify(found)}`);
+    }
+  }
 }
 
 // A committed probe exists so a reader can RE-RUN it. Its artefacts - result.json, screenshots - are committed
