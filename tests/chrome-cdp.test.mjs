@@ -1100,15 +1100,31 @@ export function testCommittedSiblingProbesAreInert() {
 // - while five sibling probes already imported '../../evidence/cdp.mjs', which is why this pins the shape the
 // tree already uses instead of inventing a convention.
 //
-// SCOPE: import POSITION only. The same absolute path is fine inside a comment or a recorded stdout log, and
-// those artefacts are left alone: they are a record of a past run, not a script anyone is meant to execute.
-// What is checked is the two properties a re-run needs - the specifier is not absolute, and a relative one
-// RESOLVES from the file's own directory to a real file inside this repository.
+// SCOPE: import POSITION only. The same absolute path is fine in a recorded stdout log, and those artefacts
+// are left alone: they are a record of a past run, not a script anyone is meant to execute. This is a text
+// scan, not a parser, so a COMMENT whose own text spells an import in import position is refused too; that
+// direction only ever costs a comment rewrite, never a false green. What is checked is the two properties a
+// re-run needs - the specifier is not absolute, and a relative one RESOLVES from the file's own directory to
+// a real file inside this repository.
 export function testCommittedEvidenceProbesImportByRelativePath() {
+  // web-uplift-xlar: the gap between a keyword and its specifier may hold COMMENTS, not only whitespace, and
+  // every such spelling is valid ECMAScript that `node --check` accepts: `import x from /* c */ './m.mjs'`,
+  // `from // c\n  './m.mjs'`, `import(/* c */ './m.mjs')`, `import /* c */ './m.mjs'`. The previous forms
+  // allowed `\s*` only, so an import written that way was never VISITED: a probe carrying the forbidden
+  // absolute lane path after `from /* c */` passed this sweep and then died with ERR_MODULE_NOT_FOUND at
+  // that path on any other clone. The gap is one shared fragment so the four spellings cannot drift apart
+  // again, the same way the method-key pattern is shared in testCommittedSiblingProbesAreInert (nz0l).
+  //
+  // NOT a whole-file comment stripper, deliberately: telling a comment from a `//` inside 'https://...' or
+  // /a|b/ needs a lexer that knows strings, template literals and regex literals apart, and blanking live
+  // code by mistake would make the sweep green by silence, which is the failure this guard exists to
+  // prevent. A gap that may only be whitespace or a comment cannot reach from a keyword into anything but
+  // its own specifier: the alternatives start on distinct characters and none of them matches a quote.
+  const GAP = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*)*`;
   const IMPORT_FORMS = [
-    /\bfrom\s*(['"])([^'"\r\n]+)\1/g, // import x from '...' / export { x } from '...'
-    /\bimport\s*\(\s*(['"])([^'"\r\n]+)\1/g, // dynamic import('...')
-    /(?:^|[^\w$.])import\s+(['"])([^'"\r\n]+)\1/g, // side-effect import '...'
+    new RegExp(String.raw`\bfrom${GAP}(['"])([^'"\r\n]+)\1`, 'g'), // import x from '...' / export { x } from '...'
+    new RegExp(String.raw`\bimport${GAP}\(${GAP}(['"])([^'"\r\n]+)\1`, 'g'), // dynamic import('...')
+    new RegExp(String.raw`(?:^|[^\w$.])import${GAP}(['"])([^'"\r\n]+)\1`, 'g'), // side-effect import '...'
   ];
   const specifiersIn = (text) => {
     const found = new Set();
@@ -1181,6 +1197,47 @@ export function testCommittedEvidenceProbesImportByRelativePath() {
   assert(
     specifierProblem('node:fs', probeFile) === null,
     'a node: builtin is not a path and must not be refused',
+  );
+
+  // web-uplift-xlar: comment-SEPARATED spellings. Each one is valid ECMAScript, so the specifier really is
+  // imported; the sweep has to visit it. The `\s*`-only gap visited none of them, which is how the mutant
+  // probe above passed this sweep and then failed at the absolute lane path on a fresh clone. The shapes are
+  // checked for validity HERE rather than assumed valid by a comment: a control that is not valid code would
+  // prove nothing about a guard whose subject is an executable import.
+  const commentSeparated = [
+    `import { gapA } from /* valid ECMAScript comment */ '${wasCommitted}';`,
+    `import { gapB } from // valid ECMAScript line comment\n  '${wasCommitted}';`,
+    `import/* before bindings */{ gapC } from/* gap */'${wasCommitted}';`,
+    `import(/* dynamic */ '${wasCommitted}');`,
+    `import /* side effect */ '${wasCommitted}';`,
+    `export { gapD } from /* re-export */ '${wasCommitted}';`,
+  ];
+  const validityFixture = join(tmp, 'import-gap-shapes.mjs');
+  writeFileSync(validityFixture, `${commentSeparated.join('\n')}\n`);
+  const validity = run(process.execPath, ['--check', validityFixture]);
+  assert(
+    validity.status === 0,
+    `the comment-separated controls must be VALID ECMAScript, or they are not imports this guard has to catch: ${validity.stderr}`,
+  );
+  for (const text of commentSeparated) {
+    const found = specifiersIn(text);
+    assert(
+      found.includes(wasCommitted),
+      `negative control: a comment between the keyword and its specifier must not hide the import; found ${JSON.stringify(found)} in ${JSON.stringify(text)} (web-uplift-xlar)`,
+    );
+    assert(
+      specifierProblem(wasCommitted, probeFile) !== null,
+      `negative control: the absolute specifier stays refused however the gap is spelled: ${JSON.stringify(text)}`,
+    );
+  }
+  // The other direction, so the gap cannot be "fixed" by refusing comment-separated imports wholesale: the
+  // relative convention the siblings use is still FOUND, and still accepted, when a comment separates it.
+  const relativeAfterComment = specifiersIn(
+    `import { launchChrome } from /* valid ECMAScript comment */ '../../evidence/cdp.mjs';`,
+  );
+  assert(
+    relativeAfterComment.includes('../../evidence/cdp.mjs') && specifierProblem(relativeAfterComment[0], probeFile) === null,
+    `the relative convention must still be found and accepted after a comment, found ${JSON.stringify(relativeAfterComment)}`,
   );
 }
 
