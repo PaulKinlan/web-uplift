@@ -14,12 +14,21 @@
 //   node tests/mwg-artefact.mjs compute    # print a JSON object {catalogSha256, guideIdsSha256, guideCount}
 //   node tests/mwg-artefact.mjs verify     # recompute all three and compare to the state file
 //   node tests/mwg-artefact.mjs update     # recompute and write all three into the state file (2-space pretty JSON + trailing newline, preserving other keys)
+//   node tests/mwg-artefact.mjs update --accept-rules-revision "<why the applied rules are unchanged>"
+//   node tests/mwg-artefact.mjs update --accept-legacy-split "<why the recorded rules are still the intended ones>"
 //
 // Exit codes:
 //    0: Success (exact match on verify, successful compute, successful update).
 //    1: Failure (verify mismatch, unreadable/unparseable files, missing or invalid
 //       catalogSha256/guideIdsSha256/guideCount in state). Fail-closed: never
 //       exits 0 when it cannot verify.
+//    4: LEGACY-UNVERIFIED (verify only, its own condition: not a pass and not a hard failure).
+//       The state carries no usable rulesSha256/basisSha256 digest pair, so the applied-rules axis
+//       cannot be SPLIT-verified - the RULES and their quoted EVIDENCE cannot be told apart - which
+//       is the only thing that makes a same-version evidence-only re-record assertable (web-uplift-7bld,
+//       p71b). State recorded before that split is therefore exempt from the check unless it is migrated
+//       deliberately: `update --accept-legacy-split "<reason>"`, which is refused when the combined
+//       ruleBasisSha256 has moved since the state was recorded (web-uplift-nlem).
 //   64: Usage error (unknown command, invalid argument count).
 //
 // Set identity: alongside catalogSha256 the artefact carries guideIdsSha256
@@ -213,16 +222,27 @@ if (isDirectRun) {
   // revision that leaves appliedRulesVersion alone is refused by default - see the guard below - because it is
   // indistinguishable from the missed bump s52q exists to catch. This flag is how a caller says, in words that
   // are recorded in the state file, that the rules themselves did not change.
-  const revisionFlagAt = args.indexOf('--accept-rules-revision');
-  const revisionReason = revisionFlagAt === -1 ? null : (args[revisionFlagAt + 1] ?? '');
-  const commandArgs = revisionFlagAt === -1 ? args : args.filter((_, i) => i !== revisionFlagAt && i !== revisionFlagAt + 1);
+  //
+  // web-uplift-nlem: --accept-legacy-split is the same kind of request for state recorded BEFORE the split
+  // existed: it asks to establish rulesSha256/basisSha256 on an artefact whose only evidence is the combined
+  // ruleBasisSha256. Both flags are verified, never trusted (see the guards below).
+  const takeFlag = (name) => {
+    const at = args.indexOf(name);
+    if (at === -1) return null;
+    const value = args[at + 1] ?? '';
+    args.splice(at, 2);
+    return value;
+  };
+  const revisionReason = takeFlag('--accept-rules-revision');
+  const legacyReason = takeFlag('--accept-legacy-split');
+  const commandArgs = args;
   if (commandArgs.length !== 1) {
     console.error(`FAIL: expected exactly one command (compute|verify|update), got ${commandArgs.length} arguments`);
     console.error(
       'Usage:\n' +
       '  node tests/mwg-artefact.mjs compute\n' +
       '  node tests/mwg-artefact.mjs verify\n' +
-      '  node tests/mwg-artefact.mjs update [--accept-rules-revision "<why the applied rules are unchanged>"]'
+      '  node tests/mwg-artefact.mjs update [--accept-rules-revision "<why the applied rules are unchanged>"] [--accept-legacy-split "<why the recorded rules are still the intended ones>"]'
     );
     process.exit(64);
   }
@@ -236,6 +256,10 @@ if (isDirectRun) {
       '  node tests/mwg-artefact.mjs verify\n' +
       '  node tests/mwg-artefact.mjs update'
     );
+    process.exit(64);
+  }
+  if (command !== 'update' && (revisionReason !== null || legacyReason !== null)) {
+    console.error('FAIL: --accept-rules-revision and --accept-legacy-split only apply to update; verify and compute never record anything');
     process.exit(64);
   }
 
@@ -310,6 +334,31 @@ if (isDirectRun) {
       process.exit(1);
     }
 
+    // THE SPLIT MUST BIND ON RECORDED STATE, not only on state written after it (web-uplift-nlem). A state
+    // recorded before 7bld carries the combined ruleBasisSha256 and NEITHER split digest, so it used to verify
+    // green through the old single-hash path while the check that makes a same-version evidence-only re-record
+    // assertable simply did not run - the p71b escape hatch, one layer down: an artefact is exempt from the
+    // check introduced to make its own claim true. It is a DISTINCT condition rather than a plain failure
+    // because nothing is known to be wrong with the artefact; what is known is that it cannot be split-verified
+    // until someone migrates it deliberately, so a gate must be able to tell it apart from both a pass and a
+    // mismatch (exit 4, the repository's convention for its own condition, as the drift check uses for
+    // anchor-broken).
+    const missingSplit = [
+      ['rulesSha256', state.rulesSha256],
+      ['basisSha256', state.basisSha256],
+    ].filter(([, value]) => typeof value !== 'string' || !SHA256_PATTERN.test(value));
+    if (missingSplit.length > 0) {
+      for (const [field, value] of missingSplit) {
+        console.error(
+          `LEGACY-UNVERIFIED: state file at ${statePath} has missing or invalid ${field} (got ${JSON.stringify(value ?? null)}), so the applied-rules axis cannot be SPLIT-verified: whether the RULES moved or only their quoted EVIDENCE did cannot be told apart (web-uplift-nlem)`
+        );
+      }
+      console.error(
+        'This artefact was recorded before the two-digest split (web-uplift-7bld/p71b), so the check that exists to make an evidence-only re-record assertable does not apply to it. MIGRATE it deliberately: `node tests/mwg-artefact.mjs update --accept-legacy-split "<why the recorded rules are still the intended ones>"`, which is refused if the combined ruleBasisSha256 has moved since the state was recorded (in that case bump appliedRulesVersion and re-record through the reviewed path). Otherwise treat this artefact as unverified on purpose and keep it out of a gate. Exiting 4: not a pass, and not a mismatch.'
+      );
+      process.exit(4);
+    }
+
     const catalog = readCatalogFile(catalogPath);
     const computed = computeSha256(catalog);
     const ids = computeGuideIds(catalog);
@@ -332,6 +381,20 @@ if (isDirectRun) {
     if (rules.ruleBasisSha256 !== state.ruleBasisSha256) {
       mismatches.push(
         `ruleBasisSha256 mismatch (state: ${state.ruleBasisSha256}, computed: ${rules.ruleBasisSha256}): the APPLIED RULES changed and were not re-recorded. If the version should move, bump appliedRulesVersion in knowledge/mwg-state.json, make knowledge/mwg-rule-basis.json and knowledge/principles.json agree, and run update; if it should not, revert the rules edit`
+      );
+    }
+    // The split digests are checked HERE, one axis at a time, not just written by update: a state that carries
+    // them and is never compared against them would leave the split decorative in the very command whose job is
+    // verification (web-uplift-nlem). Each mismatch names the axis, which is the property the split was
+    // introduced for - "the quoted evidence moved" and "the rule changed" are different repairs.
+    if (rules.rulesSha256 !== state.rulesSha256) {
+      mismatches.push(
+        `rulesSha256 mismatch (state: ${state.rulesSha256}, computed: ${rules.rulesSha256}): the RULES changed (an id, guide, where, or the applied principles), not just their quoted evidence. Re-record deliberately with a bumped appliedRulesVersion, or revert the rule edit`
+      );
+    }
+    if (rules.basisSha256 !== state.basisSha256) {
+      mismatches.push(
+        `basisSha256 mismatch (state: ${state.basisSha256}, computed: ${rules.basisSha256}): the quoted EVIDENCE moved while the RULES did not. That is legitimate only as a recorded re-record: node tests/mwg-artefact.mjs update --accept-rules-revision "<why the applied rules are unchanged>"`
       );
     }
     if (mismatches.length > 0) {
@@ -378,6 +441,42 @@ if (isDirectRun) {
       process.exit(1);
     }
     const rulesRevisionUnderSameVersion = previousRulesSha !== rules.ruleBasisSha256 && state.appliedRulesVersion === rules.catalogueVersion;
+    // web-uplift-nlem: a state recorded before the split must not have its split digests RESTORED by a plain
+    // update - that is the silent establishment of a claim, which is exactly what p71b refused for the flag.
+    // The migration is a separate, recorded act, and it is only provable in one case: the combined digest the
+    // state already carries still equals the computed one, which proves NEITHER axis moved since the artefact
+    // was recorded. If it moved, no amount of reason text can say which axis moved, so the artefact has to be
+    // re-recorded through the reviewed path (a deliberate appliedRulesVersion bump) instead.
+    const migratesLegacySplit = typeof state.rulesSha256 !== 'string' || !SHA256_PATTERN.test(state.rulesSha256) ||
+      typeof state.basisSha256 !== 'string' || !SHA256_PATTERN.test(state.basisSha256);
+    if (migratesLegacySplit) {
+      if (legacyReason === null) {
+        console.error(
+          `FAIL: knowledge/mwg-state.json at ${statePath} carries no usable rulesSha256/basisSha256, so the applied-rules axis cannot be split-verified (web-uplift-nlem). Refusing to establish the split digests as a side effect of update: that would record a claim nobody verified. Re-run with --accept-legacy-split "<why the recorded rules are still the intended ones>" to migrate it deliberately, or bump appliedRulesVersion and re-record through the reviewed path`
+        );
+        process.exit(1);
+      }
+      if (legacyReason.trim() === '') {
+        console.error('FAIL: --accept-legacy-split needs a non-empty reason: it is recorded in the state file as the justification for establishing the split digests on an artefact that predates them (web-uplift-nlem)');
+        process.exit(1);
+      }
+      if (previousRulesSha !== rules.ruleBasisSha256) {
+        console.error(
+          `FAIL: refusing --accept-legacy-split. The split digests can only be established when the combined digest proves that NEITHER axis moved since this artefact was recorded, and it did move: state.ruleBasisSha256=${JSON.stringify(previousRulesSha)} computed=${JSON.stringify(rules.ruleBasisSha256)}. Which axis moved cannot be recovered from the single hash, so this artefact has to be re-recorded through the reviewed path - bump appliedRulesVersion deliberately in knowledge/mwg-state.json AND knowledge/mwg-rule-basis.json AND knowledge/principles.json, or revert the rules edit (web-uplift-nlem)`
+        );
+        process.exit(1);
+      }
+      state.lastLegacySplitAcceptance = {
+        at: new Date().toISOString(),
+        fromRuleBasisSha256: previousRulesSha,
+        rulesSha256: rules.rulesSha256,
+        basisSha256: rules.basisSha256,
+        reason: legacyReason.trim(),
+      };
+    } else if (legacyReason !== null) {
+      console.error('FAIL: --accept-legacy-split was given but this state already carries the split digests; the flag exists only to establish them on an artefact recorded before web-uplift-7bld (web-uplift-nlem)');
+      process.exit(1);
+    }
     // DERIVED, NOT TRUSTED (web-uplift-p71b). --accept-rules-revision is not a permission: it is a request the
     // tool then verifies. A re-record is allowed only if the RULE digest is provably unchanged and only the
     // ANCHOR digest moved, which is the one thing the flag claims. A rewritten rule summary moves rulesSha256,
@@ -433,7 +532,14 @@ if (isDirectRun) {
       process.exit(1);
     }
 
-    console.log(`OK: updated catalogSha256, guideIdsSha256, guideCount and the applied-rules axis (appliedRulesVersion ${rules.catalogueVersion}, ruleBasisSha256 ${rules.ruleBasisSha256}) in ${statePath}`);
+    console.log(
+      `OK: updated catalogSha256, guideIdsSha256, guideCount and the applied-rules axis (appliedRulesVersion ${rules.catalogueVersion}, ruleBasisSha256 ${rules.ruleBasisSha256}) in ${statePath}`
+    );
+    if (migratesLegacySplit) {
+      console.log(
+        `MIGRATED: this state predated the rules/evidence digest split, and the combined ruleBasisSha256 was unchanged, so neither axis had moved. Established rulesSha256 and basisSha256 and recorded the acceptance (and its reason) as lastLegacySplitAcceptance (web-uplift-nlem)`
+      );
+    }
     process.exit(0);
   }
 }

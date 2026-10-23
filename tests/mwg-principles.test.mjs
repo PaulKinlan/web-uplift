@@ -1504,6 +1504,120 @@ export function testMwgArtefactGuard() {
     });
     assert(bad.status === 1, `mwg-artefact: case 11 (declared guideIdsSha256 wrong) must exit 1, got ${bad.status}`);
   }
+
+  // 12. web-uplift-nlem: a state recorded BEFORE the rules/evidence digest split must not verify green. It
+  // carries the combined ruleBasisSha256 and NEITHER split digest, so before this bead verify exited 0 through
+  // the old single-hash path and the split - the check introduced to make a same-version evidence-only
+  // re-record assertable - simply did not run on it (p71b's escape hatch, one layer down). Exit 4 is its OWN
+  // condition: not a pass, and not a mismatch, so a gate can tell "cannot be split-verified" from "verified"
+  // and from "wrong".
+  const legacyStatePath = (name) => {
+    const path = join(tmp, name);
+    const legacy = JSON.parse(readFileSync(committedState, 'utf8'));
+    delete legacy.rulesSha256;
+    delete legacy.basisSha256;
+    writeFileSync(path, JSON.stringify(legacy, null, 2) + '\n', 'utf8');
+    return path;
+  };
+  {
+    const legacyState = legacyStatePath('mwg-artefact-legacy-state.json');
+    const res = runArtefact(['verify'], { MWG_DRIFT_STATE: legacyState, MWG_DRIFT_CATALOG: committedCatalog });
+    assert(res.status === 4, `mwg-artefact: case 12 (state with no split digests) must exit 4, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/LEGACY-UNVERIFIED/.test(res.stderr), `mwg-artefact: case 12 must name the legacy condition: ${res.stderr}`);
+    assert(
+      res.stderr.includes('rulesSha256') && res.stderr.includes('basisSha256'),
+      `mwg-artefact: case 12 must name both missing split digests: ${res.stderr}`
+    );
+    assert(/--accept-legacy-split/.test(res.stderr), `mwg-artefact: case 12 must name the migration command: ${res.stderr}`);
+    assert(!/^OK:/m.test(res.stdout), `mwg-artefact: case 12 must not report OK for a state it could not split-verify: ${res.stdout}`);
+  }
+
+  // 13. update must not ESTABLISH the split digests as a side effect: that records a claim nobody verified,
+  // which is exactly what p71b refused for the --accept-rules-revision flag. Without the migration flag it
+  // refuses and writes nothing.
+  {
+    const path = legacyStatePath('mwg-artefact-legacy-update.json');
+    const res = runArtefact(['update'], { MWG_DRIFT_STATE: path, MWG_DRIFT_CATALOG: committedCatalog });
+    assert(res.status === 1, `mwg-artefact: case 13 (plain update on a legacy state) must refuse, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/--accept-legacy-split/.test(res.stderr), `mwg-artefact: case 13 must name the migration flag: ${res.stderr}`);
+    const after = JSON.parse(readFileSync(path, 'utf8'));
+    assert(
+      after.rulesSha256 === undefined && after.basisSha256 === undefined,
+      `mwg-artefact: case 13 must not write the split digests it refused to establish, got ${JSON.stringify({ rules: after.rulesSha256, basis: after.basisSha256 })}`
+    );
+  }
+
+  // 14. the migration path, and the defined story for pre-split artefacts: the combined digest is unchanged, so
+  // NEITHER axis moved since the artefact was recorded; with the reason recorded the state is migrated, the
+  // acceptance and its reason are in the state file, and verify then passes on that same copy.
+  {
+    const path = legacyStatePath('mwg-artefact-legacy-migrate.json');
+    const res = runArtefact(['update', '--accept-legacy-split', 'mwg-artefact case 14: the recorded rules are the ones this tree applies'], {
+      MWG_DRIFT_STATE: path,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(res.status === 0, `mwg-artefact: case 14 (migration with an unchanged combined digest) must succeed, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/MIGRATED/.test(res.stdout), `mwg-artefact: case 14 must say it migrated: ${res.stdout}`);
+    const migrated = JSON.parse(readFileSync(path, 'utf8'));
+    const committed = JSON.parse(readFileSync(committedState, 'utf8'));
+    assert(
+      migrated.rulesSha256 === committed.rulesSha256 && migrated.basisSha256 === committed.basisSha256,
+      'mwg-artefact: case 14 must establish the digests the tree computes, not an invented pair'
+    );
+    assert(
+      migrated.lastLegacySplitAcceptance && migrated.lastLegacySplitAcceptance.reason.includes('case 14'),
+      `mwg-artefact: case 14 must record the acceptance and its reason, got ${JSON.stringify(migrated.lastLegacySplitAcceptance)}`
+    );
+    const after = runArtefact(['verify'], { MWG_DRIFT_STATE: path, MWG_DRIFT_CATALOG: committedCatalog });
+    assert(after.status === 0, `mwg-artefact: case 14 verify after migration must exit 0, got ${after.status}:\n${after.stderr || after.stdout}`);
+  }
+
+  // 15. the migration is only provable while the combined digest stands still. If it moved, the single hash
+  // cannot say WHICH axis moved, so the reason string cannot make the artrefact safe and the artefact has to be
+  // re-recorded through the reviewed path (a deliberate appliedRulesVersion bump).
+  {
+    const path = legacyStatePath('mwg-artefact-legacy-moved.json');
+    const moved = JSON.parse(readFileSync(path, 'utf8'));
+    moved.ruleBasisSha256 = 'f'.repeat(64);
+    writeFileSync(path, JSON.stringify(moved, null, 2) + '\n', 'utf8');
+    const res = runArtefact(['update', '--accept-legacy-split', 'mwg-artefact case 15: trust me'], {
+      MWG_DRIFT_STATE: path,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(res.status === 1, `mwg-artefact: case 15 (migration after the combined digest moved) must refuse, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(/refusing --accept-legacy-split/.test(res.stderr), `mwg-artefact: case 15 must name the refusal: ${res.stderr}`);
+    assert(
+      res.stderr.includes('ruleBasisSha256') && /appliedRulesVersion/.test(res.stderr),
+      `mwg-artefact: case 15 must name the digest it compared and the reviewed path: ${res.stderr}`
+    );
+  }
+
+  // 16. the split digests must be CHECKED, not merely written: flipping one alone exits 1 and names that axis.
+  // Before this bead a flipped split digest was invisible whenever the combined digest still matched, which left
+  // the split decorative in the one command whose job is verification.
+  for (const [axis, field, otherField] of [
+    ['RULES', 'rulesSha256', 'basisSha256'],
+    ['EVIDENCE', 'basisSha256', 'rulesSha256'],
+  ]) {
+    const path = join(tmp, `mwg-artefact-split-flip-${field}.json`);
+    const flipped = JSON.parse(readFileSync(committedState, 'utf8'));
+    flipped[field] = (flipped[field][0] === 'a' ? 'b' : 'a') + flipped[field].slice(1);
+    writeFileSync(path, JSON.stringify(flipped, null, 2) + '\n', 'utf8');
+    const res = runArtefact(['verify'], { MWG_DRIFT_STATE: path, MWG_DRIFT_CATALOG: committedCatalog });
+    assert(res.status === 1, `mwg-artefact: case 16 (${field} flipped) must exit 1, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(
+      res.stderr.includes(`${field} mismatch`),
+      `mwg-artefact: case 16 (${field} flipped) must report the ${field} mismatch: ${res.stderr}`
+    );
+    assert(
+      res.stderr.includes(axis),
+      `mwg-artefact: case 16 (${field} flipped) must name the ${axis} axis, so the repair is readable: ${res.stderr}`
+    );
+    assert(
+      !res.stderr.includes(`${otherField} mismatch`),
+      `mwg-artefact: case 16 (${field} flipped) must not blame ${otherField}: ${res.stderr}`
+    );
+  }
 }
 
 
