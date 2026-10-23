@@ -1100,15 +1100,31 @@ export function testCommittedSiblingProbesAreInert() {
 // - while five sibling probes already imported '../../evidence/cdp.mjs', which is why this pins the shape the
 // tree already uses instead of inventing a convention.
 //
-// SCOPE: import POSITION only. The same absolute path is fine inside a comment or a recorded stdout log, and
-// those artefacts are left alone: they are a record of a past run, not a script anyone is meant to execute.
-// What is checked is the two properties a re-run needs - the specifier is not absolute, and a relative one
-// RESOLVES from the file's own directory to a real file inside this repository.
+// SCOPE: import POSITION only. The same absolute path is fine in a recorded stdout log, and those artefacts
+// are left alone: they are a record of a past run, not a script anyone is meant to execute. This is a text
+// scan, not a parser, so a COMMENT whose own text spells an import in import position is refused too; that
+// direction only ever costs a comment rewrite, never a false green. What is checked is the two properties a
+// re-run needs - the specifier is not absolute, and a relative one RESOLVES from the file's own directory to
+// a real file inside this repository.
 export function testCommittedEvidenceProbesImportByRelativePath() {
+  // web-uplift-xlar: the gap between a keyword and its specifier may hold COMMENTS, not only whitespace, and
+  // every such spelling is valid ECMAScript that `node --check` accepts: `import x from /* c */ './m.mjs'`,
+  // `from // c\n  './m.mjs'`, `import(/* c */ './m.mjs')`, `import /* c */ './m.mjs'`. The previous forms
+  // allowed `\s*` only, so an import written that way was never VISITED: a probe carrying the forbidden
+  // absolute lane path after `from /* c */` passed this sweep and then died with ERR_MODULE_NOT_FOUND at
+  // that path on any other clone. The gap is one shared fragment so the four spellings cannot drift apart
+  // again, the same way the method-key pattern is shared in testCommittedSiblingProbesAreInert (nz0l).
+  //
+  // NOT a whole-file comment stripper, deliberately: telling a comment from a `//` inside 'https://...' or
+  // /a|b/ needs a lexer that knows strings, template literals and regex literals apart, and blanking live
+  // code by mistake would make the sweep green by silence, which is the failure this guard exists to
+  // prevent. A gap that may only be whitespace or a comment cannot reach from a keyword into anything but
+  // its own specifier: the alternatives start on distinct characters and none of them matches a quote.
+  const GAP = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*)*`;
   const IMPORT_FORMS = [
-    /\bfrom\s*(['"])([^'"\r\n]+)\1/g, // import x from '...' / export { x } from '...'
-    /\bimport\s*\(\s*(['"])([^'"\r\n]+)\1/g, // dynamic import('...')
-    /(?:^|[^\w$.])import\s+(['"])([^'"\r\n]+)\1/g, // side-effect import '...'
+    new RegExp(String.raw`\bfrom${GAP}(['"])([^'"\r\n]+)\1`, 'g'), // import x from '...' / export { x } from '...'
+    new RegExp(String.raw`\bimport${GAP}\(${GAP}(['"])([^'"\r\n]+)\1`, 'g'), // dynamic import('...')
+    new RegExp(String.raw`(?:^|[^\w$.])import${GAP}(['"])([^'"\r\n]+)\1`, 'g'), // side-effect import '...'
   ];
   const specifiersIn = (text) => {
     const found = new Set();
@@ -1182,6 +1198,145 @@ export function testCommittedEvidenceProbesImportByRelativePath() {
     specifierProblem('node:fs', probeFile) === null,
     'a node: builtin is not a path and must not be refused',
   );
+
+  // web-uplift-xlar: comment-SEPARATED spellings. Each one is valid ECMAScript, so the specifier really is
+  // imported; the sweep has to visit it. The `\s*`-only gap visited none of them, which is how the mutant
+  // probe above passed this sweep and then failed at the absolute lane path on a fresh clone. The shapes are
+  // checked for validity HERE rather than assumed valid by a comment: a control that is not valid code would
+  // prove nothing about a guard whose subject is an executable import.
+  const commentSeparated = [
+    `import { gapA } from /* valid ECMAScript comment */ '${wasCommitted}';`,
+    `import { gapB } from // valid ECMAScript line comment\n  '${wasCommitted}';`,
+    `import/* before bindings */{ gapC } from/* gap */'${wasCommitted}';`,
+    `import(/* dynamic */ '${wasCommitted}');`,
+    `import /* side effect */ '${wasCommitted}';`,
+    `export { gapD } from /* re-export */ '${wasCommitted}';`,
+  ];
+  const validityFixture = join(tmp, 'import-gap-shapes.mjs');
+  writeFileSync(validityFixture, `${commentSeparated.join('\n')}\n`);
+  const validity = run(process.execPath, ['--check', validityFixture]);
+  assert(
+    validity.status === 0,
+    `the comment-separated controls must be VALID ECMAScript, or they are not imports this guard has to catch: ${validity.stderr}`,
+  );
+  for (const text of commentSeparated) {
+    const found = specifiersIn(text);
+    assert(
+      found.includes(wasCommitted),
+      `negative control: a comment between the keyword and its specifier must not hide the import; found ${JSON.stringify(found)} in ${JSON.stringify(text)} (web-uplift-xlar)`,
+    );
+    assert(
+      specifierProblem(wasCommitted, probeFile) !== null,
+      `negative control: the absolute specifier stays refused however the gap is spelled: ${JSON.stringify(text)}`,
+    );
+  }
+  // The other direction, so the gap cannot be "fixed" by refusing comment-separated imports wholesale: the
+  // relative convention the siblings use is still FOUND, and still accepted, when a comment separates it.
+  const relativeAfterComment = specifiersIn(
+    `import { launchChrome } from /* valid ECMAScript comment */ '../../evidence/cdp.mjs';`,
+  );
+  assert(
+    relativeAfterComment.includes('../../evidence/cdp.mjs') && specifierProblem(relativeAfterComment[0], probeFile) === null,
+    `the relative convention must still be found and accepted after a comment, found ${JSON.stringify(relativeAfterComment)}`,
+  );
+}
+
+// A committed probe exists so a reader can RE-RUN it. Its artefacts - result.json, screenshots - are committed
+// beside it as the RECORD of the run that was reviewed, so a replay must not write into that directory: it
+// would overwrite the record with today's Chrome and today's rendering, and the first thing the reader sees is
+// a dirty clone that reads as their own mistake (web-uplift-8arj). fb6-probe.mjs states the rule in its own
+// comment - "Screenshots stay outside the repository on purpose: the committed PNGs beside this probe are the
+// record of the original run, and a replay must not overwrite them with today's rendering" - with OUT =
+// '/tmp/fb6-evidence'. Two probes broke it by deriving their output directory from their own location:
+// evidence-out/omh-view-transition/omh-probe.mjs (observed: one replay left ' M .../result.json' on a clean
+// clone) and evidence-out/yh6-axis-labels/yh6-probe.mjs (latent: that probe exits 2 until its two fixture
+// pages exist, and this was the line that would have dirtied the tree on the first replay to reach it).
+//
+// WHAT THIS CATCHES, two shapes that both end in the same dirty clone: (1) an OUTPUT-NAMED constant derived
+// from the probe's OWN directory, and (2) a file-creating or file-writing call whose target names the repository
+// - an 'evidence-out/' literal or `repoRoot` (evidence-out/web-uplift-7tj/ab-probe.mjs wrote two COMMITTED JSON
+// records that way, web-uplift-k0ga). NOT CAUGHT, by construction and stated rather than implied away: a
+// directory assembled by string concatenation of import.meta.url, a path built through a helper whose name says
+// nothing about output, and a write through a variable assigned somewhere else. Catching those needs data flow,
+// not a text tripwire. One further limit worth naming: a write target of `new URL('./x.json', import.meta.url)`
+// is accepted here - the evidence-out/web-uplift-cpa scratch `manifest.mjs` generators write their committed
+// manifest that way on purpose, and they REGENERATE a file rather than record a run. The population and both
+// rules are named here so a green result cannot be read as more than it is.
+export function testCommittedEvidenceProbesWriteOutsideTheRepository() {
+  const OUTPUT_NAMED =
+    /^(?:OUT|OUTPUT|OUT_DIR|OUTPUT_DIR|ARTIFACTS?|ARTIFACT_DIR|SHOTS?|SHOT_DIR|SCREENSHOTS?|SCREENSHOT_DIR|EVIDENCE|EVIDENCE_DIR)$/;
+  const OWN_DIRECTORY = /new\s+URL\s*\(\s*(['"])\.\1\s*,\s*import\.meta\.url\s*\)/;
+  const WRITES = /\b(?:writeFileSync|appendFileSync|writeFile|createWriteStream|mkdirSync|mkdtempSync|copyFileSync|renameSync)\s*\(/g;
+  // The first argument slice: from the opener to the first comma or close paren on the same line. A nested call
+  // (join(repoRoot, ...)) is cut short at ITS first comma, which is enough for these rules because the token
+  // they look for is in the leading part.
+  const IN_REPOSITORY = /'evidence-out\/|"evidence-out\/|`evidence-out\/|\brepoRoot\b|'evidence-out'|"evidence-out"/;
+  const insideRepositoryWrites = (text) => {
+    const found = [];
+    // `const NAME = <rest of the line>`: the declaration, not the write call, because that is where the
+    // derivation happens and where the two probes carried it.
+    for (const m of text.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]*)/g)) {
+      if (OUTPUT_NAMED.test(m[1]) && OWN_DIRECTORY.test(m[2])) found.push(`${m[1]} = ${m[2].trim()}`);
+    }
+    for (const m of text.matchAll(WRITES)) {
+      const rest = text.slice(m.index + m[0].length);
+      const arg = rest.split(/\n/)[0].split(/[,)]/)[0];
+      if (IN_REPOSITORY.test(arg)) found.push(`${m[0].trim()}${arg.trim()}`);
+    }
+    return found;
+  };
+
+  const committed = run('git', ['ls-files', 'evidence-out/**/*.mjs', 'evidence-out/*.mjs']);
+  assert(committed.status === 0, `git ls-files failed: ${committed.stderr}`);
+  const probes = committed.stdout.split('\n').filter(Boolean).sort();
+  assert(probes.length > 0, 'the sweep must find the committed probes, or passing says nothing');
+  // Non-vacuity by name: every probe these rules were measured on, plus the one that already stated it correctly.
+  for (const known of [
+    'evidence-out/omh-view-transition/omh-probe.mjs',
+    'evidence-out/yh6-axis-labels/yh6-probe.mjs',
+    'evidence-out/fb6-stuck/fb6-probe.mjs',
+    'evidence-out/web-uplift-7tj/ab-probe.mjs',
+  ]) {
+    assert(probes.includes(known), `the sweep must cover the probe this rule is built on: ${known}`);
+  }
+  const offenders = [];
+  for (const rel of probes) {
+    for (const found of insideRepositoryWrites(readFileSync(join(repoRoot, rel), 'utf8'))) {
+      offenders.push(`${rel}: ${found}`);
+    }
+  }
+  assert(
+    offenders.length === 0,
+    `a committed probe must write its artefacts OUTSIDE the repository, or a replay overwrites the committed record it sits beside and dirties the reader's clone (web-uplift-8arj, web-uplift-k0ga). Point the output directory at /tmp the way fb6-probe.mjs does: ${offenders.join('; ')}`,
+  );
+
+  // Negative controls: the exact lines the two beads fixed must be REFUSED, and the neighbouring shapes that are
+  // legitimately about the probe's own directory - the PAGE it drives, and the /tmp output fb6 uses - must be
+  // ACCEPTED, so a detector that simply refused every import.meta.url or every write would fail here.
+  assert(
+    insideRepositoryWrites("const OUT = new URL('.', import.meta.url).pathname.replace(/\\/$/, '');").length === 1,
+    'negative control: an output directory derived from the probe own directory must be refused',
+  );
+  assert(
+    insideRepositoryWrites("writeFileSync('evidence-out/web-uplift-7tj/ab-old-allowlist.json', body);").length === 1,
+    'negative control: a repo-relative artefact LITERAL must be refused (web-uplift-k0ga)',
+  );
+  assert(
+    insideRepositoryWrites("mkdirSync(join(repoRoot, 'evidence-out/web-uplift-7tj'), { recursive: true });").length === 1,
+    'negative control: a directory under repoRoot must be refused (web-uplift-k0ga)',
+  );
+  assert(
+    insideRepositoryWrites("const OUT = '/tmp/fb6-evidence';\nwriteFileSync(`${OUT}/${name}`, bytes);").length === 0,
+    'the /tmp output directory this rule asks for must be accepted',
+  );
+  assert(
+    insideRepositoryWrites("const URL_ = new URL('./fb6-scorecard.html', import.meta.url).href;").length === 0,
+    'the PAGE a probe drives is not an output path: addressing it relative to the probe must stay accepted',
+  );
+  assert(
+    insideRepositoryWrites("const HERE = new URL('.', import.meta.url);").length === 0,
+    'a directory constant not named like an output is outside this tripwire stated reach, and pinning that keeps the limit honest',
+  );
 }
 
 
@@ -1212,6 +1367,7 @@ export const chromeCdpTests = [
   testCommittedProbeIsInert,
   testCommittedSiblingProbesAreInert,
   testCommittedEvidenceProbesImportByRelativePath,
+  testCommittedEvidenceProbesWriteOutsideTheRepository,
 ];
 
 export {

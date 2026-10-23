@@ -46,7 +46,12 @@ await new Promise((resolve, reject) => {
   server.listen(0, '127.0.0.1', resolve);
 });
 const URL_ = `http://127.0.0.1:${server.address().port}/`;
-const OUT = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+// Output stays OUTSIDE the repository, which is the rule fb6-probe.mjs states and this probe used to break: the
+// committed result.json and the six PNGs beside it are the RECORD of the run that was reviewed, so a replay
+// must not overwrite them with today's rendering. Measured on a clean clone: pointing OUT at this probe's own
+// directory left ' M evidence-out/omh-view-transition/result.json' after one replay, which reads to the next
+// reader as their own mistake rather than as the probe's (web-uplift-8arj).
+const OUT = '/tmp/omh-evidence';
 mkdirSync(OUT, { recursive: true });
 const log = (m) => console.log(m);
 const results = { url: URL_, checks: {} };

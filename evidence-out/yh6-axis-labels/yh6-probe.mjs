@@ -40,7 +40,12 @@ const VIEWPORTS = [
   { label: 'narrow', width: 400, height: 900 },
 ];
 const FLOOR_PX = 12; // the bead's ask; every other scorecard text size is >= 0.7rem (~11.2px)
-const OUT = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+// Output stays OUTSIDE the repository, the same rule fb6-probe.mjs states and this probe broke by deriving its
+// output directory from its own location: the committed result.json and the PNGs beside it are the record of
+// the run that was reviewed, and a replay must not overwrite them with today's rendering (web-uplift-8arj).
+// Latent here rather than observed: the probe exits 2 above until its two fixture pages exist, and they would
+// have made this line dirty the tree on the first replay that reached it.
+const OUT = '/tmp/yh6-evidence';
 mkdirSync(OUT, { recursive: true });
 const log = (m) => console.log(m);
 const results = { floorPx: FLOOR_PX, measurements: [], checks: {} };
