@@ -443,16 +443,26 @@ if (isDirectRun) {
     const rulesRevisionUnderSameVersion = previousRulesSha !== rules.ruleBasisSha256 && state.appliedRulesVersion === rules.catalogueVersion;
     // web-uplift-nlem: a state recorded before the split must not have its split digests RESTORED by a plain
     // update - that is the silent establishment of a claim, which is exactly what p71b refused for the flag.
-    // The migration is a separate, recorded act, and it is only provable in one case: the combined digest the
-    // state already carries still equals the computed one, which proves NEITHER axis moved since the artefact
-    // was recorded. If it moved, no amount of reason text can say which axis moved, so the artefact has to be
-    // re-recorded through the reviewed path (a deliberate appliedRulesVersion bump) instead.
+    // The migration is a separate, recorded act with THREE distinguishable outcomes (web-uplift-6ls5, the
+    // review finding on this branch: my first cut refused the changed-basis case and offered no way forward, so
+    // an operator with a legacy artefact whose axis had moved was STRANDED - worse than the silent exit 0):
+    //   1. legacy + combined digest unchanged -> BACKFILL. The single hash still matches, which proves neither
+    //      axis moved since the artefact was recorded, so establishing the pair asserts nothing new.
+    //   2. legacy + appliedRulesVersion moved    -> VERSION-BUMP RE-RECORD. The axis genuinely changed under a
+    //      version the operator moved deliberately, so the honest record is the NEW version's digests; the
+    //      acceptance, both versions and the reason are stored. This is the reachable exit 6ls5 asked for.
+    //   3. legacy + same version + digest moved  -> REFUSE. That is s52q's missed bump and the single hash
+    //      cannot say which axis moved, so the caller is told exactly how to move the version (see below).
+    // Both accepted routes require the flag and a reason; silence is never a route.
     const migratesLegacySplit = typeof state.rulesSha256 !== 'string' || !SHA256_PATTERN.test(state.rulesSha256) ||
       typeof state.basisSha256 !== 'string' || !SHA256_PATTERN.test(state.basisSha256);
+    let legacyRoute = null;
     if (migratesLegacySplit) {
+      const versionMoved = state.appliedRulesVersion !== rules.catalogueVersion;
+      const digestUnchanged = previousRulesSha === rules.ruleBasisSha256;
       if (legacyReason === null) {
         console.error(
-          `FAIL: knowledge/mwg-state.json at ${statePath} carries no usable rulesSha256/basisSha256, so the applied-rules axis cannot be split-verified (web-uplift-nlem). Refusing to establish the split digests as a side effect of update: that would record a claim nobody verified. Re-run with --accept-legacy-split "<why the recorded rules are still the intended ones>" to migrate it deliberately, or bump appliedRulesVersion and re-record through the reviewed path`
+          `FAIL: knowledge/mwg-state.json at ${statePath} carries no usable rulesSha256/basisSha256, so the applied-rules axis cannot be split-verified (web-uplift-nlem). Refusing to establish the split digests as a side effect of update: that would record a claim nobody verified. Two deliberate routes, both taking --accept-legacy-split "<reason>": (1) if the combined ruleBasisSha256 still matches (nothing moved since recording) it backfills the pair; (2) if the applied-rules version moved, it records the NEW version's digests. If neither holds, move the version first (see the refusal below)`
         );
         process.exit(1);
       }
@@ -460,14 +470,23 @@ if (isDirectRun) {
         console.error('FAIL: --accept-legacy-split needs a non-empty reason: it is recorded in the state file as the justification for establishing the split digests on an artefact that predates them (web-uplift-nlem)');
         process.exit(1);
       }
-      if (previousRulesSha !== rules.ruleBasisSha256) {
+      if (!versionMoved && !digestUnchanged) {
         console.error(
-          `FAIL: refusing --accept-legacy-split. The split digests can only be established when the combined digest proves that NEITHER axis moved since this artefact was recorded, and it did move: state.ruleBasisSha256=${JSON.stringify(previousRulesSha)} computed=${JSON.stringify(rules.ruleBasisSha256)}. Which axis moved cannot be recovered from the single hash, so this artefact has to be re-recorded through the reviewed path - bump appliedRulesVersion deliberately in knowledge/mwg-state.json AND knowledge/mwg-rule-basis.json AND knowledge/principles.json, or revert the rules edit (web-uplift-nlem)`
+          `FAIL: refusing --accept-legacy-split. This artefact predates the split and the applied-rules axis has moved under an UNCHANGED version: state.ruleBasisSha256=${JSON.stringify(previousRulesSha)} computed=${JSON.stringify(rules.ruleBasisSha256)} at appliedRulesVersion ${JSON.stringify(state.appliedRulesVersion)}. A single hash cannot say whether the RULES or only their EVIDENCE moved, so this is the missed bump (web-uplift-s52q) and no reason string can make it safe. MOVE THE VERSION and re-run: bump catalogueVersion in knowledge/mwg-rule-basis.json (and keep knowledge/principles.json in step), then re-run this update with the same flag - update writes the rule basis's catalogueVersion into the state for you, and the version-bump route then establishes the new digests. If the rules did not genuinely change, revert the edit instead (web-uplift-nlem, web-uplift-6ls5)`
         );
         process.exit(1);
       }
+      // Reached when the operator is entitled to record: either nothing moved (backfill), or the version moved
+      // deliberately (version-bump). A version that moved BACKWARDS lands here too, which is intentional and
+      // matches how update already treats a non-legacy state whose recorded version lags the rules': the tool
+      // records the applied rules' version rather than arbitrating which one is newer, and the edit is a git
+      // diff someone reviews.
+      legacyRoute = versionMoved ? 'version-bump' : 'backfill';
       state.lastLegacySplitAcceptance = {
         at: new Date().toISOString(),
+        route: legacyRoute,
+        fromAppliedRulesVersion: state.appliedRulesVersion,
+        toAppliedRulesVersion: rules.catalogueVersion,
         fromRuleBasisSha256: previousRulesSha,
         rulesSha256: rules.rulesSha256,
         basisSha256: rules.basisSha256,
@@ -535,9 +554,13 @@ if (isDirectRun) {
     console.log(
       `OK: updated catalogSha256, guideIdsSha256, guideCount and the applied-rules axis (appliedRulesVersion ${rules.catalogueVersion}, ruleBasisSha256 ${rules.ruleBasisSha256}) in ${statePath}`
     );
-    if (migratesLegacySplit) {
+    if (legacyRoute === 'backfill') {
       console.log(
         `MIGRATED: this state predated the rules/evidence digest split, and the combined ruleBasisSha256 was unchanged, so neither axis had moved. Established rulesSha256 and basisSha256 and recorded the acceptance (and its reason) as lastLegacySplitAcceptance (web-uplift-nlem)`
+      );
+    } else if (legacyRoute === 'version-bump') {
+      console.log(
+        `MIGRATED: this state predated the split and its applied-rules version moved (${state.lastLegacySplitAcceptance.fromAppliedRulesVersion} -> ${rules.catalogueVersion}), so the axis genuinely changed and the NEW version's digests are recorded. The acceptance, both versions and the reason are stored as lastLegacySplitAcceptance (web-uplift-nlem, web-uplift-6ls5)`
       );
     }
     process.exit(0);

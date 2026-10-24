@@ -17,6 +17,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { CANONICALISATION_RULE, computeSha256 } from './mwg-artefact.mjs';
+
+const SHA256 = /^[0-9a-f]{64}$/;
 import { basisAnchorViolations, guidesFromTree } from './mwg-basis.mjs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -1590,6 +1592,12 @@ export function testMwgArtefactGuard() {
       res.stderr.includes('ruleBasisSha256') && /appliedRulesVersion/.test(res.stderr),
       `mwg-artefact: case 15 must name the digest it compared and the reviewed path: ${res.stderr}`
     );
+    // web-uplift-6ls5: refusing is not enough - the message has to name a route that actually WORKS, because a
+    // refusal with an unreachable exit strands the operator worse than the silent pass this bead removed.
+    assert(
+      /catalogueVersion/.test(res.stderr) && /mwg-rule-basis\.json/.test(res.stderr),
+      `mwg-artefact: case 15 must name the concrete bump route (catalogueVersion in knowledge/mwg-rule-basis.json): ${res.stderr}`
+    );
   }
 
   // 16. the split digests must be CHECKED, not merely written: flipping one alone exits 1 and names that axis.
@@ -1616,6 +1624,111 @@ export function testMwgArtefactGuard() {
     assert(
       !res.stderr.includes(`${otherField} mismatch`),
       `mwg-artefact: case 16 (${field} flipped) must not blame ${otherField}: ${res.stderr}`
+    );
+  }
+
+  // 17. web-uplift-6ls5, the review finding on this branch: the version-bump route has to be REACHABLE on
+  // legacy state, and the test has to prove a SUCCESSFUL re-record, not just a clearer error. A legacy artefact
+  // whose applied-rules axis genuinely changed under a moved version is exactly the case the operator could not
+  // get out of before: the backfill (correctly) refuses because the combined digest moved, and nothing else
+  // existed - a documented path nobody could walk is worse than the silent pass it replaced. Two throwaway
+  // copies stand in for the reviewed edits: the state keeps its OLD recorded combined digest and version, and
+  // the rule basis carries a moved rule under a new catalogueVersion. update must record that new version and
+  // its two digests, and verify must then pass against the same sources - a real round trip, not a message.
+  {
+    const statePath = join(tmp, 'mwg-artefact-legacy-bump-state.json');
+    const legacy = JSON.parse(readFileSync(committedState, 'utf8'));
+    const oldVersion = legacy.appliedRulesVersion;
+    const oldCombined = legacy.ruleBasisSha256;
+    delete legacy.rulesSha256;
+    delete legacy.basisSha256;
+    legacy.ruleBasisSha256 = 'f'.repeat(64); // the axis genuinely moved since this artefact was recorded
+    writeFileSync(statePath, JSON.stringify(legacy, null, 2) + '\n', 'utf8');
+    const bumpedBasis = join(tmp, 'mwg-artefact-legacy-bump-basis.json');
+    const basis = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-rule-basis.json'), 'utf8'));
+    const newVersion = `${basis.catalogueVersion}-reviewed-bump`;
+    basis.catalogueVersion = newVersion;
+    basis.rules[0].where = 'reviewed: this rule was re-worded in the version bump the operator moved';
+    writeFileSync(bumpedBasis, JSON.stringify(basis, null, 2) + '\n', 'utf8');
+
+    const res = runArtefact(['update', '--accept-legacy-split', 'mwg-artefact case 17: reviewed bump, rule re-worded'], {
+      MWG_DRIFT_STATE: statePath,
+      MWG_RULE_BASIS: bumpedBasis,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(
+      res.status === 0,
+      `mwg-artefact: case 17 (version-bump re-record on legacy state) must SUCCEED, got ${res.status}:\n${res.stderr || res.stdout}`
+    );
+    const recorded = JSON.parse(readFileSync(statePath, 'utf8'));
+    assert(
+      recorded.appliedRulesVersion === newVersion,
+      `mwg-artefact: case 17 must record the moved version, got ${JSON.stringify(recorded.appliedRulesVersion)} (old ${oldVersion})`
+    );
+    assert(
+      typeof recorded.rulesSha256 === 'string' && SHA256.test(recorded.rulesSha256) &&
+        typeof recorded.basisSha256 === 'string' && SHA256.test(recorded.basisSha256),
+      'mwg-artefact: case 17 must establish both split digests'
+    );
+    const acceptance = recorded.lastLegacySplitAcceptance;
+    assert(
+      acceptance && acceptance.route === 'version-bump',
+      `mwg-artefact: case 17 must record WHICH route was taken, got ${JSON.stringify(acceptance && acceptance.route)}`
+    );
+    assert(
+      acceptance.fromAppliedRulesVersion === oldVersion && acceptance.toAppliedRulesVersion === newVersion &&
+        acceptance.fromRuleBasisSha256 === 'f'.repeat(64) &&
+        acceptance.reason.includes('case 17'),
+      `mwg-artefact: case 17 must record both versions, the digest it replaced and the reason, got ${JSON.stringify(acceptance)}`
+    );
+    assert(
+      acceptance.rulesSha256 === recorded.rulesSha256 && acceptance.basisSha256 === recorded.basisSha256,
+      'mwg-artefact: case 17 must record the digests it established, not a copy of something else'
+    );
+    // The round trip: the re-recorded artefact must now verify against the sources it was recorded from. This is
+    // the reviewer's acceptance - a SUCCESSFUL re-record, not a better error message.
+    const verified = runArtefact(['verify'], {
+      MWG_DRIFT_STATE: statePath,
+      MWG_RULE_BASIS: bumpedBasis,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(
+      verified.status === 0,
+      `mwg-artefact: case 17 verify after the bump re-record must exit 0, got ${verified.status}:\n${verified.stderr || verified.stdout}`
+    );
+    assert(
+      oldCombined !== recorded.ruleBasisSha256,
+      'mwg-artefact: case 17 is only meaningful if the combined digest actually moved'
+    );
+  }
+
+  // 18. the version-bump route is still a DELIBERATE act: without the flag nothing is established, and the
+  // refusal names BOTH reachable routes, so an operator can choose. (Pre-fix, this call silently backfilled.)
+  {
+    const statePath = join(tmp, 'mwg-artefact-legacy-bump-noflag.json');
+    const legacy = JSON.parse(readFileSync(committedState, 'utf8'));
+    delete legacy.rulesSha256;
+    delete legacy.basisSha256;
+    legacy.ruleBasisSha256 = 'f'.repeat(64);
+    writeFileSync(statePath, JSON.stringify(legacy, null, 2) + '\n', 'utf8');
+    const bumpedBasis = join(tmp, 'mwg-artefact-legacy-bump-noflag-basis.json');
+    const basis = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-rule-basis.json'), 'utf8'));
+    basis.catalogueVersion = `${basis.catalogueVersion}-reviewed-bump`;
+    writeFileSync(bumpedBasis, JSON.stringify(basis, null, 2) + '\n', 'utf8');
+    const res = runArtefact(['update'], {
+      MWG_DRIFT_STATE: statePath,
+      MWG_RULE_BASIS: bumpedBasis,
+      MWG_DRIFT_CATALOG: committedCatalog,
+    });
+    assert(res.status === 1, `mwg-artefact: case 18 (bump route without the flag) must refuse, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(
+      /--accept-legacy-split/.test(res.stderr) && /backfill/i.test(res.stderr) && /version/i.test(res.stderr),
+      `mwg-artefact: case 18 must name the flag and BOTH routes: ${res.stderr}`
+    );
+    const after = JSON.parse(readFileSync(statePath, 'utf8'));
+    assert(
+      after.rulesSha256 === undefined && after.basisSha256 === undefined,
+      'mwg-artefact: case 18 must not establish the digests it refused to establish'
     );
   }
 }
