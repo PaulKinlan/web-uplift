@@ -480,7 +480,14 @@ export const SUBSYSTEMS = [
       { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
       { type: 'node', path: 'tests/safe-fetch.mjs', label: 'Safe-fetch DNS rebinding and decoding' },
       { type: 'node', path: 'tests/source-tree-symlink.mjs', label: 'Source-tree symlink escape tests' },
-      { type: 'regression', filter: 'Evidence', label: 'Regression: Evidence primitives' },
+      // MEASURED BUDGET (web-uplift-91lr), same shape as the Batch bound above: this target took 185.4s on an
+      // otherwise idle VM on 2026-10-27 - testInstalledEvidenceCli 74.3s, testEvidenceTruncationReporting 54.0s,
+      // testConsoleEvidence 50.1s, the other four 1.2-1.3s each - and was killed at the default 120s, so an
+      // evidence/ change could not get a verdict at all. All three slow cases are browser-bound: they pay a
+      // Chrome launch per gather() call (measured launch 3.3-4.7s + first session 5.0s). The real fix is to stop
+      // paying that per call (web-uplift-91lr), not to keep raising this; once those cases run in ~2.5s instead
+      // of ~10s, this bound comes back down with a new measurement.
+      { type: 'regression', filter: 'Evidence', label: 'Regression: Evidence primitives', timeoutMs: 240000 },
       { type: 'regression', filter: 'Chrome', label: 'Regression: Chrome candidate and sandbox policy' },
       { type: 'regression', filter: 'Har', label: 'Regression: HAR redaction and redirects' },
       { type: 'regression', filter: 'Axe', label: 'Regression: Axe primitive tests' },
@@ -1040,6 +1047,26 @@ export function executionSummary(executed, total, duration) {
   return `\n⚠ [test:fast] ${ranAndPassed} of ${total} test target(s) ran and passed${timing}, but ${skipped.length} was SKIPPED: ${named} - this run is NOT certifying, because a target that never ran is not evidence.`;
 }
 
+// A suite scheduled DIRECTLY already runs every case it lists, so a regression FILTER that re-runs some of
+// them is duplicate work, not extra coverage (web-uplift-91lr). Measured on a two-file redaction change:
+// tests/redaction.test.mjs's browser cases ran under 'Regression: Secrets scan tests' (55.0s), under
+// 'Regression: HAR redaction and redirects' (58.2s) AND in the whole-suite direct target, and
+// testConsoleEvidence ran under both 'Regression: Evidence primitives' and 'Regression: Console evidence
+// tests' - about 110s of pure duplication in a 690s gate.
+//
+// The direct target is NEVER narrowed: this only tells each regression filter to leave out a suite file that
+// is already being run in full, so the union of executed CASE NAMES is unchanged by construction. That is not
+// an argument, it is checked: tests/test-fast.mjs compares the two unions from the runner's own --list output.
+export function dedupeAgainstDirectSuites(targets) {
+  const directSuites = new Set(
+    targets
+      .filter((t) => t.type === 'node' && typeof t.path === 'string' && /^tests\/[^/]+\.test\.mjs$/.test(t.path))
+      .map((t) => t.path),
+  );
+  if (directSuites.size === 0) return targets;
+  return targets.map((t) => (t.type === 'regression' ? { ...t, excludeSuites: [...directSuites] } : t));
+}
+
 export function runTarget(target, repo = repoRoot) {
   let cmd;
   let args;
@@ -1055,6 +1082,7 @@ export function runTarget(target, repo = repoRoot) {
   } else if (target.type === 'regression') {
     cmd = process.execPath;
     args = [join(repo, 'tests', 'regression.mjs'), '--only', target.filter];
+    for (const suite of target.excludeSuites || []) args.push('--exclude-suite', suite);
   } else {
     throw new Error(`Unknown target type: ${target.type}`);
   }
@@ -1355,6 +1383,13 @@ Usage:
     process.exit(1);
   }
 
+  const beforeDedupe = plan.targets;
+  plan.targets = dedupeAgainstDirectSuites(plan.targets);
+  const directSuites = new Set(plan.targets.filter((t) => t.type === 'node' && /^tests\/[^/]+\.test\.mjs$/.test(t.path || '')).map((t) => t.path));
+  if (directSuites.size > 0) {
+    const filtersDeduped = plan.targets.filter((t) => (t.excludeSuites || []).length > 0).length;
+    console.log(`[test:fast] Dedupe: ${directSuites.size} suite(s) run in full, so ${filtersDeduped} filter target(s) skip ${[...directSuites].join(', ')} (union of case names unchanged)`);
+  }
   console.log(`[test:fast] Selected ${plan.targets.length} test target(s):`);
   for (const t of plan.targets) {
     console.log(`  → ${t.label}`);
