@@ -1328,6 +1328,26 @@ function testDedupeKeepsTheExecutedCaseSetIdentical() {
     `the dedupe must shrink the FILTERED target (${filtered.size} -> ${dedupedExecuted.size} executed); if it shrank the suite instead, coverage was lost`,
   );
 
+  // web-uplift-4k7l (review round 2): an exclusion must not become a place for a broken filter to hide. The
+  // first cut validated the filter against what was left AFTER the exclusions, so a filter that names nothing
+  // at all exited 0 - a typo, or a filter naming a renamed case, would have run nothing and reported success.
+  // The two empty cases are different and must stay distinguishable:
+  //   names nothing before the exclusions     -> exit 1 (the filter is wrong)
+  //   names something, all of it excluded     -> exit 0, naming the suites that run those cases
+  const bogus = run(['--only', 'NonExistentTest', '--exclude-suite', 'tests/redaction.test.mjs']);
+  assert(
+    bogus.res.status === 1,
+    `a filter that names no case must FAIL CLOSED even with an exclusion active, got status ${bogus.res.status}:\n${bogus.out}`,
+  );
+  assert(
+    /no tests matched filter/.test(bogus.out) && /names no case that exists/.test(bogus.out),
+    `the failure must say the filter names nothing, not that the suite took the cases: ${bogus.out}`,
+  );
+  assert(
+    /no tests left for filter/.test(dedupedRun.out) && /whole-suite target runs them/.test(dedupedRun.out),
+    `the legitimate empty case must be distinguishable: it says the whole-suite target runs them (${dedupedRun.out})`,
+  );
+
   const without = new Set([...filtered, ...suiteCases]);
   const withDedupe = new Set([...dedupedExecuted, ...suiteCases]);
   const missing = [...without].filter((n) => !withDedupe.has(n));

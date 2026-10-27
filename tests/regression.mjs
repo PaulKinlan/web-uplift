@@ -88,14 +88,32 @@ if (excludeSuites.size > 0 && !process.argv.includes('--list')) {
 // filter must never certify a target that never ran. The match rule is parseFilterArgs's rule, read back the
 // same way runSuite reads it, and the gate's self-test cross-checks this against a real filtered run rather
 // than trusting the duplicate.
+// The filter is validated against the PRE-DEDUPE population, before any exclusion can hide it (web-uplift-4k7l).
+// The first cut of this checked only what was left after the exclusions, so `--only NonExistentTest
+// --exclude-suite tests/redaction.test.mjs` matched nothing at all and still exited 0: a typo'd filter, or a
+// filter naming a renamed case, would have run nothing and reported success. That is the fail-open this whole
+// fortnight has been about, and it is the difference between the two empty cases below:
+//
+//   matched nothing BEFORE the exclusions  -> exit 1. The filter itself is wrong; the gate must not certify it.
+//   matched something before, nothing after -> exit 0, naming the suites that took the cases. The cases exist
+//                                             and the whole-suite targets run them; this filter is simply done.
 if (excludeSuites.size > 0) {
   const { filters } = parseFilterArgs(process.argv.slice(2));
-  const anyMatch = filters.length > 0
-    && RUN_TESTS.some((fn) => filters.some((f) => fn.name.toLowerCase().includes(f.toLowerCase())));
-  if (filters.length > 0 && !anyMatch) {
-    console.log(`no tests left for filter [${filters.join(', ')}] after leaving out ${[...excludeSuites].join(', ')}: the whole-suite target runs them`);
-    process.exitCode = 0;
-    process.exit(0);
+  const matches = (pool) => pool.filter((fn) => filters.some((f) => fn.name.toLowerCase().includes(f.toLowerCase())));
+  if (filters.length > 0) {
+    if (matches(ALL_TESTS).length === 0) {
+      console.error(
+        `no tests matched filter: ${filters.join(', ')} - not before and not after leaving out ` +
+          `${[...excludeSuites].join(', ')}, so this filter names no case that exists`,
+      );
+      process.exitCode = 1;
+      process.exit(1);
+    }
+    if (matches(RUN_TESTS).length === 0) {
+      console.log(`no tests left for filter [${filters.join(', ')}] after leaving out ${[...excludeSuites].join(', ')}: the whole-suite target runs them`);
+      process.exitCode = 0;
+      process.exit(0);
+    }
   }
 }
 
