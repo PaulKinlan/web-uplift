@@ -43,7 +43,7 @@
  * state. This runner ORCHESTRATES the fan-out; it contains no checks.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, readFile, rename, writeFile, access } from 'node:fs/promises';
+import { mkdir, readFile, rename, access } from 'node:fs/promises';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +51,7 @@ import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
+import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, UnsafeTargetRefused } from './safe-write.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
 
@@ -196,7 +197,9 @@ if (!args['dry-run']) {
   mkdirSync(outRoot, { recursive: true });
   if (!isolationRecord) {
     try {
-      writeFileSync(
+      // No-follow even here (web-uplift-rsbb): outRoot is shared across runs, so an earlier run's
+      // agent could have left run-security.json as a link and this record would land outside it.
+      writeFileNoFollowSync(
         join(outRoot, 'run-security.json'),
         JSON.stringify({
           isolation: 'refused',
@@ -219,7 +222,7 @@ if (!args['dry-run']) {
     process.exit(1);
   }
   try {
-    writeFileSync(
+    writeFileNoFollowSync(
       join(outRoot, 'run-security.json'),
       JSON.stringify({ ...isolationRecord, recordedAt: new Date().toISOString(), tool: 'web-uplift batch' }, null, 2) + '\n',
     );
@@ -439,14 +442,18 @@ async function worker() {
     // worker and taking the whole batch down with an ENOENT stack.
     try {
       if (!isRealUnderOutput(siteDir)) throw new Error('the run directory (or an ancestor of it) was replaced before the scope record could be written');
-      await writeFile(join(siteDir, 'write-scope.json'), JSON.stringify(scope, null, 2) + '\n');
+      // NOT a plain writeFile (web-uplift-rsbb): the agent shares this tree and has exited, so a
+      // planted leaf link here would redirect the runner's own record outside it. See
+      // runner/safe-write.mjs for what O_NOFOLLOW does and does not cover.
+      await writeFileNoFollow(join(siteDir, 'write-scope.json'), JSON.stringify(scope, null, 2) + '\n');
     } catch (err) {
+      const scopeReason = err instanceof UnsafeTargetRefused ? err.message : `run directory unusable when the scope record was written: ${err.code || err.message}`;
       // FAIL CLOSED FOR THIS URL. The record is part of the accounting contract, so a
       // URL whose record cannot be written is not completed, not published and not
       // counted. The refusal below is still reported if there was one - that is the
       // security-relevant fact and must not be hidden by a bookkeeping failure.
       recordFailed = true;
-      failures.push({ url, reason: `run directory unusable when the scope record was written: ${err.code || err.message}` });
+      failures.push({ url, reason: scopeReason });
       console.error(`record failed  ${shownUrl(url)}: ${shownText(String(err.message), url)}`);
     }
     console.log(`  changed: ${summariseChanges(scope.changed)}`);
@@ -479,7 +486,10 @@ async function worker() {
     }
 
     try {
-      await writeFile(join(siteDir, 'run.json'), result);
+      // The agent is gone by now and this write is the runner's own; a leaf link it planted at this
+      // path would send that write outside the run tree, so it is refused rather than followed
+      // (web-uplift-rsbb). The catch below records the refusal against this URL.
+      await writeFileNoFollow(join(siteDir, 'run.json'), result);
       const ok = await exists(join(siteDir, 'report.json'));
       if (ok) {
         await annotateReport(siteDir, { agent: agentName, runId: planned.runId });
@@ -551,7 +561,7 @@ async function quarantineRefusedRun(siteDir, { url, escapedOutsideScope }) {
     }
   }
   try {
-    await writeFile(join(siteDir, 'run-refused.json'), JSON.stringify({ url, reason: 'wrote outside --out', escapedOutsideScope, at: new Date().toISOString() }, null, 2) + '\n');
+    await writeFileNoFollow(join(siteDir, 'run-refused.json'), JSON.stringify({ url, reason: 'wrote outside --out', escapedOutsideScope, at: new Date().toISOString() }, null, 2) + '\n');
   } catch (err) {
     console.error(`Could not write the refusal marker: ${shownText(String(err.message), url)}`);
     if (!problem) problem = `could not write the refusal marker: ${err.message}`;
@@ -646,15 +656,23 @@ function validateAtomicReport(reportPath) {
 
 async function annotateReport(siteDir, meta) {
   const reportPath = join(siteDir, 'report.json');
+  // READ AND REWRITE both refuse a planted leaf link (web-uplift-rsbb): readFile() would follow
+  // `report.json -> <some other file>` and this function would then hand that content back through
+  // the same link with runner metadata added, i.e. read someone else's file and rewrite it. The
+  // refusal is NOT swallowed with the invalid-JSON case below: an unparseable report is left alone
+  // for inspection, but a link here is an attack on this runner's own write and has to fail the URL.
+  let report;
   try {
-    const report = JSON.parse(await readFile(reportPath, 'utf8'));
-    report.agent = report.agent ?? meta.agent;
-    report.runId = report.runId ?? meta.runId;
-    await writeFile(reportPath, JSON.stringify(report, null, 2) + '\n');
-  } catch {
+    report = JSON.parse(await readFileNoFollow(reportPath, 'utf8'));
+  } catch (err) {
+    if (err instanceof UnsafeTargetRefused) throw err;
     // If the model wrote an invalid report, keep the original file so the
     // failure can be inspected instead of hiding it behind runner metadata.
+    return;
   }
+  report.agent = report.agent ?? meta.agent;
+  report.runId = report.runId ?? meta.runId;
+  await writeFileNoFollow(reportPath, JSON.stringify(report, null, 2) + '\n');
 }
 
 // Replay the flow into <siteDir>/evidence/flow/ (per-step screenshots +
@@ -672,7 +690,7 @@ async function replayFlowIntoRun(url, siteDir) {
     const session = await newSession(chrome, { log });
     try {
       const res = await replayFlow(session.client, flow, { startUrl: url, outDir: flowDir, log, allowMutations });
-      writeFileSync(join(flowDir, 'flow-result.json'), JSON.stringify(res, null, 2) + '\n');
+      writeFileNoFollowSync(join(flowDir, 'flow-result.json'), JSON.stringify(res, null, 2) + '\n');
       return res;
     } finally {
       await session.close();

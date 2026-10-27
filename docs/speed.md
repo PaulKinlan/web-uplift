@@ -18,6 +18,24 @@ code does.
 | full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=6 tests/*.test.mjs`, 14 suites) | the merger, once per landing on the merged union | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below |
 | affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a) |
 
+### Per-target budgets in the fast gate
+
+Each fast-gate target is killed at `target.timeoutMs || 120000`; `TEST_FAST_TARGET_TIMEOUT_MS` overrides all of
+them for a single run. One target deliberately carries a measured budget instead of the default:
+`Regression: Batch isolation and scope tests` is **240s** and `Fast gate unit and integration tests`
+(`tests/test-fast.mjs`) is **300s**. They measured **148.3s** and **130.4s** on an idle VM on 2026-10-27
+(web-uplift-rsbb): the first is `testBatchWriteScope` 76.9s plus five smaller cases, the second is the gate's own
+self-test running the selection machinery end to end several times. Both were being killed at the 120s default, so
+every change under `runner/` - and every change to the gate script itself - failed the fast gate on a target that
+was already over budget before it ran anything new. The two worst targets in this repo are therefore the batch
+group and the gate's own self-test; neither is a per-change cost problem, both are design problems.
+
+That is a bound, not a fix. `testBatchWriteScope` is 52% of the batch target and is its slow path: it should be
+split so the whole group is not gated on one long case (web-uplift-d78k), and the gate self-test should stop
+re-running the whole selection machinery per assertion (a follow-up bead). Raising either number again without
+splitting moves the problem rather than solving it, and any further addition to these targets has to be argued
+against the measurements above.
+
 Neither gate is run without naming this project's own command on a shared VM, because
 `~/.fleet/check.conf` is machine-global and an installer from another checkout can overwrite it
 (web-uplift-ebvj):
