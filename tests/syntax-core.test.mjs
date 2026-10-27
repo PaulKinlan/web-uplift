@@ -2066,7 +2066,7 @@ export function testSuiteListsMatchRegressionRegistry() {
   // be silently absent - and an entry with an EMPTY declaration list is refused, because that is the shape
   // that looks complete while guarding nothing (web-uplift-yfbk).
   const REGISTERED_NON_CASE_TARGETS = {
-    'batch-resume-isolation.mjs': 'a case LIBRARY: 4 of its 4 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'batch-resume-isolation.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
     'cdp-copy-sync.mjs': 'one behaviour: the copy check it performs. It has no direct-run guard and is imported by nine files, so wrapping it would change import-time behaviour; it is exercised as the case of testCdpCopySyncGuard in install-package.test.mjs.',
     'changelog-version-check.mjs': 'one behaviour: whether CHANGELOG.md records the current version. Its check runs at import so the gate and its importers both see the failure; there is no case to name.',
     'flow-shadow-browser.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
@@ -2231,8 +2231,7 @@ const EXPECTED_SUITE_FILES = 30;
       'testFixSurvivesUnscoreableReports', 'testFixRefusesPassOnIncompleteCoverage', 'testFixRefusesContradictoryCoverageClaim', 'testFixRejectsMalformedReports',
       'testFixWriteScopeDiffing', 'testFixModeRefusesOutOfScopeWrites', 'testFixModeScopeEdgeCases', 'testFixIsolationAssertion',
       'testFixIsolatedRunPublishes', 'testSnapshotRunStructure', 'testSnapshotRunCopiesArtifacts', 'testSnapshotRunMissingArtifactsBestEffort',
-      'testSnapshotRunCopyErrorTolerance', 'testBatchWriteScope', 'testBatchResumeIsolation',
-      'testSafeWriteRefusesSymlinkLeaf', 'testRunnerRunJsonWriteRefusesPlantedLeafLink', 'testRunnerReportJsonWriteRefusesPlantedLeafLink', 'testWriteScopeCoversExecutedTrees',
+      'testSnapshotRunCopyErrorTolerance', 'testBatchWriteScope', 'testBatchResumeIsolation', 'testWriteScopeCoversExecutedTrees',
       'testBatchIntegrityGateAbortsOnTamperedExecutedTree', 'testFlowNormalize', 'testFlowRecordSensitiveRedaction', 'testFlowReplayMutationGate', 'testFlowReplaySchemeGate',
       'testFlowPierceShadowRootBrowser',
     ],
