@@ -39,7 +39,12 @@ import {
 } from './test-helpers.mjs';
 import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules } from '../runner/agents.mjs';
 import { snapshotTree, diffTrees, executableIntegrity, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
-import { testBatchResumeIsolation } from './batch-resume-isolation.mjs';
+import {
+  testBatchResumeIsolation,
+  testRunnerReportJsonWriteRefusesPlantedLeafLink,
+  testRunnerRunJsonWriteRefusesPlantedLeafLink,
+  testSafeWriteRefusesSymlinkLeaf,
+} from './batch-resume-isolation.mjs';
 import {
   testSnapshotRunStructure,
   testSnapshotRunCopiesArtifacts,
@@ -1813,6 +1818,9 @@ export const runnerAgentsTests = [
   testSnapshotRunCopyErrorTolerance,
   testBatchWriteScope,
   testBatchResumeIsolation,
+  testSafeWriteRefusesSymlinkLeaf,
+  testRunnerRunJsonWriteRefusesPlantedLeafLink,
+  testRunnerReportJsonWriteRefusesPlantedLeafLink,
   testWriteScopeCoversExecutedTrees,
   testBatchIntegrityGateAbortsOnTamperedExecutedTree,
   testFlowNormalize,
@@ -1828,6 +1836,9 @@ export {
   testSnapshotRunMissingArtifactsBestEffort,
   testSnapshotRunCopyErrorTolerance,
   testBatchResumeIsolation,
+  testSafeWriteRefusesSymlinkLeaf,
+  testRunnerRunJsonWriteRefusesPlantedLeafLink,
+  testRunnerReportJsonWriteRefusesPlantedLeafLink,
   testFlowNormalize,
   testFlowRecordSensitiveRedaction,
   testFlowReplayMutationGate,

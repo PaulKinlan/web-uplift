@@ -27,6 +27,7 @@ import {
   lstatSync,
   readlinkSync,
 } from 'node:fs';
+import { writeFileNoFollowSync } from './safe-write.mjs';
 import { join, basename } from 'node:path';
 // The containment helpers live with the artifact-path module, which imports nothing
 // itself, so reaching them from runner/ adds no cycle: aggregate/scorecard.mjs already
@@ -73,8 +74,12 @@ export function updateLatest(hostRoot, runId) {
     if (existsSync(link) || isSymlink(link)) rmSync(link, { recursive: true, force: true });
     symlinkSync(runId, link, 'dir');
   } catch {
-    // Symlinks unavailable (e.g. some CI / Windows): record the run id in a file.
-    writeFileSync(txt, runId + '\n');
+    // Symlinks unavailable (e.g. some CI / Windows): record the run id in a file. No-follow, because
+    // a planted latest.txt link would redirect this pointer out of the host root (web-uplift-rsbb).
+    // A refusal and any other write failure BOTH propagate: the caller treats an unwritable pointer as
+    // a publication failure and records it, so swallowing one here would silently leave a run that was
+    // never published looking complete (that is what testBatchWriteScope asserts).
+    writeFileNoFollowSync(txt, runId + '\n');
   }
   return link;
 }
