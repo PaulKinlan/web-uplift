@@ -1627,6 +1627,67 @@ export function testMwgArtefactGuard() {
     );
   }
 
+  // 19. web-uplift-46wr, the round-3 review finding: a version bump that does NOT refresh the catalog snapshot
+  // used to re-record happily and produce an artefact that this tool accepted while `mwg-drift-classify
+  // --verify-basis` refused the same commit (basis 9.9.9 vs catalog 1.0.0). update must refuse the pair and
+  // name the re-analysis, and nothing may be written.
+  {
+    const statePath = legacyStatePath('mwg-artefact-46wr-state.json');
+    const basis = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-rule-basis.json'), 'utf8'));
+    basis.catalogueVersion = `${basis.catalogueVersion}-reviewed-bump`;
+    const bumpedBasis = join(tmp, 'mwg-artefact-46wr-basis.json');
+    writeFileSync(bumpedBasis, JSON.stringify(basis, null, 2) + '\n', 'utf8');
+    const res = runArtefact(['update', '--accept-legacy-split', 'mwg-artefact case 19: bump without re-analysis'], {
+      MWG_DRIFT_STATE: statePath,
+      MWG_RULE_BASIS: bumpedBasis,
+      MWG_DRIFT_CATALOG: committedCatalog, // deliberately NOT refreshed
+    });
+    assert(res.status === 1, `mwg-artefact: case 19 (bump without a refreshed catalog) must refuse, got ${res.status}:\n${res.stderr || res.stdout}`);
+    assert(
+      /catalogue release/.test(res.stderr) && /mwg-catalog\.json/.test(res.stderr) && /RE-ANALYSIS/.test(res.stderr),
+      `mwg-artefact: case 19 must name the binding and the re-analysis it needs: ${res.stderr}`
+    );
+    const after = JSON.parse(readFileSync(statePath, 'utf8'));
+    assert(
+      after.rulesSha256 === undefined && after.basisSha256 === undefined,
+      'mwg-artefact: case 19 must not have recorded an artefact the drift pipeline would refuse'
+    );
+  }
+
+  // 21. the rule 19 enforces is the drift pipeline's own rule, checked against the classifier rather than
+  // asserted about it: a bumped corpus/basis/catalog TRIPLE verifies, and the same basis with an un-refreshed
+  // catalog is refused by name. This is the reviewer's repro, corrected - the pair the docs prescribe is
+  // accepted end to end, and the pair the old documentation produced is not. (Nothing is asserted about
+  // VERIFY here: web-uplift-a1vf keeps an ANALYSED-only advance legal, with appliedRulesVersion deliberately
+  // left behind, so the binding belongs at the point a state is RECORDED, not at every read. That is what
+  // case 19 pins and what testMwgArtefactAppliedRulesAxisFailsClosed continues to protect.)
+  {
+    const fixDir = join(repoRoot, 'tests', 'fixtures', 'mwg-drift');
+    const trio = (name) => join(tmp, `mwg-artefact-46wr-${name}`);
+    const writeVersion = (src, dst, field, version) => {
+      const value = JSON.parse(readFileSync(src, 'utf8'));
+      value[field] = version;
+      writeFileSync(dst, JSON.stringify(value, null, 2) + '\n', 'utf8');
+      return dst;
+    };
+    const corpus = writeVersion(join(fixDir, 'corpus-old.json'), trio('corpus.json'), 'version', '9.9.9');
+    const basis = writeVersion(join(fixDir, 'basis-fixture.json'), trio('basis.json'), 'catalogueVersion', '9.9.9');
+    const catalog = writeVersion(join(fixDir, 'catalog-fixture-set.json'), trio('catalog.json'), 'version', '9.9.9');
+    const classify = (catalogPath) => spawnSync(process.execPath, [
+      join(repoRoot, 'tests', 'mwg-drift-classify.mjs'),
+      '--verify-basis', corpus, '--basis', basis, '--catalog', catalogPath,
+    ], { encoding: 'utf8' });
+
+    const together = classify(catalog);
+    assert(together.status === 0, `mwg-artefact: case 21 (bumped triple) must be drift-consistent, got ${together.status}:\n${together.stderr || together.stdout}`);
+    const apart = classify(join(fixDir, 'catalog-fixture-set.json'));
+    assert(apart.status === 1, `mwg-artefact: case 21 (bumped basis, old catalog) must be refused, got ${apart.status}`);
+    assert(
+      /basis registry catalogueVersion \(9\.9\.9\) does not match catalog version \(1\.0\.0\)/.test(apart.stdout + apart.stderr),
+      `mwg-artefact: case 21 must show the binding that 46wr was about: ${apart.stderr || apart.stdout}`
+    );
+  }
+
   // 17. web-uplift-6ls5, the review finding on this branch: the version-bump route has to be REACHABLE on
   // legacy state, and the test has to prove a SUCCESSFUL re-record, not just a clearer error. A legacy artefact
   // whose applied-rules axis genuinely changed under a moved version is exactly the case the operator could not
@@ -1650,11 +1711,19 @@ export function testMwgArtefactGuard() {
     basis.catalogueVersion = newVersion;
     basis.rules[0].where = 'reviewed: this rule was re-worded in the version bump the operator moved';
     writeFileSync(bumpedBasis, JSON.stringify(basis, null, 2) + '\n', 'utf8');
+    // A VERSION BUMP IS A RE-ANALYSIS (web-uplift-46wr): the catalog snapshot moves to the same release in the
+    // same commit, because the drift pipeline verifies the basis against one catalogue release. Before this
+    // case did that, it reproduced the reviewer's finding - an artefact that verified here and failed
+    // `--verify-basis` in the pipeline.
+    const bumpedCatalog = join(tmp, 'mwg-artefact-legacy-bump-catalog.json');
+    const catalogForBump = JSON.parse(readFileSync(committedCatalog, 'utf8'));
+    catalogForBump.version = newVersion;
+    writeFileSync(bumpedCatalog, JSON.stringify(catalogForBump, null, 2) + '\n', 'utf8');
 
     const res = runArtefact(['update', '--accept-legacy-split', 'mwg-artefact case 17: reviewed bump, rule re-worded'], {
       MWG_DRIFT_STATE: statePath,
       MWG_RULE_BASIS: bumpedBasis,
-      MWG_DRIFT_CATALOG: committedCatalog,
+      MWG_DRIFT_CATALOG: bumpedCatalog,
     });
     assert(
       res.status === 0,
@@ -1690,7 +1759,7 @@ export function testMwgArtefactGuard() {
     const verified = runArtefact(['verify'], {
       MWG_DRIFT_STATE: statePath,
       MWG_RULE_BASIS: bumpedBasis,
-      MWG_DRIFT_CATALOG: committedCatalog,
+      MWG_DRIFT_CATALOG: bumpedCatalog,
     });
     assert(
       verified.status === 0,
@@ -1715,10 +1784,16 @@ export function testMwgArtefactGuard() {
     const basis = JSON.parse(readFileSync(join(repoRoot, 'knowledge', 'mwg-rule-basis.json'), 'utf8'));
     basis.catalogueVersion = `${basis.catalogueVersion}-reviewed-bump`;
     writeFileSync(bumpedBasis, JSON.stringify(basis, null, 2) + '\n', 'utf8');
+    // The catalog is refreshed too: this case is about the FLAG being required, and case 19 owns the
+    // missing-re-analysis refusal (web-uplift-46wr).
+    const noflagCatalog = join(tmp, 'mwg-artefact-legacy-bump-noflag-catalog.json');
+    const catalogForNoflag = JSON.parse(readFileSync(committedCatalog, 'utf8'));
+    catalogForNoflag.version = basis.catalogueVersion;
+    writeFileSync(noflagCatalog, JSON.stringify(catalogForNoflag, null, 2) + '\n', 'utf8');
     const res = runArtefact(['update'], {
       MWG_DRIFT_STATE: statePath,
       MWG_RULE_BASIS: bumpedBasis,
-      MWG_DRIFT_CATALOG: committedCatalog,
+      MWG_DRIFT_CATALOG: noflagCatalog,
     });
     assert(res.status === 1, `mwg-artefact: case 18 (bump route without the flag) must refuse, got ${res.status}:\n${res.stderr || res.stdout}`);
     assert(

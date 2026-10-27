@@ -429,6 +429,24 @@ if (isDirectRun) {
       console.error('FAIL: knowledge/mwg-rule-basis.json declares no catalogueVersion, so the applied-rules axis cannot be recorded');
       process.exit(1);
     }
+    // A VERSION BUMP IS A RE-ANALYSIS, NOT A POINTER EDIT (web-uplift-46wr). The consumers of
+    // appliedRulesVersion also verify the rule basis against ONE catalogue release (tests/mwg-drift-classify.mjs
+    // requires basis.catalogueVersion === catalog.version), so recording a basis version the catalog snapshot
+    // does not corroborate writes a state that THIS tool accepts and the drift pipeline refuses - which is what
+    // the documented legacy migration did until this guard existed: bump the basis, re-record, verify green, and
+    // the same commit fails `--verify-basis`.
+    // Scoped to a recording that MOVES the applied-rules version. An ANALYSED-only advance keeps
+    // state.appliedRulesVersion equal to the basis version (the rules did not change) while the catalog axis
+    // moves, and that must still record - web-uplift-a1vf's contract, pinned by
+    // testMwgArtefactAppliedRulesAxisFailsClosed. What must not be recorded is a pair in which the applied
+    // version is being MOVED to a release the catalog snapshot does not corroborate.
+    const movesAppliedVersion = state.appliedRulesVersion !== rules.catalogueVersion;
+    if (movesAppliedVersion && rules.catalogueVersion !== catalog.version) {
+      console.error(
+        `FAIL: the applied rule basis is written against catalogue release ${JSON.stringify(rules.catalogueVersion)} but the catalog snapshot in this tree is ${JSON.stringify(catalog.version ?? null)} (web-uplift-46wr). tests/mwg-drift-classify.mjs verifies the basis against ONE catalogue release, so recording this pair would produce an artefact this tool accepts and the drift pipeline refuses. A version bump is a RE-ANALYSIS: refresh the catalog snapshot to ${JSON.stringify(rules.catalogueVersion)} in the same commit - knowledge/mwg-catalog.json's version and retrievedAt, and knowledge/principles.json's guidanceCatalogVersion - then re-run update. If you did not mean to move the release, revert the basis version instead.`
+      );
+      process.exit(1);
+    }
     // Strict on purpose, with no first-run allowance: this commit records the hash in the committed state
     // file, so after it lands the field always exists, and an allowance would simply absorb the case this
     // bead exists to catch - a rules change that nobody bumped (found by measuring: my first cut let a
