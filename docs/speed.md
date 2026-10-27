@@ -18,6 +18,19 @@ code does.
 | full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=6 tests/*.test.mjs`, 14 suites) | the merger, once per landing on the merged union | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below |
 | affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a) |
 
+### Per-target budgets in the fast gate
+
+Each fast-gate target is killed at `target.timeoutMs || 120000`; `TEST_FAST_TARGET_TIMEOUT_MS` overrides all of
+them for a single run. One target deliberately carries a measured budget instead of the default:
+`Regression: Batch isolation and scope tests` is **240s**. It measured **148.3s** on an idle VM on 2026-10-27
+(`testBatchWriteScope` 76.9s, `testBatchResumeIsolation` 7.3s, and four 3.6-4.6s cases; web-uplift-rsbb), so the
+default bound was killing it - every change under `runner/` failed the fast gate on a target that was already
+over budget before it ran anything new.
+
+That is a bound, not a fix. `testBatchWriteScope` is 52% of the target and is the slow path: it should be split
+so the whole batch group is not gated on one long case. Raising this number again without splitting it moves the
+problem rather than solving it, and any further addition to this target has to be argued against the measurement.
+
 Neither gate is run without naming this project's own command on a shared VM, because
 `~/.fleet/check.conf` is machine-global and an installer from another checkout can overwrite it
 (web-uplift-ebvj):

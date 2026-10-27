@@ -432,7 +432,13 @@ export const SUBSYSTEMS = [
       { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
       { type: 'node', path: 'tests/batch-resume-isolation.mjs', label: 'Batch resume isolation tests' },
       { type: 'node', path: 'tests/skill-write-contract.mjs', label: 'Skill write contract tests' },
-      { type: 'regression', filter: 'Batch', label: 'Regression: Batch isolation and scope tests' },
+      // MEASURED BUDGET, not a raised ceiling on a hunch (web-uplift-rsbb). This target took 148.3s idle on
+      // 2026-10-27 (testBatchWriteScope alone 76.9s: 52% of it; resume isolation 7.3s; the rest 3.6-4.6s each)
+      // and was being killed at the default 120s, so every runner change failed the fast gate on a target that
+      // was already over budget before it ran anything new. The bound now matches the measurement with room for
+      // a busy VM. The slow path is still the design defect and the real fix is to split testBatchWriteScope
+      // (web-uplift-...) - raising this again without splitting it is not free.
+      { type: 'regression', filter: 'Batch', label: 'Regression: Batch isolation and scope tests', timeoutMs: 240000 },
       { type: 'regression', filter: 'Agent', label: 'Regression: Agent environment allowlist tests' },
     ],
   },
