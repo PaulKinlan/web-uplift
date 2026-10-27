@@ -22,14 +22,19 @@ code does.
 
 Each fast-gate target is killed at `target.timeoutMs || 120000`; `TEST_FAST_TARGET_TIMEOUT_MS` overrides all of
 them for a single run. One target deliberately carries a measured budget instead of the default:
-`Regression: Batch isolation and scope tests` is **240s**. It measured **148.3s** on an idle VM on 2026-10-27
-(`testBatchWriteScope` 76.9s, `testBatchResumeIsolation` 7.3s, and four 3.6-4.6s cases; web-uplift-rsbb), so the
-default bound was killing it - every change under `runner/` failed the fast gate on a target that was already
-over budget before it ran anything new.
+`Regression: Batch isolation and scope tests` is **240s** and `Fast gate unit and integration tests`
+(`tests/test-fast.mjs`) is **300s**. They measured **148.3s** and **130.4s** on an idle VM on 2026-10-27
+(web-uplift-rsbb): the first is `testBatchWriteScope` 76.9s plus five smaller cases, the second is the gate's own
+self-test running the selection machinery end to end several times. Both were being killed at the 120s default, so
+every change under `runner/` - and every change to the gate script itself - failed the fast gate on a target that
+was already over budget before it ran anything new. The two worst targets in this repo are therefore the batch
+group and the gate's own self-test; neither is a per-change cost problem, both are design problems.
 
-That is a bound, not a fix. `testBatchWriteScope` is 52% of the target and is the slow path: it should be split
-so the whole batch group is not gated on one long case. Raising this number again without splitting it moves the
-problem rather than solving it, and any further addition to this target has to be argued against the measurement.
+That is a bound, not a fix. `testBatchWriteScope` is 52% of the batch target and is its slow path: it should be
+split so the whole group is not gated on one long case (web-uplift-d78k), and the gate self-test should stop
+re-running the whole selection machinery per assertion (a follow-up bead). Raising either number again without
+splitting moves the problem rather than solving it, and any further addition to these targets has to be argued
+against the measurements above.
 
 Neither gate is run without naming this project's own command on a shared VM, because
 `~/.fleet/check.conf` is machine-global and an installer from another checkout can overwrite it

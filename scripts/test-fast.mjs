@@ -524,7 +524,11 @@ export const SUBSYSTEMS = [
       f === 'tests/test-fast.mjs' ||
       f === 'tests/regression.mjs',
     targets: [
-      { type: 'node', path: 'tests/test-fast.mjs', label: 'Fast gate unit and integration tests' },
+      // MEASURED BUDGET (web-uplift-rsbb): 130.4s idle on 2026-10-27, against the 120s default, so a change to the
+      // gate script itself could not pass the gate - the one target that guards the machinery was itself being
+      // killed. The bound matches the measurement with room for a busy VM; the self-test is the slow path to fix
+      // (it runs the selection machinery end to end several times over) and this number should come down with it.
+      { type: 'node', path: 'tests/test-fast.mjs', label: 'Fast gate unit and integration tests', timeoutMs: 300000 },
       { type: 'regression', filter: 'testSyntaxChecks', label: 'Regression: Syntax checks' },
     ],
   },
