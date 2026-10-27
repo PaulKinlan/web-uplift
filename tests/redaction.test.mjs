@@ -336,7 +336,7 @@ export async function testCredentialRedactionHelpers() {
 
 // The integration half: a REAL har run over a local page, so the wiring is exercised and
 // not just the helpers. One browser launch covers every vector in the artifact.
-export async function testHarCredentialRedaction() {
+export async function testHarCredentialRedaction(t, { browser } = {}) {
   const SECRET = 'SECRET-CANARY-456';
   const server = http.createServer((req, res) => {
     const path = (req.url || '').split('?')[0];
@@ -369,7 +369,7 @@ export async function testHarCredentialRedaction() {
     const base = join(tmp, `dsj-har-${Math.random().toString(36).slice(2)}`);
     mkdirSync(base, { recursive: true });
     const out = join(base, 'network.har');
-    await gather('har', `http://127.0.0.1:${port}/?token=${SECRET}&page=2`, { quiet: true, wait: 2500, bodies: true, out });
+    await gather('har', `http://127.0.0.1:${port}/?token=${SECRET}&page=2`, { browser, quiet: true, wait: 2500, bodies: true, out });
 
     const raw = readFileSync(out, 'utf8');
     assert(!raw.includes(SECRET), 'dsj har: the credential must not appear anywhere in the raw HAR');
@@ -458,7 +458,7 @@ export async function testHarCredentialRedaction() {
 // actually reach a HAR today are page-supplied request headers such as
 // Authorization and X-Api-Key. The full name list is still applied defensively,
 // and testRedactHeaderList covers all of it without a browser.
-export async function testHarRedactsCredentialHeaders() {
+export async function testHarRedactsCredentialHeaders(t, { browser } = {}) {
   const server = http.createServer((req, res) => {
     const path = (req.url || '').split('?')[0];
     if (path === '/api') {
@@ -480,7 +480,7 @@ export async function testHarRedactsCredentialHeaders() {
     const apiKey = 'super-secret-api-key';
 
     const out = join(tmp, 'redacted-network.har');
-    const result = await gather('har', url, { quiet: true, wait: 600, out });
+    const result = await gather('har', url, { browser, quiet: true, wait: 600, out });
     const harText = readFileSync(out, 'utf8');
     const summaryText = readFileSync(result.summaryArtifact, 'utf8');
     const har = JSON.parse(harText);
@@ -509,7 +509,7 @@ export async function testHarRedactsCredentialHeaders() {
     );
 
     const rawOut = join(tmp, 'raw-network.har');
-    await gather('har', url, { quiet: true, wait: 600, out: rawOut, redactHeaders: false });
+    await gather('har', url, { browser, quiet: true, wait: 600, out: rawOut, redactHeaders: false });
     const rawText = readFileSync(rawOut, 'utf8');
     assert(
       rawText.includes(token) && rawText.includes(apiKey),
@@ -531,7 +531,7 @@ export async function testHarRedactsCredentialHeaders() {
 // the external script is silently NEVER scanned. The fixture keeps the planted
 // key percent-encoded so the page HTML itself contains no key: a finding can
 // only come from the fetched external script.
-export async function testSecretsScanHandlesQuotedScriptUrl() {
+export async function testSecretsScanHandlesQuotedScriptUrl(t, { browser } = {}) {
   const encKey = Array.from('AKIAIOSFODNN7EXAMPLE')
     .map((c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())
     .join('');
@@ -545,7 +545,7 @@ export async function testSecretsScanHandlesQuotedScriptUrl() {
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
   try {
     const { port } = server.address();
-    const result = await gather('secrets', `http://127.0.0.1:${port}/`, { quiet: true, wait: 300 });
+    const result = await gather('secrets', `http://127.0.0.1:${port}/`, { browser, quiet: true, wait: 300 });
     const ext = result.findings.filter((f) => typeof f.source === 'string' && f.source.startsWith('external JS'));
     assert(
       ext.length >= 1 && ext[0].pattern === 'aws-access-key',
@@ -568,7 +568,7 @@ export async function testSecretsScanHandlesQuotedScriptUrl() {
 // unbounded body or hang the audit. Proven with three fixtures: a key BEFORE
 // the 2 MiB boundary is found, a key AFTER it is not (the body was capped),
 // and a never-answering script cannot hang the run past the deadline.
-export async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
+export async function testSecretsExternalScriptFetchIsCappedAndDeadlined(t, { browser } = {}) {
   const { configureFetchDeadline } = await import('../evidence/cli.mjs');
   const earlyKey = 'NOTAREALKEY_FIXTURE_EARLY1234567890ABCDEFGH';
   const lateKey = 'NOTAREALKEY_FIXTURE_LATE1234567890ABCDEFGHIJ';
@@ -625,7 +625,7 @@ export async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
   try {
     const { port } = server.address();
     configureFetchDeadline(800);
-    const result = await gather('secrets', `http://127.0.0.1:${port}/`, { quiet: true, wait: 300 });
+    const result = await gather('secrets', `http://127.0.0.1:${port}/`, { browser, quiet: true, wait: 300 });
     const elapsedMs = Date.now() - started;
     const sources = result.findings.map((f) => `${f.pattern}@${f.source}`);
     assert(
@@ -704,7 +704,7 @@ export async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
 // of the credential. The old shape kept the first six and last four characters
 // (and the whole value for a match of twelve characters or fewer), and those
 // findings are written into run artifacts that can be published (web-uplift-u5n).
-export async function testSecretsArtifactDoesNotPersistMatches() {
+export async function testSecretsArtifactDoesNotPersistMatches(t, { browser } = {}) {
   const secret = 'NOTAREALKEY_FIXTURE_ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   const server = http.createServer((req, res) => {
     const path = (req.url || '').split('?')[0];
@@ -723,7 +723,7 @@ export async function testSecretsArtifactDoesNotPersistMatches() {
   try {
     const { port } = server.address();
     const out = join(tmp, 'secrets.json');
-    const result = await gather('secrets', `http://127.0.0.1:${port}/`, { quiet: true, wait: 300, out });
+    const result = await gather('secrets', `http://127.0.0.1:${port}/`, { browser, quiet: true, wait: 300, out });
     assert(result.totalFindings >= 1, `the fixture secret must still be reported: ${JSON.stringify(result.findings)}`);
     const finding = result.findings.find((f) => f.match !== undefined);
     assert(finding && finding.match === '[redacted]', `a finding must not carry the matched value: ${JSON.stringify(finding)}`);
@@ -735,7 +735,7 @@ export async function testSecretsArtifactDoesNotPersistMatches() {
     for (const [label, text] of [['the artifact', artifact], ['stdout', JSON.stringify(result)]]) {
       assert(!text.includes(secret), `${label} must not carry the matched value`);
     }
-    const clean = await gather('secrets', `http://127.0.0.1:${port}/clean`, { quiet: true, wait: 300 });
+    const clean = await gather('secrets', `http://127.0.0.1:${port}/clean`, { browser, quiet: true, wait: 300 });
     assert(clean.totalFindings === 0, `a page with no secret must report none: ${JSON.stringify(clean.findings)}`);
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
@@ -835,7 +835,7 @@ export function testSourceTreeRedactsBeforeInlining() {
 // The same guarantee end to end: what `dom --source` actually writes to disk. The
 // artifact is the thing that gets published, so the check is on the artifact text,
 // not on the in-memory return (web-uplift-obl).
-export async function testDomSourceArtifactIsRedacted() {
+export async function testDomSourceArtifactIsRedacted(t, { browser } = {}) {
   const secret = 'AKIA' + 'QRSTUVWXYZ012345';
   const root = join(tmp, 'dom-source-tree');
   mkdirSync(root, { recursive: true });
@@ -850,7 +850,7 @@ export async function testDomSourceArtifactIsRedacted() {
   try {
     const { port } = server.address();
     const out = join(tmp, 'dom-source.json');
-    const result = await gather('dom', `http://127.0.0.1:${port}/`, { quiet: true, wait: 300, source: root, out });
+    const result = await gather('dom', `http://127.0.0.1:${port}/`, { browser, quiet: true, wait: 300, source: root, out });
     assert(result.source, `dom --source must return a source block: ${Object.keys(result)}`);
     assert(result.source.redactedFiles >= 1, `the fixture credential must be redacted: ${JSON.stringify(result.source.redactedFiles)}`);
     assert(
@@ -895,4 +895,4 @@ export {
   testCredentialRedactorsAgree,
 };
 
-await runSuite(redactionTests, import.meta.url, { timeoutMs: 30000, concurrency: 1 });
+await runSuite(redactionTests, import.meta.url, { timeoutMs: 30000, concurrency: 1, browser: true });

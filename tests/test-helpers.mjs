@@ -321,6 +321,7 @@ export function assertUnknownRawSurface(summary, routeLabel, assertFn = assert) 
 export { parseFilterArgs } from './filter-args.mjs';
 
 import { parseFilterArgs } from './filter-args.mjs';
+import { closeSharedBrowser, sharedBrowser } from './shared-browser.mjs';
 
 export async function runSuite(tests, metaUrl, options = {}) {
   const isDirect = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(metaUrl);
@@ -360,6 +361,10 @@ export async function runSuite(tests, metaUrl, options = {}) {
   let failed = false;
   const timeoutMs = options.timeoutMs || 120000;
   const concurrency = options.concurrency !== undefined ? options.concurrency : 1;
+  // web-uplift-91lr: one browser for the whole suite instead of one per gather() call, handed to each case
+  // as its second argument. Opt-in per suite because a shared browser shares its PROFILE; see
+  // tests/shared-browser.mjs for the measurements that make this worth doing and for that boundary.
+  const shared = options.browser === true;
 
   for (const fn of selectedTests) {
     test(fn.name, { timeout: timeoutMs, concurrency }, async (t) => {
@@ -368,7 +373,7 @@ export async function runSuite(tests, metaUrl, options = {}) {
         if (!completed) failed = true;
       });
       try {
-        await fn(t);
+        await fn(t, shared ? { browser: await sharedBrowser() } : {});
         completed = true;
       } catch (err) {
         failed = true;
@@ -376,6 +381,8 @@ export async function runSuite(tests, metaUrl, options = {}) {
       }
     });
   }
+
+  if (shared) after(() => closeSharedBrowser());
 
   after(() => {
     if (!failed && process.exitCode !== 1) {
