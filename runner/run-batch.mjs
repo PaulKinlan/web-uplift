@@ -51,7 +51,7 @@ import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
-import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, SymlinkWriteRefused } from './safe-write.mjs';
+import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, UnsafeTargetRefused } from './safe-write.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
 
@@ -447,7 +447,7 @@ async function worker() {
       // runner/safe-write.mjs for what O_NOFOLLOW does and does not cover.
       await writeFileNoFollow(join(siteDir, 'write-scope.json'), JSON.stringify(scope, null, 2) + '\n');
     } catch (err) {
-      const scopeReason = err instanceof SymlinkWriteRefused ? err.message : `run directory unusable when the scope record was written: ${err.code || err.message}`;
+      const scopeReason = err instanceof UnsafeTargetRefused ? err.message : `run directory unusable when the scope record was written: ${err.code || err.message}`;
       // FAIL CLOSED FOR THIS URL. The record is part of the accounting contract, so a
       // URL whose record cannot be written is not completed, not published and not
       // counted. The refusal below is still reported if there was one - that is the
@@ -665,7 +665,7 @@ async function annotateReport(siteDir, meta) {
   try {
     report = JSON.parse(await readFileNoFollow(reportPath, 'utf8'));
   } catch (err) {
-    if (err instanceof SymlinkWriteRefused) throw err;
+    if (err instanceof UnsafeTargetRefused) throw err;
     // If the model wrote an invalid report, keep the original file so the
     // failure can be inspected instead of hiding it behind runner metadata.
     return;

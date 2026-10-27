@@ -3,8 +3,8 @@
 // A host-slug-correct planted pointer must be consulted in the isolated path,
 // demonstrating the exact residual that the refusal and help text disclose.
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { SymlinkWriteRefused, readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync } from '../runner/safe-write.mjs';
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { UnsafeTargetRefused, readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync } from '../runner/safe-write.mjs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -63,24 +63,56 @@ export async function testSafeWriteRefusesSymlinkLeaf() {
     const link = join(dir, 'run.json');
     symlinkSync(victim, link);
 
-    const refused = (err) => err instanceof SymlinkWriteRefused && err.code === 'ELOOP';
+    const refused = (err) => err instanceof UnsafeTargetRefused && err.code === 'ELOOP';
     // Every arm the module exposes, because a guard on only one of them leaves the other call sites open.
     await assert.rejects(
       () => writeFileNoFollow(link, 'CLOBBERED'),
       refused,
-      'the async write through a planted leaf link must be refused as a SymlinkWriteRefused, not followed'
+      'the async write through a planted leaf link must be refused as a UnsafeTargetRefused, not followed'
     );
     assert.equal(readFileSync(victim, 'utf8'), 'ORIGINAL\n', 'the async write must not have touched the link target');
     assert.throws(
       () => writeFileNoFollowSync(link, 'CLOBBERED'),
       refused,
-      'the sync write through a planted leaf link must be refused as a SymlinkWriteRefused, not followed'
+      'the sync write through a planted leaf link must be refused as a UnsafeTargetRefused, not followed'
     );
     assert.equal(readFileSync(victim, 'utf8'), 'ORIGINAL\n', 'the sync write must not have touched the link target');
     await assert.rejects(
       () => readFileNoFollow(link),
       refused,
       'a READ through a planted leaf link must be refused too: otherwise someone else\'s file is read as this run\'s report'
+    );
+
+    // HARD LINKS are the arm the first cut of this guard missed (web-uplift-rsbb review, P1): nothing is
+    // followed, so O_NOFOLLOW passes, and writing truncates the victim's inode directly. The fd-level
+    // st_nlink check is what covers it, on every arm.
+    const hardLink = join(dir, 'run-hardlink.json');
+    linkSync(victim, hardLink);
+    await assert.rejects(
+      () => writeFileNoFollow(hardLink, 'CLOBBERED'),
+      (err) => err instanceof UnsafeTargetRefused && /hard link/.test(err.message),
+      'the async write through a planted HARD link must be refused: nothing is followed, so the write would truncate the other name'
+    );
+    assert.equal(readFileSync(victim, 'utf8'), 'ORIGINAL\n', 'the async write must not have touched the hard link target');
+    assert.throws(
+      () => writeFileNoFollowSync(hardLink, 'CLOBBERED'),
+      (err) => err instanceof UnsafeTargetRefused && /hard link/.test(err.message),
+      'the sync write through a planted HARD link must be refused'
+    );
+    assert.equal(readFileSync(victim, 'utf8'), 'ORIGINAL\n', 'the sync write must not have touched the hard link target');
+    await assert.rejects(
+      () => readFileNoFollow(hardLink),
+      (err) => err instanceof UnsafeTargetRefused && /hard link/.test(err.message),
+      'a READ through a hard link must be refused too: the annotate step would rewrite the other name'
+    );
+
+    // A non-regular file at the target (here a directory) is refused by the same descriptor check.
+    const asDir = join(dir, 'target-dir');
+    mkdirSync(asDir);
+    await assert.rejects(
+      () => writeFileNoFollow(asDir, 'x'),
+      (err) => err instanceof UnsafeTargetRefused,
+      'writing a directory path must be refused by the kind check, not left to a raw EISDIR'
     );
 
     // Positive controls: the guard refuses LINKS, not writes.
@@ -167,10 +199,69 @@ export function testRunnerReportJsonWriteRefusesPlantedLeafLink() {
   }
 }
 
+
+// THE ACCEPTANCE CASE THE FIRST CUT MISSED (web-uplift-rsbb review, P1): a HARD link needs no symlink to
+// be followed. Measured on the symlink-only fix: the runner exited 0, printed 'done (coverage complete)',
+// and TRUNCATED the victim to empty - the write-scope diff even reported run.json as added inside the tree,
+// because the name in the tree really was added. Only the victim-unchanged assertion catches it.
+export function testRunnerRunJsonWriteRefusesPlantedHardLink() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-rsbb-hardlink-run-'));
+  try {
+    const out = join(root, 'reports');
+    const victim = join(root, 'victim.json');
+    const sentinel = '"SENTINEL-CONTENT"\n';
+    writeFileSync(victim, sentinel);
+    const report = join(repoRoot, 'examples', 'playground-report.json');
+    const res = driveHostileStub(root, out, [
+      '#!/bin/sh',
+      'site=$(dirname "$WEB_UPLIFT_LAUNCH_LOG")',
+      `cp '${report}' "$site/report.json"`,
+      `ln '${victim}' "$site/run.json"`,
+      'exit 0',
+      '',
+    ].join('\n'));
+    const output = `${res.stdout}\n${res.stderr}`;
+    assert.equal(readFileSync(victim, 'utf8'), sentinel, `the hard-linked victim must be UNCHANGED - this is the assertion the symlink-only fix failed:\n${output}`);
+    assert.notEqual(res.status, 0, `a run whose run.json is a planted HARD link must FAIL, got ${res.status}:\n${output}`);
+    assert.match(output, /refusing to write .*run\.json/, `the failure must name the refused write:\n${output}`);
+    assert.match(output, /hard link/, `the failure must say it is a hard link:\n${output}`);
+    assert.doesNotMatch(output, /coverage complete/, `a refused write must never be reported as complete:\n${output}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// The same hard link at report.json: the read feeds a rewrite, so both halves must refuse. Pre-fix the
+// victim was read as this run's report and rewritten with runner metadata.
+export function testRunnerReportJsonWriteRefusesPlantedHardLink() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-rsbb-hardlink-report-'));
+  try {
+    const out = join(root, 'reports');
+    const victim = join(root, 'victim-report.json');
+    const report = join(repoRoot, 'examples', 'playground-report.json');
+    writeFileSync(victim, readFileSync(report));
+    const before = readFileSync(victim, 'utf8');
+    const res = driveHostileStub(root, out, [
+      '#!/bin/sh',
+      'site=$(dirname "$WEB_UPLIFT_LAUNCH_LOG")',
+      `ln '${victim}' "$site/report.json"`,
+      'exit 0',
+      '',
+    ].join('\n'));
+    const output = `${res.stdout}\n${res.stderr}`;
+    assert.equal(readFileSync(victim, 'utf8'), before, `the hard-linked report victim must be UNCHANGED:\n${output}`);
+    assert.notEqual(res.status, 0, `a run whose report.json is a planted HARD link must FAIL, got ${res.status}:\n${output}`);
+    assert.match(output, /hard link/, `the failure must say it is a hard link:\n${output}`);
+    assert.doesNotMatch(output, /coverage complete/, `a refused write must never be reported as complete:\n${output}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 // --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the array the runner
 // drives, so the list cannot drift from what runs. process.exitCode, not process.exit: exit() does not
 // flush asynchronous stdout on a pipe (web-uplift-ecif).
-const CASES = [testBatchResumeIsolation, testSafeWriteRefusesSymlinkLeaf, testRunnerRunJsonWriteRefusesPlantedLeafLink, testRunnerReportJsonWriteRefusesPlantedLeafLink];
+const CASES = [testBatchResumeIsolation, testSafeWriteRefusesSymlinkLeaf, testRunnerRunJsonWriteRefusesPlantedLeafLink, testRunnerReportJsonWriteRefusesPlantedLeafLink, testRunnerRunJsonWriteRefusesPlantedHardLink, testRunnerReportJsonWriteRefusesPlantedHardLink];
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.includes('--list')) {
