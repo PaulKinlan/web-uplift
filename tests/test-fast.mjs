@@ -1234,6 +1234,7 @@ const CASES = [
   testSuiteExecutionMarkers,
   testSharedModulesAreWiredOrRefused,
   testSkippedTargetNeverHidesBehindTheSummaryLine,
+  testDedupeKeepsTheExecutedCaseSetIdentical,
 ];
 
 function runAll() {
@@ -1243,7 +1244,7 @@ function runAll() {
 
 // The fast gate runs this file as a TARGET, and DECLARED_SUITE_CASES can only guard the cases of a suite
 // that can name them. tests/test-helpers.mjs's runSuite does this for suites that use it; this file has its
-// own runner, so it names its cases here. All 22 cases are listed from the CASES array that runAll() also
+// own runner, so it names its cases here. All 23 cases are listed from the CASES array that runAll() also
 // drives, so the list cannot drift from what actually runs (web-uplift-yfbk).
 const { list: listCases } = parseFilterArgs(process.argv.slice(2));
 if (listCases) {
@@ -1253,6 +1254,109 @@ if (listCases) {
   process.exitCode = 0;
 } else {
   runAll();
+}
+
+// web-uplift-91lr: the dedupe must not change WHICH CASES RUN. A suite scheduled directly runs all of its
+// cases, so a regression filter that re-runs some of them is duplicate work (measured on a redaction change:
+// 'Secrets' 55.0s + 'HAR' 58.2s duplicating the direct suite, ~110s in a 690s gate), and the plan now tells
+// those filters to leave that suite out. So the union of executed case names has to be identical before and
+// after:
+//
+//   without dedupe:  cases(--only F)  UNION cases(suite)
+//   with dedupe:     cases(--only F, suite left out)  UNION cases(suite)
+//
+// Both sides are read from the runner's own output, and the duplicated match rule is CROSS-CHECKED against a
+// real cheap filtered run rather than trusted: this file's idea of "what --only F selects" must equal what the
+// runner actually executed for the same filter.
+function testDedupeKeepsTheExecutedCaseSetIdentical() {
+  console.log('Testing that deduping a filtered target against a directly-run suite removes duplicates only (web-uplift-91lr)...');
+  const CASE_NAME = /^test[A-Za-z0-9_]+$/;
+  const namesFrom = (text) => new Set(text.split('\n').map((l) => l.trim()).filter((l) => CASE_NAME.test(l)));
+  const executedFrom = (text) =>
+    new Set(
+      text
+        .split('\n')
+        .map((l) => /^[✔✖]\s+(test[A-Za-z0-9_]+)\s/.exec(l.trim())?.[1])
+        .filter(Boolean),
+    );
+  const run = (args, file = join(repoRoot, 'tests/regression.mjs')) => {
+    const res = spawnSync(process.execPath, [file, ...args], { cwd: repoRoot, encoding: 'utf8', timeout: 120000 });
+    return { res, out: `${res.stdout}\n${res.stderr}` };
+  };
+
+  const suitePath = join(repoRoot, 'tests/redaction.test.mjs');
+  const all = run(['--list']);
+  assert(all.res.status === 0, `tests/regression.mjs --list must exit 0:\n${all.out}`);
+  const everyCase = namesFrom(all.res.stdout);
+  const suite = run(['--list'], suitePath);
+  assert(suite.res.status === 0, `the suite's --list must exit 0:\n${suite.out}`);
+  const suiteCases = namesFrom(suite.res.stdout);
+  assert(everyCase.size > 100, `CONTROL: the registry must list the whole population, got ${everyCase.size}`);
+  assert(suiteCases.size > 0, 'CONTROL: the suite must list real cases');
+
+  // The rule this file uses to work out what "--only F" selects.
+  const matches = (pool, filter) => new Set([...pool].filter((n) => n.toLowerCase().includes(filter.toLowerCase())));
+
+  // CROSS-CHECK that rule against the runner itself on a CHEAP filter (no browser, so this stays affordable).
+  const cheapFilter = 'FragmentRedaction';
+  const cheapRun = run(['--only', cheapFilter]);
+  assert(cheapRun.res.status === 0, `a cheap filtered run must exit 0:\n${cheapRun.out}`);
+  const cheapExecuted = executedFrom(cheapRun.out);
+  const cheapExpected = matches(everyCase, cheapFilter);
+  assert(cheapExecuted.size > 0, `CONTROL: the cheap filter must actually run cases:\n${cheapRun.out}`);
+  assert(
+    cheapExecuted.size === cheapExpected.size && [...cheapExecuted].every((n) => cheapExpected.has(n)),
+    `this file's idea of what --only ${cheapFilter} selects must equal what the runner executed; expected ${JSON.stringify([...cheapExpected].sort())}, ran ${JSON.stringify([...cheapExecuted].sort())}`,
+  );
+
+  // Now the real comparison: a filter whose cases live in the suite that is also run whole.
+  const filter = 'Secrets';
+  const filtered = matches(everyCase, filter);
+  const overlap = [...filtered].filter((n) => suiteCases.has(n));
+  assert(filtered.size > 0, 'CONTROL: the filter must select real cases, or this compares nothing');
+  assert(
+    overlap.length > 0,
+    `CONTROL: the filter must actually overlap the suite, otherwise the dedupe removes nothing and this passes vacuously (filter cases: ${JSON.stringify([...filtered])})`,
+  );
+
+  // What is left for the filter once the whole-suite target takes that suite: read from the runner, not computed.
+  const dedupedRun = run(['--only', filter, '--exclude-suite', 'tests/redaction.test.mjs']);
+  assert(dedupedRun.res.status === 0, `a filtered run with an exclusion must exit 0 even when nothing is left:\n${dedupedRun.out}`);
+  const dedupedExecuted = executedFrom(dedupedRun.out);
+  assert(
+    dedupedExecuted.size < filtered.size,
+    `the dedupe must shrink the FILTERED target (${filtered.size} -> ${dedupedExecuted.size} executed); if it shrank the suite instead, coverage was lost`,
+  );
+
+  // web-uplift-4k7l (review round 2): an exclusion must not become a place for a broken filter to hide. The
+  // first cut validated the filter against what was left AFTER the exclusions, so a filter that names nothing
+  // at all exited 0 - a typo, or a filter naming a renamed case, would have run nothing and reported success.
+  // The two empty cases are different and must stay distinguishable:
+  //   names nothing before the exclusions     -> exit 1 (the filter is wrong)
+  //   names something, all of it excluded     -> exit 0, naming the suites that run those cases
+  const bogus = run(['--only', 'NonExistentTest', '--exclude-suite', 'tests/redaction.test.mjs']);
+  assert(
+    bogus.res.status === 1,
+    `a filter that names no case must FAIL CLOSED even with an exclusion active, got status ${bogus.res.status}:\n${bogus.out}`,
+  );
+  assert(
+    /no tests matched filter/.test(bogus.out) && /names no case that exists/.test(bogus.out),
+    `the failure must say the filter names nothing, not that the suite took the cases: ${bogus.out}`,
+  );
+  assert(
+    /no tests left for filter/.test(dedupedRun.out) && /whole-suite target runs them/.test(dedupedRun.out),
+    `the legitimate empty case must be distinguishable: it says the whole-suite target runs them (${dedupedRun.out})`,
+  );
+
+  const without = new Set([...filtered, ...suiteCases]);
+  const withDedupe = new Set([...dedupedExecuted, ...suiteCases]);
+  const missing = [...without].filter((n) => !withDedupe.has(n));
+  const added = [...withDedupe].filter((n) => !without.has(n));
+  assert(
+    missing.length === 0 && added.length === 0,
+    `the union of executed case names must be identical with and without the dedupe; missing: ${JSON.stringify(missing)}, added: ${JSON.stringify(added)}`,
+  );
+  console.log('✔ Dedupe keeps the executed case set identical');
 }
 
 function testH68zAutoMappedExecutableIsRefusedAndRunsTheControls() {

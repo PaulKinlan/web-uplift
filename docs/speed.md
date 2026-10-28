@@ -22,13 +22,41 @@ code does.
 
 Each fast-gate target is killed at `target.timeoutMs || 120000`; `TEST_FAST_TARGET_TIMEOUT_MS` overrides all of
 them for a single run. One target deliberately carries a measured budget instead of the default:
-`Regression: Batch isolation and scope tests` is **240s** and `Fast gate unit and integration tests`
-(`tests/test-fast.mjs`) is **300s**. They measured **148.3s** and **130.4s** on an idle VM on 2026-10-27
+`Regression: Batch isolation and scope tests` is **240s**, `Fast gate unit and integration tests`
+(`tests/test-fast.mjs`) is **300s**, and `Regression: Evidence primitives` is **240s**. They measured **148.3s** and **130.4s** on an idle VM on 2026-10-27
 (web-uplift-rsbb): the first is `testBatchWriteScope` 76.9s plus five smaller cases, the second is the gate's own
 self-test running the selection machinery end to end several times. Both were being killed at the 120s default, so
 every change under `runner/` - and every change to the gate script itself - failed the fast gate on a target that
 was already over budget before it ran anything new. The two worst targets in this repo are therefore the batch
 group and the gate's own self-test; neither is a per-change cost problem, both are design problems.
+
+The third measured bound (web-uplift-91lr) is a different shape and is expected to come back **down**:
+`Regression: Evidence primitives` took **185.4s** on an otherwise idle VM on 2026-10-27 -
+`testInstalledEvidenceCli` 74.3s, `testEvidenceTruncationReporting` 54.0s, `testConsoleEvidence` 50.1s, the
+other four 1.2-1.3s each - and was killed at the 120s default, so an `evidence/` change could not get a
+verdict. Those three cases are browser-bound and pay a Chrome launch per `gather()` call, and the launch
+itself has got much more expensive than the 0.45s recorded for t2mr above: measured with the repo's own
+launcher on 2026-10-27, launch->CDP is 3.3-4.7s and the FIRST session on it costs another 5.0s. The fix is to
+stop paying that per call (web-uplift-91lr step 3), at which point this number is the measurement to beat
+rather than a ceiling to live with.
+
+### Filtered targets are deduped against suites that run whole (web-uplift-91lr)
+
+A `tests/*.test.mjs` suite selected because it changed runs as a **whole-suite** target, and the same cases can
+also be selected by a narrow `Regression: <filter>` target. When both are in the plan the gate used to run those
+cases twice - measured on a two-file redaction change: `testHar*` cases ran under `Regression: Secrets scan
+tests` (55.0s) **and** `Regression: HAR redaction and redirects` (58.2s) **and** again in the direct suite, and
+`testConsoleEvidence` ran under both `Regression: Evidence primitives` (169.9s) and `Regression: Console
+evidence tests` (58.6s): ~110s of pure duplication in a 690s gate, which is what pushed that change past the
+600s bound.
+
+The plan now tells each filter target to leave out any suite that is already running in full
+(`--exclude-suite`), and the whole-suite target is never narrowed. The union of executed **case names** is
+therefore identical, and that is checked rather than argued: `tests/test-fast.mjs` compares
+`cases(--only F) ∪ cases(suite)` against `cases(--only F --exclude-suite suite) ∪ cases(suite)` as sets, from
+the runner's own `--list` output, and fails if the dedupe removed a case instead of a duplicate. A filter whose
+cases all live in the excluded suite runs nothing and says so - that is only a pass when an exclusion was asked
+for; an empty selection without one still fails.
 
 That is a bound, not a fix. `testBatchWriteScope` is 52% of the batch target and is its slow path: it should be
 split so the whole group is not gated on one long case (web-uplift-d78k), and the gate self-test should stop
