@@ -379,7 +379,14 @@ export const SUBSYSTEMS = [
       // The drift helpers under tests/mwg-drift-*.mjs are imported ONLY by this suite. Without it the
       // plan selected three mwg checks that cannot fail for a change to them, which is why the four
       // were declared unwired (web-uplift-ev2u). Naming the importer makes the coverage honest.
-      { type: 'node', path: 'tests/mwg-principles.test.mjs', label: 'MWG principles and drift unit tests' },
+      // MEASURED BUDGET (web-uplift-46wr), same shape as the Evidence and Batch bounds: this one file took
+      // 236s wall on an otherwise idle VM on 2026-10-28 - testMwgDriftCheckGuard 76.7s, testMwgArtefactGuard
+      // 53.4s, testMwgDriftClassifierGuard 31.9s, testMwgArtefactAppliedRulesAxisFailsClosed 18.6s,
+      // testMwgDriftExtractPipe 13.3s, testMwgDriftBasisFloor 11.3s - and was killed at the 120s default, so
+      // an mwg/ change could not reach a verdict. The shape defect is that all of those run in ONE suite in one
+      // process, one case at a time; splitting it is filed rather than done here (a P2 fix should not carry a
+      // 200s test refactor). When it is split, this bound comes back down with a new measurement.
+      { type: 'node', path: 'tests/mwg-principles.test.mjs', label: 'MWG principles and drift unit tests', timeoutMs: 300000 },
       { type: 'regression', filter: 'Mwg', label: 'Regression: MWG catalog and drift tests' },
       { type: 'regression', filter: 'Principles', label: 'Regression: Principles sync tests' },
       { type: 'regression', filter: 'Guidance', label: 'Regression: Guidance usage tests' },

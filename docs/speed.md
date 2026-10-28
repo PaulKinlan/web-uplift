@@ -23,12 +23,20 @@ code does.
 Each fast-gate target is killed at `target.timeoutMs || 120000`; `TEST_FAST_TARGET_TIMEOUT_MS` overrides all of
 them for a single run. One target deliberately carries a measured budget instead of the default:
 `Regression: Batch isolation and scope tests` is **240s**, `Fast gate unit and integration tests`
-(`tests/test-fast.mjs`) is **300s**, and `Regression: Evidence primitives` is **240s**. They measured **148.3s** and **130.4s** on an idle VM on 2026-10-27
+(`tests/test-fast.mjs`) is **300s**, `Regression: Evidence primitives` is **240s**, and `MWG principles and
+drift unit tests` (`tests/mwg-principles.test.mjs`, one file) is **300s**. They measured **148.3s** and **130.4s** on an idle VM on 2026-10-27
 (web-uplift-rsbb): the first is `testBatchWriteScope` 76.9s plus five smaller cases, the second is the gate's own
 self-test running the selection machinery end to end several times. Both were being killed at the 120s default, so
 every change under `runner/` - and every change to the gate script itself - failed the fast gate on a target that
 was already over budget before it ran anything new. The two worst targets in this repo are therefore the batch
 group and the gate's own self-test; neither is a per-change cost problem, both are design problems.
+
+The fourth (web-uplift-46wr) is a one-FILE target - `tests/mwg-principles.test.mjs` - that measured **236s** on
+2026-10-28 and was killed at the 120s default: `testMwgDriftCheckGuard` 76.7s, `testMwgArtefactGuard` 53.4s,
+`testMwgDriftClassifierGuard` 31.9s, `testMwgArtefactAppliedRulesAxisFailsClosed` 18.6s, `testMwgDriftExtractPipe`
+13.3s, `testMwgDriftBasisFloor` 11.3s, everything else under 3s. Those six cases are 80% of the file and they run
+one at a time in one process, which is the shape defect: the file wants splitting, not a bigger bound, and the
+bound exists only so an mwg/ change can be verified in the meantime.
 
 The third measured bound (web-uplift-91lr) is a different shape and is expected to come back **down**:
 `Regression: Evidence primitives` took **185.4s** on an otherwise idle VM on 2026-10-27 -
