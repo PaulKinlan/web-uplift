@@ -15,7 +15,7 @@ code does.
 
 | gate | command | who runs it | budget |
 | --- | --- | --- | --- |
-| full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=6 tests/*.test.mjs`, 14 suites) | the merger, once per landing on the merged union | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below |
+| full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=2 tests/*.test.mjs`, 14 suites) | deferred: the nightly factory audit; per-landing verification is the fast gate | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below |
 | affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a) |
 
 ### Per-target budgets in the fast gate
@@ -39,6 +39,22 @@ itself has got much more expensive than the 0.45s recorded for t2mr above: measu
 launcher on 2026-10-27, launch->CDP is 3.3-4.7s and the FIRST session on it costs another 5.0s. The fix is to
 stop paying that per call (web-uplift-91lr step 3), at which point this number is the measurement to beat
 rather than a ceiling to live with.
+
+### The full sweep runs two suites at a time, and it is not a per-landing gate (hub ruling, 2026-10-28)
+
+`npm test` used `--test-concurrency=6`. Six suite processes on this box means up to six Chrome instances
+launching at once, and each launch is the expensive thing here - measured with the repo's own launcher on an
+otherwise idle VM: 3.3-4.7s to a CDP reply and 5.0s more for the first session (see web-uplift-91lr). Under six
+ways of doing that simultaneously, sessions queue behind each other and browser-bound cases cascade past their
+own 30s budgets: 48 harness-bound expiries in one run, ~1,900s of dead wall time, and a 48s gate that came back
+as 2,449s. The concurrency is now **2**.
+
+This is deliberately the smaller change: it removes the oversubscription instead of giving the timeouts more
+room, and it does not weaken any assertion.
+
+The second half of the ruling is architectural: the fast gate with mapped change coverage is the per-landing
+verification, and the full multi-browser sweep is deferred to the **nightly factory audit**. A landing therefore
+needs a verified fast gate plus an independent cross-family review, not a full-gate pass.
 
 ### Filtered targets are deduped against suites that run whole (web-uplift-91lr)
 
