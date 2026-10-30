@@ -16,15 +16,18 @@ code does.
 | gate | command | who runs it | budget |
 | --- | --- | --- | --- |
 | full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=2 tests/*.test.mjs`, 14 suites) | deferred: the nightly factory audit; per-landing verification is the fast gate | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below |
-| affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a) |
+| affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a). NOT under that median on a `runner/` or `fixer/` change: those select `tests/runner-agents.test.mjs` whole, which measured 282-397s on 2026-10-30 (web-uplift-dysm) and is the one path carrying a measured direct-target bound below |
 
 ### Per-target budgets in the fast gate
 
 Each fast-gate target is killed at `target.timeoutMs || 120000`; `TEST_FAST_TARGET_TIMEOUT_MS` overrides all of
 them for a single run. One target deliberately carries a measured budget instead of the default:
 `Regression: Batch isolation and scope tests` is **240s**, `Fast gate unit and integration tests`
-(`tests/test-fast.mjs`) is **300s**, `Regression: Evidence primitives` is **240s**, and `MWG principles and
-drift unit tests` (`tests/mwg-principles.test.mjs`, one file) is **300s**. They measured **148.3s** and **130.4s** on an idle VM on 2026-10-27
+(`tests/test-fast.mjs`) is **300s**, `Regression: Evidence primitives` is **240s**, `MWG principles and
+drift unit tests` (`tests/mwg-principles.test.mjs`, one file) is **300s**, and `Regression: Fix mode tests`
+is **240s** (measured 139.3s and 149.2s for its 13 cases on 2026-10-30, so a `fixer/`-only change was being
+killed at the 120s default - a regression target carries a FILTER rather than a path, which is why the
+path-keyed table below cannot reach it). They measured **148.3s** and **130.4s** on an idle VM on 2026-10-27
 (web-uplift-rsbb): the first is `testBatchWriteScope` 76.9s plus five smaller cases, the second is the gate's own
 self-test running the selection machinery end to end several times. Both were being killed at the 120s default, so
 every change under `runner/` - and every change to the gate script itself - failed the fast gate on a target that
@@ -47,6 +50,25 @@ itself has got much more expensive than the 0.45s recorded for t2mr above: measu
 launcher on 2026-10-27, launch->CDP is 3.3-4.7s and the FIRST session on it costs another 5.0s. The fix is to
 stop paying that per call (web-uplift-91lr step 3), at which point this number is the measurement to beat
 rather than a ceiling to live with.
+
+The fifth measured bound is the first one stated as data rather than as a `timeoutMs` on one target:
+`scripts/test-fast.mjs` carries `DIRECT_TARGET_BUDGETS`, keyed by repo-relative path, and the plan applies it
+to every node target naming that path, so `--dry-run`, `--manifest` and the run cannot disagree about it.
+`tests/runner-agents.test.mjs` is **480s** (web-uplift-dysm). Measured on this VM on 2026-10-30:
+**282.3s** for the 31 cases in the fast log `08eb3199be80120061f7018f8b90ac084acb773d`, and **317.6s** and
+**397s** earlier and later the same evening under load - against the generic 240s, which was KILLING the
+target (exit 124, no verdict cached) rather than failing it, so no `runner/` or `fixer/` change could get a
+verdict at all. `testBatchWriteScope` alone is 56-77s of it and the fix-mode and batch cases are the rest;
+this suite is the same shape defect as the mwg file above, and the same remedy applies (split it along the
+filters it already has). The bound is there so those changes can be verified in the meantime.
+
+The table is keyed by PATH and applied when the plan is assembled, not at the point a target is created, so
+it holds whichever route selects the suite: a changed `*.test.mjs` file, a `SUBSYSTEMS` rule, or the
+auto-map fallback. That positioning is the review finding (web-uplift-eh9m) that made this paragraph
+honest: the first cut budgeted only the direct-target creation sites, and a `runner/agents.mjs` change
+reaches `tests/runner-agents.test.mjs` through the `agent-dispatch` SUBSYSTEMS rule instead, which carried
+no `timeoutMs` at all and so fell back to `runTarget`'s 120s default - an even earlier kill than the 240s
+this started from.
 
 ### The full sweep runs two suites at a time, and it is not a per-landing gate (hub ruling, 2026-10-28)
 

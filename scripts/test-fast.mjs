@@ -294,6 +294,39 @@ export const UNWIRED_SHARED_MODULES = [
 ];
 
 /**
+ * MEASURED per-path budgets for whole-SUITE targets, whichever route selected them (docs/speed.md,
+ * "Per-target budgets in the fast gate").
+ *
+ * A `.test.mjs` direct target otherwise gets the generic 240s, which is a ceiling nobody measured -
+ * and a whole-suite target is the shape that trips it, because the suite's cases run one at a time in
+ * one process. These are the paths where a measurement says the generic ceiling is wrong. Key is the
+ * repo-relative path; every entry must carry its numbers in docs/speed.md, and the entry is only
+ * legitimate while the file it names is over the generic ceiling on a quiet VM.
+ *
+ * The real fix for a suite that lands here is to split it along the filters it already has (that is
+ * what makes it parallelizable in the full gate too), not to give the timeout more room. The bound
+ * exists so a change can be VERIFIED in the meantime, which is why web-uplift-dysm exists at all.
+ */
+export const DIRECT_TARGET_BUDGETS = {
+  // 282.3s on this VM on 2026-10-30 (fast log 08eb3199be80120061f7018f8b90ac084acb773d, 31 cases),
+  // 317.6s and 397s on the same evening under load, against the 240s generic default that was KILLING
+  // it (exit 124, no verdict cached) rather than failing it (web-uplift-dysm). testBatchWriteScope
+  // alone is 56-77s of that; the fix-mode and batch cases are the rest.
+  'tests/runner-agents.test.mjs': 480000,
+};
+
+// APPLIED ON EVERY ROUTE, by path, once the plan is assembled (applyMeasuredBudget below). A suite can be
+// selected three ways - a changed *.test.mjs file, a SUBSYSTEMS rule, or the auto-map fallback - and a
+// measurement honoured on only one of them is how the same suite keeps getting killed on a route nobody
+// looked at: web-uplift-eh9m, where a runner/agents.mjs change selected the agent-dispatch subsystem target
+// for tests/runner-agents.test.mjs with no timeoutMs at all, so runTarget's 120s default applied to a suite
+// measured at 282-397s. Keying the table by PATH is what makes the route irrelevant.
+function applyMeasuredBudget(target) {
+  const measured = target.type === 'node' ? DIRECT_TARGET_BUDGETS[target.path] : undefined;
+  return measured == null ? target : { ...target, timeoutMs: measured };
+}
+
+/**
  * Known subsystems and their mapped test targets.
  */
 export const SUBSYSTEMS = [
@@ -418,7 +451,11 @@ export const SUBSYSTEMS = [
     description: 'Model-driven fix loop and report updates',
     match: (f) => f.startsWith('fixer/'),
     targets: [
-      { type: 'regression', filter: 'Fix', label: 'Regression: Fix mode tests' },
+      // MEASURED BUDGET, same rule as the Batch filter above (web-uplift-eh9m). The 13 fix-mode cases measured
+      // 139.3s and 149.2s on this VM on 2026-10-30 (`node tests/regression.mjs --only Fix`), so a fixer/ change
+      // alone was being killed at the 120s default - the route its own subsystem selects, and the one the
+      // direct-target budget cannot reach because a regression target has a FILTER, not a path.
+      { type: 'regression', filter: 'Fix', label: 'Regression: Fix mode tests', timeoutMs: 240000 },
     ],
   },
   {
@@ -1021,7 +1058,8 @@ export function mapFilesToTests(filePaths, options = {}) {
 
   return {
     matchedSubsystems: Array.from(matchedSubsystems),
-    targets: Array.from(targetsByKey.values()),
+    // Every route passes through here, so a measured budget cannot be missed by the one that was added last.
+    targets: Array.from(targetsByKey.values()).map(applyMeasuredBudget),
     unmappedFiles,
     omittedFiles,
     refusedFiles,
