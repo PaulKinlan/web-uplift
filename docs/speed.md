@@ -70,6 +70,16 @@ reaches `tests/runner-agents.test.mjs` through the `agent-dispatch` SUBSYSTEMS r
 no `timeoutMs` at all and so fell back to `runTarget`'s 120s default - an even earlier kill than the 240s
 this started from.
 
+The seventh measured bound is `Regression: Write-scope tests` at **240s** (web-uplift-d78k). That filter selects
+`testBatchWriteScope`, which is the same eight end-to-end batch scenarios that are 52% of the Batch target
+(76.9s measured on an idle VM on 2026-10-27, web-uplift-rsbb) plus two small cases, so the 120s default was never a
+measurement for it. On 2026-10-30 it was killed at 120.20s in a real fast-gate run on a VM at load 20.4, and because
+`symlink-guards` selects this target, that kill blocked every change touching `tests/install-copy-symlink.mjs` -
+including one that had already passed every other target. The lump is the defect and this bound does not fix it:
+d78k's split (move the eight end-to-end scenarios out of this filter, keep predicate-level coverage in it) is still
+the fix, and the scenarios stay covered in the meantime through the runner subsystem's Batch target, which selects
+them by name rather than by accident of a filter.
+
 The sixth measured bound follows that same rule for a FILTER target: `Regression: Installed evidence CLI tests`
 is **240s** (web-uplift-3jzf). It is the only route a dependency bump takes, through this same
 `install-and-package` rule matching `package.json` and `package-lock.json`, and it is network-bound rather than

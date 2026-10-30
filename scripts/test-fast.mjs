@@ -370,7 +370,16 @@ export const SUBSYSTEMS = [
       { type: 'node', path: 'tests/install-copy-symlink.mjs', label: 'Install copy symlink escape tests' },
       { type: 'node', path: 'tests/snapshot-run.mjs', label: 'Snapshot run unit tests' },
       { type: 'regression', filter: 'Symlink', label: 'Regression: Symlink tests' },
-      { type: 'regression', filter: 'WriteScope', label: 'Regression: Write-scope tests' },
+      // MEASURED BUDGET (web-uplift-d78k), the same rule as the Batch, Fix, Evidence and Installed bounds above:
+      // this filter selects testBatchWriteScope, which is the SAME 8 end-to-end batch scenarios that make the
+      // Batch target 148.3s - measured 76.9s on an idle VM on 2026-10-27 (web-uplift-rsbb) - plus two small
+      // cases. So a 120s default was never a measurement for it: on 2026-10-30 it was killed at 120.20s in a
+      // real run on a VM at load 20.4, and that kill is what stopped every change touching
+      // tests/install-copy-symlink.mjs, because symlink-guards selects this target.
+      // The design defect is the lump and 240s does not fix it: d78k's split (move the end-to-end scenarios out
+      // of this filter and leave the predicate-level coverage here) is still the fix, and the scenarios stay
+      // covered meanwhile through the runner subsystem's Batch target, which selects them by name.
+      { type: 'regression', filter: 'WriteScope', label: 'Regression: Write-scope tests', timeoutMs: 240000 },
       { type: 'regression', filter: 'Snapshot', label: 'Regression: Snapshot run tests' },
     ],
   },
