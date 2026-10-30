@@ -30,12 +30,13 @@
 // planted link, hard or soft.
 //
 // What this does NOT do, stated rather than hidden: it is not containment (the parent chain is
-// checked separately by isRealUnderOutput), it does not authenticate content an agent wrote earlier,
-// and on a platform without O_NOFOLLOW it degrades to lstat-then-write, which keeps the hard-link and
-// non-regular-file checks but reopens a check-then-use window for symlinks. The honest boundary for
-// that is operator-supplied isolation.
-import { constants, closeSync, fstatSync, ftruncateSync, lstatSync, openSync, writeFileSync } from 'node:fs';
+// checked separately, by isRealDirUnder and assertRealParentUnder below), it does not authenticate
+// content an agent wrote earlier, and on a platform without O_NOFOLLOW it degrades to
+// lstat-then-write, which keeps the hard-link and non-regular-file checks but reopens a check-then-use
+// window for symlinks. The honest boundary for that is operator-supplied isolation.
+import { constants, closeSync, fstatSync, ftruncateSync, lstatSync, openSync, statSync, writeFileSync } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 
 const NOFOLLOW = constants.O_NOFOLLOW;
 const HAS_NOFOLLOW = typeof NOFOLLOW === 'number';
@@ -170,4 +171,98 @@ async function assertSafePath(path, action) {
 
 export function isNoFollowSupported() {
   return HAS_NOFOLLOW;
+}
+
+// --- the parent CHAIN, which the leaf guards above do not cover --------------------------------
+//
+// A leaf guard answers "is this NAME a link?". It does not answer "does this PATH still lead to the
+// tree I meant?", and a DIRECTORY level is just as plantable: replace `<out>/evidence` (or `<out>`
+// itself) with a symbolic link to somewhere else and every write below it lands there, while the
+// leaf still looks like a fresh regular file that this runner created. So the directory chain from
+// the declared root down to the file's parent is checked as well, and a target whose path leaves the
+// root is refused rather than written.
+//
+// This is the check run-batch.mjs used to carry inline for its run directories, lifted here so fix
+// mode can use the SAME rule instead of growing a second one (web-uplift-uruy). A second copy is how
+// this defect class recurs, exactly as a second credential-redaction table would be.
+
+// A real directory: both lstat and stat say directory, so a symbolic link to a directory (and
+// anything that merely resolves like one) is NOT one. Shared, because the batch runner's latest
+// pointer, its run directories and fix mode's records all ask the same question.
+export function isRealDir(p) {
+  try {
+    return lstatSync(p).isDirectory() && statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Pure path test: is `target` at or below `base`? Says nothing about the filesystem.
+export function isInsidePath(base, target) {
+  const baseAbs = resolve(base);
+  const targetAbs = resolve(target);
+  return targetAbs === baseAbs || targetAbs.startsWith(baseAbs + sep);
+}
+
+// `dir` is a real directory and EVERY segment from `base` down to it is a real directory (both
+// lstat and stat say directory, so neither a link nor something that resolves oddly passes).
+// `includeBase` extends the check to `base` itself, for a root that is itself agent-writable.
+// Validate immediately before EVERY use, never once early: the agent shares this tree and can swap a
+// level between the check and the write.
+export function isRealDirUnder(base, dir, { includeBase = false } = {}) {
+  const baseAbs = resolve(base);
+  const dirAbs = resolve(dir);
+  if (!isInsidePath(baseAbs, dirAbs)) return false;
+  if (includeBase && !isRealDir(baseAbs)) return false;
+  let cur = baseAbs;
+  for (const segment of relative(baseAbs, dirAbs).split(sep).filter(Boolean)) {
+    cur = join(cur, segment);
+    if (!isRealDir(cur)) return false;
+  }
+  return true;
+}
+
+function refusedOutsideTree(path, action, baseAbs, what) {
+  return new UnsafeTargetRefused(
+    path,
+    action,
+    `it resolves outside ${baseAbs}, ${what}, so the write would leave the tree it is accounted for; it is refused rather than performed (web-uplift-uruy)`
+  );
+}
+
+function refusedUnrealChain(path, action, baseAbs, segment) {
+  return new UnsafeTargetRefused(
+    path,
+    action,
+    `${segment} is a symbolic link or not a directory, so this access would land outside ${baseAbs} rather than in it (a planted directory level redirects it without touching the leaf; web-uplift-uruy)`
+  );
+}
+
+// The guard for a FILE target: the path must stay inside `base`, `base` itself must be a real
+// directory when `includeBase` is set, and the whole directory chain below it must be real. The leaf
+// is deliberately NOT checked here - writeFileNoFollow/readFileNoFollow own the leaf, and a leaf that
+// does not exist yet is the normal case for a create.
+//
+// `what` names the tree in the refusal, so the operator reads which boundary was crossed: the message
+// is evidence, not a stack trace line.
+export function assertRealParentUnder(base, target, action, { what = 'the tree this access must stay inside', includeBase = false } = {}) {
+  const baseAbs = resolve(base);
+  const targetAbs = resolve(target);
+  if (!isInsidePath(baseAbs, targetAbs)) throw refusedOutsideTree(target, action, baseAbs, what);
+  if (includeBase && !isRealDir(baseAbs)) throw refusedUnrealChain(target, action, baseAbs, baseAbs);
+  // A target that IS the base has no parent below it to walk; anything else is validated by its
+  // parent directory chain, because the leaf itself is writeFileNoFollow's question (and a leaf that
+  // does not exist yet is the normal case for a create).
+  const dirAbs = targetAbs === baseAbs ? baseAbs : dirname(targetAbs);
+  if (!isRealDirUnder(baseAbs, dirAbs)) {
+    // Name the first segment that is not a real directory: the leaf-relative diagnosis is what
+    // tells an operator which level to look at.
+    let cur = baseAbs;
+    let bad = dirAbs;
+    for (const segment of relative(baseAbs, dirAbs).split(sep).filter(Boolean)) {
+      cur = join(cur, segment);
+      if (!isRealDir(cur)) { bad = cur; break; }
+    }
+    throw refusedUnrealChain(target, action, baseAbs, bad);
+  }
 }
