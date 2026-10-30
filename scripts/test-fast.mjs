@@ -294,8 +294,8 @@ export const UNWIRED_SHARED_MODULES = [
 ];
 
 /**
- * MEASURED per-path budgets for DIRECT-TEST targets (docs/speed.md, "Per-target budgets in the fast
- * gate").
+ * MEASURED per-path budgets for whole-SUITE targets, whichever route selected them (docs/speed.md,
+ * "Per-target budgets in the fast gate").
  *
  * A `.test.mjs` direct target otherwise gets the generic 240s, which is a ceiling nobody measured -
  * and a whole-suite target is the shape that trips it, because the suite's cases run one at a time in
@@ -315,10 +315,15 @@ export const DIRECT_TARGET_BUDGETS = {
   'tests/runner-agents.test.mjs': 480000,
 };
 
-// One place for the rule, because both direct-target creation sites must agree: a per-path measurement
-// that applied to only one of them would make --dry-run disagree with the run.
-function directTargetBudget(path) {
-  return DIRECT_TARGET_BUDGETS[path] ?? (path.endsWith('.test.mjs') ? 240000 : 120000);
+// APPLIED ON EVERY ROUTE, by path, once the plan is assembled (applyMeasuredBudget below). A suite can be
+// selected three ways - a changed *.test.mjs file, a SUBSYSTEMS rule, or the auto-map fallback - and a
+// measurement honoured on only one of them is how the same suite keeps getting killed on a route nobody
+// looked at: web-uplift-eh9m, where a runner/agents.mjs change selected the agent-dispatch subsystem target
+// for tests/runner-agents.test.mjs with no timeoutMs at all, so runTarget's 120s default applied to a suite
+// measured at 282-397s. Keying the table by PATH is what makes the route irrelevant.
+function applyMeasuredBudget(target) {
+  const measured = target.type === 'node' ? DIRECT_TARGET_BUDGETS[target.path] : undefined;
+  return measured == null ? target : { ...target, timeoutMs: measured };
 }
 
 /**
@@ -446,7 +451,11 @@ export const SUBSYSTEMS = [
     description: 'Model-driven fix loop and report updates',
     match: (f) => f.startsWith('fixer/'),
     targets: [
-      { type: 'regression', filter: 'Fix', label: 'Regression: Fix mode tests' },
+      // MEASURED BUDGET, same rule as the Batch filter above (web-uplift-eh9m). The 13 fix-mode cases measured
+      // 139.3s and 149.2s on this VM on 2026-10-30 (`node tests/regression.mjs --only Fix`), so a fixer/ change
+      // alone was being killed at the 120s default - the route its own subsystem selects, and the one the
+      // direct-target budget cannot reach because a regression target has a FILTER, not a path.
+      { type: 'regression', filter: 'Fix', label: 'Regression: Fix mode tests', timeoutMs: 240000 },
     ],
   },
   {
@@ -931,7 +940,7 @@ export function mapFilesToTests(filePaths, options = {}) {
     if (isDirectRunnableTest(normalized)) {
       const absPath = rawPath.startsWith('/') ? rawPath : join(repoRoot, normalized);
       if (existsSync(absPath)) {
-        const timeoutMs = directTargetBudget(normalized);
+        const timeoutMs = normalized.endsWith('.test.mjs') ? 240000 : 120000;
         const target = { type: 'node', path: rawPath, label: `Direct test: ${normalized}`, timeoutMs };
         targetsByKey.set(targetKey(target), target);
         matched = true;
@@ -1007,7 +1016,7 @@ export function mapFilesToTests(filePaths, options = {}) {
       if (namingSuites.length === 0) { remaining.push(file); continue; }
       for (const suite of namingSuites) {
         autoMappedFiles.push({ path: file, suite });
-        const target = { type: 'node', path: suite, label: `Direct test: ${suite}`, timeoutMs: directTargetBudget(suite) };
+        const target = { type: 'node', path: suite, label: `Direct test: ${suite}`, timeoutMs: suite.endsWith('.test.mjs') ? 240000 : 120000 };
         targetsByKey.set(targetKey(target), target);
       }
       // web-uplift-h68z: the auto-map is RECORDED AND PRINTED, and it does not excuse the missing map rule. The
@@ -1049,7 +1058,8 @@ export function mapFilesToTests(filePaths, options = {}) {
 
   return {
     matchedSubsystems: Array.from(matchedSubsystems),
-    targets: Array.from(targetsByKey.values()),
+    // Every route passes through here, so a measured budget cannot be missed by the one that was added last.
+    targets: Array.from(targetsByKey.values()).map(applyMeasuredBudget),
     unmappedFiles,
     omittedFiles,
     refusedFiles,
