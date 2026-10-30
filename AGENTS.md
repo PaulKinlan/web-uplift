@@ -103,13 +103,22 @@ at the skill). opencode also reads this `AGENTS.md` for project context.
 ## Testing & fast gates (fleet-check --fast)
 
 The full test suite is `npm test`, which runs `npm run sync:vendored` and then
-`node --test --test-concurrency=6 tests/*.test.mjs`: the 14 modular suites
-(`tests/*.test.mjs`) each run in their own `node:test` process, taking about 1 to 1.5
-minutes on the project VM. It runs once per landing on the merger's merged union.
+`node --test --test-concurrency=2 tests/*.test.mjs`: the 14 modular suites
+(`tests/*.test.mjs`) each run in their own `node:test` process.
 
-**Why concurrency 6** (measured 2026-10-13, web-uplift-f5mb; replacing these numbers with adjectives
-is how this becomes a guess again). Paired run by run in ONE window with the load beside every run,
-3 samples per arm, each arm in its own tree:
+**It is NOT a per-landing gate** (hub ruling, 2026-10-28). A landing needs a verified
+fast gate plus an independent cross-family review; the full sweep is deferred to the
+nightly factory audit, which is where its wall time is recorded. Do not run it to
+verify a change, and do not wait for it before handing off. `docs/speed.md` section
+"The full sweep runs two suites at a time, and it is not a per-landing gate" holds
+the ruling, the measurement behind the concurrency, and what is still outstanding
+about it; `docs/adr-0004-full-sweep-concurrency-2.md` is the decision record.
+
+**Why concurrency 6 was chosen, and why the sweep now runs at 2** (the table below was
+measured 2026-10-13, web-uplift-f5mb, when the sweep was still the per-landing gate;
+replacing these numbers with adjectives is how this becomes a guess again). Paired run by
+run in ONE window with the load beside every run, 3 samples per arm, each arm in its own
+tree:
 
 | arm | median | runs (s) | failed runs | peak job-tree RSS |
 | --- | --- | --- | --- | --- |
@@ -144,6 +153,13 @@ is how this becomes a guess again). Paired run by run in ONE window with the loa
   asserted a wall-clock ratio between a cache-resident 160 kB measurement and a non-resident
   640 kB one, so it failed at concurrency 3 and 4 on both the split and the unsplit layouts.
   If a gate run ever fails there again, that is a machine-speed assertion, not the sweep.
+- **The 6 setting was beaten by the browser launches it stacked, and that is what set 2.** Six suite
+  processes can mean six Chrome instances launching at once; measured with the repo's own launcher on an
+  idle VM, a launch is 3.3-4.7s to a CDP reply plus 5.0s more for the first session, so sessions queue
+  and browser-bound cases cascade past their own 30s budgets (48 harness-bound expiries in one run, about
+  1,900s of dead wall time, a 48s gate returning as 2,449s). The sweep now runs at **2** and is no longer
+  per-landing. This table still holds: it is the measurement that chose 6 for the sweep as it was then
+  defined, and it is why 8 was rejected.
 - `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`) pins concurrency to
   1 and is the serial escape hatch for a host too small for concurrent browser suites.
 
@@ -152,7 +168,7 @@ For iteration and implementer fast gates, several selective mechanisms are provi
 1. **Native node:test runner:** All 14 suites use native `node:test` and `node:assert/strict`.
    Run `node --test tests/evidence-conditions.test.mjs` or filter natively by pattern via
    `node --test --test-name-pattern="<regex>" tests/evidence-conditions.test.mjs`. Multi-suite
-   execution is bounded by `--test-concurrency`: `npm test` runs the 14 files at concurrency 6,
+   execution is bounded by `--test-concurrency`: `npm test` runs the 14 files at concurrency 2,
    while `npm run test:node` (`node --test --test-concurrency=1 tests/*.test.mjs`) pins it to 1
    as the serial escape hatch for a host too small for concurrent browser suites.
 2. **Direct suite execution:** Each `tests/*.test.mjs` suite can be run directly
@@ -219,16 +235,17 @@ baseline pass: a green gate that never ran the suite for a changed module is a f
   what `fleet remote/check-coverage.py` matches against the diff; the record for a fast run can then state
   its coverage instead of `UNKNOWN` (fleet docs/speed.md R15).
 
-The budget is a median under 60s (the fleet's `docs/speed.md` R2) for the fast gate, and the full gate runs
-once per landing. `docs/speed.md` in this repo is the readable record: the routing policy, the omission
+The budget is a median under 60s (the fleet's `docs/speed.md` R2) for the fast gate, which is the
+per-landing verification; the full sweep is not run per landing (see the testing section above).
+`docs/speed.md` in this repo is the readable record: the routing policy, the omission
 rules with their reasons, the escape, and the measurements with their provenance. It is not a fourth place
 to drift - `tests/test-fast.mjs` parses its rule table and compares every reason cell to `OMITTED_RULES`,
 specifically so a wrong-but-plausible reason with a right rule id fails.
 
 `tests/test-fast.mjs` pins each of these, including that NO AUTHORED executable tracked path is omitted by
 a rule while every non-executable tracked path is mapped or omitted, that the refusal names the escape, and
-that AGENTS.md and `docs/speed.md` both state the rule ids. `npm test` remains the merger's full union gate
-and is unchanged.
+that AGENTS.md and `docs/speed.md` both state the rule ids. The full sweep (`npm test`) is not a
+per-landing gate and has not been since 2026-10-28; it runs in the nightly factory audit.
 
 ### Fleet configuration (~/.fleet/check.conf)
 

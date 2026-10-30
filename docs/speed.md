@@ -15,7 +15,7 @@ code does.
 
 | gate | command | who runs it | budget |
 | --- | --- | --- | --- |
-| full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=2 tests/*.test.mjs`, 14 suites) | deferred: the nightly factory audit; per-landing verification is the fast gate | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below |
+| full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=2 tests/*.test.mjs`, 14 suites) | deferred: the nightly factory audit; per-landing verification is the fast gate | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below. BOTH of those were taken at the concurrency-6 setting of 2026-10-13 and are historical: the sweep runs at 2 since 2026-10-28 and its paired wall time at 2 is outstanding ("The full sweep runs two suites at a time" below, ADR 0004) |
 | affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a). NOT under that median on a `runner/` or `fixer/` change: those select `tests/runner-agents.test.mjs` whole, which measured 282-397s on 2026-10-30 (web-uplift-dysm) and is the one path carrying a measured direct-target bound below |
 
 ### Per-target budgets in the fast gate
@@ -97,6 +97,14 @@ room, and it does not weaken any assertion.
 The second half of the ruling is architectural: the fast gate with mapped change coverage is the per-landing
 verification, and the full multi-browser sweep is deferred to the **nightly factory audit**. A landing therefore
 needs a verified fast gate plus an independent cross-family review, not a full-gate pass.
+
+What is outstanding, stated rather than implied: the number 2 does not yet carry the paired measurement that
+ADR 0002 demands of a concurrency setting. What is measured is the failure at 6 (the 48 expiries, the ~1,900s
+of dead wall time, the 2,449s run) and the launch cost that explains it; what is not yet measured is wall time,
+failed runs and peak job-tree RSS AT 2, taken in one window with the load recorded beside every run as the
+2026-10-13 arms were. The first nightly sweep's wall time at 2 is where that comes from, and until it exists the
+2 is a reasoned setting with a measured failure behind it rather than a fully measured arm. Anyone who does
+take that measurement should add it to this section, not to a bead comment.
 
 ### Filtered targets are deduped against suites that run whole (web-uplift-91lr)
 
@@ -209,11 +217,14 @@ in its own tree. This is the authority; the model above is not.
 | 14 files, concurrency 6 | **66.2s** | 67.9, 60.8, 66.2 | 0/3 | 863-914 MB | 9.86, 8.74, 19.83 |
 | 14 files, concurrency 8 | 74.3s | 74.3, 56.5, 80.8 | **2/3** | 961-1033 MB | 13.75, 13.42, 19.08 |
 
-`npm test` therefore runs at **concurrency 6**: 33.0s (33%) below the 99.1s it was, and 16.4s below the
-split tree at concurrency 3. Concurrency 8 is rejected on BOTH counts: slower than 6, and 2 of its 3 runs
-failed on `testOversizedBodyDoesNotEarnACleanVerdict` (`web-uplift-wo80`, a case that asserts on the
+`npm test` therefore ran at **concurrency 6** from 2026-10-13, 33.0s (33%) below the 99.1s it was and 16.4s
+below the split tree at concurrency 3. Concurrency 8 is rejected on BOTH counts: slower than 6, and 2 of its 3
+runs failed on `testOversizedBodyDoesNotEarnACleanVerdict` (`web-uplift-wo80`, a case that asserts on the
 reader's scheduling by relying on two socket writes not coalescing). The extra slots buy nothing and cost
-a flake.
+a flake. **The 6 setting was superseded on 2026-10-28** and the sweep now runs at 2: the table measures wall
+time and RSS and is silent about the one thing that broke at 6, which is up to six Chrome launches stacking
+("The full sweep runs two suites at a time" below, ADR 0004). Which gives this section a second lesson: an arm
+that wins on wall time can still lose the gate it was measuring.
 
 The model predicted 3 -> 76s, 6 -> 45s, 8 -> 37s and the measurements were 82.6s, 66.2s, 74.3s, which is
 the useful lesson: per-file wall times do NOT survive N-way contention on browser-and-parser-bound

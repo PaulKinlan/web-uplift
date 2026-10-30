@@ -44,7 +44,7 @@ To eliminate these bottlenecks while strictly preserving all CLI surfaces, publi
 - Implement `scripts/test-fast.mjs` backing `CHECK_FAST_CMD='npm run test:fast'` in `~/.fleet/check.conf`.
 - Inspect git status and diffs against `origin/master` (`mapFilesToTests`) to determine changed files and map them to affected subsystem targets (e.g. runner, flow, safe-fetch, evidence, schema, mwg).
 - Add `--only <name>`, `--filter <regex>`, and `--list` flags to `tests/regression.mjs` backed by an authoritative `ALL_TESTS` array.
-- Enforce the fleet operational rule: implementers run `fleet-check --fast` (completing in 10 to 30 seconds for typical changes), while the full regression suite runs once per landing on the merger's integrated tree.
+- Enforce the fleet operational rule: implementers run `fleet-check --fast` (completing in 10 to 30 seconds for typical changes), while the full regression suite runs once per landing on the merger's integrated tree. **[The second clause is superseded by [ADR 0004](adr-0004-full-sweep-concurrency-2.md) (2026-10-28): the full sweep is not a per-landing gate, it runs in the nightly factory audit, and the per-landing verification is the fast gate plus an independent review.]**
 
 ### 3. Native Test Runner Adoption (`web-uplift-hhft` & `web-uplift-d2xu`)
 *Status: Completed (`web-uplift-d2xu`, `web-uplift-hhft`, `web-uplift-n93i`)*
