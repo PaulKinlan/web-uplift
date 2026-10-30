@@ -1268,6 +1268,21 @@ if (listCases) {
 // Both sides are read from the runner's own output, and the duplicated match rule is CROSS-CHECKED against a
 // real cheap filtered run rather than trusted: this file's idea of "what --only F selects" must equal what the
 // runner actually executed for the same filter.
+// web-uplift-edrg: a spawned suite must be read through the reporter THIS test parses, so the child cannot
+// inherit node:test's own mode. When this file runs as a TARGET (`node tests/test-fast.mjs`) the env carries no
+// test context and the child prints `✔ testCaseName (12.3ms)`; when it runs under `node --test
+// tests/test-fast.mjs`, i.e. the whole sweep, NODE_TEST_CONTEXT is inherited and the child switches to the v8
+// reporter: the human `✔ testCaseName` lines stop being written and the case set read below becomes empty, so
+// 'CONTROL: the cheap filter must actually run cases' failed and the sweep went red on a test that passes in
+// the fast gate. The line this test needs is the CHILD's, so the child is pinned to the plain reporter rather
+// than the parent's mode. Any future assertion here that reads a spawned suite's human output must spawn it the
+// same way: the failure mode is a silent empty parse, not an error.
+function plainChildEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  delete env.NODE_TEST_CONTEXT;
+  return env;
+}
+
 function testDedupeKeepsTheExecutedCaseSetIdentical() {
   console.log('Testing that deduping a filtered target against a directly-run suite removes duplicates only (web-uplift-91lr)...');
   const CASE_NAME = /^test[A-Za-z0-9_]+$/;
@@ -1280,7 +1295,7 @@ function testDedupeKeepsTheExecutedCaseSetIdentical() {
         .filter(Boolean),
     );
   const run = (args, file = join(repoRoot, 'tests/regression.mjs')) => {
-    const res = spawnSync(process.execPath, [file, ...args], { cwd: repoRoot, encoding: 'utf8', timeout: 120000 });
+    const res = spawnSync(process.execPath, [file, ...args], { cwd: repoRoot, env: plainChildEnv(), encoding: 'utf8', timeout: 120000 });
     return { res, out: `${res.stdout}\n${res.stderr}` };
   };
 
