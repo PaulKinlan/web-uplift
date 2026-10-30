@@ -1,6 +1,9 @@
 # ADR 0002: Test-file concurrency is a measured setting, superseding the 2-vCPU sequential mandate
 
-- **Status**: Accepted
+- **Status**: Accepted. **Decision 1 is superseded by [ADR 0004](adr-0004-full-sweep-concurrency-2.md)
+  (2026-10-28)**: the sweep runs at concurrency 2 and is no longer a per-landing gate. The rule this ADR
+  establishes, that concurrency is a measured setting recorded with its measurement rather than a fixed
+  mandate, stands and is exactly what ADR 0004 applies.
 - **Date**: 2026-10-13
 - **Supersedes**: the concurrency clause of [ADR 0001](adr-0001-test-and-evidence-decomposition.md)
   decision 3 ("Native Test Runner Adoption") and the premise of its decision 4
@@ -47,9 +50,11 @@ a FAKE `CHROME_BIN` script that binds nothing. Port exhaustion is not the bindin
 
 **The gate's file concurrency is a measured setting recorded with its measurement, not a fixed mandate.**
 
-1. `npm test` runs `node --test --test-concurrency=6 tests/*.test.mjs`. The setting was chosen from paired
-   runs in one window, 3 samples per arm, load recorded beside every run, in the tree that would ship it
-   (`docs/speed.md`, "What the gate's wall time is made of"):
+1. `npm test` runs `node --test --test-concurrency=6 tests/*.test.mjs`. **[SUPERSEDED 2026-10-28: the setting
+   is now 2 and the sweep is no longer a per-landing gate; see ADR 0004. The measurement below is kept because
+   it is what chose 6 for the sweep as it was then defined, and it is why 8 is rejected.]** The setting was
+   chosen from paired runs in one window, 3 samples per arm, load recorded beside every run, in the tree that
+   would ship it (`docs/speed.md`, "What the gate's wall time is made of"):
 
    | arm | median | runs | failed | peak job-tree RSS |
    | --- | --- | --- | --- | --- |
@@ -88,3 +93,12 @@ prose alone, and `AGENTS.md` carries the same table.
 given in, which leaves roughly 12s of tail at concurrency 3 (75.6s measured against the 63.9s floor). That
 is `web-uplift-jgkj`, a sharded launcher; this ADR does not claim it. Nor does it fix
 `web-uplift-wo80`, the case that fails at concurrency 8.
+
+## What was wrong with it, found on 2026-10-28
+
+The arms above measured wall time, failed runs and RSS, and they were paired and honest. What they did not
+measure is the axis that broke: six suite processes can mean six Chrome instances launching at once, and the
+launch is the expensive thing here (3.3-4.7s to a CDP reply plus 5.0s for the first session, measured with the
+repo's own launcher). Under that oversubscription browser-bound cases cascade past their own 30s budgets: 48
+harness-bound expiries in one run, ~1,900s of dead wall time, and a 48s gate returning as 2,449s. A setting can
+win every number in a table and still lose the property the table was standing in for. See ADR 0004.
