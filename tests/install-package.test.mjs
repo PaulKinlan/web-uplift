@@ -201,6 +201,38 @@ export function testCdpCopySyncDropsStaleVendoredEntries() {
     `a tracked destination must never be deleted by --sync:\n${trackedRun.stdout}\n${trackedRun.stderr}`,
   );
   assert(trackedRun.status !== 0, `a tracked destination with no source stays the failure it was:\n${trackedRun.stdout}\n${trackedRun.stderr}`);
+
+  // CONTROL 3 (web-uplift-y6ch): a destination that is a DIRECTORY is not a vendored copy. It used to reach
+  // writeFileSync and throw 'EISDIR: illegal operation on a directory' out of the middle of a run, with no
+  // message saying which path was wrong; the removal path was the other half of the same blind spot, where
+  // rmSync(force: true) only forgives ENOENT. Both are refused by name now, before anything is written.
+  rmSync(join(fixture, trackedRel), { force: true }); // drop CONTROL 2's failure so this arm starts clean
+  const dirTarget = join(dstDir, 'kept.json'); // replaces a vendored file in the pair list with a directory
+  rmSync(dirTarget, { force: true });
+  mkdirSync(dirTarget, { recursive: true });
+  const dirRun = sync('--sync');
+  assert(dirRun.status !== 0, `a directory where a vendored file belongs must fail:\n${dirRun.stdout}\n${dirRun.stderr}`);
+  assert(
+    /refusing to touch .*kept\.json: it is a directory, not a vendored file/.test(dirRun.stderr),
+    `the refusal must name the path and the reason:\n${dirRun.stderr}`,
+  );
+  assert(!/EISDIR|node:internal/.test(dirRun.stderr), `it must be a message, not a crash:\n${dirRun.stderr}`);
+  assert(existsSync(dirTarget), 'the directory must survive: deleting it is not this script\'s job');
+  rmSync(dirTarget, { recursive: true, force: true });
+
+  // CONTROL 4 (web-uplift-y6ch): a pair present on NEITHER side is a stale DECLARATION, not a stale mirror
+  // entry, so a run must never report removing it. buildPairs skips such a pair outside the real tree, which
+  // is why the behaviour itself is exercised on the real tree in the bead's evidence rather than here; what is
+  // asserted here is the guard that makes the false report impossible, so a later edit cannot reintroduce the
+  // unguarded delete it replaced.
+  const syncSource = readFileSync(join(repoRoot, 'tests', 'cdp-copy-sync.mjs'), 'utf8');
+  const removeAt = syncSource.indexOf('rmSync(targetAbs, { force: true });');
+  assert(removeAt > 0, 'the removal path must still exist');
+  const beforeRemove = syncSource.slice(0, removeAt);
+  assert(
+    beforeRemove.includes('destinationKind(pair.dstAbs)') && beforeRemove.includes("destKind !== 'file'"),
+    'the stale-entry removal must inspect the destination before deleting it: rmSync(force) only forgives ENOENT, and a missing destination is a stale declaration, not a copy to remove (web-uplift-y6ch)',
+  );
 }
 
 

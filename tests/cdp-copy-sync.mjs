@@ -139,6 +139,9 @@ const failures = [];
 // other (web-uplift-sfbp). Collected at the TOP of the pair loop (web-uplift-rt1y), so the answer exists on
 // every path, including the ones that write nothing.
 const symlinkRefusals = [];
+// Destinations that are not files at all (a directory where a vendored file belongs), refused for the same
+// reason and at the same point (web-uplift-y6ch). Kept separate so the message names the right problem.
+const nonFileRefusals = [];
 
 for (const pair of pairs) {
   // THE destination question, asked ONCE per pair and BEFORE any shortcut (web-uplift-rt1y). It used to be
@@ -154,6 +157,16 @@ for (const pair of pairs) {
   if (refused) {
     symlinkRefusals.push(refused.path);
     console.error(`web-uplift sync: ${refused.reason}: ${refused.path} (${refused.symlinkComponent} is a symlink). Nothing was written for it; remove or replace the symlink and run again.`);
+    continue;
+  }
+  // A destination that is not a file is not a vendored copy, and it is not this script's to overwrite or
+  // delete (web-uplift-y6ch). Asked HERE, with the symlink refusal, for the same reason that one is asked
+  // here: it must be reached before every fast path, and before the write path that used to throw
+  // 'EISDIR: illegal operation on a directory' out of the middle of a sync run with no message saying why.
+  const destKind = destAbs ? destinationKind(destAbs) : 'missing';
+  if (destKind === 'directory' || destKind === 'other') {
+    console.error(`web-uplift sync: refusing to touch ${pair.dstRel}: it is a ${destKind}, not a vendored file. Nothing was written or removed for it; delete it by hand if it is wrong.`);
+    nonFileRefusals.push(pair.dstRel);
     continue;
   }
   const source = readCopy(pair.srcAbs);
@@ -196,7 +209,7 @@ for (const pair of pairs) {
   for (const line of lines) console.error(`FAIL: ${line}`);
 }
 
-if (failures.length === 0 && symlinkRefusals.length === 0) {
+if (failures.length === 0 && symlinkRefusals.length === 0 && nonFileRefusals.length === 0) {
   console.log(`all ${pairs.length} vendored copies identical`);
   process.exit(0);
 }
@@ -211,6 +224,14 @@ if (symlinkRefusals.length > 0) {
   process.exit(1);
 }
 
+// Same contract for a destination that is not a file: refused in every mode, including a check-only run that
+// would have written nothing (web-uplift-y6ch).
+if (nonFileRefusals.length > 0) {
+  const unique = [...new Set(nonFileRefusals)];
+  console.error(`FAILED: refused to touch ${unique.length} destination(s) that are not files: ${unique.join(', ')}. Nothing was written or removed for those. Delete them by hand if they are wrong.`);
+  process.exit(1);
+}
+
 if (syncMode) {
   if (dryRun) {
     for (const pair of failures) {
@@ -218,7 +239,14 @@ if (syncMode) {
       const sourceRel = fromVendored ? pair.dstRel : pair.srcRel;
       const sourceObj = fromVendored ? readCopy(pair.dstAbs) : readCopy(pair.srcAbs);
       if (isRemovableStaleEntry(targetRel, sourceObj)) {
-        console.log(`dry-run: would remove ${targetRel} (its source ${sourceRel} no longer exists)`);
+        const destKind = destinationKind(pair.dstAbs);
+        if (destKind === 'missing') {
+          console.log(`dry-run: cannot sync ${sourceRel} -> ${targetRel}: it exists on neither side, so there is nothing to remove`);
+        } else if (destKind !== 'file') {
+          console.log(`dry-run: cannot remove ${targetRel}: the destination is a ${destKind}, not a vendored file`);
+        } else {
+          console.log(`dry-run: would remove ${targetRel} (its source ${sourceRel} no longer exists)`);
+        }
         continue;
       }
       console.log(`dry-run: would sync ${sourceRel} -> ${targetRel}`);
@@ -273,9 +301,29 @@ if (syncMode) {
       // executed suite") and cost a whole gate run on a healthy tree. Still loud for a source that
       // EXISTS but cannot be read, which is the unreadable branch below: that one is a real problem
       // with the tree, not a leftover name.
-      rmSync(targetAbs, { force: true });
-      removedCount++;
-      console.log(`removed stale vendored copy: ${targetRel} (its source ${sourceRel} no longer exists on this branch)`);
+      //
+      // The destination decides what can actually be done (web-uplift-y6ch). Deleting blind claimed a
+      // removal that never happened when the mirror entry was gone too, and it CRASHED with EISDIR when
+      // the destination was a directory, because rmSync(force: true) only forgives ENOENT. Both cases can
+      // only be reached on the REAL tree: buildPairs skips a pair that is absent on both sides anywhere else,
+      // so a fixture cannot make this fail and the loud branch below is not a fixture tax.
+      const destKind = destinationKind(pair.dstAbs);
+      if (destKind === 'missing') {
+        // Present on NEITHER side: a stale declaration, not a stale mirror copy. There is nothing to delete,
+        // so claiming a removal was false - and it hid the diagnostic master gave here ('source is missing')
+        // for a VENDORED_FILES entry naming a file that no longer exists anywhere. That declaration is
+        // guarded by testInstallSurfaceMatchesWhatInstallVendors, and this run reports the count rather than
+        // failing on it: a sparse fixture or a partially checked-out tree has these legitimately.
+        console.error(`cannot sync ${sourceRel} -> ${targetRel}: source is ${sourceObj.state} and the vendored copy is ${destKind} too, so there is nothing to remove. A pair missing on BOTH sides is a stale declaration in install-surface.mjs, not a stale mirror entry (web-uplift-y6ch).`);
+        errorCount++;
+      } else if (destKind !== 'file') {
+        console.error(`cannot remove ${targetRel}: the destination is a ${destKind}, not a vendored file, so it is not this script's job to delete it. Remove it by hand if it is wrong.`);
+        errorCount++;
+      } else {
+        rmSync(targetAbs, { force: true });
+        removedCount++;
+        console.log(`removed stale vendored copy: ${targetRel} (its source ${sourceRel} no longer exists on this branch)`);
+      }
     } else {
       console.error(`cannot sync ${sourceRel} -> ${targetRel}: source is ${sourceObj.state}`);
       errorCount++;
@@ -284,8 +332,7 @@ if (syncMode) {
   if (errorCount > 0) {
     console.error(`FAILED to sync ${errorCount} file(s) (source was missing or unreadable)`);
     process.exit(1);
-  }
-  if (refusals.length > 0) {
+  }  if (refusals.length > 0) {
     console.error(`FAILED: refused to overwrite ${refusals.length} tracked file(s) with uncommitted local changes: ${refusals.join(', ')}. Nothing was written for those. Your edits are intact.`);
     process.exit(1);
   }
@@ -324,11 +371,16 @@ function buildPairs(root = targetRepo) {
       continue;
     }
     for (const relPath of rels) {
+      // The path is always built, even for a side walkDir did not list (web-uplift-y6ch). A null here meant
+      // 'absent', but walkDir only lists REGULAR FILES, so a directory sitting where a vendored file belongs
+      // produced dstAbs null, readCopy called it 'missing', and the write path then threw EISDIR through the
+      // symlink refusal guard, which had nothing to ask about. An absolute path makes 'absent' show up as
+      // ENOENT/'missing' in readCopy and lets the destination guards see what is really there.
       out.push({
         srcRel: join(srcDir, relPath),
         dstRel: join(dstDir, relPath),
-        srcAbs: srcFiles.get(relPath) ?? null,
-        dstAbs: dstFiles.get(relPath) ?? null,
+        srcAbs: srcFiles.get(relPath) ?? join(root, srcDir, relPath),
+        dstAbs: dstFiles.get(relPath) ?? join(root, dstDir, relPath),
       });
     }
   }
@@ -367,6 +419,27 @@ function walkDir(dir) {
 //     means the generated side lost an entry, not that the canonical file should be deleted.
 function isRemovableStaleEntry(targetRel, sourceObj) {
   return !fromVendored && sourceObj.state === 'missing' && !TRACKED_DESTS.has(targetRel);
+}
+
+// What is actually AT a destination, because 'the source is gone' alone does not license a delete
+// (web-uplift-y6ch):
+//   - missing on both sides is a stale DECLARATION in install-surface.mjs, not a stale mirror entry, and
+//     nothing is removable. Reporting 'removed' there was a false log line and it hid the diagnostic the
+//     pre-03lo script gave (a loud 'source is missing') for a VENDORED_FILES entry naming a file that no
+//     longer exists anywhere.
+//   - a directory is not a vendored copy. rmSync(force: true) only forgives ENOENT, so it threw EISDIR out
+//     of the sync as an uncaught crash, mid-run, with the removal counter already claiming work.
+// Returns 'missing' | 'file' | 'directory' | 'other' | 'symlink' | 'unreadable'.
+function destinationKind(abs) {
+  let st;
+  try {
+    st = statSync(abs);
+  } catch (error) {
+    return error.code === 'ENOENT' ? 'missing' : 'unreadable';
+  }
+  if (st.isSymbolicLink()) return 'symlink';
+  if (st.isDirectory()) return 'directory';
+  return st.isFile() ? 'file' : 'other';
 }
 
 function readCopy(file) {
