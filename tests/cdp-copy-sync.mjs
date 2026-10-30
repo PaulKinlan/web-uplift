@@ -19,7 +19,7 @@
 // Exit 0 when every pair is identical, 1 when any differ or one side is missing.
 // Node builtins only: no npm install is needed to run it.
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VENDORED_DIRS, VENDORED_FILES, TRACKED_COPY_FILES, generateVendoredSurface, refusedDestination, trackedCopyHasLocalEdits } from '../install-surface.mjs';
@@ -216,12 +216,18 @@ if (syncMode) {
     for (const pair of failures) {
       const targetRel = fromVendored ? pair.srcRel : pair.dstRel;
       const sourceRel = fromVendored ? pair.dstRel : pair.srcRel;
+      const sourceObj = fromVendored ? readCopy(pair.dstAbs) : readCopy(pair.srcAbs);
+      if (isRemovableStaleEntry(targetRel, sourceObj)) {
+        console.log(`dry-run: would remove ${targetRel} (its source ${sourceRel} no longer exists)`);
+        continue;
+      }
       console.log(`dry-run: would sync ${sourceRel} -> ${targetRel}`);
     }
     console.error(`dry-run: ${failures.length} drifted copies would be synced (no changes written)`);
     process.exit(1);
   }
   let syncedCount = 0;
+  let removedCount = 0;
   let errorCount = 0;
   const refusals = [];
   for (const pair of failures) {
@@ -258,6 +264,18 @@ if (syncMode) {
       }
       syncedCount++;
       console.log(`synced: ${sourceRel} -> ${targetRel}`);
+    } else if (isRemovableStaleEntry(targetRel, sourceObj)) {
+      // A STALE ENTRY IN THE GENERATED MIRROR (web-uplift-03lo). The source file is gone from this
+      // branch, so the vendored copy can be compared to nothing, synced to nothing and is executed
+      // by nothing - dropping it is the honest action, and the mirror is generated so it carries no
+      // state worth protecting. Failing here instead turned a stale checkout into a FAIL at the
+      // sync step, which reads exactly like a test failure ("coverage UNKNOWN: the gate log names no
+      // executed suite") and cost a whole gate run on a healthy tree. Still loud for a source that
+      // EXISTS but cannot be read, which is the unreadable branch below: that one is a real problem
+      // with the tree, not a leftover name.
+      rmSync(targetAbs, { force: true });
+      removedCount++;
+      console.log(`removed stale vendored copy: ${targetRel} (its source ${sourceRel} no longer exists on this branch)`);
     } else {
       console.error(`cannot sync ${sourceRel} -> ${targetRel}: source is ${sourceObj.state}`);
       errorCount++;
@@ -271,7 +289,7 @@ if (syncMode) {
     console.error(`FAILED: refused to overwrite ${refusals.length} tracked file(s) with uncommitted local changes: ${refusals.join(', ')}. Nothing was written for those. Your edits are intact.`);
     process.exit(1);
   }
-  console.log(`successfully synced ${syncedCount} drifted copy/copies`);
+  console.log(`successfully synced ${syncedCount} drifted copy/copies` + (removedCount > 0 ? `, removed ${removedCount} stale vendored ${removedCount === 1 ? 'entry' : 'entries'} whose source no longer exists` : ''));
   process.exit(0);
 }
 
@@ -339,6 +357,18 @@ function walkDir(dir) {
 // reported as unreadable rather than missing. A null/absent path or an ENOENT
 // read is missing; any other read error (e.g. EACCES) is unreadable. Both fail
 // the guard the same way - only the message differs.
+// A destination this script may DELETE rather than write (web-uplift-03lo): the entry is in the
+// generated vendored surface, its source is GONE (not unreadable), and deleting it cannot remove a
+// tracked file. All three conditions, because each one alone is a different and much worse action:
+//   - 'missing' rather than 'unreadable': an unreadable source is a broken tree, not a leftover name.
+//   - not `.pi/skills/web-audit/SKILL.md`: TRACKED_COPY_FILES destinations are tracked repo files, and
+//     removing a tracked file is not this script's job.
+//   - never in --from-vendored mode: there the TARGET is the canonical tree, so "the source is gone"
+//     means the generated side lost an entry, not that the canonical file should be deleted.
+function isRemovableStaleEntry(targetRel, sourceObj) {
+  return !fromVendored && sourceObj.state === 'missing' && !TRACKED_DESTS.has(targetRel);
+}
+
 function readCopy(file) {
   if (!file) return { state: 'missing' };
   let bytes;
