@@ -18,8 +18,9 @@
 // This file is the fast, browser-free foreground check. Run it directly:
 //   node tests/flow.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, readdirSync, existsSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 function assert(condition, message) {
@@ -1700,12 +1701,76 @@ export async function testFlowReplaySchemeGate() {
 
 // Run directly (node tests/flow.mjs), not when imported by the regression
 // suite, which calls the exported functions itself.
+// web-uplift-dc1z: a flow file is data, so a step's `type` must never reach a path. The screenshot name was
+// 'step-<index>-<type>.png' joined to outDir, so a crafted or corrupted flow - a recorded file someone edited,
+// or a hand-written CI fixture - could write outside the evidence directory ('../../escape') or nest
+// directories ('a/b'). The assertions below FAIL on the pre-fix source: with the old name the '../escape' step
+// writes a file outside outDir and the returned evidence path contains the traversal.
+export async function testFlowScreenshotNameCannotEscapeOutDir() {
+  console.log('Testing that a flow step type cannot put a screenshot outside the evidence directory (web-uplift-dc1z)...');
+  const { fileSafeLabel, replayFlow } = await import('../runner/flow.mjs');
+
+  // The sanitiser itself, including what a hostile flow would actually try.
+  assert(fileSafeLabel('../escape') === 'escape', `'../escape' must collapse to a bare component, got ${fileSafeLabel('../escape')}`);
+  assert(fileSafeLabel('a/b') === 'a-b', `a separator must not survive, got ${fileSafeLabel('a/b')}`);
+  assert(fileSafeLabel('..') === 'step', `a dot-only label must fall back, got ${fileSafeLabel('..')}`);
+  assert(fileSafeLabel('') === 'step' && fileSafeLabel(undefined) === 'step', 'an absent type still names a file');
+  assert(fileSafeLabel('Nàvigate').length > 0, 'a non-ASCII type still produces a name');
+  for (const hostile of ['../../escape', '..\\..\\win', '..%2F..%2Fenc', 'a/b/../c', ' null', '/abs', '.hidden']) {
+    const safe = fileSafeLabel(hostile);
+    assert(!/[/\\.]/.test(safe), `${JSON.stringify(hostile)} produced an unsafe component: ${JSON.stringify(safe)}`);
+    assert(safe.length <= 32, `${JSON.stringify(hostile)} must be capped, got ${safe.length} chars`);
+  }
+
+  // Then the write site: replay a flow whose step types are hostile and prove every file landed in outDir.
+  const root = mkdtempSync(join(tmpdir(), 'wu-flow-shot-'));
+  const outDir = join(root, 'evidence', 'run-1');
+  const client = {
+    Emulation: { setDeviceMetricsOverride: async () => {} },
+    Page: {
+      captureScreenshot: async () => ({ data: 'AAAA' }),
+      navigate: async () => {},
+      loadEventFired: () => Promise.resolve(),
+    },
+    Runtime: { evaluate: async () => ({ result: { value: 'https://example.test/current' } }) },
+  };
+  const steps = [
+    { type: '../../escape' },
+    { type: 'a/b' },
+    { type: '..\\..\\win' },
+    { type: '..%2F..%2Fenc' },
+    { type: '' },
+  ];
+  try {
+    const res = await replayFlow(client, { title: 'hostile types', steps }, { startUrl: 'https://example.test/', outDir, settleMs: 1 });
+    assert(res.steps.length === steps.length, `every step is recorded, got ${res.steps.length}`);
+    for (const step of res.steps) {
+      assert(
+        /^evidence\/step-\d{2}-[a-z0-9_-]+\.png$/.test(step.screenshot),
+        `step ${step.index} (${JSON.stringify(step.type)}) wrote an unsafe evidence path: ${step.screenshot}`,
+      );
+    }
+    const written = readdirSync(outDir).sort();
+    assert(written.length === steps.length, `every screenshot landed in outDir, got ${JSON.stringify(written)}`);
+    for (const name of written) {
+      assert(/^step-\d{2}-[a-z0-9_-]+\.png$/.test(name), `file in outDir has a safe name: ${name}`);
+    }
+    // Nothing escaped: the only entries anywhere under root are the run directory and its files.
+    const stray = [join(root, 'escape.png'), join(root, '..', 'escape.png'), join(root, 'evidence', 'escape.png'), join(root, 'win.png')].filter(existsSync);
+    assert(stray.length === 0, `a step type wrote outside the evidence directory: ${JSON.stringify(stray)}`);
+    assert(readdirSync(root).sort().join(',') === 'evidence', `root may only contain the evidence dir, got ${JSON.stringify(readdirSync(root))}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 const CASES = [
   testFlowRecorderOverlayNeverAssignsInnerHTML,
   testFlowNormalize,
   testFlowRecordSensitiveRedaction,
   testFlowReplayMutationGate,
   testFlowReplaySchemeGate,
+  testFlowScreenshotNameCannotEscapeOutDir,
 ];
 
 // --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the same array the
