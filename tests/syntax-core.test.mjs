@@ -2066,11 +2066,11 @@ export function testSuiteListsMatchRegressionRegistry() {
   // be silently absent - and an entry with an EMPTY declaration list is refused, because that is the shape
   // that looks complete while guarding nothing (web-uplift-yfbk).
   const REGISTERED_NON_CASE_TARGETS = {
-    'batch-resume-isolation.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'batch-resume-isolation.mjs': 'a case LIBRARY: 1 of its 6 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name). The other five run through this file direct target, and the register check below verifies both numbers.',
     'cdp-copy-sync.mjs': 'one behaviour: the copy check it performs. It has no direct-run guard and is imported by nine files, so wrapping it would change import-time behaviour; it is exercised as the case of testCdpCopySyncGuard in install-package.test.mjs.',
     'changelog-version-check.mjs': 'one behaviour: whether CHANGELOG.md records the current version. Its check runs at import so the gate and its importers both see the failure; there is no case to name.',
     'flow-shadow-browser.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
-    'flow.mjs': 'a case LIBRARY: 3 of its 3 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'flow.mjs': 'a case LIBRARY: 4 of its 5 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name). The fifth, testFlowRecorderOverlayNeverAssignsInnerHTML, runs through this file direct target, and the register check below verifies both numbers.',
     'install-copy-symlink.mjs': 'a case LIBRARY, not a standalone suite: it exports the install/sync cases that tests/install-package.test.mjs lists and runs, and its direct-run guard is a convenience. Duplicating them here would trip the one-owner check.',
     'mwg-artefact.mjs': 'tooling entry point (update/verify) rather than a case list; its invariants are asserted by the mwg suites.',
     'mwg-catalog-extract.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/mwg-principles.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
@@ -2126,6 +2126,39 @@ export function testSuiteListsMatchRegressionRegistry() {
     assert(
       orphans.length === 0,
       `tests/${file} exports ${orphans.length} case(s) that its own list does not run, so no gate can ever run them: ${orphans.join(', ')}. Add them to the suite's list or delete them.`,
+    );
+  }
+
+  // THE NUMBERS IN A REGISTER ENTRY ARE CHECKED, not just written down (web-uplift-3z0v). The prose in
+  // REGISTERED_NON_CASE_TARGETS is the ONLY record of which suite runs a case library's cases, and it rotted
+  // exactly as hand-written counts do: the batch library's entry said '1 of its 1' two beads after the library
+  // grew to six (web-uplift-rsbb added the safe-write refusal cases), and the check above passes either way
+  // because a registered library is exempt from listing. So every entry that states 'N of its M --list names
+  // are also listed and run by tests/<owner>' is verified against the tree: the library must list M cases, N of
+  // them must be in <owner>'s own list, and the remainder must be in NO suite's list - which is what makes the
+  // entry's remaining claim ('the rest run through the library's own direct target') true rather than assumed.
+  const ownerIndexOf = new Map();
+  for (const [file, names] of namesByFile) for (const name of names) ownerIndexOf.set(name, file);
+  for (const [file, reason] of Object.entries(REGISTERED_NON_CASE_TARGETS)) {
+    const stated = reason.match(/(\d+) of its (\d+) --list names are also listed and run by tests\/([A-Za-z0-9._-]+)/);
+    if (!stated) continue;
+    const [, statedOwned, statedTotal, ownerFile] = stated;
+    const libraryCases = listOf([join(repoRoot, 'tests', file), '--list']);
+    assert(
+      Number(statedTotal) === libraryCases.length,
+      `tests/syntax-core.test.mjs register entry for ${file} states it lists ${statedTotal} case(s), but its --list prints ${libraryCases.length}: ${libraryCases.join(', ')}. Update the number in the same commit - that prose is the only record of who runs these cases.`,
+    );
+    const ownerList = namesByFile.get(ownerFile);
+    assert(ownerList, `the register entry for ${file} names tests/${ownerFile} as the owner, but that file has no case list in this run`);
+    const owned = libraryCases.filter((name) => ownerList.includes(name));
+    assert(
+      Number(statedOwned) === owned.length,
+      `tests/syntax-core.test.mjs register entry for ${file} states ${statedOwned} of its cases run in tests/${ownerFile}, but ${owned.length} do (${owned.join(', ') || 'none'}). Update the number in the same commit.`,
+    );
+    const strayCases = libraryCases.filter((name) => !owned.includes(name) && ownerIndexOf.has(name));
+    assert(
+      strayCases.length === 0,
+      `tests/syntax-core.test.mjs register entry for ${file} claims the remaining cases run through the library's own direct target, but ${strayCases.join(', ')} ${strayCases.length === 1 ? 'is' : 'are'} also listed by another suite (${strayCases.map((n) => ownerIndexOf.get(n)).join(', ')}): the entry needs rewriting, not just a new count.`,
     );
   }
 
