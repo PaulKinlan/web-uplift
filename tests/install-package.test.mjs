@@ -127,6 +127,83 @@ export function testCdpCopySyncMutationGuard() {
 }
 
 
+// web-uplift-03lo. `.web-uplift/` is a GENERATED mirror, and it keeps entries whose source has gone: switch
+// a worktree from a branch that has a file to one that does not and the mirror still holds the vendored copy.
+// `--sync` used to FAIL on that ("cannot sync ...: source is missing"), which killed the fast gate before it
+// ran a single test and read like a test failure ("coverage UNKNOWN: the gate log names no executed suite").
+// A stale entry should be DROPPED, because it can be compared to nothing and is executed by nothing.
+//
+// The three cases that must NOT be conflated with that one are asserted here too, since the cheap version of
+// this fix is ";just delete whatever does not have a source":
+//   - a check-only run still fails and still writes nothing,
+//   - an UNREADABLE source is a broken tree, not a leftover name, and stays a loud failure,
+//   - the tracked destinations (.pi/skills/...) are never deleted: they are repo files, not mirror entries.
+export function testCdpCopySyncDropsStaleVendoredEntries() {
+  const fixture = mkdtempSync(join(tmp, 'cdp-sync-stale-'));
+  const srcDir = join(fixture, 'schema');
+  const dstDir = join(fixture, '.web-uplift', 'schema');
+  mkdirSync(srcDir, { recursive: true });
+  mkdirSync(dstDir, { recursive: true });
+  writeFileSync(join(srcDir, 'kept.json'), '{"version": 1}\n');
+  writeFileSync(join(dstDir, 'kept.json'), '{"version": 1}\n');
+  // The stale entry: a vendored copy whose source is not on this branch at all.
+  writeFileSync(join(dstDir, 'orphan.json'), '{"stale": true}\n');
+  const sync = (...args) => spawnSync(process.execPath, [join(repoRoot, 'tests', 'cdp-copy-sync.mjs'), '--repo', fixture, ...args], { encoding: 'utf8' });
+
+  // Check-only: an inconsistent mirror is still drift, and a check never writes.
+  const check = sync();
+  assert(check.status !== 0, `a stale entry must still fail a check-only run:\n${check.stdout}\n${check.stderr}`);
+  assert(existsSync(join(dstDir, 'orphan.json')), 'a check-only run must not delete anything');
+
+  // Dry-run names the removal and writes nothing.
+  const dry = sync('--dry-run');
+  assert(dry.status === 1, `--dry-run must still exit 1 while the mirror is inconsistent:\n${dry.stdout}\n${dry.stderr}`);
+  assert(
+    dry.stdout.includes('dry-run: would remove .web-uplift/schema/orphan.json'),
+    `--dry-run must report the removal it would make:\n${dry.stdout}`,
+  );
+  assert(existsSync(join(dstDir, 'orphan.json')), '--dry-run must not remove anything');
+
+  // --sync repairs the mirror, says what it dropped, and exits 0.
+  const syncRun = sync('--sync');
+  assert(syncRun.status === 0, `--sync must repair a stale mirror rather than fail:\n${syncRun.stdout}\n${syncRun.stderr}`);
+  assert(!existsSync(join(dstDir, 'orphan.json')), 'the stale vendored entry must be removed by --sync');
+  assert(
+    syncRun.stdout.includes('removed stale vendored copy: .web-uplift/schema/orphan.json'),
+    `--sync must say what it removed, on one line:\n${syncRun.stdout}`,
+  );
+  assert(!/FAILED to sync/.test(syncRun.stderr), `a repair is not a failure:\n${syncRun.stderr}`);
+  const after = sync();
+  assert(after.status === 0, `after the repair the guard must pass:\n${after.stdout}\n${after.stderr}`);
+
+  // CONTROL 1: an unreadable SOURCE is still a loud failure. Skipped as root, where chmod 0o000 does not
+  // stop a read and the fixture would assert nothing.
+  if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+    const locked = join(srcDir, 'locked.json');
+    writeFileSync(locked, '{"version": 3}\n');
+    writeFileSync(join(dstDir, 'locked.json'), '{"version": 4}\n');
+    chmodSync(locked, 0o000);
+    const unreadable = sync('--sync');
+    chmodSync(locked, 0o644);
+    assert(unreadable.status !== 0, `an unreadable source must still fail:\n${unreadable.stdout}\n${unreadable.stderr}`);
+    assert(/source is unreadable/.test(unreadable.stderr), `the failure must name the unreadable source:\n${unreadable.stderr}`);
+    assert(existsSync(join(dstDir, 'locked.json')), 'an unreadable source must not get its vendored copy deleted');
+  }
+
+  // CONTROL 2: a TRACKED destination is never deleted, even with no source. `.pi/skills/web-audit/SKILL.md`
+  // is a tracked repo file; removing it is not this script's job.
+  const trackedRel = join('.pi', 'skills', 'web-audit', 'SKILL.md');
+  mkdirSync(dirname(join(fixture, trackedRel)), { recursive: true });
+  writeFileSync(join(fixture, trackedRel), '# skill\nvendored copy with no source\n');
+  const trackedRun = sync('--sync');
+  assert(
+    existsSync(join(fixture, trackedRel)),
+    `a tracked destination must never be deleted by --sync:\n${trackedRun.stdout}\n${trackedRun.stderr}`,
+  );
+  assert(trackedRun.status !== 0, `a tracked destination with no source stays the failure it was:\n${trackedRun.stdout}\n${trackedRun.stderr}`);
+}
+
+
 // The installed tree is built ON DEMAND rather than by a case that must run first (web-uplift-3yns). Two
 // cases need it, and before this change the second one asserted that the first had already run - "this
 // check reuses the target installed by testInstalledEvidenceCli, which must run first" - which held only
@@ -585,6 +662,7 @@ export const installPackageTests = [
   testSweepRemovesAMalformedStageNameOnlyWhenItIsOld,
   testCdpCopySyncGuard,
   testCdpCopySyncMutationGuard,
+  testCdpCopySyncDropsStaleVendoredEntries,
   testInstalledEvidenceCli,
   testNpxCacheDoesNotAccumulate,
   testInstalledTreeRelativeImportsResolve,
