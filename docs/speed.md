@@ -70,6 +70,18 @@ reaches `tests/runner-agents.test.mjs` through the `agent-dispatch` SUBSYSTEMS r
 no `timeoutMs` at all and so fell back to `runTarget`'s 120s default - an even earlier kill than the 240s
 this started from.
 
+The sixth measured bound follows that same rule for a FILTER target: `Regression: Installed evidence CLI tests`
+is **240s** (web-uplift-3jzf). It is the only route a dependency bump takes, through this same
+`install-and-package` rule matching `package.json` and `package-lock.json`, and it is network-bound rather than
+code-bound: `testInstalledEvidenceCli` drives `npm exec --yes --package <tarball> web-uplift install`, so it
+pays for a fresh install of a tarball whose identity changes with every tree change - a rebase re-pays it. It has
+measured 5.99s with a warm cache (older log), 76.4s and 99.8s inside passing gate runs, 89.8s in the foreground
+on an idle VM, and 170.9s in the foreground on a cold tarball, all on 2026-10-30. Three gate runs on the same
+tree were killed at 120.2s, and that is what made it expensive to see: an over-budget target is recorded as exit
+124 "not a verdict", not as a failure, so a deps change read as "the gate will not give me a verdict" and the
+cause was a target 50s over its default. The real fix is for those cases to prepare one install tree and reuse
+it instead of installing per case; the bound keeps a dependency change verifiable meanwhile.
+
 ### The full sweep runs two suites at a time, and it is not a per-landing gate (hub ruling, 2026-10-28)
 
 `npm test` used `--test-concurrency=6`. Six suite processes on this box means up to six Chrome instances
