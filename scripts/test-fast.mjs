@@ -294,6 +294,34 @@ export const UNWIRED_SHARED_MODULES = [
 ];
 
 /**
+ * MEASURED per-path budgets for DIRECT-TEST targets (docs/speed.md, "Per-target budgets in the fast
+ * gate").
+ *
+ * A `.test.mjs` direct target otherwise gets the generic 240s, which is a ceiling nobody measured -
+ * and a whole-suite target is the shape that trips it, because the suite's cases run one at a time in
+ * one process. These are the paths where a measurement says the generic ceiling is wrong. Key is the
+ * repo-relative path; every entry must carry its numbers in docs/speed.md, and the entry is only
+ * legitimate while the file it names is over the generic ceiling on a quiet VM.
+ *
+ * The real fix for a suite that lands here is to split it along the filters it already has (that is
+ * what makes it parallelizable in the full gate too), not to give the timeout more room. The bound
+ * exists so a change can be VERIFIED in the meantime, which is why web-uplift-dysm exists at all.
+ */
+export const DIRECT_TARGET_BUDGETS = {
+  // 282.3s on this VM on 2026-10-30 (fast log 08eb3199be80120061f7018f8b90ac084acb773d, 31 cases),
+  // 317.6s and 397s on the same evening under load, against the 240s generic default that was KILLING
+  // it (exit 124, no verdict cached) rather than failing it (web-uplift-dysm). testBatchWriteScope
+  // alone is 56-77s of that; the fix-mode and batch cases are the rest.
+  'tests/runner-agents.test.mjs': 480000,
+};
+
+// One place for the rule, because both direct-target creation sites must agree: a per-path measurement
+// that applied to only one of them would make --dry-run disagree with the run.
+function directTargetBudget(path) {
+  return DIRECT_TARGET_BUDGETS[path] ?? (path.endsWith('.test.mjs') ? 240000 : 120000);
+}
+
+/**
  * Known subsystems and their mapped test targets.
  */
 export const SUBSYSTEMS = [
@@ -903,7 +931,7 @@ export function mapFilesToTests(filePaths, options = {}) {
     if (isDirectRunnableTest(normalized)) {
       const absPath = rawPath.startsWith('/') ? rawPath : join(repoRoot, normalized);
       if (existsSync(absPath)) {
-        const timeoutMs = normalized.endsWith('.test.mjs') ? 240000 : 120000;
+        const timeoutMs = directTargetBudget(normalized);
         const target = { type: 'node', path: rawPath, label: `Direct test: ${normalized}`, timeoutMs };
         targetsByKey.set(targetKey(target), target);
         matched = true;
@@ -979,7 +1007,7 @@ export function mapFilesToTests(filePaths, options = {}) {
       if (namingSuites.length === 0) { remaining.push(file); continue; }
       for (const suite of namingSuites) {
         autoMappedFiles.push({ path: file, suite });
-        const target = { type: 'node', path: suite, label: `Direct test: ${suite}`, timeoutMs: suite.endsWith('.test.mjs') ? 240000 : 120000 };
+        const target = { type: 'node', path: suite, label: `Direct test: ${suite}`, timeoutMs: directTargetBudget(suite) };
         targetsByKey.set(targetKey(target), target);
       }
       // web-uplift-h68z: the auto-map is RECORDED AND PRINTED, and it does not excuse the missing map rule. The

@@ -16,7 +16,7 @@ code does.
 | gate | command | who runs it | budget |
 | --- | --- | --- | --- |
 | full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=2 tests/*.test.mjs`, 14 suites) | deferred: the nightly factory audit; per-landing verification is the fast gate | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below |
-| affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a) |
+| affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a). NOT under that median on a `runner/` or `fixer/` change: those select `tests/runner-agents.test.mjs` whole, which measured 282-397s on 2026-10-30 (web-uplift-dysm) and is the one path carrying a measured direct-target bound below |
 
 ### Per-target budgets in the fast gate
 
@@ -46,6 +46,18 @@ verdict. Those three cases are browser-bound and pay a Chrome launch per `gather
 itself has got much more expensive than the 0.45s recorded for t2mr above: measured with the repo's own
 launcher on 2026-10-27, launch->CDP is 3.3-4.7s and the FIRST session on it costs another 5.0s. The fix is to
 stop paying that per call (web-uplift-91lr step 3), at which point this number is the measurement to beat
+rather than a ceiling to live with.
+
+The fifth measured bound is the first one that applies to a DIRECT test target rather than a regression
+filter, and it is declared as data: `scripts/test-fast.mjs` carries `DIRECT_TARGET_BUDGETS`, keyed by
+repo-relative path, and both places that build a direct target read it, so `--dry-run` and the run cannot
+disagree. `tests/runner-agents.test.mjs` is **480s** (web-uplift-dysm). Measured on this VM on 2026-10-30:
+**282.3s** for the 31 cases in the fast log `08eb3199be80120061f7018f8b90ac084acb773d`, and **317.6s** and
+**397s** earlier and later the same evening under load - against the generic 240s, which was KILLING the
+target (exit 124, no verdict cached) rather than failing it, so no `runner/` or `fixer/` change could get a
+verdict at all. `testBatchWriteScope` alone is 56-77s of it and the fix-mode and batch cases are the rest;
+this suite is the same shape defect as the mwg file above, and the same remedy applies (split it along the
+filters it already has). The bound is there so those changes can be verified in the meantime.
 rather than a ceiling to live with.
 
 ### The full sweep runs two suites at a time, and it is not a per-landing gate (hub ruling, 2026-10-28)
