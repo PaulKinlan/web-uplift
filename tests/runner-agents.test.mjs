@@ -1087,6 +1087,79 @@ export function testFixModeScopeEdgeCases() {
 }
 
 
+// web-uplift-7692: the snapshot must cover the tree the agent is told to write into. With the
+// DEFAULT --out (`reports/fix-<slug>`) it did not: snapshotTree drops any path with a `reports`
+// segment, so an agent write there was in neither snapshot and the per-iteration diff reported no
+// file changes - invisible and unreverted, which breaks the property the snapshot exists for.
+//
+// NOT asserted, because it is not true and this change does not make it true: reversion. Fix mode
+// has no undo (fixer/fix.mjs says exactly that where it refuses an escape: "The changes are NOT
+// reverted automatically"), so the contract is record-and-refuse, not record-and-roll-back. Stated
+// here so the missing half of the acceptance wording is a decision on record, not an omission.
+//
+// The scope this DOES cover is this run's own --out tree. Other hosts' retained runs under the
+// same `reports/` root stay excluded on purpose (previous runs' output, not this run's writes).
+export function testFixModeSnapshotRecordsWritesUnderDefaultReportsOut() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-fix-defaultout-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(root, 'src', 'index.html'), '<h1>hi</h1>');
+    const findings = join(repoRoot, 'examples', 'playground-report.json');
+    const passReport = join(repoRoot, 'examples', 'playground-report-fixed.json');
+    // The DEFAULT --out for http://example.test/ is reports/fix-example.test (slugify keeps `.`).
+    const outDir = join(root, 'reports', 'fix-example.test');
+    const planted = join(outDir, 'scratch', 'planted.txt');
+
+    writeFileSync(join(binDir, 'claude'), [
+      '#!/bin/sh',
+      `mkdir -p ${JSON.stringify(join(outDir, 'scratch'))}`,
+      `printf 'planted' > ${JSON.stringify(planted)}`,
+      `cp ${JSON.stringify(passReport)} ${JSON.stringify(join(outDir, 'report.json'))}`,
+      'exit 0',
+      '',
+    ].join('\n'));
+    chmodSync(join(binDir, 'claude'), 0o755);
+
+    const res = run(process.execPath, [
+      join(repoRoot, 'fixer', 'fix.mjs'),
+      '--target', 'src', '--audit-url', 'http://example.test/', '--agent', 'claude',
+      '--max-iterations', '1', '--findings', findings,
+      '--isolation', 'host-permission-model',
+      // NO --out on purpose: the default reports/ path is the case under test.
+      '--reports-root', 'retained',
+    ], { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+    const output = `${res.stdout}\n${res.stderr}`;
+
+    assert(existsSync(planted), `snapshot scope: the fixture must have written into the default --out:\n${output}`);
+    const diffPath = join(outDir, 'iter-1-diff.json');
+    assert(existsSync(diffPath), `snapshot scope: the per-iteration diff must be written:\n${output}`);
+    const diff = JSON.parse(readFileSync(diffPath, 'utf8'));
+    assert(
+      diff.changed.added.some((p) => p.endsWith(join('scratch', 'planted.txt'))),
+      `snapshot scope: a write under the DEFAULT --out must be RECORDED in the per-iteration diff, got ${JSON.stringify(diff.changed)}`,
+    );
+    assert(
+      diff.changed.added.some((p) => p.endsWith('report.json')),
+      `snapshot scope: the report the agent wrote into --out must be recorded too, got ${JSON.stringify(diff.changed)}`,
+    );
+    assert.deepEqual(
+      diff.escapedOutsideScope,
+      [],
+      `snapshot scope: --out is a declared allowed root, so its own writes are recorded but not escapes: ${JSON.stringify(diff.escapedOutsideScope)}`,
+    );
+    // The positive half: covering --out must not turn a legitimate run into a refusal. Before this
+    // change the run passed while silently ignoring the write, so both halves are asserted.
+    assert(res.status === 0, `snapshot scope: a clean default-out run must still pass, got ${res.status}:\n${output}`);
+    assert(/^PASS:/m.test(res.stdout), `snapshot scope: the climb must still report PASS:\n${res.stdout}`);
+    assert(!/CONFINEMENT FAILURE/.test(res.stderr), `snapshot scope: an in-scope --out write must not be an escape:\n${res.stderr}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+
 // web-uplift-arp, minimal design: this tool does NOT sandbox the agent. It refuses
 // to spawn a write-capable agent unless the operator asserts which boundary they are
 // providing, it says loudly that it cannot verify that assertion, it records the
@@ -1805,6 +1878,7 @@ export const runnerAgentsTests = [
   testFixWriteScopeDiffing,
   testFixModeRefusesOutOfScopeWrites,
   testFixModeScopeEdgeCases,
+  testFixModeSnapshotRecordsWritesUnderDefaultReportsOut,
   testFixIsolationAssertion,
   testFixIsolatedRunPublishes,
   testSnapshotRunStructure,

@@ -185,12 +185,35 @@ let escapedOutsideScope = false;
 let agentFailure = null;
 
 // The walk covers the invocation directory, the target when it sits outside it,
-// and any operator-allowed root, so an out-of-tree path still gets a per-run diff.
+// the run's own --out tree, and any operator-allowed root, so an out-of-tree path
+// still gets a per-run diff.
+//
+// --out IS NAMED EXPLICITLY, and that is not redundancy (web-uplift-7692). It is the
+// one root the walk used to skip: snapshotTree's exclusion drops any path with a
+// `reports` segment, and the DEFAULT --out is `reports/fix-<slug>` - so with the
+// default output the tree the agent is told to write its report and scratch into was
+// invisible to both snapshots. An agent write there was neither recorded in the
+// per-iteration diff nor refused as an escape, which breaks the property the snapshot
+// exists to provide: a change is recorded or it did not happen. `walkUnder` forces the
+// walk past the reports exclusion (and descends that exclusion's ancestors to reach
+// it), while naming outRoot in `extraRoots` covers an --out that lives outside the
+// invocation directory at all.
+//
+// What this does NOT cover, stated rather than implied: only THIS run's --out tree is
+// forced into the walk. Other hosts' retained runs under the same `reports/` root stay
+// excluded - they are previous runs' output, not writes this run makes - so an agent
+// write into `reports/<other-host>/` is neither recorded nor refused here.
+//
 // The executed first-party trees are hash-stamped (web-uplift-dzd): a fix
 // iteration that tampers with .web-uplift/ or evidence/ is an escape this diff
 // can SEE, and the climb's existing break-on-escape then stops the next
 // iteration executing the tampered code.
-const snapshotScope = () => snapshotTree(projectRoot, { extraRoots: [scopeRoot, ...allowWrite], hashUnder: EXECUTABLE_HASH_ROOTS });
+const snapshotScope = () =>
+  snapshotTree(projectRoot, {
+    extraRoots: [scopeRoot, outRoot, ...allowWrite],
+    walkUnder: [outRoot],
+    hashUnder: EXECUTABLE_HASH_ROOTS,
+  });
 
 function fixExtra(findingsPath, iteration) {
   return (
