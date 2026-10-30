@@ -43,8 +43,8 @@
  * with --agent all is NOT a thing here, you pass one agent) without spawning.
  */
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile, access, cp } from 'node:fs/promises';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdir, readFile, access, cp } from 'node:fs/promises';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { AGENTS, AGENT_NAMES, buildAgentEnv, parseAgentEnvFlag } from '../runner/agents.mjs';
 import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
@@ -52,6 +52,7 @@ import { countOutstanding, completionState, remaining } from '../runner/remainin
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
+import { UnsafeTargetRefused, assertRealParentUnder, isInsidePath, isRealDir, readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync } from '../runner/safe-write.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
 
 // Every place this tool PRINTS the audit URL goes through shownAuditUrl (web-uplift-s0x):
@@ -258,25 +259,71 @@ const isolationAssertion = args.isolation && args.isolation !== true ? String(ar
 const willSpawnAgent = maxIterations > 0 || !args.findings;
 let isolationRecord;
 
+// --- This tool's OWN writes, into a tree the agent can write ---------------------
+//
+// --out is handed to the agent (its report and scratch live there) and the agent holds
+// write tools, so a record this tool writes AFTER the agent exits is a write through a
+// directory an attacker was just in. A link left at one of those names redirects this
+// tool's own record onto a file outside the run tree, with this tool's privileges - and
+// the run then reports success. That is web-uplift-rsbb's defect class, and
+// runner/safe-write.mjs already owns the rule for it: BOTH link types refused, checked on
+// the opened descriptor so there is no check-then-use window, and the file truncated only
+// after that check passes. Reusing it here is the point of web-uplift-uruy - a second
+// implementation of this rule is how the class comes back.
+//
+// Two different questions, both required:
+//   the leaf   writeFileNoFollow: symlink, hard link (st_nlink > 1) and non-regular file
+//              at the name are refused, and the target is left untouched.
+//   the chain  assertRealParentUnder: every directory between the record and the tree it
+//              belongs to must be a real directory, so a swapped directory level cannot
+//              redirect it either - and a record whose path leaves its tree is refused.
+//              `includeBase` extends that to the root itself: for fix mode the root is
+//              agent-writable too, so a run tree replaced by a symlink is a redirect.
+const OUT_TREE = 'the --out tree this run\'s own records belong to';
+const RETAINED_TREE = 'the --reports-root tree the retained run belongs to';
+
+async function writeUnder(root, path, data, what) {
+  assertRealParentUnder(root, path, 'write', { what, includeBase: true });
+  await writeFileNoFollow(path, data);
+}
+
+function writeUnderSync(root, path, data, what) {
+  assertRealParentUnder(root, path, 'write', { what, includeBase: true });
+  writeFileNoFollowSync(path, data);
+}
+
 function writeRunSecurity(dir, record) {
   // A RECORD, not an attestation: it lives in the directory the agent can write, so
   // it states what the operator asserted and that the tool could not verify it. It
   // is evidence for a human, never proof of a boundary. Returns false when it could
   // not be written - the caller REFUSES to spawn in that case, because a run that
   // proceeds without the record defeats the point of demanding the assertion.
+  //
+  // A planted link is NOT in that recoverable class and is rethrown: `false` means "could
+  // not be recorded, so this run does not proceed", while a link at the name means this
+  // record's write was being redirected somewhere outside the run tree.
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'run-security.json'), JSON.stringify({ ...record, recordedAt: new Date().toISOString(), tool: 'web-uplift fix' }, null, 2) + '\n');
+    writeUnderSync(outRoot, join(dir, 'run-security.json'), JSON.stringify({ ...record, recordedAt: new Date().toISOString(), tool: 'web-uplift fix' }, null, 2) + '\n', OUT_TREE);
     return true;
   } catch (err) {
+    if (err instanceof UnsafeTargetRefused) throw err;
     console.error(`Could not record the isolation state: ${shownText(err.message || String(err))}`);
     return false;
   }
 }
 
+// Whether a record this tool had to write could not be written (other than by a refusal,
+// which propagates). The final exit code folds this in: a run whose security record is
+// missing must not report success further down.
+let securityRecordFailure = false;
+
 if (!willSpawnAgent) {
   isolationRecord = { isolation: 'not-required', reason: 'this run spawns no agent (--findings supplied and --max-iterations 0)' };
-  writeRunSecurity(outDir, isolationRecord);
+  // Fail closed: a run that cannot record why it needed no boundary is a run whose
+  // security state a reader cannot recover, and the record is the only thing that says
+  // so. A refusal (planted link / tree replaced) propagates and stops the run.
+  if (!writeRunSecurity(outDir, isolationRecord)) securityRecordFailure = true;
 } else if (!isolationAssertion) {
   isolationRecord = {
     isolation: 'refused',
@@ -402,6 +449,9 @@ if (goalActive) {
 // the final compare has the pre-fix state with its artifacts. The live working
 // report stays at outDir/report.json for the iterations; we just preserve a copy.
 const reportsRoot = args['reports-root'] ?? 'reports';
+// The tree the retained runs are published into, resolved once so `writeUnder` compares against
+// the same path the writes are built from, not a relative spelling that a different cwd moves.
+const publishRoot = resolve(reportsRoot);
 // NOTE: the baseline run dir is NOT created and `latest` is NOT moved here. Both
 // are deferred to the publish step at the end of this file, which is skipped when
 // the climb is refused or an agent failed. Publishing earlier meant a REFUSED run
@@ -438,17 +488,17 @@ for (let i = 1; i <= maxIterations && !passed; i++) {
   const changes = diffTrees(scopeBefore, snapshotScope());
   const escaped = escapedChanges(changes, projectRoot, allowedRoots);
   const iterationDiff = { iteration: i, projectRoot, target: scopeRoot, allowedRoots, changed: changes, escapedOutsideScope: escaped, agentError: iterationError ? String(iterationError.message || iterationError) : null };
-  await writeFile(join(outDir, `iter-${i}-diff.json`), JSON.stringify(iterationDiff, null, 2) + '\n');
+  await writeUnder(outRoot, join(outDir, `iter-${i}-diff.json`), JSON.stringify(iterationDiff, null, 2) + '\n', OUT_TREE);
   console.log(`  changed: ${summariseChanges(changes)}`);
   if (escaped.length) {
     escapedOutsideScope = true;
-    await writeFile(join(outDir, 'confinement-escape.json'), JSON.stringify(iterationDiff, null, 2) + '\n');
+    await writeUnder(outRoot, join(outDir, 'confinement-escape.json'), JSON.stringify(iterationDiff, null, 2) + '\n', OUT_TREE);
     console.error(confinementFailure(`iteration ${i}`, escaped));
     break;
   }
   if (iterationError) {
     agentFailure = iterationError;
-    await writeFile(join(outDir, `iter-${i}-error.json`), JSON.stringify(iterationDiff, null, 2) + '\n');
+    await writeUnder(outRoot, join(outDir, `iter-${i}-error.json`), JSON.stringify(iterationDiff, null, 2) + '\n', OUT_TREE);
     console.error(`\nThe fix agent failed in iteration ${i}: ${shownText(iterationError.message || String(iterationError))}`);
     break;
   }
@@ -460,7 +510,7 @@ for (let i = 1; i <= maxIterations && !passed; i++) {
     // A crash here would be a raw stack after the scope checks, and the report is
     // the one thing this iteration was asked to produce. Name it and stop.
     agentFailure = err;
-    await writeFile(join(outDir, `iter-${i}-error.json`), JSON.stringify({ ...iterationDiff, reportError: String(err.message || err) }, null, 2) + '\n');
+    await writeUnder(outRoot, join(outDir, `iter-${i}-error.json`), JSON.stringify({ ...iterationDiff, reportError: String(err.message || err) }, null, 2) + '\n', OUT_TREE);
     console.error(`\nIteration ${i} produced no usable report: ${shownText(err.message || String(err))}`);
     break;
   }
@@ -546,14 +596,14 @@ if (escapedOutsideScope || agentFailure) {
     // run dirs are created here rather than before the climb, so a refused run
     // leaves no run dir and no moved pointer behind.
     const beforeRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-before`);
-    await snapshotRun(dirOf(findingsPath), beforeRun.dir, baseline);
+    await snapshotRun(dirOf(findingsPath), beforeRun.dir, baseline, publishRoot);
     updateLatest(beforeRun.hostRoot, beforeRun.runId);
     console.log(`Preserved baseline run at ${beforeRun.dir}`);
     const afterRun = runDir(reportsRoot, auditUrl, `${makeRunId()}-after`);
-    await snapshotRun(outDir, afterRun.dir, finalReport);
+    await snapshotRun(outDir, afterRun.dir, finalReport, publishRoot);
     // The isolation record travels with the retained result, so a reader of the run
     // can see exactly what was asserted (and that it was not verified).
-    await writeFile(join(afterRun.dir, 'run-security.json'), JSON.stringify(isolationRecord, null, 2) + '\n');
+    await writeUnder(publishRoot, join(afterRun.dir, 'run-security.json'), JSON.stringify(isolationRecord, null, 2) + '\n', RETAINED_TREE);
     updateLatest(afterRun.hostRoot, afterRun.runId);
 
     const cmp = compareReports(baseline, finalReport, { dirA: beforeRun.dir, dirB: afterRun.dir });
@@ -564,10 +614,10 @@ if (escapedOutsideScope || agentFailure) {
       dirA: beforeRun.dir,
       dirB: afterRun.dir,
     });
-    await writeFile(join(afterRun.dir, 'compare.json'), JSON.stringify({ host: beforeRun.host, runA: beforeRun.runId, runB: afterRun.runId, ...cmp }, null, 2) + '\n');
-    await writeFile(join(afterRun.dir, 'compare.md'), md);
+    await writeUnder(publishRoot, join(afterRun.dir, 'compare.json'), JSON.stringify({ host: beforeRun.host, runA: beforeRun.runId, runB: afterRun.runId, ...cmp }, null, 2) + '\n', RETAINED_TREE);
+    await writeUnder(publishRoot, join(afterRun.dir, 'compare.md'), md, RETAINED_TREE);
     // A copy at the working outDir too, for convenience.
-    await writeFile(join(outDir, 'compare.md'), md);
+    await writeUnder(outRoot, join(outDir, 'compare.md'), md, OUT_TREE);
     console.log(`\nBefore -> after comparison written to ${join(afterRun.dir, 'compare.md')}`);
     console.log(`  outstanding ${cmp.summary.outstandingBefore} -> ${cmp.summary.outstandingAfter}, ` +
       `resolved ${cmp.summary.resolved}, new ${cmp.summary.newlyIntroduced}, persisting ${cmp.summary.persisting}`);
@@ -575,17 +625,25 @@ if (escapedOutsideScope || agentFailure) {
     // deep-dive, history, before/after) so a fix run leaves a shareable summary.
     try {
       const data = buildScorecardData(beforeRun.hostRoot, beforeRun.host, new Date().toISOString().slice(0, 16).replace('T', ' '));
-      await writeFile(join(beforeRun.hostRoot, 'scorecard.html'), renderScorecard(data));
+      await writeUnder(publishRoot, join(beforeRun.hostRoot, 'scorecard.html'), renderScorecard(data), RETAINED_TREE);
       console.log(`Scorecard written to ${join(beforeRun.hostRoot, 'scorecard.html')}`);
     } catch (err) {
+      // Same rule as the comparison below: a refusal means this tool's own write was
+      // being redirected, which is not a recoverable "could not emit" case.
+      if (err instanceof UnsafeTargetRefused) throw err;
       console.error(`Could not emit scorecard: ${shownText(err.message || String(err))}`);
     }
   } catch (err) {
+    // The comparison records land in trees the agent could reach (its own --out, and the
+    // reports tree whose names a run's agent can guess), so a refusal here must fail the run
+    // rather than print and leave exit 0: reporting a climb as complete after a redirected
+    // write is exactly the outcome this guard exists to prevent (web-uplift-uruy).
+    if (err instanceof UnsafeTargetRefused) throw err;
     console.error(`Could not emit before/after comparison: ${shownText(err.message || String(err))}`);
   }
 }
 
-process.exitCode = passed && !escapedOutsideScope && !agentFailure ? 0 : 1;
+process.exitCode = passed && !escapedOutsideScope && !agentFailure && !securityRecordFailure ? 0 : 1;
 
 // --- helpers ---------------------------------------------------------------
 
@@ -614,11 +672,11 @@ async function baselineAudit() {
     escapedOutsideScope: escaped,
     agentError: agentFailure ? String(agentFailure.message || agentFailure) : null,
   };
-  await writeFile(join(outDir, 'iter-0-diff.json'), JSON.stringify(record, null, 2) + '\n');
+  await writeUnder(outRoot, join(outDir, 'iter-0-diff.json'), JSON.stringify(record, null, 2) + '\n', OUT_TREE);
   console.log(`  baseline audit changed: ${summariseChanges(changes)}`);
   if (escaped.length) {
     escapedOutsideScope = true;
-    await writeFile(join(outDir, 'confinement-escape.json'), JSON.stringify(record, null, 2) + '\n');
+    await writeUnder(outRoot, join(outDir, 'confinement-escape.json'), JSON.stringify(record, null, 2) + '\n', OUT_TREE);
     console.error(confinementFailure('the baseline audit', escaped));
   }
   return join(outDir, 'report.json');
@@ -662,8 +720,15 @@ function runAgent(prompt, iteration) {
     child.on('error', reject);
     child.on('close', async (code) => {
       try {
-        await writeFile(join(outDir, `run-iter-${iteration}.json`), out);
-      } catch { /* best effort */ }
+        await writeUnder(outRoot, join(outDir, `run-iter-${iteration}.json`), out, OUT_TREE);
+      } catch (err) {
+        // A refusal is not a lost log line: the agent we just ran left a link at the
+        // name this tool writes its own capture to, so the capture would land on a file
+        // outside the run tree. Fail the iteration (the caller records it and exits
+        // non-zero) instead of reporting a run whose capture was silently redirected.
+        if (err instanceof UnsafeTargetRefused) return reject(err);
+        /* any other failure stays best effort: the capture is a convenience record */
+      }
       code === 0 ? resolve(out) : reject(new Error(`agent exit ${code}: ${err.slice(-500)}`));
     });
   });
@@ -701,10 +766,25 @@ function jsonType(value) {
 }
 
 async function readReport(path) {
+  // A report INSIDE the run tree is a file the agent can replace with a link, so it is read
+  // under the same rule as the writes (web-uplift-uruy): otherwise a planted
+  // `report.json -> <another file>` is read as this run's report and, where the caller then
+  // rewrites it, handed back through the same link. A report the OPERATOR supplied (--findings)
+  // is outside that threat model and is read normally, including through a link they chose.
   let report;
   try {
-    report = JSON.parse(await readFile(path, 'utf8'));
+    let text;
+    if (isInsidePath(outRoot, path)) {
+      assertRealParentUnder(outRoot, path, 'read', { what: OUT_TREE, includeBase: true });
+      text = await readFileNoFollow(path, 'utf8');
+    } else {
+      text = await readFile(path, 'utf8');
+    }
+    report = JSON.parse(text);
   } catch (err) {
+    // The refusal keeps its own type: callers distinguish "leave this report alone" from
+    // "this read was an attack on this tool's own file", and only the former is swallowed.
+    if (err instanceof UnsafeTargetRefused) throw err;
     throw new Error(`Could not read findings/report JSON at ${path}: ${err.message}`);
   }
   const shapeError = reportShapeError(report);
@@ -722,15 +802,20 @@ function dirOf(reportPath) {
 // Writing report.json is mandatory and throws on failure; auxiliary artifacts
 // (report.md and evidence/) are copied best-effort so a failure copying auxiliary
 // files does not abort an otherwise successful fix run.
-async function snapshotRun(fromDir, toDir, report) {
+async function snapshotRun(fromDir, toDir, report, root) {
   await mkdir(toDir, { recursive: true });
-  await writeFile(join(toDir, 'report.json'), JSON.stringify(report, null, 2) + '\n');
+  // report.json is the mandatory write, so it carries both guards (the chain under `root`, then
+  // the leaf). The auxiliary copies stay best effort, but never INTO a planted name: `cp` would
+  // write through `toDir/evidence -> elsewhere`, so a destination that exists and is not a real
+  // directory is skipped rather than followed.
+  await writeUnder(root, join(toDir, 'report.json'), JSON.stringify(report, null, 2) + '\n', RETAINED_TREE);
   await Promise.all(
     ['report.md', 'evidence'].map(async (name) => {
       const src = join(fromDir, name);
-      if (existsSync(src)) {
+      const dest = join(toDir, name);
+      if (existsSync(src) && (!existsSync(dest) || isRealDir(dest))) {
         try {
-          await cp(src, join(toDir, name), { recursive: true });
+          await cp(src, dest, { recursive: true });
         } catch {
           /* best effort: artifacts may be elsewhere */
         }

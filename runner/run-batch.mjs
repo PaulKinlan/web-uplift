@@ -51,7 +51,7 @@ import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow } from './flow.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
-import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, UnsafeTargetRefused } from './safe-write.mjs';
+import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, isRealDir, isRealDirUnder, UnsafeTargetRefused } from './safe-write.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
 
@@ -623,27 +623,13 @@ function hasCompletedLatest(url) {
 // shares this tree and can replace its run directory with a symlink between the check
 // and the write, which would make a write land in another run - or outside the output
 // tree entirely, escaping the accounting.
-function isRealDir(p) {
-  try {
-    return lstatSync(p).isDirectory() && statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-// Validate EVERY segment below the output root, not just the leaf: validating the leaf
-// alone misses an ancestor swapped for a symlink, through which the same writes land
-// somewhere else entirely. (outDir itself is the operator's choice and is not checked.)
+//
+// The check itself lives in runner/safe-write.mjs (isRealDirUnder): fix mode has the same
+// tree-sharing problem and must not carry a second copy of this rule (web-uplift-uruy).
+// This adapter only names THIS runner's output root, which used to be a closure inside the
+// check; the leaf guards in the same module cover the final name.
 function isRealUnderOutput(p) {
-  const base = resolvePath(outDir);
-  const target = resolvePath(p);
-  if (target !== base && !target.startsWith(base + sep)) return false;
-  let cur = base;
-  for (const segment of relative(base, target).split(sep).filter(Boolean)) {
-    cur = join(cur, segment);
-    if (!isRealDir(cur)) return false;
-  }
-  return true;
+  return isRealDirUnder(outDir, p);
 }
 
 function validateAtomicReport(reportPath) {

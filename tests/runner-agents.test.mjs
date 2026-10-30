@@ -1087,6 +1087,121 @@ export function testFixModeScopeEdgeCases() {
 }
 
 
+// web-uplift-uruy: fix mode writes its OWN records into the tree the agent can write, after the
+// agent exits. A link left at one of those names redirects the record onto a file outside the run
+// tree, with this tool's privileges, and the run then reports success - the same defect class as
+// web-uplift-rsbb (runner/safe-write.mjs), which is why this test drives the CALL SITES rather
+// than the shared guard: the guard was already correct, the fixer simply did not use it.
+//
+// Measured on the pre-fix tree with the symlink case below: victim truncated, exit 0, `PASS:`
+// printed. Only the victim-unchanged assertion catches that, so it is asserted first in each case.
+export function testFixModeRefusesPlantedLinksInItsOwnRecords() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-fix-links-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(root, 'src', 'index.html'), '<h1>hi</h1>');
+    const findings = join(repoRoot, 'examples', 'playground-report.json');
+    // A clean report, so the climb PASSES: without it every scenario fails for the ordinary
+    // reason (no usable report) and the exit code proves nothing about the planted link.
+    const passReport = join(repoRoot, 'examples', 'playground-report-fixed.json');
+
+    const drive = (outName, agentBody) => {
+      const bin = join(binDir, 'claude');
+      writeFileSync(bin, `#!/bin/sh\n${agentBody}\n`);
+      chmodSync(bin, 0o755);
+      const res = run(
+        process.execPath,
+        [
+          join(repoRoot, 'fixer', 'fix.mjs'),
+          '--target', 'src',
+          '--audit-url', 'http://example.test/',
+          '--agent', 'claude',
+          '--max-iterations', '1',
+          '--findings', findings,
+          '--isolation', 'host-permission-model',
+          '--out', outName,
+          '--reports-root', `reports-${outName}`,
+        ],
+        { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
+      );
+      return { res, outDir: join(root, outName) };
+    };
+    const output = (r) => `${r.res.stdout}\n${r.res.stderr}`;
+    const passCrawl = (outName) =>
+      `cp ${JSON.stringify(passReport)} ${JSON.stringify(join(root, outName, 'report.json'))}`;
+
+    // 1. A SYMLINK at the first record the fixer writes after the agent exits. The record
+    //    (iter-N-diff.json) is the fixer's own account of what the iteration changed.
+    const victimLink = join(root, 'victim-link.txt');
+    const sentinel = 'SENTINEL-LINK-TARGET\n';
+    writeFileSync(victimLink, sentinel);
+    const a = drive('out-link', [
+      passCrawl('out-link'),
+      `rm -f ${JSON.stringify(join(root, 'out-link', 'iter-1-diff.json'))}`,
+      `ln -s ${JSON.stringify(victimLink)} ${JSON.stringify(join(root, 'out-link', 'iter-1-diff.json'))}`,
+    ].join('\n'));
+    assert.equal(readFileSync(victimLink, 'utf8'), sentinel, `fix records: the symlinked victim must be UNCHANGED:\n${output(a)}`);
+    assert(a.res.status !== 0, `fix records: a planted symlink at a record this tool writes must FAIL the run, got ${a.res.status}:\n${output(a)}`);
+    assert.match(output(a), /refusing to write .*iter-1-diff\.json/, `fix records: the refusal must name the record:\n${output(a)}`);
+    assert.match(output(a), /symbolic link/, `fix records: the refusal must say it is a symbolic link:\n${output(a)}`);
+    assert.doesNotMatch(a.res.stdout, /^PASS:/m, `fix records: a refused record write must never be reported as a pass:\n${output(a)}`);
+
+    // 2. A HARD LINK at the same name. No symlink is followed here - the planted name IS the
+    //    victim's inode - which is the second-round bypass web-uplift-rsbb's review found, so it
+    //    is asserted on its own: a symlink-only guard passes case 1 and fails this one.
+    const victimHard = join(root, 'victim-hard.txt');
+    writeFileSync(victimHard, sentinel);
+    const b = drive('out-hard', [
+      passCrawl('out-hard'),
+      `ln ${JSON.stringify(victimHard)} ${JSON.stringify(join(root, 'out-hard', 'iter-1-diff.json'))}`,
+    ].join('\n'));
+    assert.equal(readFileSync(victimHard, 'utf8'), sentinel, `fix records: the hard-linked victim must be UNCHANGED:\n${output(b)}`);
+    assert(b.res.status !== 0, `fix records: a planted hard link must FAIL the run, got ${b.res.status}:\n${output(b)}`);
+    assert.match(output(b), /refusing to write .*iter-1-diff\.json/, `fix records: the refusal must name the record:\n${output(b)}`);
+    assert.match(output(b), /hard link/, `fix records: the refusal must say it is a hard link:\n${output(b)}`);
+    assert.doesNotMatch(b.res.stdout, /^PASS:/m, `fix records: a refused record write must never be reported as a pass:\n${output(b)}`);
+
+    // 3. The DIRECTORY level, which no leaf guard covers: the agent replaces the whole --out tree
+    //    with a symlink to somewhere else, so every later record's path leaves the tree it belongs
+    //    to. This is the "a write that would land outside --out is refused" arm, and the assertion
+    //    that matters is that the victim DIRECTORY receives nothing.
+    const victimDir = join(root, 'victim-dir');
+    mkdirSync(victimDir, { recursive: true });
+    writeFileSync(join(victimDir, 'keep.txt'), 'KEEP\n');
+    const c = drive('out-swap', [
+      `rm -rf ${JSON.stringify(join(root, 'out-swap'))}`,
+      `ln -s ${JSON.stringify(victimDir)} ${JSON.stringify(join(root, 'out-swap'))}`,
+    ].join('\n'));
+    assert.equal(readFileSync(join(victimDir, 'keep.txt'), 'utf8'), 'KEEP\n', 'fix records: the swapped-in victim directory must be untouched');
+    assert(
+      !existsSync(join(victimDir, 'iter-1-diff.json')),
+      `fix records: a record must not be written through a directory-level link:\n${readdirSync(victimDir).join(', ')}`,
+    );
+    assert(c.res.status !== 0, `fix records: a swapped --out tree must FAIL the run, got ${c.res.status}:\n${output(c)}`);
+    assert.match(
+      output(c),
+      /refusing to write .*iter-1-diff\.json/,
+      `fix records: the refusal must name the record whose tree left --out:\n${output(c)}`,
+    );
+    assert.doesNotMatch(c.res.stdout, /^PASS:/m, `fix records: a swapped tree must never be reported as a pass:\n${output(c)}`);
+
+    // 4. Positive control: with no link planted, the SAME drive writes the record and reports the
+    //    pass. Without this, a guard that refused every write would satisfy cases 1-3.
+    const d = drive('out-clean', passCrawl('out-clean'));
+    assert(d.res.status === 0, `fix records: an untouched run must still pass (got ${d.res.status})\n${output(d)}`);
+    assert(/^PASS:/m.test(d.res.stdout), `fix records: an untouched run must report PASS:\n${d.res.stdout}`);
+    const cleanDiff = join(d.outDir, 'iter-1-diff.json');
+    assert(existsSync(cleanDiff), 'fix records: the per-iteration diff must still be written on a clean run');
+    assert(statSync(cleanDiff).isFile(), 'fix records: the per-iteration diff must be a regular file');
+    assert(statSync(cleanDiff).nlink === 1, 'fix records: the per-iteration diff must not be a link to another name');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+
 // web-uplift-arp, minimal design: this tool does NOT sandbox the agent. It refuses
 // to spawn a write-capable agent unless the operator asserts which boundary they are
 // providing, it says loudly that it cannot verify that assertion, it records the
@@ -1805,6 +1920,7 @@ export const runnerAgentsTests = [
   testFixWriteScopeDiffing,
   testFixModeRefusesOutOfScopeWrites,
   testFixModeScopeEdgeCases,
+  testFixModeRefusesPlantedLinksInItsOwnRecords,
   testFixIsolationAssertion,
   testFixIsolatedRunPublishes,
   testSnapshotRunStructure,
