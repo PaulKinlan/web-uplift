@@ -390,7 +390,18 @@ export const SUBSYSTEMS = [
       { type: 'node', path: 'tests/changelog-version-check.mjs', label: 'Changelog and version agreement' },
       { type: 'node', path: 'tests/install-copy-symlink.mjs', label: 'Install copy symlink tests' },
       { type: 'regression', filter: 'InstallSurface', label: 'Regression: Install surface tests' },
-      { type: 'regression', filter: 'Installed', label: 'Regression: Installed evidence CLI tests' },
+      // MEASURED BUDGET (web-uplift-3jzf), the same rule as the Batch, Fix and Evidence budgets above: this is
+      // the only route a dependency bump takes (`package.json` / `package-lock.json` in this very rule), and it
+      // cannot fit the 120s default once the npm cache is cold - which every lockfile change guarantees. The cost
+      // is `npm exec --yes --package <tarball>` inside installedTarget(): a network install of a tarball whose
+      // identity changes with every tree change, so a rebase re-pays it. Measured on this VM on 2026-10-30:
+      // 5.99s (warm cache, older log), 76.4s and 99.8s (inside passing gate runs), 89.8s (foreground, idle),
+      // 170.9s (foreground, cold tarball), and killed at 120.2s in three gate runs - so a deps change could not
+      // get a verdict at all, and exit 124 is recorded as "not a verdict" rather than as this target being over
+      // budget, which is what hid it. 240s matches the measurement with the headroom the other budgets use.
+      // The real fix is for the install cases to prepare one tree and reuse it (web-uplift-3jzf, step 2); raising
+      // this bound without that is a floor, not a solution.
+      { type: 'regression', filter: 'Installed', label: 'Regression: Installed evidence CLI tests', timeoutMs: 240000 },
       { type: 'regression', filter: 'Update', label: 'Regression: Update check tests' },
     ],
   },
