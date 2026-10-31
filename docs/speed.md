@@ -82,6 +82,12 @@ default on 2026-11-01 after every case that reported had passed, with that run's
 launch overhead - `testCdpDeadline` alone is 120.0s because its cost IS the deadline it proves, and the browser
 launch cases add 24.1s, 22.4s, 16.5s and 8.1s. Provenance stated rather than implied: that number comes from
 in-gate case timings rather than a standalone idle run, and a standalone measurement should replace it if taken.
+An eighth measured bound covers a whole FILE rather than a filter: `Direct test: tests/install-package.test.mjs`
+gets **420s**. That file is 206s standalone with 33/33 cases passing (measured 2026-10-30 while landing
+web-uplift-y6ch) against the 240s generic default for a `*.test.mjs` - 1.16x headroom, so any overlap kills it, and
+on 2026-10-31 it was killed at 240.40s in a real fast-gate run after passing every other target in it. Each case
+spawns npm over a real install tree, so the 206s is the file, not one slow case. Note the next strain is the 600s
+WHOLE-GATE bound: a selection that runs this file alongside `symlink-guards` needs roughly 460-580s.
 
 The seventh measured bound is `Regression: Write-scope tests` at **240s** (web-uplift-d78k). That filter selects
 `testBatchWriteScope`, which is the same eight end-to-end batch scenarios that are 52% of the Batch target
