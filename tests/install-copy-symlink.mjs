@@ -47,6 +47,38 @@ function fixturePath(name) {
   return fixturePaths.get(name);
 }
 
+// A KILLED RUN CANNOT CLEAN UP AFTER ITSELF, so the next run does it for them (web-uplift-s5bj). Fixture names
+// carry the owning pid, so a leftover whose process is GONE is dead weight and can be removed; one whose process
+// is still alive belongs to a concurrent gate in the same worktree (a preempted heavy slot makes two runs
+// overlap by design, see web-uplift-rn7w) and is left strictly alone.
+//
+// This is not cosmetic. A leftover cycle directory made tests/cdp-copy-sync.mjs recurse until the kernel said
+// ELOOP (walkDir followed symlinks, which it no longer does), and a leftover ESCAPE symlink under schema/ made
+// testInstallNormalDestinationWrites fail its 'clean install must not report any symlinks skipped' assertion -
+// two red cases naming nothing about the fixture that caused them, on a tree where nothing was wrong.
+function purgeDeadProcessFixtures() {
+  let entries = [];
+  try {
+    entries = readdirSync(SCHEMA_DIR);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const match = /^(install-depth-fixture|install-symlink-cycle|install-symlink-escape)\.(\d+)\./.exec(name);
+    if (!match) continue;
+    const pid = Number(match[2]);
+    if (pid === process.pid) continue;
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      alive = error.code === 'EPERM'; // EPERM means it exists and is not ours to signal
+    }
+    if (alive) continue;
+    rmSync(join(SCHEMA_DIR, name), { recursive: true, force: true });
+  }
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -115,6 +147,7 @@ export function testInstallSkipsSymlinksInVendoredSource() {
     // Purge BEFORE building, not only in the finally: a killed run (reaper, timeout, preempted heavy
     // slot) never reaches finally, and the leftovers then make the FIRST non-recursive mkdir/symlink
     // below throw EEXIST, poisoning every later run in the same worktree (web-uplift-qx4i).
+    purgeDeadProcessFixtures();
     rmSync(fileLink, { recursive: true, force: true });
     rmSync(cycleDir, { recursive: true, force: true });
     const secret = 'AKIA' + 'INSTALLSYMLINKFILEESCAPE';
@@ -327,6 +360,9 @@ export function testInstallRefusesDestinationSymlinks() {
 export function testInstallNormalDestinationWrites() {
   const target = mkdtempSync(join(tmpdir(), 'web-uplift-dest-normal-target-'));
   try {
+    // A leftover fixture from a KILLED run would make this 'clean install' report a skipped symlink and fail on
+    // a tree where nothing is wrong (web-uplift-s5bj). Dead owners only: a live concurrent gate's fixtures stay.
+    purgeDeadProcessFixtures();
     const install = runInstall(target);
     assert(install.status === 0, `clean install failed:\n${install.stderr || install.stdout}`);
     assert(!install.stdout.includes('(symlink)'), `clean install must not report any symlinks skipped:\n${install.stdout}`);

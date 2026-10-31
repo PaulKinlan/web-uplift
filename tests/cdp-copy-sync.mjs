@@ -338,15 +338,22 @@ function buildPairs(root = targetRepo) {
 // Returns a Map of repo-relative file path -> absolute path for every regular
 // file under `dir`, recursing like bin/web-uplift.mjs copyDir(). An empty map
 // means the directory does not exist (or holds no files).
+//
+// SYMLINKS ARE SKIPPED, NOT FOLLOWED (web-uplift-s5bj). install skips them too - that is what
+// 'X (symlink)' in its report means - so a symlink is not a vendored copy and the byte-identity guard has
+// nothing to compare. Following them was also how this walker hung: `statSync` follows, so a directory
+// symlink pointing at its own parent recursed until the kernel said 'ELOOP: too many symbolic links', and the
+// guard died on a fixture rather than reporting anything about the tree.
 function walkDir(dir) {
   const files = new Map();
   if (!existsSync(dir)) return files;
   const visit = (current, relPrefix) => {
-    for (const name of readdirSync(current)) {
-      const abs = join(current, name);
-      const relPath = relPrefix ? join(relPrefix, name) : name;
-      if (statSync(abs).isDirectory()) visit(abs, relPath);
-      else files.set(relPath, abs);
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const abs = join(current, entry.name);
+      const relPath = relPrefix ? join(relPrefix, entry.name) : entry.name;
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) visit(abs, relPath);
+      else if (entry.isFile()) files.set(relPath, abs);
     }
   };
   visit(dir, '');
