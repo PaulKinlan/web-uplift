@@ -19,12 +19,16 @@
 //                                  before any readFileSync. Returns the absolute
 //                                  path, or null when the path is unsafe.
 //
-// Residual, stated rather than implied: the containment check is lexical, so a
-// symlink already inside the run directory that points outside it still
-// resolves. Creating one requires write access to the run directory, which the
-// same agent already has, so this is not a new trust boundary.
+// Residual, stated rather than implied: this check is LEXICAL, so a symlink that
+// already exists inside the run directory and points outside it still resolves.
+// Creating one requires write access to the run directory, which the same agent
+// already has, so this is not a new READ boundary - but it is a DISCLOSURE
+// boundary, because whatever a renderer inlines is published
+// (web-uplift-kfkz). A read site therefore uses containedReadPath below, not
+// this function.
 
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
 
 export function isSafeArtifactPath(relPath) {
   return typeof relPath === 'string'
@@ -44,6 +48,33 @@ export function containedArtifactPath(dir, relPath) {
   return abs;
 }
 
+// The READ form: lexical containment first, then the same check on the RESOLVED
+// path, so an in-run symlink pointing outside is refused too (web-uplift-kfkz).
+//
+// The lexical half alone is insufficient in the direction that matters for a
+// renderer: `shot.png` is a perfectly safe-looking relative path, and if it is a
+// symlink to ~/.ssh/id_rsa the scorecard inlines host bytes into a published
+// artifact. The read did not cross a boundary the agent did not already have;
+// the PUBLICATION did.
+//
+// Returns the resolved absolute path, or null when containment cannot be proved
+// (unsafe shape, missing file, unreadable link). Callers treat null as 'no
+// artifact', which is what they already did for an unreadable file, so refusing
+// here cannot be mistaken for a successful read.
+export function containedReadPath(dir, relPath) {
+  const abs = containedArtifactPath(dir, relPath);
+  if (!abs) return null;
+  let base;
+  let real;
+  try {
+    base = realpathSync(resolve(dir));
+    real = realpathSync(abs);
+  } catch {
+    return null;
+  }
+  if (real !== base && !real.startsWith(base + sep)) return null;
+  return real;
+}
 // A DIRECTORY named by one untrusted path segment, resolved inside `base`.
 //
 // Use this before an untrusted string becomes the BASE for later reads, which is

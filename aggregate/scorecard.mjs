@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostSlug, listRuns, resolveLatest } from '../runner/run-history.mjs';
-import { containedArtifactPath, containedChildDir, isSafeArtifactPath } from './artifact-path.mjs';
+import { containedChildDir, containedReadPath, isSafeArtifactPath } from './artifact-path.mjs';
 
 // --- Outcome model ----------------------------------------------------------
 // The 17 quality principles, grouped into the outcomes a site owner recognises.
@@ -323,7 +323,7 @@ function imageSize(buf) {
 // unreadable.
 function imageData(dir, relPath) {
   try {
-    const abs = containedArtifactPath(dir, relPath);
+    const abs = containedReadPath(dir, relPath);
     if (!abs || !existsSync(abs)) return null;
     const ext = relPath.split('.').pop().toLowerCase();
     const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[ext];

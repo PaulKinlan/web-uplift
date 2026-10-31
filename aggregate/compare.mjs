@@ -24,7 +24,7 @@ import { join, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostSlug, pickRuns } from '../runner/run-history.mjs';
 import { countOutstanding, completionState } from '../runner/remaining-work.mjs';
-import { containedArtifactPath, isSafeArtifactPath } from './artifact-path.mjs';
+import { containedReadPath, isSafeArtifactPath } from './artifact-path.mjs';
 
 export function compareReports(reportA, reportB, { dirA, dirB } = {}) {
   const principleChanges = diffPrinciples(reportA, reportB);
@@ -268,7 +268,9 @@ function resolveArtifact(dir, p) {
   // resolve outside its run directory. Before this, `isAbsolute(p) ? p :
   // join(dir, p)` let a crafted `artifacts[].path` (
   // '../../../../etc/passwd') or an absolute path be read into JSON.parse here.
-  return containedArtifactPath(dir, p);
+  // The read form, not the lexical one: an artifact path that looks contained can still be a symlink out
+  // of the run directory, and whatever this reads is rendered into compare.md (web-uplift-kfkz).
+  return containedReadPath(dir, p);
 }
 
 function round(n) {
