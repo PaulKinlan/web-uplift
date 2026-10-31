@@ -313,6 +313,13 @@ export const DIRECT_TARGET_BUDGETS = {
   // it (exit 124, no verdict cached) rather than failing it (web-uplift-dysm). testBatchWriteScope
   // alone is 56-77s of that; the fix-mode and batch cases are the rest.
   'tests/runner-agents.test.mjs': 480000,
+  // 206s standalone on 2026-10-30 (33/33 cases passing, this lane's own measurement while landing
+  // web-uplift-y6ch) against the same 240s generic default - 1.16x headroom, so ANY overlap kills it: on
+  // 2026-10-31 it was killed at 240.40s in a real fast-gate run (web-uplift-s5bj) after passing every other
+  // target in that run. Each case spawns npm and a real install tree, so 206s is the file, not one slow case.
+  // The 600s WHOLE-GATE bound is the next thing this file strains: a selection that runs it alongside
+  // symlink-guards needs ~460-580s. Recorded rather than implied.
+  'tests/install-package.test.mjs': 420000,
 };
 
 // APPLIED ON EVERY ROUTE, by path, once the plan is assembled (applyMeasuredBudget below). A suite can be
