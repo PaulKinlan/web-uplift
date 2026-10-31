@@ -656,6 +656,35 @@ export async function testMcpSkillsServerStdio() {
 
 
 
+// web-uplift-s5bj: a symlink in a vendored source directory is not a vendored copy - install skips it, and the
+// byte-identity guard has nothing to compare - so the walk must not FOLLOW it. It did, and a directory symlink
+// pointing at its own parent recursed until the kernel said 'ELOOP: too many symbolic links', which is how a
+// killed test run's leftover fixture turned the NEXT run's guard red with an error naming no fixture at all.
+export function testCdpCopySyncIgnoresSymlinkCyclesInTheVendoredTree() {
+  const fixture = mkdtempSync(join(tmp, 'cdp-sync-symlink-'));
+  const srcDir = join(fixture, 'schema');
+  const dstDir = join(fixture, '.web-uplift', 'schema');
+  mkdirSync(srcDir, { recursive: true });
+  mkdirSync(dstDir, { recursive: true });
+  writeFileSync(join(srcDir, 'kept.json'), '{"version": 1}\n');
+  writeFileSync(join(dstDir, 'kept.json'), '{"version": 1}\n');
+  // A cycle, exactly like the fixture a killed install-copy-symlink run leaves behind, plus an escaping file
+  // symlink, both inside a VENDORED_DIR.
+  const cycleDir = join(srcDir, 'install-symlink-cycle.999999.dead');
+  mkdirSync(cycleDir);
+  symlinkSync(cycleDir, join(cycleDir, 'loop'));
+  const escape = join(srcDir, 'install-symlink-escape.999999.dead.txt');
+  symlinkSync(join(tmp, 'does-not-exist'), escape);
+  try {
+    const run = spawnSync(process.execPath, [join(repoRoot, 'tests', 'cdp-copy-sync.mjs'), '--repo', fixture], { encoding: 'utf8', timeout: 120000 });
+    assert(run.status === 0, `a symlink cycle in a vendored source dir must not fail the guard:\n${run.stdout}\n${run.stderr}`);
+    assert(!/ELOOP/.test(run.stderr), `the walk must not follow a symlink cycle:\n${run.stderr}`);
+    assert(/all \d+ vendored copies identical/.test(run.stdout), `the guard still compares the real files:\n${run.stdout}`);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
 export const installPackageTests = [
   testCrashLeftStagedTreeIsSweptByTheNextRun,
   testSweepLeavesALiveRunsStagedTreeAlone,
@@ -663,6 +692,7 @@ export const installPackageTests = [
   testCdpCopySyncGuard,
   testCdpCopySyncMutationGuard,
   testCdpCopySyncDropsStaleVendoredEntries,
+  testCdpCopySyncIgnoresSymlinkCyclesInTheVendoredTree,
   testInstalledEvidenceCli,
   testNpxCacheDoesNotAccumulate,
   testInstalledTreeRelativeImportsResolve,
