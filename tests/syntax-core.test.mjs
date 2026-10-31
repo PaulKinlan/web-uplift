@@ -1865,11 +1865,16 @@ export async function testScorecardArtifactContainment() {
     // Distinct markers so each assertion names the exact file it is about.
     const relSecret = Buffer.from('TRAVERSAL-REL-MARKER');
     const absSecret = Buffer.from('TRAVERSAL-ABS-MARKER');
+    const symSecret = Buffer.from('TRAVERSAL-SYMLINK-MARKER');
     const legitBytes = Buffer.from('LEGIT-INLINE-MARKER');
     writeFileSync(join(outsideDir, 'rel-secret.png'), relSecret);
     writeFileSync(join(outsideDir, 'abs-secret.png'), absSecret);
     writeFileSync(join(outsideDir, 'clip.mp4'), Buffer.from('outside-video'));
     writeFileSync(join(runDir, 'shot.png'), legitBytes);
+    // web-uplift-kfkz: a name that is PERFECTLY contained lexically ('link.png', no .. and not absolute) that is
+    // a symlink out of the run directory. The string checks cannot see it; only resolving the object can.
+    writeFileSync(join(outsideDir, 'sym-secret.png'), symSecret);
+    symlinkSync(join(outsideDir, 'sym-secret.png'), join(runDir, 'link.png'));
 
     // Non-vacuity: the planted file must actually be reachable the way the old
     // unguarded `join(dir, relPath)` resolved it, or the escape assertions below
@@ -1877,6 +1882,13 @@ export async function testScorecardArtifactContainment() {
     assert(
       existsSync(join(runDir, '../../outside/rel-secret.png')),
       'scorecard: the traversal fixture must be reachable through a plain join, or the escape test is vacuous',
+    );
+
+    // Non-vacuity for the symlink case: the link must actually reach the outside bytes the way the renderer's
+    // readFileSync would, or the assertion below passes against a fixture that could never have leaked.
+    assert(
+      readFileSync(join(runDir, 'link.png')).equals(symSecret),
+      'scorecard: the planted symlink must reach the outside file through a plain read, or the symlink test is vacuous',
     );
 
     const report = JSON.parse(readFileSync(join(repoRoot, 'examples/playground-report.json'), 'utf8'));
@@ -1887,6 +1899,7 @@ export async function testScorecardArtifactContainment() {
       { path: '../../outside/rel-secret.png', type: 'screenshot', findingIds: [findingId], caption: 'escape' },
       { path: join(outsideDir, 'abs-secret.png'), type: 'screenshot', findingIds: [findingId], caption: 'absolute' },
       { path: '../../outside/clip.mp4', type: 'video', findingIds: [findingId], caption: 'escape video' },
+      { path: 'link.png', type: 'screenshot', findingIds: [findingId], caption: 'symlink out of the run dir' },
     ];
     const scored = scoreReport(report);
     const html = renderScorecard({
@@ -1921,6 +1934,12 @@ export async function testScorecardArtifactContainment() {
     assert(
       !html.includes('../../outside'),
       'scorecard: an escaping artifact path must not be emitted as a relative src',
+    );
+    // web-uplift-kfkz: the LEXICAL checks above all pass for 'link.png', so this is the case that proves the
+    // guard resolves the object rather than reading the string.
+    assert(
+      !html.includes(symSecret.toString('base64')),
+      'scorecard: a contained-LOOKING path that is a symlink out of the run dir must not have its bytes inlined',
     );
 
     // The compare panel resolves before/after paths against OTHER run directories
