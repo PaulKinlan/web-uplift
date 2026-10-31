@@ -156,10 +156,27 @@ async function pageAction(client, selectorList, actionJs, descriptor = null) {
   return evaluate(client, expr);
 }
 
+// A flow file is DATA - recorded by the extension, exported from Chrome's Recorder, or hand-written for
+// CI - so nothing in it may reach a filesystem path unvalidated (web-uplift-dc1z). The step's `type` used
+// to land in the screenshot filename verbatim, so a type of '../escape' or 'a/b' wrote outside outDir or
+// nested a directory. This alphabet keeps lowercase letters, digits, '_' and '-', so no separator and no
+// dot segment can survive, runs of anything else collapse to one '-', and an empty result falls back to
+// 'step' rather than producing 'step-01-.png'.
+const UNSAFE_LABEL = /[^a-z0-9_-]+/g;
+export function fileSafeLabel(raw, { maxLength = 32 } = {}) {
+  const collapsed = String(raw ?? '')
+    .toLowerCase()
+    .replace(UNSAFE_LABEL, '-')
+    .replace(/^-+/, '')
+    .slice(0, maxLength);
+  const trimmed = collapsed.replace(/-+$/, '');
+  return trimmed || 'step';
+}
+
 async function screenshot(client, outDir, index, label, log) {
   try {
     const { data } = await client.Page.captureScreenshot({ format: 'png' });
-    const name = `step-${String(index).padStart(2, '0')}-${label}.png`;
+    const name = `step-${String(index).padStart(2, '0')}-${fileSafeLabel(label)}.png`;
     const bin = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
     writeFileSync(join(outDir, name), bin);
     return `evidence/${name}`;
