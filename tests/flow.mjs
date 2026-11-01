@@ -18,7 +18,7 @@
 // This file is the fast, browser-free foreground check. Run it directly:
 //   node tests/flow.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
-import { readFileSync, mkdtempSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, readdirSync, existsSync, rmSync, writeFileSync, mkdirSync, symlinkSync, linkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -1706,6 +1706,64 @@ export async function testFlowReplaySchemeGate() {
 // or a hand-written CI fixture - could write outside the evidence directory ('../../escape') or nest
 // directories ('a/b'). The assertions below FAIL on the pre-fix source: with the old name the '../escape' step
 // writes a file outside outDir and the returned evidence path contains the traversal.
+// web-uplift-9gkt: the FILENAME half is web-uplift-dc1z; this is the same write reached by three other routes,
+// and each one is a link rather than a string, so a sanitiser cannot see any of them. Every case plants the link in
+// the run tree BEFORE replay, which is what the agent under test can do between the runner creating the directory
+// and writing into it.
+export async function testFlowWritesRefusePlantedLinks() {
+  console.log('Testing that flow replay refuses planted links at its own write sites (web-uplift-9gkt)...');
+  const { replayFlow } = await import('../runner/flow.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'wu-flow-links-'));
+  const outsideDir = join(root, 'outside');
+  mkdirSync(outsideDir, { recursive: true });
+  const client = {
+    Emulation: { setDeviceMetricsOverride: async () => {} },
+    Page: {
+      captureScreenshot: async () => ({ data: 'AAAA' }),
+      navigate: async () => {},
+      loadEventFired: () => Promise.resolve(),
+    },
+    Runtime: { evaluate: async () => ({ result: { value: 'https://example.test/current' } }) },
+  };
+  const flow = { title: 'planted link', steps: [{ type: 'click' }] };
+  try {
+    // 1. THE EVIDENCE ROOT IS A SYMLINK to a directory outside the run tree: every screenshot would land there.
+    const linkedRoot = join(root, 'evidence-link');
+    symlinkSync(outsideDir, linkedRoot, 'dir');
+    let refusedRoot = false;
+    try {
+      await replayFlow(client, flow, { startUrl: 'https://example.test/', outDir: join(linkedRoot, 'run-1'), settleMs: 1 });
+    } catch {
+      refusedRoot = true;
+    }
+    assert(refusedRoot, 'a symlinked evidence root must be refused, not written through');
+    assert(readdirSync(outsideDir).length === 0, `nothing may be written through the evidence-root link, got ${JSON.stringify(readdirSync(outsideDir))}`);
+
+    // 2. THE SCREENSHOT LEAF IS A SYMLINK to a file outside the run tree. The step still runs, but the write is
+    //    refused, so the outside file keeps its bytes and the step records no screenshot.
+    const outDir = join(root, 'evidence', 'run-2');
+    mkdirSync(outDir, { recursive: true });
+    const victim = join(outsideDir, 'victim.png');
+    writeFileSync(victim, 'UNCHANGED');
+    symlinkSync(victim, join(outDir, 'step-01-click.png'));
+    const res = await replayFlow(client, flow, { startUrl: 'https://example.test/', outDir, settleMs: 1 });
+    assert(readFileSync(victim, 'utf8') === 'UNCHANGED', 'a planted leaf link must not be written through, whatever the step type');
+    assert(res.steps[0].screenshot === null || res.steps[0].screenshot === undefined, `a refused screenshot write must not be reported as evidence, got ${JSON.stringify(res.steps[0].screenshot)}`);
+
+    // 3. A PLANTED HARD LINK at the same leaf: rsbb showed links come in pairs, and a hard link needs no follow.
+    const outDir3 = join(root, 'evidence', 'run-3');
+    mkdirSync(outDir3, { recursive: true });
+    const victim2 = join(outsideDir, 'victim2.png');
+    writeFileSync(victim2, 'UNCHANGED');
+    linkSync(victim2, join(outDir3, 'step-01-click.png'));
+    const res3 = await replayFlow(client, flow, { startUrl: 'https://example.test/', outDir: outDir3, settleMs: 1 });
+    assert(readFileSync(victim2, 'utf8') === 'UNCHANGED', 'a planted hard link must not be truncated or written through');
+    assert(res3.steps[0].screenshot === null || res3.steps[0].screenshot === undefined, 'a refused hard-link write must not be reported as evidence');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export async function testFlowScreenshotNameCannotEscapeOutDir() {
   console.log('Testing that a flow step type cannot put a screenshot outside the evidence directory (web-uplift-dc1z)...');
   const { fileSafeLabel, replayFlow } = await import('../runner/flow.mjs');
@@ -1770,6 +1828,7 @@ const CASES = [
   testFlowRecordSensitiveRedaction,
   testFlowReplayMutationGate,
   testFlowReplaySchemeGate,
+  testFlowWritesRefusePlantedLinks,
   testFlowScreenshotNameCannotEscapeOutDir,
 ];
 
