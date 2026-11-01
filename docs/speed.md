@@ -77,6 +77,12 @@ every case in the file had passed. The expensive cases are `testSuiteListsMatchR
 spawns all 30 suites to build the parity list) and the browser scorecard/CSP cases (6-21s each), so this is
 breadth rather than one slow test.
 
+A further measured bound is `Direct test: tests/chrome-cdp.test.mjs` at **420s**. It was killed at the 240s generic
+default on 2026-11-01 after every case that reported had passed, with that run's case timings summing to 215s before
+launch overhead - `testCdpDeadline` alone is 120.0s because its cost IS the deadline it proves, and the browser
+launch cases add 24.1s, 22.4s, 16.5s and 8.1s. Provenance stated rather than implied: that number comes from
+in-gate case timings rather than a standalone idle run, and a standalone measurement should replace it if taken.
+
 The seventh measured bound is `Regression: Write-scope tests` at **240s** (web-uplift-d78k). That filter selects
 `testBatchWriteScope`, which is the same eight end-to-end batch scenarios that are 52% of the Batch target
 (76.9s measured on an idle VM on 2026-10-27, web-uplift-rsbb) plus two small cases, so the 120s default was never a

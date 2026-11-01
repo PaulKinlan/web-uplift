@@ -1106,6 +1106,68 @@ export function testCommittedSiblingProbesAreInert() {
 // direction only ever costs a comment rewrite, never a false green. What is checked is the two properties a
 // re-run needs - the specifier is not absolute, and a relative one RESOLVES from the file's own directory to
 // a real file inside this repository.
+// web-uplift-xcij: the committed probes are inert by contract - suni/bdnk/xlar built that story on re-runnable
+// files - but one of them SPAWNS a write-capable coding agent (evidence-out/web-uplift-7tj/ab-probe.mjs), and no
+// sweep looked for the shape. Replaying evidence from a committed file could therefore start something that
+// writes. The probes that drive `claude` are legitimate evidence of a permission A/B, so the ruling recorded here
+// is: a committed probe MAY spawn an agent, but only behind an opt-in that a replay cannot satisfy by default,
+// and the opt-in must be visible in the file rather than assumed from its environment.
+//
+// OPT_IN = 'WEB_UPLIFT_PROBE_ALLOW_AGENT_SPAWN=1' set by a human who means to pay for a model run. The sweep
+// requires the token to be PRESENT in a probe that spawns: absence is the failure, and it fails TODAY'S probe
+// until the guard is added, which is what makes this a control rather than decoration.
+const AGENT_SPAWN_OPT_IN = 'WEB_UPLIFT_PROBE_ALLOW_AGENT_SPAWN';
+const AGENT_SPAWN = /\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync)\s*\(\s*['"`](?:claude|codex|gemini|aider|agent|llm)\b/;
+export function testCommittedProbesDoNotSpawnAgentsUnguarded() {
+  const executableLines = (text) =>
+    text
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .join('\n');
+  const spawnSites = (text) => {
+    const found = [];
+    for (const line of executableLines(text).split('\n')) {
+      if (AGENT_SPAWN.test(line)) found.push(line.trim());
+    }
+    return found;
+  };
+
+  const committed = run('git', ['ls-files', 'evidence-out/**/*.mjs', 'evidence-out/*.mjs']);
+  assert(committed.status === 0, `git ls-files failed: ${committed.stderr}`);
+  const probes = committed.stdout.split('\n').filter(Boolean).sort();
+  assert(probes.length > 0, 'the sweep must find the committed probes, or passing says nothing');
+
+  const offences = [];
+  const guarded = [];
+  for (const rel of probes) {
+    const text = readFileSync(join(repoRoot, rel), 'utf8');
+    const sites = spawnSites(text);
+    if (sites.length === 0) continue;
+    if (text.includes(AGENT_SPAWN_OPT_IN)) guarded.push(rel);
+    else offences.push(`${rel}: ${sites[0]}`);
+  }
+  // Non-vacuity: the population must still reach the probe this rule was written for, and that probe must be
+  // counted as a SPAWN SITE - a detector that matched nothing would otherwise pass while guarding nothing.
+  assert(
+    probes.includes('evidence-out/web-uplift-7tj/ab-probe.mjs'),
+    'the sweep must cover the probe this rule exists to guard: evidence-out/web-uplift-7tj/ab-probe.mjs',
+  );
+  assert(
+    guarded.includes('evidence-out/web-uplift-7tj/ab-probe.mjs'),
+    'the sweep must DETECT the spawn in ab-probe.mjs and find its opt-in; if this fails, the detector stopped matching and every other probe would pass vacuously',
+  );
+  assert(
+    offences.length === 0,
+    `a committed probe must not spawn an agent unless the file carries the ${AGENT_SPAWN_OPT_IN} opt-in, because replaying committed evidence must not start a write-capable agent by default (web-uplift-xcij): ${offences.join('; ')}`,
+  );
+
+  // Negative controls, so the detector is shown to refuse the shape and accept the guarded one.
+  assert(spawnSites("spawnSync('claude', argv, { cwd: repoRoot });").length === 1, 'negative control: a bare agent spawn must be detected');
+  assert(spawnSites("execFileSync(\"gemini\", args);").length === 1, 'negative control: another agent binary must be detected');
+  assert(spawnSites("// spawnSync('claude', argv);").length === 0, 'a commented-out spawn is not executable, so it must not be flagged');
+  assert(spawnSites("spawnSync('git', ['status']);").length === 0, 'a non-agent spawn must be accepted, or every probe that shells out is refused');
+}
+
 export function testCommittedEvidenceProbesImportByRelativePath() {
   // web-uplift-xlar: the gap between a keyword and its specifier may hold COMMENTS, not only whitespace, and
   // every such spelling is valid ECMAScript that `node --check` accepts: `import x from /* c */ './m.mjs'`,
@@ -1460,6 +1522,7 @@ export const chromeCdpTests = [
   testTricklingPeerIsBoundedByTheTotalDeadline,
   testThrowingLogDoesNotLeakTheSpawnedBrowser,
   testPreSpawnLogThrowDoesNotStrandTheProfileDir,
+  testCommittedProbesDoNotSpawnAgentsUnguarded,
   testThrowingHandlerLogDoesNotTakeTheProcessDown,
   testOversizedBodyDoesNotEarnACleanVerdict,
   testCdpPipeTransport,
