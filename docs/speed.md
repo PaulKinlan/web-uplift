@@ -70,6 +70,13 @@ reaches `tests/runner-agents.test.mjs` through the `agent-dispatch` SUBSYSTEMS r
 no `timeoutMs` at all and so fell back to `runTarget`'s 120s default - an even earlier kill than the 240s
 this started from.
 
+A ninth measured bound is `Direct test: tests/syntax-core.test.mjs` at **360s**. That file is 136.6s standalone
+(31 cases, measured 2026-10-31 on a VM at load 1.4) against the 240s generic default for a `*.test.mjs` - 1.76x
+headroom, which contention eats: it was killed at 240.4s on 2026-10-30 and again on 2026-11-01, each time AFTER
+every case in the file had passed. The expensive cases are `testSuiteListsMatchRegressionRegistry` (30-89s, it
+spawns all 30 suites to build the parity list) and the browser scorecard/CSP cases (6-21s each), so this is
+breadth rather than one slow test.
+
 The seventh measured bound is `Regression: Write-scope tests` at **240s** (web-uplift-d78k). That filter selects
 `testBatchWriteScope`, which is the same eight end-to-end batch scenarios that are 52% of the Batch target
 (76.9s measured on an idle VM on 2026-10-27, web-uplift-rsbb) plus two small cases, so the 120s default was never a
