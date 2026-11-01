@@ -1900,6 +1900,8 @@ export async function testScorecardArtifactContainment() {
       { path: join(outsideDir, 'abs-secret.png'), type: 'screenshot', findingIds: [findingId], caption: 'absolute' },
       { path: '../../outside/clip.mp4', type: 'video', findingIds: [findingId], caption: 'escape video' },
       { path: 'link.png', type: 'screenshot', findingIds: [findingId], caption: 'symlink out of the run dir' },
+      { path: 'link.png', type: 'video', findingIds: [findingId], caption: 'symlink out of the run dir, video branch' },
+      { path: 'missing.png', type: 'screenshot', findingIds: [findingId], caption: 'never existed' },
     ];
     const scored = scoreReport(report);
     const html = renderScorecard({
@@ -1940,6 +1942,19 @@ export async function testScorecardArtifactContainment() {
     assert(
       !html.includes(symSecret.toString('base64')),
       'scorecard: a contained-LOOKING path that is a symlink out of the run dir must not have its bytes inlined',
+    );
+    // web-uplift-itsd: refusing the READ is not enough, because both emitted branches fall back to a RELATIVE
+    // src that the viewer resolves through the same symlink. Assert on the name, so a src string cannot slip
+    // past a base64-only check.
+    assert(
+      !html.includes('link.png'),
+      'scorecard: a symlink out of the run dir must not be emitted as a relative img/video src either',
+    );
+    // A contained-but-MISSING artifact is dropped rather than emitted as a broken link: the emit-level check
+    // covers existence too, and a link to nothing is not evidence.
+    assert(
+      !html.includes('missing.png'),
+      'scorecard: a contained path that does not exist must not be emitted as a media src',
     );
 
     // The compare panel resolves before/after paths against OTHER run directories
