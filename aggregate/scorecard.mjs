@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostSlug, listRuns, resolveLatest } from '../runner/run-history.mjs';
-import { containedArtifactPath, containedChildDir, isSafeArtifactPath } from './artifact-path.mjs';
+import { containedChildDir, containedReadPath } from './artifact-path.mjs';
 
 // --- Outcome model ----------------------------------------------------------
 // The 17 quality principles, grouped into the outcomes a site owner recognises.
@@ -323,7 +323,7 @@ function imageSize(buf) {
 // unreadable.
 function imageData(dir, relPath) {
   try {
-    const abs = containedArtifactPath(dir, relPath);
+    const abs = containedReadPath(dir, relPath);
     if (!abs || !existsSync(abs)) return null;
     const ext = relPath.split('.').pop().toLowerCase();
     const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[ext];
@@ -467,9 +467,15 @@ function isSafeFindingHref(raw) {
 function findingDialog(report, dir, f) {
   const arts = (report.artifacts ?? []).filter((a) => (a.findingIds ?? []).includes(f.id));
   const media = arts
-    // An escaping path is dropped entirely, not just blocked from the read: the
-    // `rel` fallback below becomes a src the browser resolves on its own.
-    .filter((a) => isSafeArtifactPath(a.path))
+    // An artifact whose RESOLVED path is not inside the run directory is dropped
+    // entirely, not merely blocked from the read (web-uplift-itsd). Both branches
+    // below can emit a RELATIVE src - the fallback when an image cannot be inlined,
+    // and every <video> - and a relative src is resolved by the viewer, so a
+    // shape-only check let a contained-LOOKING symlink ('link.png') reach the same
+    // outside bytes through the published tree after the inline read was refused.
+    // Missing files are dropped too: a link to nothing is not evidence, and
+    // refusing here is the one place that covers both emitted branches.
+    .filter((a) => containedReadPath(dir, a.path) !== null)
     .map((a) => {
       const rel = `${encodeURI(report.__runId)}/${a.path}`;
       if (a.type === 'screenshot') {

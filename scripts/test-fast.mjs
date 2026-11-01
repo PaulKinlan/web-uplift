@@ -313,6 +313,13 @@ export const DIRECT_TARGET_BUDGETS = {
   // it (exit 124, no verdict cached) rather than failing it (web-uplift-dysm). testBatchWriteScope
   // alone is 56-77s of that; the fix-mode and batch cases are the rest.
   'tests/runner-agents.test.mjs': 480000,
+  // 136.6s standalone on 2026-10-31 (31 cases, on a VM at load 1.4) against the 240s generic default - 1.76x
+  // headroom, which contention eats: killed at 240.4s on 2026-10-30 and again at 240.x s on 2026-11-01, each
+  // time AFTER every case in the file had passed. The expensive ones are testSuiteListsMatchRegressionRegistry
+  // (30-89s: it spawns all 30 suites to build the parity list) and the browser scorecard/CSP cases (6-21s each).
+  // Two kills under load plus a clean idle measurement is the evidence shape the runner-agents entry above
+  // documents (web-uplift-dysm), so the number follows the measurement rather than the noise.
+  'tests/syntax-core.test.mjs': 360000,
 };
 
 // APPLIED ON EVERY ROUTE, by path, once the plan is assembled (applyMeasuredBudget below). A suite can be
