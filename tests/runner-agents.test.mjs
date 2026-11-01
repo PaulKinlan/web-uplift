@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -1214,6 +1215,100 @@ export function testFixModeRefusesPlantedLinksInItsOwnRecords() {
 //
 // The scope this DOES cover is this run's own --out tree. Other hosts' retained runs under the
 // same `reports/` root stay excluded on purpose (previous runs' output, not this run's writes).
+// web-uplift-qxhv: the COPY-IN direction. `cp(src, dest, {recursive:true})` copies symlinks VERBATIM, so a link
+// the agent planted in its own scratch tree arrived in the RETAINED tree as a link - nothing followed it at copy
+// time, and every later consumer (scorecard, compare, review, publication) reads through it later. A hard link is
+// the same laundering by another name (web-uplift-rsbb: they come in pairs). Both must be refused, and the run
+// must say so rather than quietly dropping evidence.
+export function testFixModeSnapshotRefusesPlantedLinks() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-fix-snapshot-links-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(join(root, 'outside'), { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(root, 'src', 'index.html'), '<h1>hi</h1>');
+    const findings = join(repoRoot, 'examples', 'playground-report.json');
+    const passReport = join(repoRoot, 'examples', 'playground-report-fixed.json');
+    const outDir = join(root, 'reports', 'fix-example.test');
+    const outsideFile = join(root, 'outside', 'victim.png');
+    const evidence = join(outDir, 'evidence');
+
+    // The outside file is written BEFORE the run: an agent that creates it is (correctly) refused by the
+    // confinement tripwire, which would test a different guard than the one this case is about.
+    writeFileSync(outsideFile, 'OUTSIDE-SECRET');
+    writeFileSync(join(binDir, 'claude'), [
+      '#!/bin/sh',
+      `mkdir -p ${JSON.stringify(evidence)}`,
+      `printf 'REAL-EVIDENCE' > ${JSON.stringify(join(evidence, 'real.png'))}`,
+      `ln -s ${JSON.stringify(outsideFile)} ${JSON.stringify(join(evidence, 'leak.png'))}`,
+      `ln ${JSON.stringify(outsideFile)} ${JSON.stringify(join(evidence, 'hard.png'))}`,
+      `cp ${JSON.stringify(passReport)} ${JSON.stringify(join(outDir, 'report.json'))}`,
+      'exit 0',
+      '',
+    ].join('\n'));
+    chmodSync(join(binDir, 'claude'), 0o755);
+
+    const res = run(process.execPath, [
+      join(repoRoot, 'fixer', 'fix.mjs'),
+      '--target', 'src', '--audit-url', 'http://example.test/', '--agent', 'claude',
+      '--max-iterations', '1', '--findings', findings,
+      '--isolation', 'host-permission-model',
+      '--reports-root', 'retained',
+    ], { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+    const output = `${res.stdout}\n${res.stderr}`;
+
+    // The fixture must actually have planted what it claims, or the assertions below are vacuous.
+    assert(lstatSync(join(evidence, 'leak.png')).isSymbolicLink(), `snapshot links: the fixture must plant a symlink:\n${output}`);
+    assert(lstatSync(join(evidence, 'hard.png')).nlink > 1, `snapshot links: the fixture must plant a hard link:\n${output}`);
+
+    // Walk the retained tree: no link may survive the copy-in, and the positive control must be there.
+    const retained = join(root, 'retained');
+    assert(existsSync(retained), `snapshot links: the run must be retained:\n${output}`);
+    const found = [];
+    const walk = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, entry.name);
+        const st = lstatSync(abs);
+        // `latest` is run-history's own pointer, which is a symlink by design and is verified to stay inside
+        // the run root by testLatestPointerCannotEscapeTheRunRoot. This case is about links that came from the
+        // AGENT's tree, so the pointer is not evidence of laundering.
+        if (st.isSymbolicLink() && entry.name !== 'latest') found.push({ name: entry.name, kind: 'symlink' });
+        else if (st.isSymbolicLink()) continue;
+        else if (st.isDirectory()) walk(abs);
+        else found.push({ name: entry.name, kind: st.nlink > 1 ? 'hardlink' : 'file' });
+      }
+    };
+    walk(retained);
+
+    assert(!found.some((f) => f.kind === 'symlink'), `snapshot links: no symlink may be laundered into the retained tree, found ${JSON.stringify(found.filter((f) => f.kind === 'symlink'))}`);
+    assert(!found.some((f) => f.name === 'leak.png'), `snapshot links: a planted symlink must not be copied, found ${JSON.stringify(found.map((f) => f.name))}`);
+    assert(!found.some((f) => f.name === 'hard.png'), `snapshot links: a planted hard link must not be copied, found ${JSON.stringify(found.map((f) => f.name))}`);
+    assert(found.some((f) => f.name === 'real.png'), `snapshot links: the run's own evidence must still be retained, found ${JSON.stringify(found.map((f) => f.name))}`);
+
+    // And the refusal is VISIBLE in the retained report, so a reviewer sees a planted link rather than an empty dir.
+    const retainedReport = found.find((f) => f.name === 'report.json');
+    assert(retainedReport !== undefined, 'snapshot links: the retained run must carry its report.json');
+    const walkForReport = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          const r = walkForReport(abs);
+          if (r) return r;
+        } else if (entry.name === 'report.json') {
+          return abs;
+        }
+      }
+      return null;
+    };
+    const text = readFileSync(walkForReport(retained), 'utf8');
+    assert(/symbolic link/.test(text), `snapshot links: the report must record the refused symlink, got ${text.slice(0, 400)}`);
+    assert(/hard link/.test(text), `snapshot links: the report must record the refused hard link, got ${text.slice(0, 400)}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export function testFixModeSnapshotRecordsWritesUnderDefaultReportsOut() {
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-fix-defaultout-'));
   try {
@@ -1994,6 +2089,7 @@ export const runnerAgentsTests = [
   testFixModeRefusesOutOfScopeWrites,
   testFixModeScopeEdgeCases,
   testFixModeRefusesPlantedLinksInItsOwnRecords,
+  testFixModeSnapshotRefusesPlantedLinks,
   testFixModeSnapshotRecordsWritesUnderDefaultReportsOut,
   testFixIsolationAssertion,
   testFixIsolatedRunPublishes,
