@@ -94,6 +94,22 @@ function run(label, allowedTools) {
 // today's derivation (and should not dirty the reader's clone either). This probe used to mkdir and write under
 // repoRoot with repo-relative literals (web-uplift-k0ga).
 const OUT = '/tmp/web-uplift-7tj-ab';
+
+// web-uplift-xcij: this probe SPAWNS a write-capable coding agent, so replaying committed evidence must not start
+// one by accident - "committed probes are inert and re-runnable" is the story suni/bdnk/xlar built, and a replay
+// that spawns an agent with write tools is not inert. A human who means to pay for the run sets the opt-in below;
+// nothing in a replay path satisfies it by default, and the opt-in is deliberately NOT set by any harness/env file
+// in this repository. tests/chrome-cdp.test.mjs sweeps for the shape and requires this token in any probe that
+// spawns an agent, so the guard cannot be dropped silently.
+const ALLOW_AGENT_SPAWN = process.env.WEB_UPLIFT_PROBE_ALLOW_AGENT_SPAWN === '1';
+if (!ALLOW_AGENT_SPAWN) {
+  console.error(
+    'ab-probe: refusing to run. This probe spawns a write-capable coding agent (claude) on two allowlist arms. ' +
+    `Set ${'WEB_UPLIFT_PROBE_ALLOW_AGENT_SPAWN'}=1 to run it deliberately; the committed JSON records beside this ` +
+    'file are the record of the reviewed run, not something a replay should regenerate (web-uplift-xcij).'
+  );
+  process.exit(2);
+}
 mkdirSync(OUT, { recursive: true });
 
 const oldArm = run('OLD allowlist (5a04a88^)', OLD_RULES);
