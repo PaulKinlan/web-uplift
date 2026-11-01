@@ -313,6 +313,14 @@ export const DIRECT_TARGET_BUDGETS = {
   // it (exit 124, no verdict cached) rather than failing it (web-uplift-dysm). testBatchWriteScope
   // alone is 56-77s of that; the fix-mode and batch cases are the rest.
   'tests/runner-agents.test.mjs': 480000,
+  // 2026-11-01: killed at the 240s generic default in a real fast-gate run after every case that reported had
+  // PASSED, with that run's case timings summing to 215s before launch overhead: testCdpDeadline alone is 120.0s
+  // (it proves a deadline expires, so its cost IS the deadline), plus testLaunchAttributionForHungPrimitive 24.1s,
+  // testCdpPipeTransport 22.4s, testOperatorLaunchAttribution 16.5s, testLaunchRetryAndDiagnostics 8.1s,
+  // testChromeSandboxPolicy 5.5s, testPipeReadinessThenExitFailsTheLaunch 4.7s. PROVENANCE, stated rather than
+  // implied: this number comes from in-gate case timings, not a standalone idle run; a standalone measurement is
+  // the cleaner form and should replace it if anyone takes one.
+  'tests/chrome-cdp.test.mjs': 420000,
 };
 
 // APPLIED ON EVERY ROUTE, by path, once the plan is assembled (applyMeasuredBudget below). A suite can be
