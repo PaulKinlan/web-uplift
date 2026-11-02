@@ -1739,6 +1739,26 @@ export async function testFlowWritesRefusePlantedLinks() {
     assert(refusedRoot, 'a symlinked evidence root must be refused, not written through');
     assert(readdirSync(outsideDir).length === 0, `nothing may be written through the evidence-root link, got ${JSON.stringify(readdirSync(outsideDir))}`);
 
+    // 1b. web-uplift-iiz6: a symlink HIGHER UP the chain, not at the evidence root. `outDir` is
+    // link-root/sub/run-1 where link-root points outside; existsSync follows it and lstat of link-root/sub is a
+    // directory, so a deepest-ancestor-only check called it real and created the tree through the link.
+    const midLink = join(root, 'link-root');
+    // link-root -> the outside DIR; link-root/sub is then a REAL directory once the link is followed, which is
+    // exactly what defeats a check that only asks about the deepest existing node.
+    symlinkSync(outsideDir, midLink, 'dir');
+    mkdirSync(join(outsideDir, 'sub'), { recursive: true });
+    let refusedMidChain = false;
+    try {
+      await replayFlow(client, flow, { startUrl: 'https://example.test/', outDir: join(midLink, 'sub', 'run-1'), settleMs: 1 });
+    } catch {
+      refusedMidChain = true;
+    }
+    assert(refusedMidChain, 'a symlink higher up the evidence chain must be refused, not traversed by the mkdir');
+    assert(
+      !existsSync(join(outsideDir, 'sub', 'run-1')),
+      `nothing may be created through an ancestor link, found ${JSON.stringify(readdirSync(join(outsideDir, 'sub')))}`,
+    );
+
     // 2. THE SCREENSHOT LEAF IS A SYMLINK to a file outside the run tree. The step still runs, but the write is
     //    refused, so the outside file keeps its bytes and the step records no screenshot.
     const outDir = join(root, 'evidence', 'run-2');

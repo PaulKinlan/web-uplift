@@ -25,7 +25,7 @@
 // navigations, flow-record.mjs, so nothing this tool records hits the gate.)
 
 import { readFileSync, mkdirSync, existsSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, sep } from 'node:path';
 import { assertRealParentUnder, isRealDir, writeFileNoFollowSync } from './safe-write.mjs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -408,13 +408,20 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
   // create the tree THROUGH a directory symlink the agent planted, so the chain is checked first and the mkdir is
   // non-recursive: a link anywhere below the parent is refused rather than traversed.
   if (outDir) {
-    // The deepest ancestor that ALREADY EXISTS is the only part of the chain a link can live in: everything below
-    // it is created by this call, so nothing there can be a symlink yet. Assert that ancestor is a real directory
-    // and then create the tail - which is why this is safe to do recursively and a plain mkdirSync(outDir) is not.
-    let existing = outDir;
-    while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
-    if (!isRealDir(existing)) {
-      throw new Error(`refusing to write flow evidence into ${outDir}: ${existing} is not a real directory, so a planted link there would put every screenshot wherever it points`);
+    // EVERY EXISTING COMPONENT of the chain must be a real directory (web-uplift-iiz6), checked from the root DOWN
+    // and not just at the first existing node: `lstat` only refuses to follow the LAST component, so for
+    // `link-root/sub/run-1` - where `link-root` is a planted symlink to a directory outside the run tree - a check
+    // of the deepest existing node asked about `link-root/sub`, which IS a directory once the link is followed, and
+    // the recursive mkdir then created the evidence tree at the far end of the link.
+    const parts = resolve(outDir).split(sep);
+    let walked = sep;
+    for (const part of parts) {
+      if (!part) continue;
+      walked = join(walked, part);
+      if (!existsSync(walked)) break;
+      if (!isRealDir(walked)) {
+        throw new Error(`refusing to write flow evidence into ${outDir}: ${walked} is a symbolic link or not a directory, so a planted link in this chain would put every screenshot wherever it points`);
+      }
     }
     if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
   }
