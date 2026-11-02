@@ -294,7 +294,12 @@ if (syncMode) {
 }
 
 console.error(`FAIL: ${failures.length} of ${pairs.length} vendored copies have drifted`);
-console.error('Resync the vendored tree with: npm run sync:vendored (or node tests/cdp-copy-sync.mjs --sync)');
+// NAME THE TREE, not just the command (web-uplift-wqau). .web-uplift/ is GITIGNORED, so a stale copy makes the
+// tree red while `git status` is clean, and the reader has no way to tell WHICH checkout the guard compared. The
+// sync and this check both resolve repoRoot from this file's own location, so printing it is what makes a
+// mismatch between them visible instead of a mystery: if the sync repaired a different root, this line says so.
+console.error(`Compared in: ${repoRoot}`);
+console.error(`Resync the vendored tree with: npm run sync:vendored (or node tests/cdp-copy-sync.mjs --sync), run in that directory.`);
 process.exit(1);
 
 // Turns the copy-dir / copy-file mappings above into a flat, deterministic list

@@ -63,6 +63,46 @@ import {
 // The in-tree vendored copies under .web-uplift/ must stay 100% byte-identical
 // to their canonical sources (web-uplift-6ha1). Run tests/cdp-copy-sync.mjs as a
 // gate assertion so one-sided edits cannot ship on master.
+// web-uplift-wqau: the property nobody had proven is that the CHECK and the SYNC operate on the same path. The
+// gate is `npm run sync:vendored && <tests>`, so a stale .web-uplift/ copy is supposed to be repaired before
+// anything compares it - but a lane's copy is GITIGNORED, so a stale one makes the tree red while `git status` is
+// clean, and the natural response (delete the cached verdict, re-gate) hides it. This case makes a copy stale on
+// purpose and proves the repo's own sync repairs it and the guard then passes, with no manual step.
+//
+// It mutates a gitignored file for the duration of one sync, and restores the exact bytes in finally, so a failure
+// cannot leave the worktree worse than it found it.
+export function testVendoredSyncRepairsTheCopyTheGuardCompares() {
+  const rel = 'aggregate/artifact-path.mjs';
+  const source = join(repoRoot, rel);
+  const copy = join(repoRoot, '.web-uplift', rel);
+  const original = readFileSync(copy);
+  const stale = original.subarray(0, Math.max(64, Math.floor(original.length / 2)));
+  try {
+    writeFileSync(copy, stale);
+    // The guard must SEE the staleness, or this case cannot prove anything about the sync.
+    const detected = spawnSync(process.execPath, [join(repoRoot, 'tests', 'cdp-copy-sync.mjs')], { encoding: 'utf8' });
+    assert(detected.status !== 0, 'a deliberately stale vendored copy must make the guard fail, or the sync is being asked to repair something the guard cannot see');
+    assert(
+      new RegExp(`${rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(detected.stderr),
+      `the guard's failure must NAME the drifted path (${rel}):\n${detected.stderr}`,
+    );
+
+    // The repo's own sync command, exactly as `npm run sync:vendored` invokes it.
+    const sync = spawnSync(process.execPath, [join(repoRoot, 'tests', 'cdp-copy-sync.mjs'), '--sync'], { encoding: 'utf8' });
+    assert(sync.status === 0, `the vendored sync must repair a stale copy:\n${sync.stderr || sync.stdout}`);
+    assert(
+      readFileSync(copy).equals(readFileSync(source)),
+      'after the sync the copy the guard compares must be byte-identical to its source',
+    );
+
+    // And the same command with the same root now passes, which is the property: one path, both directions.
+    const after = spawnSync(process.execPath, [join(repoRoot, 'tests', 'cdp-copy-sync.mjs')], { encoding: 'utf8' });
+    assert(after.status === 0, `the guard must pass after its own sync repaired the copy:\n${after.stderr || after.stdout}`);
+  } finally {
+    writeFileSync(copy, original);
+  }
+}
+
 export function testCdpCopySyncGuard() {
   const guard = spawnSync(process.execPath, [join(repoRoot, 'tests', 'cdp-copy-sync.mjs')], { encoding: 'utf8' });
   assert(guard.status === 0, `cdp-copy-sync guard must pass:\n${guard.stderr || guard.stdout}`);
@@ -660,6 +700,7 @@ export const installPackageTests = [
   testCrashLeftStagedTreeIsSweptByTheNextRun,
   testSweepLeavesALiveRunsStagedTreeAlone,
   testSweepRemovesAMalformedStageNameOnlyWhenItIsOld,
+  testVendoredSyncRepairsTheCopyTheGuardCompares,
   testCdpCopySyncGuard,
   testCdpCopySyncMutationGuard,
   testCdpCopySyncDropsStaleVendoredEntries,
