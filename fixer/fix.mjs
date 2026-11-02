@@ -172,6 +172,11 @@ if (!dryRun && (!target || !auditUrl)) {
 const projectRoot = resolve(process.cwd());
 const scopeRoot = target ? resolve(target) : null;
 const outRoot = resolve(outDir);
+// The retained root, needed by snapshotScope which runs as early as the baseline audit - declaring it beside the
+// other roots is what keeps it out of the temporal dead zone (web-uplift-9tah: the first version of that change
+// referenced the const declared further down and threw 'Cannot access publishRoot before initialization' inside
+// baselineAudit, which the gate caught).
+const publishRoot = resolve(args['reports-root'] ?? 'reports');
 // Extra roots the operator explicitly allows a run to touch (build output, a
 // generated lockfile). Without this, a legitimate `npm run build` under a fix
 // iteration would refuse the run - fail-closed with no way forward. Repeatable,
@@ -200,10 +205,13 @@ let agentFailure = null;
 // it), while naming outRoot in `extraRoots` covers an --out that lives outside the
 // invocation directory at all.
 //
-// What this does NOT cover, stated rather than implied: only THIS run's --out tree is
-// forced into the walk. Other hosts' retained runs under the same `reports/` root stay
-// excluded - they are previous runs' output, not writes this run makes - so an agent
-// write into `reports/<other-host>/` is neither recorded nor refused here.
+// web-uplift-9tah: that paragraph used to be a residual, and it was the wrong trade. Only THIS run's --out
+// tree was forced into the walk, so an agent write into `reports/<other-host>/` was neither recorded nor
+// refused: a previous run's retained records could be edited by a later run and the snapshot would say nothing.
+// "A change is recorded or it did not happen" has no exception for a directory the agent happens to be able to
+// reach, so the whole retained root is forced into the walk now. The cost is real and stated: every retained
+// run under `reports/` is walked each iteration, which is slower on a deep reports tree, and that is the price
+// of the property rather than a reason to keep the hole.
 //
 // The executed first-party trees are hash-stamped (web-uplift-dzd): a fix
 // iteration that tampers with .web-uplift/ or evidence/ is an escape this diff
@@ -212,7 +220,8 @@ let agentFailure = null;
 const snapshotScope = () =>
   snapshotTree(projectRoot, {
     extraRoots: [scopeRoot, outRoot, ...allowWrite],
-    walkUnder: [outRoot],
+    // The whole retained root, not just this run's --out (web-uplift-9tah).
+    walkUnder: [publishRoot, outRoot],
     hashUnder: EXECUTABLE_HASH_ROOTS,
   });
 
@@ -474,7 +483,6 @@ if (goalActive) {
 const reportsRoot = args['reports-root'] ?? 'reports';
 // The tree the retained runs are published into, resolved once so `writeUnder` compares against
 // the same path the writes are built from, not a relative spelling that a different cwd moves.
-const publishRoot = resolve(reportsRoot);
 // NOTE: the baseline run dir is NOT created and `latest` is NOT moved here. Both
 // are deferred to the publish step at the end of this file, which is skipped when
 // the climb is refused or an agent failed. Publishing earlier meant a REFUSED run

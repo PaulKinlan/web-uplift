@@ -1320,6 +1320,59 @@ export function testFixModeSnapshotRefusesPlantedLinks() {
   }
 }
 
+// web-uplift-9tah: the snapshot forced only THIS run's --out into the walk, so an agent write into another
+// host's retained run under the same reports/ root was neither recorded nor refused - a previous run's records
+// could be edited by a later run and the tripwire would say nothing. The property the snapshot exists to provide
+// is "a change is recorded or it did not happen", which has no exception for a directory the agent can reach.
+export function testFixModeRefusesWritesIntoAnotherHostsRetainedRun() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-fix-otherhost-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(root, 'src', 'index.html'), '<h1>hi</h1>');
+    const findings = join(repoRoot, 'examples', 'playground-report.json');
+    const passReport = join(repoRoot, 'examples', 'playground-report-fixed.json');
+    const outDir = join(root, 'reports', 'fix-example.test');
+    // A PREVIOUS run of a DIFFERENT host, sitting under the same reports root.
+    // The exclusion is a NAME ('reports' in EXCLUDE_SEGMENTS), so this fixture must use it: a reports root called
+    // 'retained' is walked anyway and the case would pass without the fix.
+    const otherHostRun = join(root, 'reports', 'other-host.example', '20260101-000000-aaa');
+    mkdirSync(otherHostRun, { recursive: true });
+    writeFileSync(join(otherHostRun, 'report.json'), '{"previous": true}\n');
+
+    writeFileSync(join(binDir, 'claude'), [
+      '#!/bin/sh',
+      `mkdir -p ${JSON.stringify(outDir)}`,
+      `cp ${JSON.stringify(passReport)} ${JSON.stringify(join(outDir, 'report.json'))}`,
+      // The write under test: this run edits ANOTHER host's retained record.
+      `printf 'TAMPERED' > ${JSON.stringify(join(otherHostRun, 'report.json'))}`,
+      'exit 0',
+      '',
+    ].join('\n'));
+    chmodSync(join(binDir, 'claude'), 0o755);
+
+    const res = run(process.execPath, [
+      join(repoRoot, 'fixer', 'fix.mjs'),
+      '--target', 'src', '--audit-url', 'http://example.test/', '--agent', 'claude',
+      '--max-iterations', '1', '--findings', findings,
+      '--isolation', 'host-permission-model',
+      '--reports-root', 'reports',
+    ], { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+    const output = `${res.stdout}\n${res.stderr}`;
+    // The fixture must have written its own report first, or the refusal assertions could be vacuous.
+    assert(existsSync(join(outDir, 'report.json')), `other-host: the fixture must write its own report first:\n${output}`);
+
+    assert(res.status !== 0, `other-host: a write into another host's retained run must refuse the run, got ${res.status}:\n${output}`);
+    assert(
+      /other-host\.example/.test(output) && /CONFINEMENT FAILURE/.test(output),
+      `other-host: the refusal must NAME the previous run's path, not merely fail:\n${output}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export function testFixModeSnapshotRecordsWritesUnderDefaultReportsOut() {
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-fix-defaultout-'));
   try {
@@ -2101,6 +2154,7 @@ export const runnerAgentsTests = [
   testFixModeScopeEdgeCases,
   testFixModeRefusesPlantedLinksInItsOwnRecords,
   testFixModeSnapshotRefusesPlantedLinks,
+  testFixModeRefusesWritesIntoAnotherHostsRetainedRun,
   testFixModeSnapshotRecordsWritesUnderDefaultReportsOut,
   testFixIsolationAssertion,
   testFixIsolatedRunPublishes,
