@@ -200,10 +200,13 @@ let agentFailure = null;
 // it), while naming outRoot in `extraRoots` covers an --out that lives outside the
 // invocation directory at all.
 //
-// What this does NOT cover, stated rather than implied: only THIS run's --out tree is
-// forced into the walk. Other hosts' retained runs under the same `reports/` root stay
-// excluded - they are previous runs' output, not writes this run makes - so an agent
-// write into `reports/<other-host>/` is neither recorded nor refused here.
+// web-uplift-9tah: that paragraph used to be a residual, and it was the wrong trade. Only THIS run's --out
+// tree was forced into the walk, so an agent write into `reports/<other-host>/` was neither recorded nor
+// refused: a previous run's retained records could be edited by a later run and the snapshot would say nothing.
+// "A change is recorded or it did not happen" has no exception for a directory the agent happens to be able to
+// reach, so the whole retained root is forced into the walk now. The cost is real and stated: every retained
+// run under `reports/` is walked each iteration, which is slower on a deep reports tree, and that is the price
+// of the property rather than a reason to keep the hole.
 //
 // The executed first-party trees are hash-stamped (web-uplift-dzd): a fix
 // iteration that tampers with .web-uplift/ or evidence/ is an escape this diff
@@ -212,7 +215,8 @@ let agentFailure = null;
 const snapshotScope = () =>
   snapshotTree(projectRoot, {
     extraRoots: [scopeRoot, outRoot, ...allowWrite],
-    walkUnder: [outRoot],
+    // The whole retained root, not just this run's --out (web-uplift-9tah).
+    walkUnder: [publishRoot, outRoot],
     hashUnder: EXECUTABLE_HASH_ROOTS,
   });
 
