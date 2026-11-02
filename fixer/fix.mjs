@@ -172,6 +172,11 @@ if (!dryRun && (!target || !auditUrl)) {
 const projectRoot = resolve(process.cwd());
 const scopeRoot = target ? resolve(target) : null;
 const outRoot = resolve(outDir);
+// The retained root, needed by snapshotScope which runs as early as the baseline audit - declaring it beside the
+// other roots is what keeps it out of the temporal dead zone (web-uplift-9tah: the first version of that change
+// referenced the const declared further down and threw 'Cannot access publishRoot before initialization' inside
+// baselineAudit, which the gate caught).
+const publishRoot = resolve(args['reports-root'] ?? 'reports');
 // Extra roots the operator explicitly allows a run to touch (build output, a
 // generated lockfile). Without this, a legitimate `npm run build` under a fix
 // iteration would refuse the run - fail-closed with no way forward. Repeatable,
@@ -478,7 +483,6 @@ if (goalActive) {
 const reportsRoot = args['reports-root'] ?? 'reports';
 // The tree the retained runs are published into, resolved once so `writeUnder` compares against
 // the same path the writes are built from, not a relative spelling that a different cwd moves.
-const publishRoot = resolve(reportsRoot);
 // NOTE: the baseline run dir is NOT created and `latest` is NOT moved here. Both
 // are deferred to the publish step at the end of this file, which is skipped when
 // the climb is refused or an agent failed. Publishing earlier meant a REFUSED run
