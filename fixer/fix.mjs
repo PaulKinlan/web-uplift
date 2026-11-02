@@ -880,6 +880,33 @@ async function copyEvidenceTree(fromDir, toDir, { skipped, root, rel = '' }) {
   }
 }
 
+// web-uplift-cn13: report.md is a single FILE named by the agent's run, so the evidence walk's link rules never
+// reached it - the old copy read it with readFile, which FOLLOWS a symlink, and an agent-planted `report.md` link
+// therefore had the OUTSIDE file's bytes written into the retained run. Same laundering as web-uplift-qxhv in the
+// one place the tree walk does not cover, so it gets the same rules: refuse a symlink, a hard link and any
+// non-regular file, and read the source no-follow when it is a real regular file.
+async function copyRegularFile(src, dest, { skipped, root, name }) {
+  let st;
+  try {
+    st = await lstat(src);
+  } catch {
+    return; // best effort: the artifact may be elsewhere
+  }
+  if (st.isSymbolicLink()) {
+    skipped.push({ path: name, reason: 'symbolic link' });
+    return;
+  }
+  if (!st.isFile()) {
+    skipped.push({ path: name, reason: 'not a regular file' });
+    return;
+  }
+  if (st.nlink > 1) {
+    skipped.push({ path: name, reason: `hard link (${st.nlink} names)` });
+    return;
+  }
+  await writeUnder(root, dest, await readFileNoFollow(src), RETAINED_TREE);
+}
+
 async function snapshotRun(fromDir, toDir, report, root) {
   await mkdir(toDir, { recursive: true });
   const skipped = [];
@@ -894,7 +921,7 @@ async function snapshotRun(fromDir, toDir, report, root) {
       if (!existsSync(src) || (existsSync(dest) && !isRealDir(dest))) return;
       try {
         if (name === 'evidence') await copyEvidenceTree(src, dest, { skipped, root });
-        else await writeUnder(root, dest, await readFile(src), RETAINED_TREE);
+        else await copyRegularFile(src, dest, { skipped, root, name });
       } catch {
         /* best effort: artifacts may be elsewhere */
       }

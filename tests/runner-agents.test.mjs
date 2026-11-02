@@ -1243,6 +1243,9 @@ export function testFixModeSnapshotRefusesPlantedLinks() {
       `printf 'REAL-EVIDENCE' > ${JSON.stringify(join(evidence, 'real.png'))}`,
       `ln -s ${JSON.stringify(outsideFile)} ${JSON.stringify(join(evidence, 'leak.png'))}`,
       `ln ${JSON.stringify(outsideFile)} ${JSON.stringify(join(evidence, 'hard.png'))}`,
+      // web-uplift-cn13: report.md is a single FILE named by the run, so the evidence-tree walk never reached it
+      // and the old copy dereferenced this link.
+      `ln -s ${JSON.stringify(outsideFile)} ${JSON.stringify(join(outDir, 'report.md'))}`,
       `cp ${JSON.stringify(passReport)} ${JSON.stringify(join(outDir, 'report.json'))}`,
       'exit 0',
       '',
@@ -1286,6 +1289,13 @@ export function testFixModeSnapshotRefusesPlantedLinks() {
     assert(!found.some((f) => f.name === 'hard.png'), `snapshot links: a planted hard link must not be copied, found ${JSON.stringify(found.map((f) => f.name))}`);
     assert(found.some((f) => f.name === 'real.png'), `snapshot links: the run's own evidence must still be retained, found ${JSON.stringify(found.map((f) => f.name))}`);
 
+    // web-uplift-cn13: the report.md SYMLINK must not be dereferenced into the retained run. The fixture planted it
+    // pointing at the outside file, so its bytes arriving in the retained tree would mean the copy followed it.
+    assert(
+      !found.some((f) => f.name === 'report.md'),
+      `snapshot links: a symlinked report.md must not be copied into the retained run, found ${JSON.stringify(found.map((f) => f.name))}`,
+    );
+
     // And the refusal is VISIBLE in the retained report, so a reviewer sees a planted link rather than an empty dir.
     const retainedReport = found.find((f) => f.name === 'report.json');
     assert(retainedReport !== undefined, 'snapshot links: the retained run must carry its report.json');
@@ -1304,6 +1314,7 @@ export function testFixModeSnapshotRefusesPlantedLinks() {
     const text = readFileSync(walkForReport(retained), 'utf8');
     assert(/symbolic link/.test(text), `snapshot links: the report must record the refused symlink, got ${text.slice(0, 400)}`);
     assert(/hard link/.test(text), `snapshot links: the report must record the refused hard link, got ${text.slice(0, 400)}`);
+    assert(/"report\.md"/.test(text) || /report\.md/.test(text), 'snapshot links: the report must record the refused report.md too');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
