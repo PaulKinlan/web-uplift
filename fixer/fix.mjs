@@ -43,7 +43,7 @@
  * with --agent all is NOT a thing here, you pass one agent) without spawning.
  */
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, access, cp } from 'node:fs/promises';
+import { mkdir, readFile, access, readdir, lstat } from 'node:fs/promises';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { AGENTS, AGENT_NAMES, buildAgentEnv, parseAgentEnvFlag } from '../runner/agents.mjs';
@@ -825,26 +825,115 @@ function dirOf(reportPath) {
 // Writing report.json is mandatory and throws on failure; auxiliary artifacts
 // (report.md and evidence/) are copied best-effort so a failure copying auxiliary
 // files does not abort an otherwise successful fix run.
+// Copy ONE evidence tree without carrying links across the boundary (web-uplift-qxhv).
+//
+// `cp(src, dest, { recursive: true })` copies symlinks VERBATIM, so a link the agent planted in its own scratch
+// tree became a link in the RETAINED tree: nothing follows it at copy time, and every later consumer (scorecard,
+// compare, review, publication) reads through it later. That is laundering - the copy-in direction, the third
+// distinct way a link crosses a trust boundary here (write out = web-uplift-uruy, read for inlining =
+// web-uplift-kfkz/itsd).
+//
+// A HARD link is refused for the same reason (web-uplift-rsbb showed the two come in pairs): st_nlink > 1 means
+// this name is also reachable outside the run tree, so the bytes it yields are not the run's own evidence - they
+// are whatever it was linked to. Skipping is recorded, never silent, because a run that lost evidence to a guard
+// must say so.
+async function copyEvidenceTree(fromDir, toDir, { skipped, root, rel = '' }) {
+  // The destination DIRECTORY is created here, not only for subdirectories: without this the first file's
+  // writeUnder has no parent and is refused, which would drop the whole tree while looking like a planted link.
+  // Safe because the caller has already refused a dest that exists and is not a real directory.
+  await mkdir(toDir, { recursive: true });
+  let entries;
+  try {
+    entries = await readdir(fromDir, { withFileTypes: true });
+  } catch {
+    return; // best effort: artifacts may be elsewhere
+  }
+  for (const entry of entries) {
+    const src = join(fromDir, entry.name);
+    const dest = join(toDir, entry.name);
+    const relPath = rel ? join(rel, entry.name) : entry.name;
+    if (entry.isSymbolicLink()) {
+      skipped.push({ path: relPath, reason: 'symbolic link' });
+      continue;
+    }
+    if (entry.isDirectory()) {
+      await mkdir(dest, { recursive: true });
+      await copyEvidenceTree(src, dest, { skipped, root, rel: relPath });
+      continue;
+    }
+    if (!entry.isFile()) {
+      skipped.push({ path: relPath, reason: 'not a regular file' });
+      continue;
+    }
+    const st = await lstat(src);
+    if (st.nlink > 1) {
+      skipped.push({ path: relPath, reason: `hard link (${st.nlink} names)` });
+      continue;
+    }
+    try {
+      // Read the SOURCE no-follow as well: the agent's own tree can contain a link whose last component this walk
+      // listed as a regular file a moment ago, and a read through it would import foreign bytes.
+      await writeUnder(root, dest, await readFileNoFollow(src), RETAINED_TREE);
+    } catch {
+      skipped.push({ path: relPath, reason: 'unreadable or refused by the retained-tree guard' });
+    }
+  }
+}
+
+// web-uplift-cn13: report.md is a single FILE named by the agent's run, so the evidence walk's link rules never
+// reached it - the old copy read it with readFile, which FOLLOWS a symlink, and an agent-planted `report.md` link
+// therefore had the OUTSIDE file's bytes written into the retained run. Same laundering as web-uplift-qxhv in the
+// one place the tree walk does not cover, so it gets the same rules: refuse a symlink, a hard link and any
+// non-regular file, and read the source no-follow when it is a real regular file.
+async function copyRegularFile(src, dest, { skipped, root, name }) {
+  let st;
+  try {
+    st = await lstat(src);
+  } catch {
+    return; // best effort: the artifact may be elsewhere
+  }
+  if (st.isSymbolicLink()) {
+    skipped.push({ path: name, reason: 'symbolic link' });
+    return;
+  }
+  if (!st.isFile()) {
+    skipped.push({ path: name, reason: 'not a regular file' });
+    return;
+  }
+  if (st.nlink > 1) {
+    skipped.push({ path: name, reason: `hard link (${st.nlink} names)` });
+    return;
+  }
+  await writeUnder(root, dest, await readFileNoFollow(src), RETAINED_TREE);
+}
+
 async function snapshotRun(fromDir, toDir, report, root) {
   await mkdir(toDir, { recursive: true });
-  // report.json is the mandatory write, so it carries both guards (the chain under `root`, then
-  // the leaf). The auxiliary copies stay best effort, but never INTO a planted name: `cp` would
-  // write through `toDir/evidence -> elsewhere`, so a destination that exists and is not a real
-  // directory is skipped rather than followed.
-  await writeUnder(root, join(toDir, 'report.json'), JSON.stringify(report, null, 2) + '\n', RETAINED_TREE);
+  const skipped = [];
+  // The auxiliary copies run FIRST and stay best effort, but never INTO a planted name: a destination that
+  // exists and is not a real directory is skipped rather than followed. They come before report.json because the
+  // refusals they record have to be IN that report - the mandatory write is the last thing, so what a reviewer
+  // reads cannot disagree with what was copied.
   await Promise.all(
     ['report.md', 'evidence'].map(async (name) => {
       const src = join(fromDir, name);
       const dest = join(toDir, name);
-      if (existsSync(src) && (!existsSync(dest) || isRealDir(dest))) {
-        try {
-          await cp(src, dest, { recursive: true });
-        } catch {
-          /* best effort: artifacts may be elsewhere */
-        }
+      if (!existsSync(src) || (existsSync(dest) && !isRealDir(dest))) return;
+      try {
+        if (name === 'evidence') await copyEvidenceTree(src, dest, { skipped, root });
+        else await copyRegularFile(src, dest, { skipped, root, name });
+      } catch {
+        /* best effort: artifacts may be elsewhere */
       }
     }),
   );
+  if (skipped.length > 0) {
+    // Visible, not silent: the report says which entries were refused and why, so a reviewer sees a planted
+    // link instead of an empty directory.
+    report.evidenceSkipped = [...(report.evidenceSkipped ?? []), ...skipped];
+  }
+  // report.json is the mandatory write, so it carries both guards (the chain under `root`, then the leaf).
+  await writeUnder(root, join(toDir, 'report.json'), JSON.stringify(report, null, 2) + '\n', RETAINED_TREE);
 }
 
 function slugify(s) {
