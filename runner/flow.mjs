@@ -24,7 +24,9 @@
 // disk read or an injected document. (Our own recorder already excludes about:
 // navigations, flow-record.mjs, so nothing this tool records hits the gate.)
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { dirname, sep } from 'node:path';
+import { assertRealParentUnder, isRealDir, writeFileNoFollowSync } from './safe-write.mjs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchChrome, newSession, navigate, evaluate, sleep, recordLaunch } from '../evidence/cdp.mjs';
@@ -173,12 +175,19 @@ export function fileSafeLabel(raw, { maxLength = 32 } = {}) {
   return trimmed || 'step';
 }
 
+// Every write this module performs goes through runner/safe-write.mjs (web-uplift-9gkt). The evidence directory
+// lives inside the run tree, which the agent under test can write to, so a name that LOOKS local can be a leaf
+// symlink planted before replay, a directory symlink planted at the evidence root, or a hard link to a file
+// outside it. The filename half of this was web-uplift-dc1z; this is the same write reached by a different route,
+// which is why the guard is the shared module rather than another string check here.
 async function screenshot(client, outDir, index, label, log) {
   try {
     const { data } = await client.Page.captureScreenshot({ format: 'png' });
     const name = `step-${String(index).padStart(2, '0')}-${fileSafeLabel(label)}.png`;
     const bin = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-    writeFileSync(join(outDir, name), bin);
+    const target = join(outDir, name);
+    assertRealParentUnder(outDir, target, 'write', { what: 'the flow evidence directory' });
+    writeFileNoFollowSync(target, bin);
     return `evidence/${name}`;
   } catch (e) {
     log(`[flow] screenshot failed at step ${index}: ${e.message}`);
@@ -395,7 +404,27 @@ export function classifyReplayUrl(raw) {
 // --- replay -----------------------------------------------------------------
 
 export async function replayFlow(client, flow, { startUrl, outDir, log = () => {}, settleMs = 1200, allowMutations = false } = {}) {
-  if (outDir && !existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+  // Parent-directory creation is a write too (web-uplift-9gkt). `mkdirSync(..., {recursive:true})` will happily
+  // create the tree THROUGH a directory symlink the agent planted, so the chain is checked first and the mkdir is
+  // non-recursive: a link anywhere below the parent is refused rather than traversed.
+  if (outDir) {
+    // EVERY EXISTING COMPONENT of the chain must be a real directory (web-uplift-iiz6), checked from the root DOWN
+    // and not just at the first existing node: `lstat` only refuses to follow the LAST component, so for
+    // `link-root/sub/run-1` - where `link-root` is a planted symlink to a directory outside the run tree - a check
+    // of the deepest existing node asked about `link-root/sub`, which IS a directory once the link is followed, and
+    // the recursive mkdir then created the evidence tree at the far end of the link.
+    const parts = resolve(outDir).split(sep);
+    let walked = sep;
+    for (const part of parts) {
+      if (!part) continue;
+      walked = join(walked, part);
+      if (!existsSync(walked)) break;
+      if (!isRealDir(walked)) {
+        throw new Error(`refusing to write flow evidence into ${outDir}: ${walked} is a symbolic link or not a directory, so a planted link in this chain would put every screenshot wherever it points`);
+      }
+    }
+    if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+  }
   const results = [];
   let index = 0;
   for (const step of flow.steps) {
@@ -621,7 +650,8 @@ async function main() {
       try {
         const res = await replayFlow(session.client, flow, { startUrl, outDir, log, allowMutations });
         const summaryPath = join(outDir, '..', 'flow-result.json');
-        writeFileSync(summaryPath, JSON.stringify(res, null, 2) + '\n');
+        assertRealParentUnder(dirname(outDir), summaryPath, 'write', { what: 'the flow run directory' });
+        writeFileNoFollowSync(summaryPath, JSON.stringify(res, null, 2) + '\n');
         const failed = res.steps.filter((s) => !s.ok).length;
         const blocked = res.steps.filter((s) => s.mutationBlocked).length;
         console.error(`[flow] replayed ${res.steps.length} step(s), ${failed} failed${blocked > 0 ? ', ' + blocked + ' mutating step(s) blocked (dry-run)' : ''}; screenshots + flow-result.json in ${join(outDir, '..')}`);
@@ -648,7 +678,9 @@ async function main() {
       const session = await newSession(chrome, { log });
       try {
         const flow = await recordFlow(session.client, url, { log, captureHidden, captureSensitive, timeoutMs });
-        writeFileSync(outPath, JSON.stringify(flow, null, 2) + '\n');
+        // The recording itself is operator-named, so there is no tree to contain it in - but the leaf is still
+        // checked, so a planted link cannot redirect this write (web-uplift-9gkt).
+        writeFileNoFollowSync(outPath, JSON.stringify(flow, null, 2) + '\n');
         console.error(`[flow] recorded ${flow.steps.length} step(s) -> ${outPath}`);
       } finally {
         await session.close();
