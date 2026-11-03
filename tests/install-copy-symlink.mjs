@@ -15,7 +15,7 @@
 // This file is the fast, browser-free foreground check. Run it directly:
 //   node tests/install-copy-symlink.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -285,14 +285,15 @@ export function testInstallVendorsCompleteClosure() {
 // to victim files outside the target project, run install, and verify all
 // victims are untouched and the skips are reported in stdout.
 export function testInstallRefusesDestinationSymlinks() {
-  const outside = mkdtempSync(join(tmpdir(), 'web-uplift-dest-symlink-outside-'));
-  const target = mkdtempSync(join(tmpdir(), 'web-uplift-dest-symlink-target-'));
+  // Part 1: Pre-planted destination SYMLINKS covering every install write action.
+  const outsideSym = mkdtempSync(join(tmpdir(), 'web-uplift-dest-symlink-outside-'));
+  const targetSym = mkdtempSync(join(tmpdir(), 'web-uplift-dest-symlink-target-'));
   try {
-    const victimManifest = join(outside, 'victim-manifest.json');
-    const victimSkill = join(outside, 'victim-skill.md');
-    const victimSchema = join(outside, 'victim-schema.json');
-    const victimAgents = join(outside, 'victim-agents.md');
-    const victimDir = join(outside, 'victim-dir');
+    const victimManifest = join(outsideSym, 'victim-manifest.json');
+    const victimSkill = join(outsideSym, 'victim-skill.md');
+    const victimSchema = join(outsideSym, 'victim-schema.json');
+    const victimAgents = join(outsideSym, 'victim-agents.md');
+    const victimDir = join(outsideSym, 'victim-dir');
 
     writeFileSync(victimManifest, 'VICTIM-MANIFEST-SECRET\n');
     writeFileSync(victimSkill, 'VICTIM-SKILL-SECRET\n');
@@ -303,27 +304,24 @@ export function testInstallRefusesDestinationSymlinks() {
 
     // Pre-plant destination symlinks covering every install write action:
     // 1. write: .web-uplift/manifest.json
-    mkdirSync(join(target, '.web-uplift'), { recursive: true });
-    symlinkSync(victimManifest, join(target, '.web-uplift', 'manifest.json'));
+    mkdirSync(join(targetSym, '.web-uplift'), { recursive: true });
+    symlinkSync(victimManifest, join(targetSym, '.web-uplift', 'manifest.json'));
 
     // 2. copy-file: .codex/skills/web-audit/SKILL.md
-    mkdirSync(join(target, '.codex', 'skills', 'web-audit'), { recursive: true });
-    symlinkSync(victimSkill, join(target, '.codex', 'skills', 'web-audit', 'SKILL.md'));
+    mkdirSync(join(targetSym, '.codex', 'skills', 'web-audit'), { recursive: true });
+    symlinkSync(victimSkill, join(targetSym, '.codex', 'skills', 'web-audit', 'SKILL.md'));
 
     // 3. copy-dir (file): .web-uplift/schema/findings.schema.json
-    mkdirSync(join(target, '.web-uplift', 'schema'), { recursive: true });
-    symlinkSync(victimSchema, join(target, '.web-uplift', 'schema', 'findings.schema.json'));
+    mkdirSync(join(targetSym, '.web-uplift', 'schema'), { recursive: true });
+    symlinkSync(victimSchema, join(targetSym, '.web-uplift', 'schema', 'findings.schema.json'));
 
     // 4. copy-dir (directory): .web-uplift/knowledge
-    symlinkSync(victimDir, join(target, '.web-uplift', 'knowledge'));
+    symlinkSync(victimDir, join(targetSym, '.web-uplift', 'knowledge'));
 
     // 5. append: AGENTS.md
-    symlinkSync(victimAgents, join(target, 'AGENTS.md'));
+    symlinkSync(victimAgents, join(targetSym, 'AGENTS.md'));
 
-    const install = runInstall(target);
-    // web-uplift-v167: an install that refused a destination is INCOMPLETE and must not report success. It used
-    // to print these same skips, print 'Installed' and exit 0, so a user or a CI script saw success for an
-    // install with five files missing - the same condition the vendored sync already refuses AND fails on.
+    const install = runInstall(targetSym);
     assert(install.status !== 0,
       `install with destination symlinks must FAIL, not exit 0, got ${install.status}:\n${install.stdout}`);
     assert(!/^Installed\./m.test(install.stdout),
@@ -347,11 +345,73 @@ export function testInstallRefusesDestinationSymlinks() {
     assert(install.stdout.includes('AGENTS.md (symlink)'), `install did not record skipping agents symlink:\n${install.stdout}`);
 
     // Positive check: unsymlinked files in the same install were still written normally
-    assert(existsSync(join(target, '.web-uplift', 'schema', 'config.schema.json')), 'unpoisoned schema file must be written');
-    assert(existsSync(join(target, '.web-uplift', 'evidence', 'cli.mjs')), 'unpoisoned evidence CLI must be written');
+    assert(existsSync(join(targetSym, '.web-uplift', 'schema', 'config.schema.json')), 'unpoisoned schema file must be written');
+    assert(existsSync(join(targetSym, '.web-uplift', 'evidence', 'cli.mjs')), 'unpoisoned evidence CLI must be written');
   } finally {
-    rmSync(outside, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
+    rmSync(outsideSym, { recursive: true, force: true });
+    rmSync(targetSym, { recursive: true, force: true });
+  }
+
+  // Part 2: Pre-planted destination HARD LINKS covering leaf actions, alongside an ancestor symlink (web-uplift-k8ct).
+  const outsideHard = mkdtempSync(join(tmpdir(), 'web-uplift-dest-hardlink-outside-'));
+  const targetHard = mkdtempSync(join(tmpdir(), 'web-uplift-dest-hardlink-target-'));
+  try {
+    const victimManifest = join(outsideHard, 'victim-manifest.json');
+    const victimSkill = join(outsideHard, 'victim-skill.md');
+    const victimSchema = join(outsideHard, 'victim-schema.json');
+    const victimAgents = join(outsideHard, 'victim-agents.md');
+    const victimDir = join(outsideHard, 'victim-dir');
+
+    writeFileSync(victimManifest, 'VICTIM-MANIFEST-HARDLINK\n');
+    writeFileSync(victimSkill, 'VICTIM-SKILL-HARDLINK\n');
+    writeFileSync(victimSchema, 'VICTIM-SCHEMA-HARDLINK\n');
+    writeFileSync(victimAgents, 'VICTIM-AGENTS-HARDLINK\n');
+    mkdirSync(victimDir);
+    writeFileSync(join(victimDir, 'safe.txt'), 'VICTIM-DIR-SECRET\n');
+
+    // 1. write: .web-uplift/manifest.json (hard link at leaf)
+    mkdirSync(join(targetHard, '.web-uplift'), { recursive: true });
+    linkSync(victimManifest, join(targetHard, '.web-uplift', 'manifest.json'));
+
+    // 2. copy-file: .codex/skills/web-audit/SKILL.md (hard link at leaf)
+    mkdirSync(join(targetHard, '.codex', 'skills', 'web-audit'), { recursive: true });
+    linkSync(victimSkill, join(targetHard, '.codex', 'skills', 'web-audit', 'SKILL.md'));
+
+    // 3. copy-dir (file): .web-uplift/schema/findings.schema.json (hard link at leaf)
+    mkdirSync(join(targetHard, '.web-uplift', 'schema'), { recursive: true });
+    linkSync(victimSchema, join(targetHard, '.web-uplift', 'schema', 'findings.schema.json'));
+
+    // 4. copy-dir (directory): .web-uplift/knowledge (symlink at ancestor directory)
+    symlinkSync(victimDir, join(targetHard, '.web-uplift', 'knowledge'));
+
+    // 5. append: AGENTS.md (hard link at leaf)
+    linkSync(victimAgents, join(targetHard, 'AGENTS.md'));
+
+    const install = runInstall(targetHard);
+    assert(install.status !== 0,
+      `install with destination hard links must FAIL, not exit 0, got ${install.status}:\n${install.stdout}`);
+    assert(!/^Installed\./m.test(install.stdout),
+      `an incomplete install must NOT print the success line:\n${install.stdout}`);
+    assert(/FAILED: refused to write \d+ destination/.test(install.stdout + install.stderr),
+      `the failure must be loud rather than a silent refusal:\n${install.stdout}${install.stderr}`);
+
+    // Assert that all victims remain completely untouched
+    assert(readFileSync(victimManifest, 'utf8') === 'VICTIM-MANIFEST-HARDLINK\n', 'victim manifest must not be clobbered');
+    assert(readFileSync(victimSkill, 'utf8') === 'VICTIM-SKILL-HARDLINK\n', 'victim skill must not be clobbered');
+    assert(readFileSync(victimSchema, 'utf8') === 'VICTIM-SCHEMA-HARDLINK\n', 'victim schema must not be clobbered');
+    assert(readFileSync(victimAgents, 'utf8') === 'VICTIM-AGENTS-HARDLINK\n', 'victim agents must not be clobbered');
+    assert(readFileSync(join(victimDir, 'safe.txt'), 'utf8') === 'VICTIM-DIR-SECRET\n', 'victim dir must not be clobbered');
+    assert(readdirSync(victimDir).length === 1, 'victim dir must not have files copied into it');
+
+    // Assert that skipped hard links are reported in output
+    assert(install.stdout.includes('manifest.json (hardlink)'), `install did not record skipping manifest hard link:\n${install.stdout}`);
+    assert(install.stdout.includes('SKILL.md (hardlink)'), `install did not record skipping skill hard link:\n${install.stdout}`);
+    assert(install.stdout.includes('findings.schema.json (hardlink)'), `install did not record skipping schema hard link:\n${install.stdout}`);
+    assert(install.stdout.includes('knowledge (symlink)'), `install did not record skipping knowledge dir symlink:\n${install.stdout}`);
+    assert(install.stdout.includes('AGENTS.md (hardlink)'), `install did not record skipping agents hard link:\n${install.stdout}`);
+  } finally {
+    rmSync(outsideHard, { recursive: true, force: true });
+    rmSync(targetHard, { recursive: true, force: true });
   }
 }
 

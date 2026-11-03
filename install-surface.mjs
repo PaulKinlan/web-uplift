@@ -126,7 +126,11 @@ function symlinkComponent(dst, rootDir) {
   let current = root;
   for (const part of rel.split(/[\\/]/).filter(Boolean)) {
     current = join(current, part);
-    if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) return current;
+    const st = lstatSync(current, { throwIfNoEntry: false });
+    if (!st) continue;
+    if (st.isSymbolicLink() || (st.isFile() && st.nlink > 1) || (!st.isFile() && !st.isDirectory())) {
+      return current;
+    }
   }
   return null;
 }
@@ -147,10 +151,25 @@ function symlinkComponent(dst, rootDir) {
 export function refusedDestination(dst, rootDir) {
   const component = symlinkComponent(dst, rootDir);
   if (!component) return null;
+  const st = lstatSync(component, { throwIfNoEntry: false });
+  const isHard = Boolean(st?.isFile() && st?.nlink > 1);
+  const isNonRegular = Boolean(st && !st.isSymbolicLink() && !st.isFile() && !st.isDirectory());
+  let reason = 'refusing to write through a symlink';
+  let kind = 'a symlink';
+  if (isHard) {
+    reason = 'refusing to write through a hard link';
+    kind = 'a hard link';
+  } else if (isNonRegular) {
+    const noun = st.isFIFO() ? 'a FIFO' : (st.isSocket() ? 'a socket' : 'not a regular file');
+    reason = `refusing to write to ${noun}`;
+    kind = noun;
+  }
   return {
     path: relative(resolve(rootDir), resolve(dst)) || dst,
     symlinkComponent: relative(resolve(rootDir), resolve(component)) || component,
-    reason: 'refusing to write through a symlink',
+    isHard,
+    kind,
+    reason,
   };
 }
 
@@ -323,10 +342,12 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   const refusesSymlink = (dst) => {
     const refused = refusedDestination(dst, targetRoot);
     if (!refused) return false;
-    skippedSymlinks.push({ path: refused.path, symlinkComponent: refused.symlinkComponent });
+    skippedSymlinks.push({ path: refused.path, symlinkComponent: refused.symlinkComponent, isHard: refused.isHard, kind: refused.kind });
+    const noun = refused.kind || (refused.isHard ? 'a hard link' : 'a symlink');
+    const remedy = (refused.isHard || (refused.kind && refused.kind !== 'a symlink')) ? 'remove or replace the link' : 'remove or replace the symlink';
     console.error(
-      `web-uplift: ${refused.reason}: ${refused.path} (${refused.symlinkComponent} is a symlink). `
-      + 'Nothing was written for it, so the vendored surface is incomplete; remove or replace the symlink and run again.',
+      `web-uplift: ${refused.reason}: ${refused.path} (${refused.symlinkComponent} is ${noun}). `
+      + `Nothing was written for it, so the vendored surface is incomplete; ${remedy} and run again.`,
     );
     return true;
   };
@@ -426,7 +447,8 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   const manifestPath = join(vendorRoot, 'manifest.json');
   const manifestRefused = refusesSymlink(manifestPath);
   let installedAt = new Date().toISOString();
-  if (existsSync(manifestPath)) {
+  const manifestStat = lstatSync(manifestPath, { throwIfNoEntry: false });
+  if (!manifestRefused && manifestStat?.isFile() && !manifestStat.isSymbolicLink() && manifestStat.nlink === 1) {
     try {
       const existing = JSON.parse(readFileSync(manifestPath, 'utf8'));
       if (existing.version === pkg.version && existing.installedAt) {
@@ -473,7 +495,14 @@ if (invokedDirectly) {
   if (skippedSymlinks.length > 0) {
     // A refusal that still exited 0 would let a caller treat an incomplete surface as a generated
     // one, which is the failure mode the refusal exists to prevent.
-    console.error(`web-uplift: ${skippedSymlinks.length} destination(s) refused because a symlink was in the way; the vendored surface was NOT generated.`);
+    const hasSymlink = skippedSymlinks.some((s) => !s.isHard && (!s.kind || s.kind === 'a symlink'));
+    const hasHard = skippedSymlinks.some((s) => s.isHard);
+    const nonRegular = skippedSymlinks.find((s) => s.kind && s.kind !== 'a symlink' && s.kind !== 'a hard link');
+    let noun = 'a symlink';
+    if (hasSymlink && hasHard) noun = 'a link';
+    else if (hasHard) noun = 'a hard link';
+    else if (nonRegular) noun = nonRegular.kind;
+    console.error(`web-uplift: ${skippedSymlinks.length} destination(s) refused because ${noun} was in the way; the vendored surface was NOT generated.`);
     process.exitCode = 1;
   } else {
     console.log('web-uplift: vendored surface generated under .web-uplift/');
