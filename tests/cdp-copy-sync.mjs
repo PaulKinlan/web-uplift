@@ -153,7 +153,10 @@ for (const pair of pairs) {
   const refused = destAbs ? refusedDestination(destAbs, targetRepo) : null;
   if (refused) {
     symlinkRefusals.push(refused.path);
-    console.error(`web-uplift sync: ${refused.reason}: ${refused.path} (${refused.symlinkComponent} is a symlink). Nothing was written for it; remove or replace the symlink and run again.`);
+    const isHard = refused.reason?.includes('hard link');
+    const noun = isHard ? 'a hard link' : 'a symlink';
+    const remedy = isHard ? 'remove or replace the link' : 'remove or replace the symlink';
+    console.error(`web-uplift sync: ${refused.reason}: ${refused.path} (${refused.symlinkComponent} is ${noun}). Nothing was written for it; ${remedy} and run again.`);
     continue;
   }
   const source = readCopy(pair.srcAbs);
