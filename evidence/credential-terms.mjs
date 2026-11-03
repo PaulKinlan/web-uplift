@@ -529,12 +529,44 @@ function redactFragmentCredentialParams(fragment) {
   let hit = false;
   const out = parts.map((part) => {
     const eq = part.indexOf('=');
-    if (eq <= 0) return part;
-    const rawName = part.slice(0, eq);
-    if (!part.slice(eq + 1)) return part;
-    if (!isCredentialName(decodeFragmentKey(rawName))) return part;
+    if (eq <= 0) {
+      if (eq === -1 && part.includes('/')) {
+        let segHit = false;
+        const segs = part.split('/').map((seg) => {
+          if (looksLikeToken(seg)) {
+            segHit = true;
+            return REDACTED_VALUE_ENCODED;
+          }
+          return seg;
+        });
+        if (segHit) {
+          hit = true;
+          return segs.join('/');
+        }
+      }
+      return part;
+    }
+    const raw = part.slice(0, eq);
+    const splitIdx = Math.max(raw.lastIndexOf('?'), raw.lastIndexOf('/'));
+    const prefix = splitIdx === -1 ? '' : raw.slice(0, splitIdx + 1);
+    const rawName = splitIdx === -1 ? raw : raw.slice(splitIdx + 1);
+    let prefixOut = prefix;
+    if (prefix.includes('/')) {
+      const pSegs = prefix.split('/').map((s) => {
+        if (looksLikeToken(s)) {
+          hit = true;
+          return REDACTED_VALUE_ENCODED;
+        }
+        return s;
+      });
+      prefixOut = pSegs.join('/');
+    }
+    if (!part.slice(eq + 1)) return `${prefixOut}${rawName}=`;
+    if (!isCredentialName(decodeFragmentKey(rawName))) {
+      return `${prefixOut}${rawName}=${part.slice(eq + 1)}`;
+    }
     hit = true;
-    return `${rawName}=${REDACTED_VALUE_ENCODED}`;
+    return `${prefixOut}${rawName}=${REDACTED_VALUE_ENCODED}`;
   });
   return hit ? { fragment: out.join('&'), hit: true } : { fragment, hit: false };
 }

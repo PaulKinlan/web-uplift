@@ -299,10 +299,10 @@ export async function testConsoleEvidenceRedaction() {
     args: [{ value: `failed to send to http://127.0.0.1:9/api/send?access_token=${SECRET} and /api/other?session_key=${SECRET}` }],
     stackTrace: { callFrames: [] },
   });
-  // A page logging fragment-only credentials in prose, markdown links, linebreaks and bare tokens (web-uplift-k22j):
+  // A page logging fragment-only credentials in prose, markdown links, linebreaks, bare tokens, and SPA hash routes (web-uplift-k22j, web-uplift-pyvv):
   client.handlers.console({
     type: 'error',
-    args: [{ value: `OAuth callback reached https://app.test/callback#access_token=${SECRET} and [link](https://app.test/cb#token=${SECRET})` }],
+    args: [{ value: `OAuth callback reached https://app.test/callback#access_token=${SECRET} and [link](https://app.test/cb#token=${SECRET}) and SPA https://app.test/#/callback?code=${SECRET}&state=xyz and https://app.test/#/settings?key=${SECRET}` }],
     stackTrace: { callFrames: [] },
   });
   client.handlers.console({
@@ -341,6 +341,8 @@ export async function testConsoleEvidenceRedaction() {
     assert(!onDiskText.includes(SECRET), `the released report artifact on disk must not carry secrets: ${onDiskText}`);
     assert(!onDiskText.includes(BARE_TOKEN), `the released report artifact on disk must not carry bare tokens: ${onDiskText}`);
     assert(onDiskText.includes(`access_token=${REDACTED}`), `the released report artifact must retain redacted access_token: ${onDiskText}`);
+    assert(onDiskText.includes(`code=${REDACTED}&state=xyz`), `the released report artifact must retain redacted SPA code and sibling state: ${onDiskText}`);
+    assert(onDiskText.includes(`settings?key=${REDACTED}`), `the released report artifact must retain redacted SPA key: ${onDiskText}`);
     assert(onDiskText.includes('https://example.test/docs#section-2'), `innocent anchor preserved on disk: ${onDiskText}`);
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });

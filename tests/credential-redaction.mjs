@@ -1409,5 +1409,21 @@ export async function testFragmentRedactionKeepsSiblingParamsByteIdentical() {
     assert(cli.redactUrlCredentialValues(anchor) === anchor, `an ordinary anchor must survive untouched: ${anchor}`);
   }
 
+  // SPA hash routes with query strings ('#/callback?code=...', '#/x?key=...'; web-uplift-pyvv)
+  const hashRoutes = [
+    { in: 'https://app.test/#/callback?code=AUTHCODE_SECRET_123456&state=xyz', secret: 'AUTHCODE_SECRET_123456', sibling: 'state=xyz', prefix: '#/callback?' },
+    { in: 'https://app.test/#/cb?code=AUTHCODE_SECRET_123456&state=x', secret: 'AUTHCODE_SECRET_123456', sibling: 'state=x', prefix: '#/cb?' },
+    { in: 'https://app.test/#/settings?key=SECRET_KEY_123456', secret: 'SECRET_KEY_123456', prefix: '#/settings?' },
+    { in: 'https://app.test/#/x?key=SECRET_KEY_123456', secret: 'SECRET_KEY_123456', prefix: '#/x?' },
+  ];
+  for (const hr of hashRoutes) {
+    const out = cli.redactUrlCredentialValues(hr.in);
+    assert(!out.includes(hr.secret), `hash route redactor must remove secret from ${hr.in}, got: ${out}`);
+    assert(out.includes(hr.prefix), `hash route redactor must keep route prefix intact in ${hr.in}, got: ${out}`);
+    if (hr.sibling) {
+      assert(out.includes(hr.sibling), `hash route redactor must keep sibling "${hr.sibling}" in ${hr.in}, got: ${out}`);
+    }
+  }
+
   console.log('✔ fragment redaction rewrites only credential parameters; siblings stay byte-identical');
 }
