@@ -409,6 +409,21 @@ export function testInstallRefusesDestinationSymlinks() {
     assert(install.stdout.includes('findings.schema.json (hardlink)'), `install did not record skipping schema hard link:\n${install.stdout}`);
     assert(install.stdout.includes('knowledge (symlink)'), `install did not record skipping knowledge dir symlink:\n${install.stdout}`);
     assert(install.stdout.includes('AGENTS.md (hardlink)'), `install did not record skipping agents hard link:\n${install.stdout}`);
+
+    // Part 3: Pre-planted destination FIFO at .web-uplift/manifest.json (web-uplift-6ai4, web-uplift-9sba)
+    const targetFifo = mkdtempSync(join(tmpdir(), 'web-uplift-dest-fifo-target-'));
+    try {
+      mkdirSync(join(targetFifo, '.web-uplift'), { recursive: true });
+      const dstFifo = join(targetFifo, '.web-uplift', 'manifest.json');
+      spawnSync('mkfifo', [dstFifo]);
+      const installFifo = runInstall(targetFifo);
+      assert(installFifo.status !== 0, `install with destination FIFO must fail, got ${installFifo.status}`);
+      assert(installFifo.stdout.includes('manifest.json (fifo)'), `expected skip reason '(fifo)', got: ${installFifo.stdout}`);
+      assert(!installFifo.stdout.includes('manifest.json (symlink)'), `skip reason must not be '(symlink)': ${installFifo.stdout}`);
+      assert(lstatSync(dstFifo).isFIFO(), 'destination FIFO must remain a FIFO and not be replaced or truncated');
+    } finally {
+      rmSync(targetFifo, { recursive: true, force: true });
+    }
   } finally {
     rmSync(outsideHard, { recursive: true, force: true });
     rmSync(targetHard, { recursive: true, force: true });
@@ -773,6 +788,29 @@ export function testSyncRefusesCommittedSymlinkDestination() {
     } finally {
       dropSyncFixture(fixtureCase);
     }
+  }
+
+  // Hard link destination test for sync:vendored (web-uplift-6ai4)
+  const victimDirHard = mkdtempSync(join(tmpdir(), 'web-uplift-sync-victim-hard-'));
+  const fixtureHard = buildSyncFixture();
+  try {
+    const tracked = TRACKED_COPY_FILES[0];
+    const victimFile = join(victimDirHard, 'victim.md');
+    writeFileSync(victimFile, 'VICTIM-HARDLINK');
+    const destAbs = join(fixtureHard, tracked.dest);
+    rmSync(destAbs, { force: true });
+    mkdirSync(dirname(destAbs), { recursive: true });
+    linkSync(victimFile, destAbs);
+    const run = spawnSync(process.execPath, [join(fixtureHard, 'tests/cdp-copy-sync.mjs'), '--sync'], { cwd: fixtureHard, encoding: 'utf8', timeout: 120000 });
+    const out = `${run.stdout}${run.stderr}`;
+    assert(run.status !== 0, `sync over hard link destination must fail, got ${run.status}`);
+    assert(out.includes('is a hard link'), `expected 'is a hard link', got: ${out}`);
+    assert(out.includes('Remove or replace the link and run again.'), `expected 'Remove or replace the link', got: ${out}`);
+    assert(!out.includes('is a symlink'), `must not state 'is a symlink' for a hard link: ${out}`);
+    assert(readFileSync(victimFile, 'utf8') === 'VICTIM-HARDLINK', 'victim file must remain unchanged');
+  } finally {
+    rmSync(fixtureHard, { recursive: true, force: true });
+    rmSync(victimDirHard, { recursive: true, force: true });
   }
 }
 

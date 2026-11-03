@@ -117,9 +117,13 @@ if (targetRepo === repoRoot && !existsSync(join(targetRepo, '.web-uplift'))) {
   // own direct run fails the command the same way, so the two entry points now agree.
   if (skippedSymlinks.length > 0) {
     for (const entry of skippedSymlinks) {
-      console.error(`REFUSING to generate ${entry.path}: ${entry.symlinkComponent} is a symlink, so writing the vendored surface would write through it and outside ${targetRepo}.`);
+      const noun = entry.kind || (entry.isHard ? 'a hard link' : 'a symlink');
+      console.error(`REFUSING to generate ${entry.path}: ${entry.symlinkComponent} is ${noun}, so writing the vendored surface would write through it and outside ${targetRepo}.`);
     }
-    console.error(`FAILED: ${skippedSymlinks.length} destination(s) were refused while generating .web-uplift/. Nothing was written for those, so the vendored tree is incomplete. Remove or replace the symlink and run again.`);
+    const hasSymlink = skippedSymlinks.some((r) => !r.isHard && (!r.kind || r.kind === 'a symlink'));
+    const hasHard = skippedSymlinks.some((r) => r.isHard);
+    const remedy = hasHard ? 'Remove or replace the link and run again.' : 'Remove or replace the symlink and run again.';
+    console.error(`FAILED: ${skippedSymlinks.length} destination(s) were refused while generating .web-uplift/. Nothing was written for those, so the vendored tree is incomplete. ${remedy}`);
     process.exit(1);
   }
 }
@@ -152,10 +156,9 @@ for (const pair of pairs) {
   // write to; asking refusedDestination about null would throw where the old code merely compared nothing.
   const refused = destAbs ? refusedDestination(destAbs, targetRepo) : null;
   if (refused) {
-    symlinkRefusals.push(refused.path);
-    const isHard = refused.reason?.includes('hard link');
-    const noun = isHard ? 'a hard link' : 'a symlink';
-    const remedy = isHard ? 'remove or replace the link' : 'remove or replace the symlink';
+    symlinkRefusals.push(refused);
+    const noun = refused.kind || (refused.isHard ? 'a hard link' : 'a symlink');
+    const remedy = (refused.isHard || (refused.kind && refused.kind !== 'a symlink')) ? 'remove or replace the link' : 'remove or replace the symlink';
     console.error(`web-uplift sync: ${refused.reason}: ${refused.path} (${refused.symlinkComponent} is ${noun}). Nothing was written for it; ${remedy} and run again.`);
     continue;
   }
@@ -209,8 +212,12 @@ if (failures.length === 0 && symlinkRefusals.length === 0) {
 // already gone wrong. This is the single failure point for it - the write path below no longer asks again,
 // because a pair that reaches it was already answered here (web-uplift-rt1y).
 if (symlinkRefusals.length > 0) {
-  const unique = [...new Set(symlinkRefusals)];
-  console.error(`FAILED: refused to write through ${unique.length} symlinked destination(s): ${unique.join(', ')}. Nothing was written for those, and the vendored tree is incomplete. Remove or replace the symlink and run again.`);
+  const unique = [...new Set(symlinkRefusals.map((r) => r.path || r))];
+  const hasSymlink = symlinkRefusals.some((r) => !r.isHard && (!r.kind || r.kind === 'a symlink'));
+  const hasHard = symlinkRefusals.some((r) => r.isHard);
+  const noun = hasSymlink && hasHard ? 'destination(s) that are links' : (hasHard ? 'destination(s) that are hard links' : 'symlinked destination(s)');
+  const remedy = hasHard ? 'Remove or replace the link and run again.' : 'Remove or replace the symlink and run again.';
+  console.error(`FAILED: refused to write through ${unique.length} ${noun}: ${unique.join(', ')}. Nothing was written for those, and the vendored tree is incomplete. ${remedy}`);
   process.exit(1);
 }
 

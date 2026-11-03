@@ -389,20 +389,48 @@ function refusedLinkComponent(dst, projectRoot) {
     : resolve(projectRoot, refused.symlinkComponent);
 }
 
+function refusalReason(err, path) {
+  if (err?.kind) {
+    if (err.kind === 'a hard link') return 'hardlink';
+    if (err.kind === 'a symbolic link') return 'symlink';
+    if (err.kind === 'a FIFO') return 'fifo';
+    if (err.kind === 'a socket') return 'socket';
+    if (err.kind === 'a directory') return 'directory';
+    return err.kind.replace(/^a /, '').replace(/ /g, '-');
+  }
+  const st = lstatSync(path, { throwIfNoEntry: false });
+  if (st?.isSymbolicLink()) return 'symlink';
+  if (st?.isFile() && st.nlink > 1) return 'hardlink';
+  if (st?.isFIFO()) return 'fifo';
+  if (st?.isSocket()) return 'socket';
+  if (st?.isDirectory()) return 'directory';
+  if (err?.message?.includes('hard link')) return 'hardlink';
+  if (err?.message?.includes('FIFO')) return 'fifo';
+  if (err?.message?.includes('socket')) return 'socket';
+  return 'symlink';
+}
+
 function safeCopyFileSync(src, dst) {
   let srcStat;
   try {
-    srcStat = statSync(src);
+    srcStat = lstatSync(src);
   } catch {
-    srcStat = { mode: 0o666 };
+    srcStat = null;
+  }
+  if (!srcStat || !srcStat.isFile() || srcStat.isSymbolicLink()) {
+    let reason = 'missing';
+    if (srcStat?.isSymbolicLink()) reason = 'symlink';
+    else if (srcStat?.isFIFO()) reason = 'fifo';
+    else if (srcStat?.isSocket()) reason = 'socket';
+    else if (srcStat?.isDirectory()) reason = 'directory';
+    return { skipped: true, path: src, reason, isSource: true };
   }
   try {
     writeFileNoFollowSync(dst, readFileSync(src), { mode: srcStat.mode });
     return { skipped: false };
   } catch (err) {
     if (err instanceof UnsafeTargetRefused || err.name === 'UnsafeTargetRefused' || err.code === 'ELOOP' || err.code === 'EMLINK') {
-      const isHard = err.message?.includes('hard link');
-      return { skipped: true, path: dst, reason: isHard ? 'hardlink' : 'symlink' };
+      return { skipped: true, path: dst, reason: refusalReason(err, dst) };
     }
     throw err;
   }
@@ -414,8 +442,7 @@ function safeWriteFileSync(dst, content) {
     return { skipped: false };
   } catch (err) {
     if (err instanceof UnsafeTargetRefused || err.name === 'UnsafeTargetRefused' || err.code === 'ELOOP' || err.code === 'EMLINK') {
-      const isHard = err.message?.includes('hard link');
-      return { skipped: true, path: dst, reason: isHard ? 'hardlink' : 'symlink' };
+      return { skipped: true, path: dst, reason: refusalReason(err, dst) };
     }
     throw err;
   }
@@ -430,6 +457,10 @@ function safeAppendMarker(dst, marker, content) {
     }
     if (dstStat.isFile() && dstStat.nlink > 1) {
       return { skipped: true, path: dst, reason: 'hardlink' };
+    }
+    if (!dstStat.isFile()) {
+      const reason = dstStat.isFIFO() ? 'fifo' : (dstStat.isSocket() ? 'socket' : 'non-regular');
+      return { skipped: true, path: dst, reason };
     }
     let readFd;
     const noFollow = constants.O_NOFOLLOW || 0;
@@ -446,8 +477,7 @@ function safeAppendMarker(dst, marker, content) {
       existing = readFileSync(readFd, 'utf8');
     } catch (err) {
       if (err instanceof UnsafeTargetRefused || err.name === 'UnsafeTargetRefused') {
-        const isHard = err.message?.includes('hard link');
-        return { skipped: true, path: dst, reason: isHard ? 'hardlink' : 'symlink' };
+        return { skipped: true, path: dst, reason: refusalReason(err, dst) };
       }
       throw err;
     } finally {
@@ -462,8 +492,7 @@ function safeAppendMarker(dst, marker, content) {
     return { skipped: false };
   } catch (err) {
     if (err instanceof UnsafeTargetRefused || err.name === 'UnsafeTargetRefused' || err.code === 'ELOOP' || err.code === 'EMLINK') {
-      const isHard = err.message?.includes('hard link');
-      return { skipped: true, path: dst, reason: isHard ? 'hardlink' : 'symlink' };
+      return { skipped: true, path: dst, reason: refusalReason(err, dst) };
     }
     throw err;
   }
@@ -479,8 +508,7 @@ function applyStep(step, projectRoot = null) {
 
   const linkComponent = refusedLinkComponent(step.to, projectRoot);
   if (linkComponent) {
-    const isHard = lstatSync(linkComponent, { throwIfNoEntry: false })?.nlink > 1;
-    const reason = isHard ? 'hardlink' : 'symlink';
+    const reason = refusalReason(null, linkComponent);
     step.skippedFiles.push({ path: linkComponent, reason, refused: true });
     if (linkComponent !== step.to) {
       step.skippedFiles.push({ path: step.to, reason, refused: true });
@@ -491,8 +519,7 @@ function applyStep(step, projectRoot = null) {
   const toDir = dirname(step.to);
   const dirLink = refusedLinkComponent(toDir, projectRoot);
   if (dirLink) {
-    const isHard = lstatSync(dirLink, { throwIfNoEntry: false })?.nlink > 1;
-    const reason = isHard ? 'hardlink' : 'symlink';
+    const reason = refusalReason(null, dirLink);
     step.skippedFiles.push({ path: dirLink, reason, refused: true });
     if (dirLink !== step.to) {
       step.skippedFiles.push({ path: step.to, reason, refused: true });
@@ -530,8 +557,7 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = 
   }
   const toLink = refusedLinkComponent(to, projectRoot);
   if (toLink) {
-    const isHard = lstatSync(toLink, { throwIfNoEntry: false })?.nlink > 1;
-    const reason = isHard ? 'hardlink' : 'symlink';
+    const reason = refusalReason(null, toLink);
     acc.skippedFiles.push({ path: toLink, reason, refused: true });
     if (toLink !== to) {
       acc.skippedFiles.push({ path: to, reason, refused: true });
@@ -547,10 +573,13 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = 
       acc.skippedFiles.push({ path: src, reason: 'symlink' });
       continue;
     }
+    if (!st.isDirectory() && !st.isFile()) {
+      acc.skippedFiles.push({ path: src, reason: refusalReason(null, src), refused: true });
+      continue;
+    }
     const dstStat = lstatSync(dst, { throwIfNoEntry: false });
-    if (dstStat?.isSymbolicLink() || (dstStat?.isFile() && dstStat.nlink > 1)) {
-      const reason = dstStat.isSymbolicLink() ? 'symlink' : 'hardlink';
-      acc.skippedFiles.push({ path: dst, reason, refused: true });
+    if (dstStat?.isSymbolicLink() || (dstStat?.isFile() && dstStat.nlink > 1) || (dstStat && !dstStat.isFile() && !dstStat.isDirectory())) {
+      acc.skippedFiles.push({ path: dst, reason: refusalReason(null, dst), refused: true });
       continue;
     }
     if (st.isDirectory()) copyDir(src, dst, acc, depth + 1, projectRoot);

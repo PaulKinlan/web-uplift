@@ -14,6 +14,17 @@ import { dirname, join, relative, isAbsolute, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+export function describeKind(st) {
+  if (!st) return 'missing';
+  if (st.isDirectory()) return 'a directory';
+  if (st.isFIFO()) return 'a FIFO';
+  if (st.isSocket()) return 'a socket';
+  if (st.isCharacterDevice()) return 'a character device';
+  if (st.isBlockDevice()) return 'a block device';
+  if (st.isSymbolicLink()) return 'a symbolic link';
+  return 'not a regular file';
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(__filename));
 
@@ -61,16 +72,22 @@ export const VENDORED_DEPENDENCIES = ['chrome-remote-interface', 'web-features']
 //                               generated per agent rather than copied, and the
 //                               guard has no source to compare them against.
 
-function copyDir(from, to, depth = 1) {
+function copyDir(from, to, depth = 1, context = null) {
   if (depth > 64) return;
   mkdirSync(to, { recursive: true });
   for (const name of readdirSync(from)) {
     const src = join(from, name);
     const dst = join(to, name);
     const st = lstatSync(src);
-    if (st.isSymbolicLink()) continue;
-    if (st.isDirectory()) copyDir(src, dst, depth + 1);
-    else copyFileSync(src, dst);
+    if (st.isSymbolicLink() || (!st.isFile() && !st.isDirectory())) {
+      if (context?.skippedSymlinks) {
+        context.skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(st) });
+        console.error(`web-uplift: refusing to copy ${describeKind(st)}: ${src}`);
+      }
+      continue;
+    }
+    if (st.isDirectory()) copyDir(src, dst, depth + 1, context);
+    else if (st.isFile()) copyFileSync(src, dst);
   }
 }
 
@@ -383,7 +400,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     const staged = join(scratchRoot, `.stage-${process.pid}-${dir.dest}`);
     rmSync(staged, { recursive: true, force: true });
     mkdirSync(staged, { recursive: true });
-    if (existsSync(src)) copyDir(src, staged);
+    if (existsSync(src)) copyDir(src, staged, 1, { skippedSymlinks });
     pruneObsoleteEntries(dst, publishStagedTree(staged, dst));
     rmSync(staged, { recursive: true, force: true });
   }
@@ -392,7 +409,13 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     const src = join(targetRoot, file.source);
     const dst = join(vendorRoot, file.dest);
     if (refusesSymlink(dst)) continue;
-    if (existsSync(src)) {
+    const srcStat = lstatSync(src, { throwIfNoEntry: false });
+    if (srcStat && (!srcStat.isFile() || srcStat.isSymbolicLink())) {
+      skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(srcStat) });
+      console.error(`web-uplift: refusing to copy ${describeKind(srcStat)}: ${src}`);
+      continue;
+    }
+    if (srcStat?.isFile()) {
       mkdirSync(dirname(dst), { recursive: true });
       // A single file is published by rename too: copyFileSync truncates the destination first, so a reader
       // could see a partially written module. Renamed from a sibling temp name in the same directory, which
@@ -413,7 +436,13 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     const src = join(targetRoot, file.source);
     const dst = join(targetRoot, file.dest);
     if (refusesSymlink(dst)) continue;
-    if (existsSync(src)) {
+    const srcStat = lstatSync(src, { throwIfNoEntry: false });
+    if (srcStat && (!srcStat.isFile() || srcStat.isSymbolicLink())) {
+      skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(srcStat) });
+      console.error(`web-uplift: refusing to copy ${describeKind(srcStat)}: ${src}`);
+      continue;
+    }
+    if (srcStat?.isFile()) {
       if (trackedCopyHasLocalEdits(targetRoot, file.dest).state === 'edited') {
         skippedTrackedCopies.push(file.dest);
         continue;
@@ -497,11 +526,11 @@ if (invokedDirectly) {
     // one, which is the failure mode the refusal exists to prevent.
     const hasSymlink = skippedSymlinks.some((s) => !s.isHard && (!s.kind || s.kind === 'a symlink'));
     const hasHard = skippedSymlinks.some((s) => s.isHard);
-    const nonRegular = skippedSymlinks.find((s) => s.kind && s.kind !== 'a symlink' && s.kind !== 'a hard link');
+    const hasOther = skippedSymlinks.some((s) => s.kind && s.kind !== 'a symlink' && !s.isHard);
     let noun = 'a symlink';
-    if (hasSymlink && hasHard) noun = 'a link';
+    if ([hasSymlink, hasHard, hasOther].filter(Boolean).length > 1) noun = 'a link';
     else if (hasHard) noun = 'a hard link';
-    else if (nonRegular) noun = nonRegular.kind;
+    else if (hasOther) noun = skippedSymlinks.find((s) => s.kind && s.kind !== 'a symlink')?.kind || 'a link';
     console.error(`web-uplift: ${skippedSymlinks.length} destination(s) refused because ${noun} was in the way; the vendored surface was NOT generated.`);
     process.exitCode = 1;
   } else {

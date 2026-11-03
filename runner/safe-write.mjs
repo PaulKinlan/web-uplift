@@ -43,15 +43,16 @@ const HAS_NOFOLLOW = typeof NOFOLLOW === 'number';
 const WRITE_FLAGS = constants.O_WRONLY | constants.O_CREAT | (HAS_NOFOLLOW ? NOFOLLOW : 0);
 
 export class UnsafeTargetRefused extends Error {
-  constructor(path, action, reason) {
+  constructor(path, action, reason, kind = null) {
     super(`refusing to ${action} ${path}: ${reason}`);
     this.name = 'UnsafeTargetRefused';
     this.code = 'ELOOP';
     this.path = path;
+    this.kind = kind;
   }
 }
 
-function describeKind(st) {
+export function describeKind(st) {
   if (st.isDirectory()) return 'a directory';
   if (st.isFIFO()) return 'a FIFO';
   if (st.isSocket()) return 'a socket';
@@ -68,14 +69,16 @@ export function assertSafeDescriptor(st, path, action) {
     throw new UnsafeTargetRefused(
       path,
       action,
-      `it is ${describeKind(st)}, not a regular file, so ${action === 'read' ? 'reading' : 'writing'} it would not touch a file this runner created (a planted name in the agent-writable run tree; web-uplift-rsbb)`
+      `it is ${describeKind(st)}, not a regular file, so ${action === 'read' ? 'reading' : 'writing'} it would not touch a file this runner created (a planted name in the agent-writable run tree; web-uplift-rsbb)`,
+      describeKind(st),
     );
   }
   if (st.nlink > 1) {
     throw new UnsafeTargetRefused(
       path,
       action,
-      `it has ${st.nlink} hard links, so this is another name for a file that is also reachable outside the run tree; ${action === 'read' ? 'reading' : 'writing'} it would ${action === 'read' ? 'read' : 'change'} that other file (a planted hard link needs no symlink to be followed; web-uplift-rsbb)`
+      `it has ${st.nlink} hard links, so this is another name for a file that is also reachable outside the run tree; ${action === 'read' ? 'reading' : 'writing'} it would ${action === 'read' ? 'read' : 'change'} that other file (a planted hard link needs no symlink to be followed; web-uplift-rsbb)`,
+      'a hard link',
     );
   }
 }
@@ -84,7 +87,8 @@ const refusedSymlink = (path, action) =>
   new UnsafeTargetRefused(
     path,
     action,
-    `the final component is a symbolic link and following it would land outside the run tree (a planted leaf link redirects this runner's own write; web-uplift-rsbb)`
+    `the final component is a symbolic link and following it would land outside the run tree (a planted leaf link redirects this runner's own write; web-uplift-rsbb)`,
+    'a symbolic link',
   );
 
 // Replace the file at `path` (or create it), refusing a symlink at the leaf, a non-regular file, and
