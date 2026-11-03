@@ -126,7 +126,10 @@ function symlinkComponent(dst, rootDir) {
   let current = root;
   for (const part of rel.split(/[\\/]/).filter(Boolean)) {
     current = join(current, part);
-    if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) return current;
+    const st = lstatSync(current, { throwIfNoEntry: false });
+    if (!st) continue;
+    if (st.isSymbolicLink()) return current;
+    if (st.isFile() && st.nlink > 1) return current;
   }
   return null;
 }
@@ -147,10 +150,12 @@ function symlinkComponent(dst, rootDir) {
 export function refusedDestination(dst, rootDir) {
   const component = symlinkComponent(dst, rootDir);
   if (!component) return null;
+  const st = lstatSync(component, { throwIfNoEntry: false });
+  const isHard = st?.isFile() && st?.nlink > 1;
   return {
     path: relative(resolve(rootDir), resolve(dst)) || dst,
     symlinkComponent: relative(resolve(rootDir), resolve(component)) || component,
-    reason: 'refusing to write through a symlink',
+    reason: isHard ? 'refusing to write through a hard link' : 'refusing to write through a symlink',
   };
 }
 

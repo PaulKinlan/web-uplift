@@ -15,7 +15,7 @@
 // This file is the fast, browser-free foreground check. Run it directly:
 //   node tests/install-copy-symlink.mjs
 // It is also imported by tests/regression.mjs so the full gate covers it.
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -301,24 +301,24 @@ export function testInstallRefusesDestinationSymlinks() {
     mkdirSync(victimDir);
     writeFileSync(join(victimDir, 'safe.txt'), 'VICTIM-DIR-SECRET\n');
 
-    // Pre-plant destination symlinks covering every install write action:
-    // 1. write: .web-uplift/manifest.json
+    // Pre-plant destination symlinks and hard links covering every install write action:
+    // 1. write: .web-uplift/manifest.json (hard link at leaf)
     mkdirSync(join(target, '.web-uplift'), { recursive: true });
-    symlinkSync(victimManifest, join(target, '.web-uplift', 'manifest.json'));
+    linkSync(victimManifest, join(target, '.web-uplift', 'manifest.json'));
 
-    // 2. copy-file: .codex/skills/web-audit/SKILL.md
+    // 2. copy-file: .codex/skills/web-audit/SKILL.md (symlink at leaf)
     mkdirSync(join(target, '.codex', 'skills', 'web-audit'), { recursive: true });
     symlinkSync(victimSkill, join(target, '.codex', 'skills', 'web-audit', 'SKILL.md'));
 
-    // 3. copy-dir (file): .web-uplift/schema/findings.schema.json
+    // 3. copy-dir (file): .web-uplift/schema/findings.schema.json (hard link at leaf)
     mkdirSync(join(target, '.web-uplift', 'schema'), { recursive: true });
-    symlinkSync(victimSchema, join(target, '.web-uplift', 'schema', 'findings.schema.json'));
+    linkSync(victimSchema, join(target, '.web-uplift', 'schema', 'findings.schema.json'));
 
-    // 4. copy-dir (directory): .web-uplift/knowledge
+    // 4. copy-dir (directory): .web-uplift/knowledge (symlink at ancestor directory)
     symlinkSync(victimDir, join(target, '.web-uplift', 'knowledge'));
 
-    // 5. append: AGENTS.md
-    symlinkSync(victimAgents, join(target, 'AGENTS.md'));
+    // 5. append: AGENTS.md (hard link at leaf)
+    linkSync(victimAgents, join(target, 'AGENTS.md'));
 
     const install = runInstall(target);
     // web-uplift-v167: an install that refused a destination is INCOMPLETE and must not report success. It used
@@ -339,12 +339,12 @@ export function testInstallRefusesDestinationSymlinks() {
     assert(readFileSync(join(victimDir, 'safe.txt'), 'utf8') === 'VICTIM-DIR-SECRET\n', 'victim dir must not be clobbered');
     assert(readdirSync(victimDir).length === 1, 'victim dir must not have files copied into it');
 
-    // Assert that skipped symlinks are reported in output
-    assert(install.stdout.includes('manifest.json (symlink)'), `install did not record skipping manifest symlink:\n${install.stdout}`);
+    // Assert that skipped links are reported in output
+    assert(install.stdout.includes('manifest.json (hardlink)'), `install did not record skipping manifest hard link:\n${install.stdout}`);
     assert(install.stdout.includes('SKILL.md (symlink)'), `install did not record skipping skill symlink:\n${install.stdout}`);
-    assert(install.stdout.includes('findings.schema.json (symlink)'), `install did not record skipping schema symlink:\n${install.stdout}`);
+    assert(install.stdout.includes('findings.schema.json (hardlink)'), `install did not record skipping schema hard link:\n${install.stdout}`);
     assert(install.stdout.includes('knowledge (symlink)'), `install did not record skipping knowledge dir symlink:\n${install.stdout}`);
-    assert(install.stdout.includes('AGENTS.md (symlink)'), `install did not record skipping agents symlink:\n${install.stdout}`);
+    assert(install.stdout.includes('AGENTS.md (hardlink)'), `install did not record skipping agents hard link:\n${install.stdout}`);
 
     // Positive check: unsymlinked files in the same install were still written normally
     assert(existsSync(join(target, '.web-uplift', 'schema', 'config.schema.json')), 'unpoisoned schema file must be written');

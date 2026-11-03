@@ -63,7 +63,7 @@ function describeKind(st) {
 
 // The check that covers both link types. `stat` must be the fstat of the descriptor that will be
 // written, never a fresh stat of the path.
-function assertSafeDescriptor(st, path, action) {
+export function assertSafeDescriptor(st, path, action) {
   if (!st.isFile()) {
     throw new UnsafeTargetRefused(
       path,
