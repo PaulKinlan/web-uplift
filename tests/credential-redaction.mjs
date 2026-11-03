@@ -923,6 +923,14 @@ export async function testCredentialRedactorsAgree() {
   const redactedProse = terms.redactUrlsInText(prose);
   assert(!redactedProse.includes(USERINFO_PASS), `a userinfo password in prose must be redacted: ${redactedProse}`);
   assert(redactedProse.includes(`https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain`), `the rest of the URL must survive: ${redactedProse}`);
+  // A fragment-only credential in prose must also trigger redaction (web-uplift-k22j):
+  const fragProse = `see https://x.test/plain#token=${SECRET_USERINFO} then move on`;
+  const redactedFragProse = terms.redactUrlsInText(fragProse);
+  assert(!redactedFragProse.includes(SECRET_USERINFO), `a fragment token in prose must be redacted: ${redactedFragProse}`);
+  assert(redactedFragProse.includes(`https://x.test/plain#token=${'%5Bredacted%5D'}`), `the rest of the fragment URL must survive: ${redactedFragProse}`);
+  const unparseableFragProse = `see https://x.test:99999/plain#token=${SECRET_USERINFO} then move on`;
+  const redactedUnparseableFragProse = terms.redactUrlsInText(unparseableFragProse);
+  assert(!redactedUnparseableFragProse.includes(SECRET_USERINFO), `unparseable port fragment URL in prose must be redacted: ${redactedUnparseableFragProse}`);
   // A URL that the parser REJECTS must not come back verbatim either. Chrome and Node reject
   // 'file://user:pass@/path' outright, and an authority whose ':' is read as an invalid port throws,
   // so both used to return the whole string with the credential intact - the same leak through the
