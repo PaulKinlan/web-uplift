@@ -503,6 +503,17 @@ function findingDialog(report, dir, f) {
 </dialog>`;
 }
 
+// The artefact write seam (web-uplift-4uxp). Exported because the property it carries - refuse to follow a planted
+// link at the leaf or at any ancestor - is testable on its own, while the CLI path to it needs a coverage-complete
+// report on disk first. A guard whose only test needs three subsystems to cooperate is a guard that stays unproven.
+export function writeArtifact(target, data, { base, what }) {
+  if (!isRealDir(base)) {
+    throw new Error(`refusing to write ${target}: ${base} is a symbolic link or not a directory (a planted link at the artefact root would put the scorecard wherever it points)`);
+  }
+  assertRealParentUnder(base, target, 'write', { what, includeBase: true });
+  writeFileNoFollowSync(target, data);
+}
+
 // --- Icons (inline SVG, never emoji) ---------------------------------------
 const ICON = {
   close: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -1083,17 +1094,17 @@ async function main() {
   // shape a plain writeFileSync cannot see: it follows a leaf symlink and truncates a hard link. Both artefacts go
   // through safe-write - the parent chain must be real directories under the tree that owns them, and the leaf must
   // be a regular file with no other names.
-  const writeArtifact = (target, data) => {
-    const base = out ? dirname(resolve(target)) : hostRoot;
-    if (!isRealDir(base)) throw new Error(`refusing to write ${target}: ${base} is a symbolic link or not a directory (a planted link at the artefact root would put the scorecard wherever it points)`);
-    assertRealParentUnder(base, target, 'write', { what: out ? 'the --out directory the operator named' : 'the retained run tree the scorecard belongs to', includeBase: true });
-    writeFileNoFollowSync(target, data);
-  };
-  writeArtifact(dest, html);
+  writeArtifact(dest, html, {
+    base: out ? dirname(resolve(dest)) : hostRoot,
+    what: out ? 'the --out directory the operator named' : 'the retained run tree the scorecard belongs to',
+  });
   // Always emit the machine-readable summary next to the HTML for CI to consume.
   const summary = scorecardSummary(data);
   const jsonDest = dest.replace(/\.html?$/i, '') + '.json';
-  writeArtifact(jsonDest, JSON.stringify(summary, null, 2) + '\n');
+  writeArtifact(jsonDest, JSON.stringify(summary, null, 2) + '\n', {
+    base: out ? dirname(resolve(jsonDest)) : hostRoot,
+    what: out ? 'the --out directory the operator named' : 'the retained run tree the scorecard belongs to',
+  });
   console.log(`[scorecard] wrote ${dest} (${(html.length / 1024).toFixed(0)} KB) and ${jsonDest}\n`);
   // Print the inline text scorecard to stdout so the caller (a coding agent
   // finishing a run, or a terminal user) can show it inline and link the HTML.

@@ -3,6 +3,7 @@ import http from 'node:http';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
+  linkSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -1853,6 +1854,73 @@ export async function testScorecardScoringAndRender() {
 // outside its run directory must not read the file, and must not be emitted as a
 // relative src either. Before the fix, `join(dir, relPath)` collapsed `..` and the
 // scorecard read and inlined an arbitrary image into the published HTML.
+// web-uplift-4uxp: the aggregator wrote scorecard.html (and its .json beside it) with plain writeFileSync into a
+// FIXED NAME in an agent-writable tree, so the leaf was never checked for being a link - the fifth writer in the
+// link family (rsbb, uruy, iiz6, the installer, here) and the one whose output is PUBLISHED.
+//
+// Tested at the exported seam, not through the CLI: the CLI path needs a coverage-complete report on disk before
+// any write is reached, and it refuses an incomplete one earlier ('Refusing to score an
+// atomic-coverage-incomplete report'), so an end-to-end fixture would need three unrelated subsystems to cooperate
+// and would stay unproven. What changed is the write helper, so the helper is what is executed here - and the same
+// coverage refusal is recorded on the bead as the reason the end-to-end form is out of reach today.
+export async function testScorecardArtefactWriteRefusesPlantedLinks() {
+  const { writeArtifact } = await import('../aggregate/scorecard.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-artefact-write-'));
+  try {
+    const hostRoot = join(root, 'host');
+    mkdirSync(hostRoot, { recursive: true });
+    const victim = join(root, 'victim.html');
+    writeFileSync(victim, 'UNCHANGED');
+    const what = 'the retained run tree the scorecard belongs to';
+
+    // 1. A SYMBOLIC LINK at the leaf.
+    symlinkSync(victim, join(hostRoot, 'scorecard.html'));
+    let symlinkRefused = false;
+    try {
+      writeArtifact(join(hostRoot, 'scorecard.html'), 'PWNED', { base: hostRoot, what });
+    } catch {
+      symlinkRefused = true;
+    }
+    assert(symlinkRefused, 'a planted symlink at the scorecard leaf must be refused, not written through');
+    assert(readFileSync(victim, 'utf8') === 'UNCHANGED', 'a symlink leaf must not change the file it points at');
+
+    // 2. A HARD LINK at the leaf: rsbb showed the two come in pairs, and a hard link needs no resolution.
+    linkSync(victim, join(hostRoot, 'summary.json'));
+    let hardRefused = false;
+    try {
+      writeArtifact(join(hostRoot, 'summary.json'), 'PWNED', { base: hostRoot, what });
+    } catch {
+      hardRefused = true;
+    }
+    assert(hardRefused, 'a planted hard link at the scorecard leaf must be refused');
+    assert(readFileSync(victim, 'utf8') === 'UNCHANGED', 'a hard-linked leaf must not be truncated');
+
+    // 3. A SYMLINKED ANCESTOR: the base itself is not a real directory, so nothing may be created through it.
+    const outsideDir = join(root, 'outside-dir');
+    mkdirSync(outsideDir, { recursive: true });
+    symlinkSync(outsideDir, join(root, 'link-host'));
+    let ancestorRefused = false;
+    try {
+      writeArtifact(join(root, 'link-host', 'scorecard.html'), 'PWNED', { base: join(root, 'link-host'), what });
+    } catch {
+      ancestorRefused = true;
+    }
+    assert(ancestorRefused, 'a symlinked artefact directory must be refused');
+    assert(
+      readdirSync(outsideDir).length === 0,
+      `nothing may be created through a symlinked ancestor, found ${JSON.stringify(readdirSync(outsideDir))}`,
+    );
+
+    // The positive control: a normal write still lands, so the guard is not a blanket refusal. It uses its own leaf
+    // name because the planted symlink from case 1 is still sitting at scorecard.html - a refused write leaves the
+    // link in place, which is the point.
+    writeArtifact(join(hostRoot, 'scorecard-ok.html'), '<html>ok</html>', { base: hostRoot, what });
+    assert(readFileSync(join(hostRoot, 'scorecard-ok.html'), 'utf8') === '<html>ok</html>', 'a plain contained write must still succeed');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export async function testScorecardArtifactContainment() {
   const { scoreReport, renderScorecard } = await import('../aggregate/scorecard.mjs');
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-artifact-'));
@@ -2539,6 +2607,7 @@ export const syntaxCoreTests = [
   testSourceTreeDepthGuard,
   testCompareReportsUnconcludedChecks,
   testScorecardScoringAndRender,
+  testScorecardArtefactWriteRefusesPlantedLinks,
   testScorecardArtifactContainment,
   testCompareArtifactContainment,
   testCensusTargetsAreTracked,
