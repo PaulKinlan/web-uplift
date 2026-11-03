@@ -469,9 +469,16 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
 
   // Write .web-uplift/manifest.json
   let pkg = { name: 'web-uplift', version: '0.5.0' };
-  try {
-    pkg = JSON.parse(readFileSync(join(targetRoot, 'package.json'), 'utf8'));
-  } catch {}
+  const rootPkgPath = join(targetRoot, 'package.json');
+  const rootPkgStat = lstatSync(rootPkgPath, { throwIfNoEntry: false });
+  if (rootPkgStat && (!rootPkgStat.isFile() || rootPkgStat.isSymbolicLink())) {
+    skippedSymlinks.push({ path: rootPkgPath, symlinkComponent: rootPkgPath, isHard: false, kind: describeKind(rootPkgStat) });
+    console.error(`web-uplift: refusing to copy ${describeKind(rootPkgStat)}: ${rootPkgPath}`);
+  } else if (rootPkgStat?.isFile()) {
+    try {
+      pkg = JSON.parse(readFileSync(rootPkgPath, 'utf8'));
+    } catch {}
+  }
 
   const manifestPath = join(vendorRoot, 'manifest.json');
   const manifestRefused = refusesSymlink(manifestPath);
@@ -488,13 +495,19 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
 
   const vendoredDeps = [];
   for (const dep of ['chrome-remote-interface', 'commander', 'web-features', 'ws']) {
-    try {
-      const depPkgPath = join(targetRoot, 'node_modules', dep, 'package.json');
-      if (existsSync(depPkgPath)) {
+    const depPkgPath = join(targetRoot, 'node_modules', dep, 'package.json');
+    const depStat = lstatSync(depPkgPath, { throwIfNoEntry: false });
+    if (depStat && (!depStat.isFile() || depStat.isSymbolicLink())) {
+      skippedSymlinks.push({ path: depPkgPath, symlinkComponent: depPkgPath, isHard: false, kind: describeKind(depStat) });
+      console.error(`web-uplift: refusing to copy ${describeKind(depStat)}: ${depPkgPath}`);
+      continue;
+    }
+    if (depStat?.isFile()) {
+      try {
         const depPkg = JSON.parse(readFileSync(depPkgPath, 'utf8'));
         vendoredDeps.push({ name: dep, version: depPkg.version });
-      }
-    } catch {}
+      } catch {}
+    }
   }
   if (vendoredDeps.length === 0) {
     vendoredDeps.push(

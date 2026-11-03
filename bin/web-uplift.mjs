@@ -102,7 +102,7 @@ switch (command) {
     break;
   case '--version':
   case '-v': {
-    const pkg = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
+    const pkg = packageInfo();
     console.log(pkg.version);
     break;
   }
@@ -322,7 +322,16 @@ agent session (uses your subscription).`);
 }
 
 function packageInfo() {
-  return JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
+  const p = join(PKG_ROOT, 'package.json');
+  const st = lstatSync(p, { throwIfNoEntry: false });
+  if (!st || !st.isFile() || st.isSymbolicLink()) {
+    return { name: 'web-uplift', version: '0.5.0' };
+  }
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch {
+    return { name: 'web-uplift', version: '0.5.0' };
+  }
 }
 
 function installManifest({ pkg, selected, vendoredDependencies = [] }) {
@@ -459,7 +468,7 @@ function safeAppendMarker(dst, marker, content) {
       return { skipped: true, path: dst, reason: 'hardlink' };
     }
     if (!dstStat.isFile()) {
-      const reason = dstStat.isFIFO() ? 'fifo' : (dstStat.isSocket() ? 'socket' : 'non-regular');
+      const reason = dstStat.isDirectory() ? 'directory' : (dstStat.isFIFO() ? 'fifo' : (dstStat.isSocket() ? 'socket' : 'non-regular'));
       return { skipped: true, path: dst, reason };
     }
     let readFd;
@@ -631,6 +640,10 @@ function dependencyCopySteps(rootNames, destNodeModules) {
     }
     const pkgDir = dirname(pkgJsonPath);
 
+    const pkgStat = lstatSync(pkgJsonPath, { throwIfNoEntry: false });
+    if (!pkgStat || !pkgStat.isFile() || pkgStat.isSymbolicLink()) {
+      throw new Error(`Cannot vendor dependency "${name}": ${pkgJsonPath} is not a regular file.`);
+    }
     const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
     seen.set(name, pkg.version ?? 'unknown');
     for (const dep of Object.keys(pkg.dependencies ?? {})) visit(dep);

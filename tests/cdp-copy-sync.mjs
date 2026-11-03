@@ -122,7 +122,8 @@ if (targetRepo === repoRoot && !existsSync(join(targetRepo, '.web-uplift'))) {
     }
     const hasSymlink = skippedSymlinks.some((r) => !r.isHard && (!r.kind || r.kind === 'a symlink'));
     const hasHard = skippedSymlinks.some((r) => r.isHard);
-    const remedy = hasHard ? 'Remove or replace the link and run again.' : 'Remove or replace the symlink and run again.';
+    const hasOther = skippedSymlinks.some((r) => r.kind && r.kind !== 'a symlink' && !r.isHard);
+    const remedy = (hasHard || hasOther) ? 'Remove or replace the link and run again.' : 'Remove or replace the symlink and run again.';
     console.error(`FAILED: ${skippedSymlinks.length} destination(s) were refused while generating .web-uplift/. Nothing was written for those, so the vendored tree is incomplete. ${remedy}`);
     process.exit(1);
   }
@@ -215,8 +216,15 @@ if (symlinkRefusals.length > 0) {
   const unique = [...new Set(symlinkRefusals.map((r) => r.path || r))];
   const hasSymlink = symlinkRefusals.some((r) => !r.isHard && (!r.kind || r.kind === 'a symlink'));
   const hasHard = symlinkRefusals.some((r) => r.isHard);
-  const noun = hasSymlink && hasHard ? 'destination(s) that are links' : (hasHard ? 'destination(s) that are hard links' : 'symlinked destination(s)');
-  const remedy = hasHard ? 'Remove or replace the link and run again.' : 'Remove or replace the symlink and run again.';
+  const hasOther = symlinkRefusals.some((r) => r.kind && r.kind !== 'a symlink' && !r.isHard);
+  let noun = 'symlinked destination(s)';
+  if ([hasSymlink, hasHard, hasOther].filter(Boolean).length > 1) noun = 'destination(s) that are links';
+  else if (hasHard) noun = 'destination(s) that are hard links';
+  else if (hasOther) {
+    const k = symlinkRefusals.find((r) => r.kind && r.kind !== 'a symlink')?.kind;
+    noun = k ? `destination(s) that are ${k.replace(/^a /, '')}s` : 'destination(s) that are links';
+  }
+  const remedy = (hasHard || hasOther) ? 'Remove or replace the link and run again.' : 'Remove or replace the symlink and run again.';
   console.error(`FAILED: refused to write through ${unique.length} ${noun}: ${unique.join(', ')}. Nothing was written for those, and the vendored tree is incomplete. ${remedy}`);
   process.exit(1);
 }

@@ -424,6 +424,25 @@ export function testInstallRefusesDestinationSymlinks() {
     } finally {
       rmSync(targetFifo, { recursive: true, force: true });
     }
+
+    // Part 4: Pre-planted source-side FIFO in evidence/ (web-uplift-2v55, web-uplift-9sba)
+    const srcFifo = join(repoRoot, 'evidence', `test-source-fifo-${process.pid}`);
+    const targetSrcFifo = mkdtempSync(join(tmpdir(), 'web-uplift-src-fifo-target-'));
+    try {
+      rmSync(srcFifo, { force: true });
+      spawnSync('mkfifo', [srcFifo]);
+      const installSrcFifo = runInstall(targetSrcFifo);
+      assert(installSrcFifo.status !== 0, `install with source FIFO must fail, got ${installSrcFifo.status}`);
+      assert(installSrcFifo.stdout.includes(`test-source-fifo-${process.pid} (fifo)`),
+        `expected skip reason '(fifo)' for source FIFO: ${installSrcFifo.stdout}`);
+      assert(!installSrcFifo.stdout.includes(`test-source-fifo-${process.pid} (symlink)`),
+        `source FIFO must not be reported as '(symlink)': ${installSrcFifo.stdout}`);
+      assert(!existsSync(join(targetSrcFifo, '.web-uplift', 'evidence', `test-source-fifo-${process.pid}`)),
+        'source FIFO must not be copied into target');
+    } finally {
+      rmSync(srcFifo, { force: true });
+      rmSync(targetSrcFifo, { recursive: true, force: true });
+    }
   } finally {
     rmSync(outsideHard, { recursive: true, force: true });
     rmSync(targetHard, { recursive: true, force: true });
@@ -622,6 +641,24 @@ export function testGenerateVendoredSurfaceRefusesDestinationSymlinks() {
     } finally {
       rmSync(scratchTarget, { recursive: true, force: true });
       rmSync(scratchOutside, { recursive: true, force: true });
+    }
+
+    // (d) Source FIFO and package.json FIFO refusal (web-uplift-2v55, web-uplift-8rnp)
+    const srcFifoTarget = mkdtempSync(join(tmpdir(), 'web-uplift-src-fifo-gen-'));
+    try {
+      writeVendoredSurfaceSources(srcFifoTarget);
+      const pkgFifo = join(srcFifoTarget, 'package.json');
+      rmSync(pkgFifo, { force: true });
+      spawnSync('mkfifo', [pkgFifo]);
+      const pkgRun = runVendoredSurfaceGenerator(srcFifoTarget);
+      assert(pkgRun.status === 0, `the generator must not crash on a planted package.json FIFO:\n${pkgRun.stderr}`);
+      const pkgReport = JSON.parse(pkgRun.stdout.split('REPORT=').pop().trim());
+      assert(pkgReport.skippedSymlinks.some((s) => s.path === pkgFifo && s.kind === 'a FIFO'),
+        `expected package.json FIFO in skippedSymlinks: ${JSON.stringify(pkgReport.skippedSymlinks)}`);
+      assert(pkgRun.stderr.includes('refusing to copy a FIFO: ' + pkgFifo),
+        `expected 'refusing to copy a FIFO' for package.json, got: ${pkgRun.stderr}`);
+    } finally {
+      rmSync(srcFifoTarget, { recursive: true, force: true });
     }
   } finally {
     rmSync(outside, { recursive: true, force: true });
