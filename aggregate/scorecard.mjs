@@ -26,10 +26,11 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostSlug, listRuns, resolveLatest } from '../runner/run-history.mjs';
 import { containedChildDir, containedReadPath } from './artifact-path.mjs';
+import { assertRealParentUnder, isRealDir, writeFileNoFollowSync } from '../runner/safe-write.mjs';
 
 // --- Outcome model ----------------------------------------------------------
 // The 17 quality principles, grouped into the outcomes a site owner recognises.
@@ -1076,11 +1077,23 @@ async function main() {
   for (const o of data.latest.outcomes) console.log(`[scorecard]   ${o.key.padEnd(13)} ${o.score == null ? 'N/A' : o.score}`);
   const html = renderScorecard(data);
   const dest = out ?? join(hostRoot, 'scorecard.html');
-  writeFileSync(dest, html);
+  // web-uplift-4uxp: this is the FIFTH writer in the link family (rsbb, uruy, iiz6, the installer, here) and the
+  // one that assembles PUBLISHED artefacts, so a redirected write both loses the real artefact and plants content
+  // wherever the link points. The destination leaf is a FIXED NAME in an agent-writable tree, which is exactly the
+  // shape a plain writeFileSync cannot see: it follows a leaf symlink and truncates a hard link. Both artefacts go
+  // through safe-write - the parent chain must be real directories under the tree that owns them, and the leaf must
+  // be a regular file with no other names.
+  const writeArtifact = (target, data) => {
+    const base = out ? dirname(resolve(target)) : hostRoot;
+    if (!isRealDir(base)) throw new Error(`refusing to write ${target}: ${base} is a symbolic link or not a directory (a planted link at the artefact root would put the scorecard wherever it points)`);
+    assertRealParentUnder(base, target, 'write', { what: out ? 'the --out directory the operator named' : 'the retained run tree the scorecard belongs to', includeBase: true });
+    writeFileNoFollowSync(target, data);
+  };
+  writeArtifact(dest, html);
   // Always emit the machine-readable summary next to the HTML for CI to consume.
   const summary = scorecardSummary(data);
   const jsonDest = dest.replace(/\.html?$/i, '') + '.json';
-  writeFileSync(jsonDest, JSON.stringify(summary, null, 2) + '\n');
+  writeArtifact(jsonDest, JSON.stringify(summary, null, 2) + '\n');
   console.log(`[scorecard] wrote ${dest} (${(html.length / 1024).toFixed(0)} KB) and ${jsonDest}\n`);
   // Print the inline text scorecard to stdout so the caller (a coding agent
   // finishing a run, or a terminal user) can show it inline and link the HTML.
