@@ -923,6 +923,14 @@ export async function testCredentialRedactorsAgree() {
   const redactedProse = terms.redactUrlsInText(prose);
   assert(!redactedProse.includes(USERINFO_PASS), `a userinfo password in prose must be redacted: ${redactedProse}`);
   assert(redactedProse.includes(`https://${'%5Bredacted%5D'}:${'%5Bredacted%5D'}@x.test/plain`), `the rest of the URL must survive: ${redactedProse}`);
+  // A fragment-only credential in prose must also trigger redaction (web-uplift-k22j):
+  const fragProse = `see https://x.test/plain#token=${SECRET_USERINFO} then move on`;
+  const redactedFragProse = terms.redactUrlsInText(fragProse);
+  assert(!redactedFragProse.includes(SECRET_USERINFO), `a fragment token in prose must be redacted: ${redactedFragProse}`);
+  assert(redactedFragProse.includes(`https://x.test/plain#token=${'%5Bredacted%5D'}`), `the rest of the fragment URL must survive: ${redactedFragProse}`);
+  const unparseableFragProse = `see https://x.test:99999/plain#token=${SECRET_USERINFO} then move on`;
+  const redactedUnparseableFragProse = terms.redactUrlsInText(unparseableFragProse);
+  assert(!redactedUnparseableFragProse.includes(SECRET_USERINFO), `unparseable port fragment URL in prose must be redacted: ${redactedUnparseableFragProse}`);
   // A URL that the parser REJECTS must not come back verbatim either. Chrome and Node reject
   // 'file://user:pass@/path' outright, and an authority whose ':' is read as an invalid port throws,
   // so both used to return the whole string with the credential intact - the same leak through the
@@ -1399,6 +1407,22 @@ export async function testFragmentRedactionKeepsSiblingParamsByteIdentical() {
   // Ordinary anchors carry no '=' and must be returned untouched, as the function's own comment promises.
   for (const anchor of ['https://x.test/p#section-2', 'https://x.test/p#/route/deep', 'https://x.test/p#a']) {
     assert(cli.redactUrlCredentialValues(anchor) === anchor, `an ordinary anchor must survive untouched: ${anchor}`);
+  }
+
+  // SPA hash routes with query strings ('#/callback?code=...', '#/x?key=...'; web-uplift-pyvv)
+  const hashRoutes = [
+    { in: 'https://app.test/#/callback?code=AUTHCODE_SECRET_123456&state=xyz', secret: 'AUTHCODE_SECRET_123456', sibling: 'state=xyz', prefix: '#/callback?' },
+    { in: 'https://app.test/#/cb?code=AUTHCODE_SECRET_123456&state=x', secret: 'AUTHCODE_SECRET_123456', sibling: 'state=x', prefix: '#/cb?' },
+    { in: 'https://app.test/#/settings?key=SECRET_KEY_123456', secret: 'SECRET_KEY_123456', prefix: '#/settings?' },
+    { in: 'https://app.test/#/x?key=SECRET_KEY_123456', secret: 'SECRET_KEY_123456', prefix: '#/x?' },
+  ];
+  for (const hr of hashRoutes) {
+    const out = cli.redactUrlCredentialValues(hr.in);
+    assert(!out.includes(hr.secret), `hash route redactor must remove secret from ${hr.in}, got: ${out}`);
+    assert(out.includes(hr.prefix), `hash route redactor must keep route prefix intact in ${hr.in}, got: ${out}`);
+    if (hr.sibling) {
+      assert(out.includes(hr.sibling), `hash route redactor must keep sibling "${hr.sibling}" in ${hr.in}, got: ${out}`);
+    }
   }
 
   console.log('✔ fragment redaction rewrites only credential parameters; siblings stay byte-identical');

@@ -499,7 +499,23 @@ function decodeFragmentKey(raw) {
 }
 
 function redactFragmentCredentialParams(fragment) {
-  if (!fragment.includes('=')) return { fragment, hit: false };
+  if (!fragment.includes('=')) {
+    if (fragment.includes('/')) {
+      let modified = false;
+      const segs = fragment.split('/').map((seg) => {
+        if (looksLikeToken(seg)) {
+          modified = true;
+          return REDACTED_VALUE_ENCODED;
+        }
+        return seg;
+      });
+      return modified ? { fragment: segs.join('/'), hit: true } : { fragment, hit: false };
+    }
+    if (looksLikeToken(fragment)) {
+      return { fragment: REDACTED_VALUE_ENCODED, hit: true };
+    }
+    return { fragment, hit: false };
+  }
   // SIBLING PARAMETERS ARE COPIED BYTE-FOR-BYTE (web-uplift-hjm9). This used to run the whole fragment through
   // URLSearchParams and re-serialise it, which rewrote every sibling: 'a=1%20b' came back as 'a=1+b', and that
   // is not cosmetic - in a fragment '+' is a literal plus, not a space, so the value actually changed while the
@@ -513,12 +529,44 @@ function redactFragmentCredentialParams(fragment) {
   let hit = false;
   const out = parts.map((part) => {
     const eq = part.indexOf('=');
-    if (eq <= 0) return part;
-    const rawName = part.slice(0, eq);
-    if (!part.slice(eq + 1)) return part;
-    if (!isCredentialName(decodeFragmentKey(rawName))) return part;
+    if (eq <= 0) {
+      if (eq === -1 && part.includes('/')) {
+        let segHit = false;
+        const segs = part.split('/').map((seg) => {
+          if (looksLikeToken(seg)) {
+            segHit = true;
+            return REDACTED_VALUE_ENCODED;
+          }
+          return seg;
+        });
+        if (segHit) {
+          hit = true;
+          return segs.join('/');
+        }
+      }
+      return part;
+    }
+    const raw = part.slice(0, eq);
+    const splitIdx = Math.max(raw.lastIndexOf('?'), raw.lastIndexOf('/'));
+    const prefix = splitIdx === -1 ? '' : raw.slice(0, splitIdx + 1);
+    const rawName = splitIdx === -1 ? raw : raw.slice(splitIdx + 1);
+    let prefixOut = prefix;
+    if (prefix.includes('/')) {
+      const pSegs = prefix.split('/').map((s) => {
+        if (looksLikeToken(s)) {
+          hit = true;
+          return REDACTED_VALUE_ENCODED;
+        }
+        return s;
+      });
+      prefixOut = pSegs.join('/');
+    }
+    if (!part.slice(eq + 1)) return `${prefixOut}${rawName}=`;
+    if (!isCredentialName(decodeFragmentKey(rawName))) {
+      return `${prefixOut}${rawName}=${part.slice(eq + 1)}`;
+    }
     hit = true;
-    return `${rawName}=${REDACTED_VALUE_ENCODED}`;
+    return `${prefixOut}${rawName}=${REDACTED_VALUE_ENCODED}`;
   });
   return hit ? { fragment: out.join('&'), hit: true } : { fragment, hit: false };
 }
@@ -708,13 +756,13 @@ export function redactUrlsInText(text) {
     const trailing = /[.,;:!?=|"'<([{+]+$/.exec(raw);
     const body = trailing ? raw.slice(0, -trailing[0].length) : raw;
     out += text.slice(cursor, start);
-    // A span can only hold a credential if it carries a query ('?token=') or userinfo ('user:pass@'),
-    // and checking here keeps the work proportional to the text: the stress input that made this
-    // scanner quadratic (',/' repeated) has neither, so it never reaches the URL parser at all.
-    // The '@' half was missing at first and is why a userinfo-only URL in prose leaked after
-    // web-uplift-73y3 made userinfo passwords redactable - the span was skipped before the redactor
-    // that knows how to redact it was ever called.
-    out += body && (body.includes('?') || body.includes('@')) ? redactUrlCredentialValues(body) : body;
+    // A span can only hold a credential if it carries a query ('?token='), userinfo ('user:pass@'),
+    // or a fragment ('#token='), and checking here keeps the work proportional to the text: the stress
+    // input that made this scanner quadratic (',/' repeated) has none of them, so it never reaches
+    // the URL parser at all. Both '@' (web-uplift-73y3) and '#' (web-uplift-k22j) were missing at
+    // first and caused credentials in prose to leak because the span was skipped before the redactor
+    // was ever called.
+    out += body && (body.includes('?') || body.includes('@') || body.includes('#')) ? redactUrlCredentialValues(body) : body;
     out += trailing ? trailing[0] : '';
     cursor = end;
   }

@@ -29,11 +29,14 @@
 // an uppercase scheme or host is lowercased as part of the redaction - shape only, and only when a
 // credential was actually removed.
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { attachConsoleCollector, attachConsoleEvidence } from '../evidence/cdp.mjs';
 import { redactUrlCredentialValues, redactUrlsInText } from '../evidence/credential-terms.mjs';
 
 const SECRET = 'NOTAREALKEY_FIXTURE_CONSOLE1234567890ABCDEF';
+const BARE_TOKEN = 'ghp_123456789012345678901234567890123456';
 const REDACTED = '%5Bredacted%5D'; // '[redacted]' after URL encoding
 
 function assert(cond, msg) {
@@ -76,6 +79,73 @@ export async function testConsoleEvidenceRedaction() {
   assert(
     redactUrlsInText(`see https://x.test/a?token=${SECRET}, then stop.`) === `see https://x.test/a?token=${REDACTED}, then stop.`,
     'a URL inside prose is redacted while the surrounding punctuation is preserved',
+  );
+  // Fragment-only credentials in prose (web-uplift-k22j): a URL whose credential is only in the
+  // fragment (#token=, #access_token=) has no query ('?') and no userinfo ('@'). The scanner must
+  // still redact it in place.
+  assert(
+    redactUrlsInText(`see https://x.test/a#token=${SECRET}, then stop.`) === `see https://x.test/a#token=${REDACTED}, then stop.`,
+    'a fragment-only URL inside prose must be redacted',
+  );
+  assert(
+    redactUrlsInText(`OAuth callback at https://app.test/callback#access_token=${SECRET} finished.`) === `OAuth callback at https://app.test/callback#access_token=${REDACTED} finished.`,
+    'an OAuth access_token fragment URL in prose must be redacted',
+  );
+  assert(
+    redactUrlsInText(`failed to send to /api/send#access_token=${SECRET}`) === `failed to send to /api/send#access_token=${REDACTED}`,
+    'a rooted relative path with a fragment credential must be redacted',
+  );
+  assert(
+    redactUrlsInText(`see https://x.test:99999/a#token=${SECRET}, then stop.`) === `see https://x.test:99999/a#token=${REDACTED}, then stop.`,
+    'an unparseable port with a fragment credential in prose must be redacted',
+  );
+  // Bare tokens in fragments (#ghp_..., #sk-live-...):
+  assert(
+    redactUrlsInText(`see https://x.test/a#${BARE_TOKEN}, then stop.`) === `see https://x.test/a#${REDACTED}, then stop.`,
+    'a bare provider token in a URL fragment must be redacted',
+  );
+  // Inside markdown links:
+  assert(
+    redactUrlsInText(`[auth callback](https://app.test/callback#token=${SECRET})`) === `[auth callback](https://app.test/callback#token=${REDACTED})`,
+    'a fragment-only credential inside a markdown link URL must be redacted',
+  );
+  assert(
+    redactUrlsInText(`[https://app.test/callback#token=${SECRET}](https://app.test/callback#token=${SECRET})`) === `[https://app.test/callback#token=${REDACTED}](https://app.test/callback#token=${REDACTED})`,
+    'a fragment-only credential in both markdown link text and URL must be redacted',
+  );
+  // Split across a line break:
+  assert(
+    redactUrlsInText(`line1\nhttps://app.test/callback#token=${SECRET}\nline2`) === `line1\nhttps://app.test/callback#token=${REDACTED}\nline2`,
+    'a fragment-only credential URL bordered by line breaks must be redacted',
+  );
+  assert(
+    redactUrlsInText(`see https://app.test/callback#token=${SECRET}\nthen continue`) === `see https://app.test/callback#token=${REDACTED}\nthen continue`,
+    'a fragment-only credential URL followed by a line break must be redacted',
+  );
+  assert(
+    redactUrlsInText(`[auth callback](\n  https://app.test/callback#token=${SECRET}\n)`) === `[auth callback](\n  https://app.test/callback#token=${REDACTED}\n)`,
+    'a fragment credential URL inside a multiline markdown link must be redacted',
+  );
+  // Negative controls: ordinary fragment anchors and non-credential parameters must be untouched.
+  assert(
+    redactUrlsInText('see https://x.test/docs#section-2, then stop.') === 'see https://x.test/docs#section-2, then stop.',
+    'an ordinary fragment anchor in prose must be untouched',
+  );
+  assert(
+    redactUrlsInText('see https://x.test/docs#heading-overview, then stop.') === 'see https://x.test/docs#heading-overview, then stop.',
+    'an ordinary fragment slug in prose must be untouched',
+  );
+  assert(
+    redactUrlsInText('see https://x.test/app#/route/deep, then stop.') === 'see https://x.test/app#/route/deep, then stop.',
+    'a deep route fragment in prose must be untouched',
+  );
+  assert(
+    redactUrlsInText('see https://x.test/app#page=1&tab=2, then stop.') === 'see https://x.test/app#page=1&tab=2, then stop.',
+    'non-credential fragment parameters in prose must be untouched',
+  );
+  assert(
+    redactUrlsInText('[docs link](https://x.test/docs#section-2)') === '[docs link](https://x.test/docs#section-2)',
+    'an ordinary fragment anchor inside a markdown link must be untouched',
   );
   // A protocol-relative URL is matched (that is what matters here: the credential goes), but the
   // shared redactor re-emits it as a path because new URL() cannot parse a host without a scheme -
@@ -229,9 +299,23 @@ export async function testConsoleEvidenceRedaction() {
     args: [{ value: `failed to send to http://127.0.0.1:9/api/send?access_token=${SECRET} and /api/other?session_key=${SECRET}` }],
     stackTrace: { callFrames: [] },
   });
-  // Innocents: a non-credential query parameter, and a URL with no query at all.
+  // A page logging fragment-only credentials in prose, markdown links, linebreaks, bare tokens, and SPA hash routes (web-uplift-k22j, web-uplift-pyvv):
+  client.handlers.console({
+    type: 'error',
+    args: [{ value: `OAuth callback reached https://app.test/callback#access_token=${SECRET} and [link](https://app.test/cb#token=${SECRET}) and SPA https://app.test/#/callback?code=${SECRET}&state=xyz and https://app.test/#/settings?key=${SECRET}` }],
+    stackTrace: { callFrames: [] },
+  });
+  client.handlers.console({
+    type: 'error',
+    args: [{ value: `multiline log:\nhttps://app.test/callback#${BARE_TOKEN}\nfinished` }],
+    stackTrace: { callFrames: [] },
+  });
+  // Innocents: a non-credential query parameter, and a URL with no query at all, plus innocent fragment anchors.
   client.handlers.log({
     entry: { level: 'warning', source: 'deprecation', text: 'see https://example.test/docs?page=2 for details', url: 'https://example.test/docs?page=2' },
+  });
+  client.handlers.log({
+    entry: { level: 'warning', source: 'browser', text: 'see https://example.test/docs#section-2 and [guide](https://example.test/app#/route/deep)', url: 'https://example.test/docs#section-2' },
   });
 
   const result = {};
@@ -239,11 +323,30 @@ export async function testConsoleEvidenceRedaction() {
   const json = JSON.stringify(result);
 
   assert(!json.includes(SECRET), `NO console entry may carry a credential value: ${json}`);
+  assert(!json.includes(BARE_TOKEN), `NO console entry may carry a bare token in fragment: ${json}`);
   assert(
-    json.includes(`api_key=${REDACTED}`) && json.includes(`session_key=${REDACTED}`) && json.includes(`access_token=${REDACTED}`),
+    json.includes(`api_key=${REDACTED}`) && json.includes(`session_key=${REDACTED}`) && json.includes(`access_token=${REDACTED}`) && json.includes(`token=${REDACTED}`),
     `every credential parameter must survive by name with a redacted value: ${json}`,
   );
   assert(json.includes('https://example.test/docs?page=2'), 'a non-credential URL must be unchanged');
+  assert(json.includes('https://example.test/docs#section-2'), 'an innocent fragment anchor must be unchanged in the artifact');
+  assert(json.includes('https://example.test/app#/route/deep'), 'an innocent route fragment must be unchanged in the artifact');
+
+  // Assert on the ARTIFACT as written to disk (e.g. released report / console artifact JSON):
+  const tmpDir = mkdtempSync(join(tmpdir(), 'console-artifact-'));
+  try {
+    const artifactPath = join(tmpDir, 'console-released-artifact.json');
+    writeFileSync(artifactPath, JSON.stringify(result, null, 2));
+    const onDiskText = readFileSync(artifactPath, 'utf8');
+    assert(!onDiskText.includes(SECRET), `the released report artifact on disk must not carry secrets: ${onDiskText}`);
+    assert(!onDiskText.includes(BARE_TOKEN), `the released report artifact on disk must not carry bare tokens: ${onDiskText}`);
+    assert(onDiskText.includes(`access_token=${REDACTED}`), `the released report artifact must retain redacted access_token: ${onDiskText}`);
+    assert(onDiskText.includes(`code=${REDACTED}&state=xyz`), `the released report artifact must retain redacted SPA code and sibling state: ${onDiskText}`);
+    assert(onDiskText.includes(`settings?key=${REDACTED}`), `the released report artifact must retain redacted SPA key: ${onDiskText}`);
+    assert(onDiskText.includes('https://example.test/docs#section-2'), `innocent anchor preserved on disk: ${onDiskText}`);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
   assert(
     json.includes('Failed to load resource') && json.includes('boom') && json.includes('failed to send to'),
     `the diagnostic text must survive redaction: ${json}`,
@@ -256,7 +359,7 @@ export async function testConsoleEvidenceRedaction() {
     block.entries.some((e) => e.kind === 'exception' && e.stack.some((f) => f.includes('evil.test') && f.includes(REDACTED) && !f.includes(SECRET))),
     `a stack frame whose FUNCTION NAME is a URL must be redacted: ${JSON.stringify(block.entries)}`,
   );
-  assert(block.entries.length === 5, `an unchanged entry must not be split by redaction: ${JSON.stringify(block.entries)}`);
+  assert(block.entries.length === 8, `an unchanged entry must not be split by redaction: ${JSON.stringify(block.entries)}`);
   assert(block.entries[0].repeat === 2, `a retried entry must still collapse into one with a repeat count: ${JSON.stringify(block.entries[0])}`);
   assert(result.console === block && block.hasErrors === true, 'the block is attached to the result');
   assert(
