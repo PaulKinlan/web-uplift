@@ -84,7 +84,7 @@ function assert(condition, message) {
 }
 
 function runInstall(target) {
-  return spawnSync(process.execPath, [join(repoRoot, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', target], { encoding: 'utf8' });
+  return spawnSync(process.execPath, [join(repoRoot, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', target], { encoding: 'utf8', timeout: 30000 });
 }
 
 // Resolve a package's package.json without tripping ERR_PACKAGE_PATH_NOT_EXPORTED:
@@ -425,22 +425,33 @@ export function testInstallRefusesDestinationSymlinks() {
       rmSync(targetFifo, { recursive: true, force: true });
     }
 
-    // Part 4: Pre-planted source-side FIFO in evidence/ (web-uplift-2v55, web-uplift-9sba)
-    const srcFifo = join(repoRoot, 'evidence', `test-source-fifo-${process.pid}`);
+    // Part 4: Pre-planted source-side FIFO in evidence/ (web-uplift-2v55, web-uplift-9sba, web-uplift-y7tm)
+    // Runs against an isolated tree so the real repoRoot working tree is NEVER mutated.
+    const isolatedPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-src-fifo-'));
     const targetSrcFifo = mkdtempSync(join(tmpdir(), 'web-uplift-src-fifo-target-'));
     try {
-      rmSync(srcFifo, { force: true });
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      assert(runArchive.status === 0, `git archive failed: ${runArchive.stderr}`);
+      const runTar = spawnSync('tar', ['-x', '-C', isolatedPkg], { input: runArchive.stdout });
+      assert(runTar.status === 0, `tar extract failed: ${runTar.stderr}`);
+      cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(isolatedPkg, 'bin/web-uplift.mjs'));
+      cpSync(join(repoRoot, 'install-surface.mjs'), join(isolatedPkg, 'install-surface.mjs'));
+      symlinkSync(join(repoRoot, 'node_modules'), join(isolatedPkg, 'node_modules'));
+
+      const srcFifo = join(isolatedPkg, 'evidence', 'zz-source-fifo');
       spawnSync('mkfifo', [srcFifo]);
-      const installSrcFifo = runInstall(targetSrcFifo);
+      const installSrcFifo = spawnSync(process.execPath, [
+        join(isolatedPkg, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', targetSrcFifo,
+      ], { timeout: 30000, encoding: 'utf8' });
       assert(installSrcFifo.status !== 0, `install with source FIFO must fail, got ${installSrcFifo.status}`);
-      assert(installSrcFifo.stdout.includes(`test-source-fifo-${process.pid} (fifo)`),
+      assert(installSrcFifo.stdout.includes('zz-source-fifo (fifo)'),
         `expected skip reason '(fifo)' for source FIFO: ${installSrcFifo.stdout}`);
-      assert(!installSrcFifo.stdout.includes(`test-source-fifo-${process.pid} (symlink)`),
+      assert(!installSrcFifo.stdout.includes('zz-source-fifo (symlink)'),
         `source FIFO must not be reported as '(symlink)': ${installSrcFifo.stdout}`);
-      assert(!existsSync(join(targetSrcFifo, '.web-uplift', 'evidence', `test-source-fifo-${process.pid}`)),
+      assert(!existsSync(join(targetSrcFifo, '.web-uplift', 'evidence', 'zz-source-fifo')),
         'source FIFO must not be copied into target');
     } finally {
-      rmSync(srcFifo, { force: true });
+      rmSync(isolatedPkg, { recursive: true, force: true });
       rmSync(targetSrcFifo, { recursive: true, force: true });
     }
   } finally {
@@ -643,7 +654,7 @@ export function testGenerateVendoredSurfaceRefusesDestinationSymlinks() {
       rmSync(scratchOutside, { recursive: true, force: true });
     }
 
-    // (d) Source FIFO and package.json FIFO refusal (web-uplift-2v55, web-uplift-8rnp)
+    // (d) Source FIFO and package.json FIFO refusal (web-uplift-2v55, web-uplift-8rnp, web-uplift-lsy5)
     const srcFifoTarget = mkdtempSync(join(tmpdir(), 'web-uplift-src-fifo-gen-'));
     try {
       writeVendoredSurfaceSources(srcFifoTarget);
@@ -653,8 +664,8 @@ export function testGenerateVendoredSurfaceRefusesDestinationSymlinks() {
       const pkgRun = runVendoredSurfaceGenerator(srcFifoTarget);
       assert(pkgRun.status === 0, `the generator must not crash on a planted package.json FIFO:\n${pkgRun.stderr}`);
       const pkgReport = JSON.parse(pkgRun.stdout.split('REPORT=').pop().trim());
-      assert(pkgReport.skippedSymlinks.some((s) => s.path === pkgFifo && s.kind === 'a FIFO'),
-        `expected package.json FIFO in skippedSymlinks: ${JSON.stringify(pkgReport.skippedSymlinks)}`);
+      assert(pkgReport.skippedSymlinks.some((s) => s.path === pkgFifo && s.kind === 'a FIFO' && s.side === 'source'),
+        `expected package.json FIFO in skippedSymlinks with side 'source': ${JSON.stringify(pkgReport.skippedSymlinks)}`);
       assert(pkgRun.stderr.includes('refusing to copy a FIFO: ' + pkgFifo),
         `expected 'refusing to copy a FIFO' for package.json, got: ${pkgRun.stderr}`);
     } finally {
@@ -690,7 +701,7 @@ function runVendoredSurfaceGenerator(target) {
     `console.log('REPORT=' + JSON.stringify(generateVendoredSurface({ targetRoot: ${JSON.stringify(target)} })));`,
     '',
   ].join('\n'));
-  return spawnSync(process.execPath, [driver], { encoding: 'utf8' });
+  return spawnSync(process.execPath, [driver], { encoding: 'utf8', timeout: 30000 });
 }
 
 // Fixture 6: the SYNC writer's destination guard (web-uplift-sfbp). tests/cdp-copy-sync.mjs IS
@@ -920,6 +931,49 @@ export function testInstallAsksTheSharedSymlinkGuard() {
     assert(run.stdout.includes('manifest.json (symlink)'),
       `the refusal must still be reported to the operator, and reported by the plan rather than swallowed: ${run.stdout}`);
     assert(readFileSync(victim, 'utf8') === 'VICTIM-MANIFEST\n', 'the victim must stay untouched in the probe run');
+
+    // Benign source symlink in evidence/ must be skipped and allow install to succeed (web-uplift-tfrz)
+    const testSymlinkPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-symlink-'));
+    const testSymlinkTarget = mkdtempSync(join(tmpdir(), 'web-uplift-symlink-target-'));
+    try {
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      spawnSync('tar', ['-x', '-C', testSymlinkPkg], { input: runArchive.stdout });
+      cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testSymlinkPkg, 'bin/web-uplift.mjs'));
+      cpSync(join(repoRoot, 'install-surface.mjs'), join(testSymlinkPkg, 'install-surface.mjs'));
+      symlinkSync(join(repoRoot, 'node_modules'), join(testSymlinkPkg, 'node_modules'));
+      symlinkSync('../knowledge/principles.json', join(testSymlinkPkg, 'evidence', 'zz-link.json'));
+      const runSym = spawnSync(process.execPath, [
+        join(testSymlinkPkg, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', testSymlinkTarget,
+      ], { timeout: 30000, encoding: 'utf8' });
+      assert(runSym.status === 0, `install with benign source symlink must succeed, got ${runSym.status}: ${runSym.stderr}`);
+      assert(!existsSync(join(testSymlinkTarget, '.web-uplift', 'evidence', 'zz-link.json')),
+        'source symlink must not be copied into target');
+    } finally {
+      rmSync(testSymlinkPkg, { recursive: true, force: true });
+      rmSync(testSymlinkTarget, { recursive: true, force: true });
+    }
+
+    // Dependency package.json FIFO must cleanly fail install without hanging (web-uplift-jj9z)
+    const testDepFifoPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-depfifo-'));
+    const testDepFifoTarget = mkdtempSync(join(tmpdir(), 'web-uplift-depfifo-target-'));
+    try {
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      spawnSync('tar', ['-x', '-C', testDepFifoPkg], { input: runArchive.stdout });
+      cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testDepFifoPkg, 'bin/web-uplift.mjs'));
+      cpSync(join(repoRoot, 'install-surface.mjs'), join(testDepFifoPkg, 'install-surface.mjs'));
+      mkdirSync(join(testDepFifoPkg, 'node_modules', 'chrome-remote-interface'), { recursive: true });
+      const depFifo = join(testDepFifoPkg, 'node_modules', 'chrome-remote-interface', 'package.json');
+      spawnSync('mkfifo', [depFifo]);
+      const runDepFifo = spawnSync(process.execPath, [
+        join(testDepFifoPkg, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', testDepFifoTarget,
+      ], { timeout: 10000, encoding: 'utf8' });
+      assert(runDepFifo.status !== 0, `install with dep package.json FIFO must fail, got ${runDepFifo.status}`);
+      assert(runDepFifo.stderr.includes('is not a regular file'),
+        `expected 'is not a regular file', got: ${runDepFifo.stderr}`);
+    } finally {
+      rmSync(testDepFifoPkg, { recursive: true, force: true });
+      rmSync(testDepFifoTarget, { recursive: true, force: true });
+    }
 
     const cliSource = readFileSync(join(repoRoot, 'bin/web-uplift.mjs'), 'utf8');
     // Scan the CODE, not the prose: the comment above the adapter deliberately names the walk this bead

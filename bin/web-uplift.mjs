@@ -261,7 +261,13 @@ agent session (uses your subscription).`);
   // project names those packages or their versions, they stay invisible to the
   // consumer's own dependency audit, and two installs of one tool version can
   // carry different code (web-uplift-92b).
-  const dependencyPlan = dependencyCopySteps(VENDORED_DEPENDENCIES, join(vendorRoot, 'node_modules'));
+  let dependencyPlan;
+  try {
+    dependencyPlan = dependencyCopySteps(VENDORED_DEPENDENCIES, join(vendorRoot, 'node_modules'));
+  } catch (err) {
+    console.error(`web-uplift install: ${err.message}`);
+    process.exit(1);
+  }
   plan.push(...dependencyPlan.steps);
   for (const file of VENDORED_FILES) {
     plan.push({ action: 'copy-file', from: join(PKG_ROOT, file.source), to: join(vendorRoot, file.dest), what: file.what });
@@ -616,26 +622,47 @@ function dependencyCopySteps(rootNames, destNodeModules) {
     seen.set(name, null);
 
     let pkgJsonPath;
-    try {
-      pkgJsonPath = require.resolve(`${name}/package.json`);
-    } catch {
-      try {
-        const entry = require.resolve(name);
-        let cur = dirname(entry);
-        while (cur && cur !== dirname(cur)) {
-          const candidate = join(cur, 'package.json');
-          if (existsSync(candidate)) {
-            pkgJsonPath = candidate;
-            break;
-          }
-          cur = dirname(cur);
+    let curDir = PKG_ROOT;
+    while (curDir && curDir !== dirname(curDir)) {
+      const cand = join(curDir, 'node_modules', ...name.split('/'), 'package.json');
+      const st = lstatSync(cand, { throwIfNoEntry: false });
+      if (st) {
+        if (!st.isFile() || st.isSymbolicLink()) {
+          throw new Error(`Cannot vendor dependency "${name}": ${cand} is not a regular file.`);
         }
-      } catch {}
-      if (!pkgJsonPath) {
-        throw new Error(
-          `Cannot vendor dependency "${name}" because it could not be resolved. ` +
-            'Run npm install in the web-uplift package first.',
-        );
+        pkgJsonPath = cand;
+        break;
+      }
+      curDir = dirname(curDir);
+    }
+    if (!pkgJsonPath) {
+      try {
+        pkgJsonPath = require.resolve(`${name}/package.json`);
+      } catch {
+        try {
+          const entry = require.resolve(name);
+          let cur = dirname(entry);
+          while (cur && cur !== dirname(cur)) {
+            const candidate = join(cur, 'package.json');
+            const cst = lstatSync(candidate, { throwIfNoEntry: false });
+            if (cst) {
+              if (!cst.isFile() || cst.isSymbolicLink()) {
+                throw new Error(`Cannot vendor dependency "${name}": ${candidate} is not a regular file.`);
+              }
+              pkgJsonPath = candidate;
+              break;
+            }
+            cur = dirname(cur);
+          }
+        } catch (e) {
+          if (e.message?.includes('not a regular file')) throw e;
+        }
+        if (!pkgJsonPath) {
+          throw new Error(
+            `Cannot vendor dependency "${name}" because it could not be resolved. ` +
+              'Run npm install in the web-uplift package first.',
+          );
+        }
       }
     }
     const pkgDir = dirname(pkgJsonPath);

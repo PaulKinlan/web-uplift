@@ -79,9 +79,10 @@ function copyDir(from, to, depth = 1, context = null) {
     const src = join(from, name);
     const dst = join(to, name);
     const st = lstatSync(src);
-    if (st.isSymbolicLink() || (!st.isFile() && !st.isDirectory())) {
+    if (st.isSymbolicLink()) continue;
+    if (!st.isFile() && !st.isDirectory()) {
       if (context?.skippedSymlinks) {
-        context.skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(st) });
+        context.skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(st), side: 'source' });
         console.error(`web-uplift: refusing to copy ${describeKind(st)}: ${src}`);
       }
       continue;
@@ -359,7 +360,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   const refusesSymlink = (dst) => {
     const refused = refusedDestination(dst, targetRoot);
     if (!refused) return false;
-    skippedSymlinks.push({ path: refused.path, symlinkComponent: refused.symlinkComponent, isHard: refused.isHard, kind: refused.kind });
+    skippedSymlinks.push({ path: refused.path, symlinkComponent: refused.symlinkComponent, isHard: refused.isHard, kind: refused.kind, side: 'destination' });
     const noun = refused.kind || (refused.isHard ? 'a hard link' : 'a symlink');
     const remedy = (refused.isHard || (refused.kind && refused.kind !== 'a symlink')) ? 'remove or replace the link' : 'remove or replace the symlink';
     console.error(
@@ -411,7 +412,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     if (refusesSymlink(dst)) continue;
     const srcStat = lstatSync(src, { throwIfNoEntry: false });
     if (srcStat && (!srcStat.isFile() || srcStat.isSymbolicLink())) {
-      skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(srcStat) });
+      skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(srcStat), side: 'source' });
       console.error(`web-uplift: refusing to copy ${describeKind(srcStat)}: ${src}`);
       continue;
     }
@@ -438,7 +439,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     if (refusesSymlink(dst)) continue;
     const srcStat = lstatSync(src, { throwIfNoEntry: false });
     if (srcStat && (!srcStat.isFile() || srcStat.isSymbolicLink())) {
-      skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(srcStat) });
+      skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(srcStat), side: 'source' });
       console.error(`web-uplift: refusing to copy ${describeKind(srcStat)}: ${src}`);
       continue;
     }
@@ -472,7 +473,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   const rootPkgPath = join(targetRoot, 'package.json');
   const rootPkgStat = lstatSync(rootPkgPath, { throwIfNoEntry: false });
   if (rootPkgStat && (!rootPkgStat.isFile() || rootPkgStat.isSymbolicLink())) {
-    skippedSymlinks.push({ path: rootPkgPath, symlinkComponent: rootPkgPath, isHard: false, kind: describeKind(rootPkgStat) });
+    skippedSymlinks.push({ path: rootPkgPath, symlinkComponent: rootPkgPath, isHard: false, kind: describeKind(rootPkgStat), side: 'source' });
     console.error(`web-uplift: refusing to copy ${describeKind(rootPkgStat)}: ${rootPkgPath}`);
   } else if (rootPkgStat?.isFile()) {
     try {
@@ -498,7 +499,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     const depPkgPath = join(targetRoot, 'node_modules', dep, 'package.json');
     const depStat = lstatSync(depPkgPath, { throwIfNoEntry: false });
     if (depStat && (!depStat.isFile() || depStat.isSymbolicLink())) {
-      skippedSymlinks.push({ path: depPkgPath, symlinkComponent: depPkgPath, isHard: false, kind: describeKind(depStat) });
+      skippedSymlinks.push({ path: depPkgPath, symlinkComponent: depPkgPath, isHard: false, kind: describeKind(depStat), side: 'source' });
       console.error(`web-uplift: refusing to copy ${describeKind(depStat)}: ${depPkgPath}`);
       continue;
     }
@@ -535,16 +536,27 @@ const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLT
 if (invokedDirectly) {
   const { skippedSymlinks = [] } = generateVendoredSurface();
   if (skippedSymlinks.length > 0) {
-    // A refusal that still exited 0 would let a caller treat an incomplete surface as a generated
-    // one, which is the failure mode the refusal exists to prevent.
-    const hasSymlink = skippedSymlinks.some((s) => !s.isHard && (!s.kind || s.kind === 'a symlink'));
-    const hasHard = skippedSymlinks.some((s) => s.isHard);
-    const hasOther = skippedSymlinks.some((s) => s.kind && s.kind !== 'a symlink' && !s.isHard);
-    let noun = 'a symlink';
-    if ([hasSymlink, hasHard, hasOther].filter(Boolean).length > 1) noun = 'a link';
-    else if (hasHard) noun = 'a hard link';
-    else if (hasOther) noun = skippedSymlinks.find((s) => s.kind && s.kind !== 'a symlink')?.kind || 'a link';
-    console.error(`web-uplift: ${skippedSymlinks.length} destination(s) refused because ${noun} was in the way; the vendored surface was NOT generated.`);
+    const destRefusals = skippedSymlinks.filter((s) => s.side === 'destination');
+    const srcRefusals = skippedSymlinks.filter((s) => s.side === 'source');
+
+    const describeNoun = (list) => {
+      const hasSymlink = list.some((s) => !s.isHard && (!s.kind || s.kind === 'a symlink'));
+      const hasHard = list.some((s) => s.isHard);
+      const hasOther = list.some((s) => s.kind && s.kind !== 'a symlink' && !s.isHard);
+      if ([hasSymlink, hasHard, hasOther].filter(Boolean).length > 1) return 'a link';
+      if (hasHard) return 'a hard link';
+      if (hasOther) return list.find((s) => s.kind && s.kind !== 'a symlink')?.kind || 'a link';
+      return 'a symlink';
+    };
+
+    if (destRefusals.length > 0) {
+      const noun = describeNoun(destRefusals);
+      console.error(`web-uplift: ${destRefusals.length} destination(s) refused because ${noun} was in the way; the vendored surface was NOT generated.`);
+    }
+    if (srcRefusals.length > 0) {
+      const noun = describeNoun(srcRefusals);
+      console.error(`web-uplift: ${srcRefusals.length} source node(s) refused because ${noun} was in the way; the vendored surface is incomplete.`);
+    }
     process.exitCode = 1;
   } else {
     console.log('web-uplift: vendored surface generated under .web-uplift/');

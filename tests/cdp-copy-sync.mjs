@@ -118,7 +118,11 @@ if (targetRepo === repoRoot && !existsSync(join(targetRepo, '.web-uplift'))) {
   if (skippedSymlinks.length > 0) {
     for (const entry of skippedSymlinks) {
       const noun = entry.kind || (entry.isHard ? 'a hard link' : 'a symlink');
-      console.error(`REFUSING to generate ${entry.path}: ${entry.symlinkComponent} is ${noun}, so writing the vendored surface would write through it and outside ${targetRepo}.`);
+      if (entry.side === 'source') {
+        console.error(`REFUSING to copy ${entry.path}: ${entry.symlinkComponent} is ${noun}, so copying it would touch an unsafe source.`);
+      } else {
+        console.error(`REFUSING to generate ${entry.path}: ${entry.symlinkComponent} is ${noun}, so writing the vendored surface would write through it and outside ${targetRepo}.`);
+      }
     }
     const hasSymlink = skippedSymlinks.some((r) => !r.isHard && (!r.kind || r.kind === 'a symlink'));
     const hasHard = skippedSymlinks.some((r) => r.isHard);
