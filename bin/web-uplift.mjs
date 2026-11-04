@@ -296,6 +296,7 @@ agent session (uses your subscription).`);
   console.log(`agents: ${selected.join(', ')}${dryRun ? '  (dry-run)' : ''}\n`);
   printExistingInstallNotice(vendorRoot, pkg);
   let refusedDestinations = 0;
+  let refusedSources = 0;
   for (const step of plan) {
     const relTo = relative(projectRoot, step.to) || step.to;
     if (dryRun) {
@@ -306,18 +307,31 @@ agent session (uses your subscription).`);
     console.log(`  ${step.action.padEnd(9)} ${relTo}   (${step.what})`);
     if (step.skippedFiles && step.skippedFiles.length > 0) {
       for (const skip of step.skippedFiles) {
-        if (skip.refused) refusedDestinations += 1;
+        if (skip.refused) {
+          if (skip.isSource) refusedSources += 1;
+          else refusedDestinations += 1;
+        }
         console.log(`    skipped ${skip.path} (${skip.reason})`);
       }
     }
   }
-  if (!dryRun && installIncomplete(refusedDestinations)) {
-    console.error(
-      `\nFAILED: refused to write ${refusedDestinations} destination(s) that are links and left them ` +
-        `untouched (listed above). The vendored tree and the agent wrappers are INCOMPLETE and this install ` +
-        `did NOT finish, so it does not report success. Remove or replace the link(s) and run this command ` +
-        `again.`,
-    );
+  if (!dryRun && (installIncomplete(refusedDestinations) || installIncomplete(refusedSources))) {
+    if (refusedDestinations > 0) {
+      console.error(
+        `\nFAILED: refused to write ${refusedDestinations} destination(s) that are links and left them ` +
+          `untouched (listed above). The vendored tree and the agent wrappers are INCOMPLETE and this install ` +
+          `did NOT finish, so it does not report success. Remove or replace the link(s) and run this command ` +
+          `again.`,
+      );
+    }
+    if (refusedSources > 0) {
+      console.error(
+        `\nFAILED: refused to copy ${refusedSources} source node(s) that are links or non-regular files ` +
+          `(listed above). The vendored tree and the agent wrappers are INCOMPLETE and this install ` +
+          `did NOT finish, so it does not report success. Remove or replace the source node(s) and run this ` +
+          `command again.`,
+      );
+    }
     process.exitCode = 1;
     return;
   }
@@ -550,7 +564,7 @@ function applyStep(step, projectRoot = null) {
   if (step.action === 'copy-file') {
     const res = safeCopyFileSync(step.from, step.to);
     if (res.skipped) {
-      step.skippedFiles.push({ path: res.path, reason: res.reason, refused: true });
+      step.skippedFiles.push({ path: res.path, reason: res.reason, refused: true, isSource: !!res.isSource });
     }
   } else if (step.action === 'write') {
     const res = safeWriteFileSync(step.to, step.content);
@@ -622,7 +636,7 @@ function dependencyCopySteps(rootNames, destNodeModules) {
     seen.set(name, null);
 
     let pkgJsonPath;
-    let curDir = PKG_ROOT;
+    let curDir = dirname(fileURLToPath(import.meta.url));
     while (curDir && curDir !== dirname(curDir)) {
       const cand = join(curDir, 'node_modules', ...name.split('/'), 'package.json');
       const st = lstatSync(cand, { throwIfNoEntry: false });
@@ -636,34 +650,10 @@ function dependencyCopySteps(rootNames, destNodeModules) {
       curDir = dirname(curDir);
     }
     if (!pkgJsonPath) {
-      try {
-        pkgJsonPath = require.resolve(`${name}/package.json`);
-      } catch {
-        try {
-          const entry = require.resolve(name);
-          let cur = dirname(entry);
-          while (cur && cur !== dirname(cur)) {
-            const candidate = join(cur, 'package.json');
-            const cst = lstatSync(candidate, { throwIfNoEntry: false });
-            if (cst) {
-              if (!cst.isFile() || cst.isSymbolicLink()) {
-                throw new Error(`Cannot vendor dependency "${name}": ${candidate} is not a regular file.`);
-              }
-              pkgJsonPath = candidate;
-              break;
-            }
-            cur = dirname(cur);
-          }
-        } catch (e) {
-          if (e.message?.includes('not a regular file')) throw e;
-        }
-        if (!pkgJsonPath) {
-          throw new Error(
-            `Cannot vendor dependency "${name}" because it could not be resolved. ` +
-              'Run npm install in the web-uplift package first.',
-          );
-        }
-      }
+      throw new Error(
+        `Cannot vendor dependency "${name}" because it could not be resolved. ` +
+          'Run npm install in the web-uplift package first.',
+      );
     }
     const pkgDir = dirname(pkgJsonPath);
 

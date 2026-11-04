@@ -975,6 +975,52 @@ export function testInstallAsksTheSharedSymlinkGuard() {
       rmSync(testDepFifoTarget, { recursive: true, force: true });
     }
 
+    // Dependency package.json FIFO in bin/node_modules must cleanly fail install without hanging (web-uplift-v6ul)
+    const testBinFifoPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-binfifo-'));
+    const testBinFifoTarget = mkdtempSync(join(tmpdir(), 'web-uplift-binfifo-target-'));
+    try {
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      spawnSync('tar', ['-x', '-C', testBinFifoPkg], { input: runArchive.stdout });
+      cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testBinFifoPkg, 'bin/web-uplift.mjs'));
+      cpSync(join(repoRoot, 'install-surface.mjs'), join(testBinFifoPkg, 'install-surface.mjs'));
+      mkdirSync(join(testBinFifoPkg, 'bin/node_modules/chrome-remote-interface'), { recursive: true });
+      const binFifo = join(testBinFifoPkg, 'bin/node_modules/chrome-remote-interface/package.json');
+      spawnSync('mkfifo', [binFifo]);
+      const runBinFifo = spawnSync(process.execPath, [
+        join(testBinFifoPkg, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', testBinFifoTarget,
+      ], { timeout: 10000, encoding: 'utf8' });
+      assert(runBinFifo.status !== 0, `install with bin/dep package.json FIFO must fail, got ${runBinFifo.status}`);
+      assert(runBinFifo.stderr.includes('is not a regular file'),
+        `expected 'is not a regular file', got: ${runBinFifo.stderr}`);
+    } finally {
+      rmSync(testBinFifoPkg, { recursive: true, force: true });
+      rmSync(testBinFifoTarget, { recursive: true, force: true });
+    }
+
+    // Symlinked source file in copy-file must report a source refusal, not a destination refusal (web-uplift-6ipa)
+    const testSrcSymlinkPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-srcsym-'));
+    const testSrcSymlinkTarget = mkdtempSync(join(tmpdir(), 'web-uplift-srcsym-target-'));
+    try {
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      spawnSync('tar', ['-x', '-C', testSrcSymlinkPkg], { input: runArchive.stdout });
+      cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testSrcSymlinkPkg, 'bin/web-uplift.mjs'));
+      cpSync(join(repoRoot, 'install-surface.mjs'), join(testSrcSymlinkPkg, 'install-surface.mjs'));
+      symlinkSync(join(repoRoot, 'node_modules'), join(testSrcSymlinkPkg, 'node_modules'));
+      rmSync(join(testSrcSymlinkPkg, 'knowledge/baseline.mjs'));
+      symlinkSync('principles.json', join(testSrcSymlinkPkg, 'knowledge/baseline.mjs'));
+      const runSrcSym = spawnSync(process.execPath, [
+        join(testSrcSymlinkPkg, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', testSrcSymlinkTarget,
+      ], { timeout: 10000, encoding: 'utf8' });
+      assert(runSrcSym.status !== 0, `install with symlinked package source must fail, got ${runSrcSym.status}`);
+      assert(runSrcSym.stderr.includes('refused to copy 1 source node(s)'),
+        `expected 'refused to copy 1 source node(s)', got: ${runSrcSym.stderr}`);
+      assert(!runSrcSym.stderr.includes('destination(s) that are links'),
+        `must not blame destination links: ${runSrcSym.stderr}`);
+    } finally {
+      rmSync(testSrcSymlinkPkg, { recursive: true, force: true });
+      rmSync(testSrcSymlinkTarget, { recursive: true, force: true });
+    }
+
     const cliSource = readFileSync(join(repoRoot, 'bin/web-uplift.mjs'), 'utf8');
     // Scan the CODE, not the prose: the comment above the adapter deliberately names the walk this bead
     // deleted, and a belt that a comment can trip is a belt that reports the wrong thing - the same lesson
