@@ -43,7 +43,7 @@ import {
   scanTextForSecrets,
   readSourceTree,
 } from '../evidence/cli.mjs';
-import { testLogUrlRedaction } from './log-redaction.mjs';
+import { testLogUrlRedaction, testFlowReplayLogRedaction } from './log-redaction.mjs';
 import {
   testFragmentRedactionKeepsSiblingParamsByteIdentical,
   testCompoundCredentialSpellingsAreClassified,
@@ -884,6 +884,7 @@ export const redactionTests = [
   testSourceTreeRedactsBeforeInlining,
   testDomSourceArtifactIsRedacted,
   testLogUrlRedaction,
+  testFlowReplayLogRedaction,
   testCredentialRedactorsAgree,
   testTrackedBeadsExportHasNoSecretShapes,
   testBeadsExportRedactionRuleCanFire,
@@ -892,6 +893,7 @@ export const redactionTests = [
 export {
   testSecretsCoverageClassification,
   testLogUrlRedaction,
+  testFlowReplayLogRedaction,
   testCredentialRedactorsAgree,
 };
 

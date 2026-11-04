@@ -49,7 +49,7 @@ import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
-import { loadFlow, replayFlow } from './flow.mjs';
+import { loadFlow, replayFlow, createFlowReplayLogger, redactRecordedStructure } from './flow.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
 import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, isRealDir, isRealDirUnder, UnsafeTargetRefused } from './safe-write.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
@@ -667,7 +667,7 @@ async function annotateReport(siteDir, meta) {
 async function replayFlowIntoRun(url, siteDir) {
   const flowDir = join(siteDir, 'evidence', 'flow');
   await mkdir(flowDir, { recursive: true });
-  const log = verbose ? (m) => console.error(shownText(m, url)) : () => {};
+  const log = verbose ? createFlowReplayLogger(flow, url) : () => {};
   const chrome = await launchChrome({ log });
   // The runner's own browser is attributed to the same run-level launches.jsonl
   // the agent's CLI invocations write (web-uplift-4wx).
@@ -676,7 +676,7 @@ async function replayFlowIntoRun(url, siteDir) {
     const session = await newSession(chrome, { log });
     try {
       const res = await replayFlow(session.client, flow, { startUrl: url, outDir: flowDir, log, allowMutations });
-      writeFileNoFollowSync(join(flowDir, 'flow-result.json'), JSON.stringify(res, null, 2) + '\n');
+      writeFileNoFollowSync(join(flowDir, 'flow-result.json'), JSON.stringify(redactRecordedStructure(res), null, 2) + '\n');
       return res;
     } finally {
       await session.close();

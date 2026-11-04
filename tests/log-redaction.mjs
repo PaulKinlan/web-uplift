@@ -270,12 +270,149 @@ export async function testLogUrlRedaction() {
     `log-url census: ${findings.length} output line(s) interpolate a target URL without the redacting wrapper (web-uplift-b9p/s0x). Wrap it, or add an asserted exemption with the reason:\n  ${findings.join('\n  ')}`);
 }
 
+export async function testFlowReplayLogRedaction() {
+  const { createFlowReplayLogger, redactRecordedStructure } = await import('../runner/flow.mjs');
+  const { redactUrlCredentialValues } = await import('../evidence/cli.mjs');
+
+  const targetUrl = 'https://target.test/app?api_key=TARGET_SECRET_VAL_123&sort=desc';
+  const secondUrl = 'https://auth.second.test/oauth?token=SECOND_SECRET_VAL_456&state=active';
+  const formValue = 'FORM_PASSWORD_SECRET_789';
+  const headerValue = 'HEADER_TOKEN_SECRET_XYZ';
+
+  const flow = {
+    title: 'Flow with credentials in multiple step positions (web-uplift-xeyp)',
+    steps: [
+      { type: 'navigate', url: secondUrl },
+      { type: 'change', selectors: ['input[type="password"]', '#pwd'], value: formValue },
+      { type: 'setHeaders', headers: { 'Authorization': `Bearer ${headerValue}`, 'Accept': 'application/json' } },
+      // Custom step to verify recursive structure walking rather than hardcoded path matching
+      { type: 'customExtension', payload: { apiKey: 'NESTED_CUSTOM_SECRET_999', note: 'diagnostic note' } },
+    ],
+  };
+
+  const loggedMessages = [
+    `starting flow replay for ${targetUrl}`,
+    `[browser] loaded ${secondUrl}`,
+    `[flow] step 2 change: ok - input ${formValue}`,
+    `[flow] step 3 setHeaders: ok - headers {"Authorization":"Bearer ${headerValue}","Accept":"application/json"}`,
+    `[flow] step 4 custom: ok - details {"apiKey":"NESTED_CUSTOM_SECRET_999","note":"diagnostic note"}`,
+  ];
+
+  // 1. Control / Pre-fix proof: The legacy pre-fix wrapper only redacted targetUrl,
+  // leaking credentials in the other 3 positions (second URL, form field, header) into the logs.
+  const legacyPrefixWrapper = (m, raw) => {
+    const shown = redactUrlCredentialValues(raw);
+    return typeof shown === 'string' && shown !== raw ? m.split(raw).join(shown) : m;
+  };
+  const prefixOutput = loggedMessages.map((m) => legacyPrefixWrapper(m, targetUrl)).join('\n');
+  assert(!prefixOutput.includes('TARGET_SECRET_VAL_123'), 'legacy wrapper only caught targetUrl');
+  assert(prefixOutput.includes('SECOND_SECRET_VAL_456'), 'PRE-FIX FAILURE PROOF: second URL credential leaked');
+  assert(prefixOutput.includes('FORM_PASSWORD_SECRET_789'), 'PRE-FIX FAILURE PROOF: form field credential leaked');
+  assert(prefixOutput.includes('HEADER_TOKEN_SECRET_XYZ'), 'PRE-FIX FAILURE PROOF: header credential leaked');
+  assert(prefixOutput.includes('NESTED_CUSTOM_SECRET_999'), 'PRE-FIX FAILURE PROOF: custom step credential leaked');
+
+  // 2. Post-fix flow-replay log wrapper: Redacts across the recorded structure.
+  const captured = [];
+  const log = createFlowReplayLogger(flow, targetUrl, (m) => captured.push(m));
+  for (const msg of loggedMessages) {
+    log(msg);
+  }
+  const readerLog = captured.join('\n');
+
+  // 3. Assert on what a reader of the log can SEE:
+  // None of the credentials in ANY of the four positions must survive verbatim.
+  assert(!readerLog.includes('TARGET_SECRET_VAL_123'),
+    `target URL credential must not reach the log:\n${readerLog}`);
+  assert(!readerLog.includes('SECOND_SECRET_VAL_456'),
+    `second URL credential must not reach the log:\n${readerLog}`);
+  assert(!readerLog.includes('FORM_PASSWORD_SECRET_789'),
+    `form field credential must not reach the log:\n${readerLog}`);
+  assert(!readerLog.includes('HEADER_TOKEN_SECRET_XYZ'),
+    `header credential must not reach the log:\n${readerLog}`);
+  assert(!readerLog.includes('NESTED_CUSTOM_SECRET_999'),
+    `nested custom step credential must not reach the log:\n${readerLog}`);
+
+  // 4. Invariant: do NOT blanket-scrub - the log must stay diagnostically useful.
+  assert(readerLog.includes('sort=desc'),
+    `non-credential query parameter in target URL must survive: ${readerLog}`);
+  assert(readerLog.includes('state=active'),
+    `non-credential query parameter in second URL must survive: ${readerLog}`);
+  assert(readerLog.includes('[flow] step 2 change: ok - input [redacted]'),
+    `diagnostic step execution label and type must survive: ${readerLog}`);
+  assert(readerLog.includes('Authorization":"Bearer [redacted]'),
+    `auth header scheme and name must survive: ${readerLog}`);
+  assert(readerLog.includes('Accept":"application/json'),
+    `benign headers must survive unmolested: ${readerLog}`);
+  assert(readerLog.includes('note":"diagnostic note'),
+    `benign custom properties must survive unmolested: ${readerLog}`);
+
+  // 5. Structure redaction test directly on recorded steps / flow-result:
+  const redactedFlow = redactRecordedStructure(flow);
+  const flowJson = JSON.stringify(redactedFlow);
+  assert(!flowJson.includes('SECOND_SECRET_VAL_456'), 'second URL redacted in structure');
+  assert(!flowJson.includes('FORM_PASSWORD_SECRET_789'), 'form field redacted in structure');
+  assert(!flowJson.includes('HEADER_TOKEN_SECRET_XYZ'), 'header redacted in structure');
+  assert(!flowJson.includes('NESTED_CUSTOM_SECRET_999'), 'nested custom step redacted in structure');
+  assert(flowJson.includes('state=active'), 'benign URL param preserved in structure');
+  assert(flowJson.includes('application/json'), 'benign header preserved in structure');
+  assert(flowJson.includes('diagnostic note'), 'benign note preserved in structure');
+
+  // 6. Result record redaction (flow-result.json shape, web-uplift-xqgh Case A):
+  const resultRecord = {
+    title: 'login',
+    steps: [{
+      index: 1, type: 'change', ok: true,
+      detail: 'typed "correcthorsebatterystaple"',
+      sensitive: true,
+      mutationBlocked: false, schemeRefused: false, skipped: false,
+      screenshot: 'evidence/step-01-change.png', url: 'https://t.test/login',
+    }],
+  };
+  const redactedResult = redactRecordedStructure(resultRecord);
+  assert(!JSON.stringify(redactedResult).includes('correcthorsebatterystaple'),
+    'flow-result record detail must redact typed credential (web-uplift-xqgh Case A)');
+  assert(redactedResult.steps[0].detail === 'typed "[redacted]"',
+    `detail should be typed "[redacted]", got: ${redactedResult.steps[0].detail}`);
+
+  // 7. 2FA / OTP selector fields without generic keywords (web-uplift-xqgh Case B):
+  const flow2fa = {
+    title: '2fa',
+    steps: [{ type: 'change', selectors: ['aria/One-time code', '#mfa-input'], value: '834172' }],
+  };
+  const cap2fa = [];
+  const log2fa = createFlowReplayLogger(flow2fa, 'https://t.test/login', (m) => cap2fa.push(m));
+  log2fa('[flow] step 2 change: ok - typed "834172"');
+  assert(!cap2fa[0].includes('834172'), 'OTP code in log must be redacted (web-uplift-xqgh Case B)');
+  assert(cap2fa[0].includes('typed "[redacted]"'), `OTP code log line should be typed "[redacted]", got: ${cap2fa[0]}`);
+
+  // 8. Benign selectors like #keyword-search, aria/Pinned comment, #author are NOT redacted (web-uplift-1dei):
+  const flowInnocent = {
+    title: 'innocent',
+    steps: [
+      { type: 'change', selectors: ['#keyword-search'], value: 'winter boots' },
+      { type: 'change', selectors: ['aria/Pinned comment'], value: 'good point!' },
+      { type: 'change', selectors: ['#author'], value: 'Ada Lovelace' },
+    ],
+  };
+  const capInnocent = [];
+  const logInnocent = createFlowReplayLogger(flowInnocent, 'https://t.test/', (m) => capInnocent.push(m));
+  logInnocent("[flow] step 1 change: ok - typed 'winter boots'");
+  logInnocent("[flow] step 2 change: ok - typed 'good point!'");
+  logInnocent("[flow] step 3 change: ok - typed 'Ada Lovelace'");
+  assert(capInnocent[0].includes('winter boots'), 'keyword selector value must survive (web-uplift-1dei)');
+  assert(capInnocent[1].includes('good point!'), 'pinned selector value must survive (web-uplift-1dei)');
+  assert(capInnocent[2].includes('Ada Lovelace'), 'author selector value must survive (web-uplift-1dei)');
+  const innocentJson = JSON.stringify(redactRecordedStructure(flowInnocent));
+  assert(!innocentJson.includes('[redacted]'), 'innocent structure must not be redacted');
+}
+
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
 const CASES = [
   testLogUrlRedaction,
+  testFlowReplayLogRedaction,
 ];
 
 // --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the same array the
