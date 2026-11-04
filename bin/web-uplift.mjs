@@ -102,7 +102,7 @@ switch (command) {
     break;
   case '--version':
   case '-v': {
-    const pkg = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
+    const pkg = packageInfo();
     console.log(pkg.version);
     break;
   }
@@ -261,7 +261,13 @@ agent session (uses your subscription).`);
   // project names those packages or their versions, they stay invisible to the
   // consumer's own dependency audit, and two installs of one tool version can
   // carry different code (web-uplift-92b).
-  const dependencyPlan = dependencyCopySteps(VENDORED_DEPENDENCIES, join(vendorRoot, 'node_modules'));
+  let dependencyPlan;
+  try {
+    dependencyPlan = dependencyCopySteps(VENDORED_DEPENDENCIES, join(vendorRoot, 'node_modules'));
+  } catch (err) {
+    console.error(`web-uplift install: ${err.message}`);
+    process.exit(1);
+  }
   plan.push(...dependencyPlan.steps);
   for (const file of VENDORED_FILES) {
     plan.push({ action: 'copy-file', from: join(PKG_ROOT, file.source), to: join(vendorRoot, file.dest), what: file.what });
@@ -290,6 +296,7 @@ agent session (uses your subscription).`);
   console.log(`agents: ${selected.join(', ')}${dryRun ? '  (dry-run)' : ''}\n`);
   printExistingInstallNotice(vendorRoot, pkg);
   let refusedDestinations = 0;
+  let refusedSources = 0;
   for (const step of plan) {
     const relTo = relative(projectRoot, step.to) || step.to;
     if (dryRun) {
@@ -300,18 +307,31 @@ agent session (uses your subscription).`);
     console.log(`  ${step.action.padEnd(9)} ${relTo}   (${step.what})`);
     if (step.skippedFiles && step.skippedFiles.length > 0) {
       for (const skip of step.skippedFiles) {
-        if (skip.refused) refusedDestinations += 1;
+        if (skip.refused) {
+          if (skip.isSource) refusedSources += 1;
+          else refusedDestinations += 1;
+        }
         console.log(`    skipped ${skip.path} (${skip.reason})`);
       }
     }
   }
-  if (!dryRun && installIncomplete(refusedDestinations)) {
-    console.error(
-      `\nFAILED: refused to write ${refusedDestinations} destination(s) that are links and left them ` +
-        `untouched (listed above). The vendored tree and the agent wrappers are INCOMPLETE and this install ` +
-        `did NOT finish, so it does not report success. Remove or replace the link(s) and run this command ` +
-        `again.`,
-    );
+  if (!dryRun && (installIncomplete(refusedDestinations) || installIncomplete(refusedSources))) {
+    if (refusedDestinations > 0) {
+      console.error(
+        `\nFAILED: refused to write ${refusedDestinations} destination(s) that are links and left them ` +
+          `untouched (listed above). The vendored tree and the agent wrappers are INCOMPLETE and this install ` +
+          `did NOT finish, so it does not report success. Remove or replace the link(s) and run this command ` +
+          `again.`,
+      );
+    }
+    if (refusedSources > 0) {
+      console.error(
+        `\nFAILED: refused to copy ${refusedSources} source node(s) that are links or non-regular files ` +
+          `(listed above). The vendored tree and the agent wrappers are INCOMPLETE and this install ` +
+          `did NOT finish, so it does not report success. Remove or replace the source node(s) and run this ` +
+          `command again.`,
+      );
+    }
     process.exitCode = 1;
     return;
   }
@@ -322,7 +342,16 @@ agent session (uses your subscription).`);
 }
 
 function packageInfo() {
-  return JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
+  const p = join(PKG_ROOT, 'package.json');
+  const st = lstatSync(p, { throwIfNoEntry: false });
+  if (!st || !st.isFile() || st.isSymbolicLink()) {
+    return { name: 'web-uplift', version: '0.5.0' };
+  }
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch {
+    return { name: 'web-uplift', version: '0.5.0' };
+  }
 }
 
 function installManifest({ pkg, selected, vendoredDependencies = [] }) {
@@ -389,20 +418,48 @@ function refusedLinkComponent(dst, projectRoot) {
     : resolve(projectRoot, refused.symlinkComponent);
 }
 
+function refusalReason(err, path) {
+  if (err?.kind) {
+    if (err.kind === 'a hard link') return 'hardlink';
+    if (err.kind === 'a symbolic link') return 'symlink';
+    if (err.kind === 'a FIFO') return 'fifo';
+    if (err.kind === 'a socket') return 'socket';
+    if (err.kind === 'a directory') return 'directory';
+    return err.kind.replace(/^a /, '').replace(/ /g, '-');
+  }
+  const st = lstatSync(path, { throwIfNoEntry: false });
+  if (st?.isSymbolicLink()) return 'symlink';
+  if (st?.isFile() && st.nlink > 1) return 'hardlink';
+  if (st?.isFIFO()) return 'fifo';
+  if (st?.isSocket()) return 'socket';
+  if (st?.isDirectory()) return 'directory';
+  if (err?.message?.includes('hard link')) return 'hardlink';
+  if (err?.message?.includes('FIFO')) return 'fifo';
+  if (err?.message?.includes('socket')) return 'socket';
+  return 'symlink';
+}
+
 function safeCopyFileSync(src, dst) {
   let srcStat;
   try {
-    srcStat = statSync(src);
+    srcStat = lstatSync(src);
   } catch {
-    srcStat = { mode: 0o666 };
+    srcStat = null;
+  }
+  if (!srcStat || !srcStat.isFile() || srcStat.isSymbolicLink()) {
+    let reason = 'missing';
+    if (srcStat?.isSymbolicLink()) reason = 'symlink';
+    else if (srcStat?.isFIFO()) reason = 'fifo';
+    else if (srcStat?.isSocket()) reason = 'socket';
+    else if (srcStat?.isDirectory()) reason = 'directory';
+    return { skipped: true, path: src, reason, isSource: true };
   }
   try {
     writeFileNoFollowSync(dst, readFileSync(src), { mode: srcStat.mode });
     return { skipped: false };
   } catch (err) {
     if (err instanceof UnsafeTargetRefused || err.name === 'UnsafeTargetRefused' || err.code === 'ELOOP' || err.code === 'EMLINK') {
-      const isHard = err.message?.includes('hard link');
-      return { skipped: true, path: dst, reason: isHard ? 'hardlink' : 'symlink' };
+      return { skipped: true, path: dst, reason: refusalReason(err, dst) };
     }
     throw err;
   }
@@ -414,8 +471,7 @@ function safeWriteFileSync(dst, content) {
     return { skipped: false };
   } catch (err) {
     if (err instanceof UnsafeTargetRefused || err.name === 'UnsafeTargetRefused' || err.code === 'ELOOP' || err.code === 'EMLINK') {
-      const isHard = err.message?.includes('hard link');
-      return { skipped: true, path: dst, reason: isHard ? 'hardlink' : 'symlink' };
+      return { skipped: true, path: dst, reason: refusalReason(err, dst) };
     }
     throw err;
   }
@@ -430,6 +486,10 @@ function safeAppendMarker(dst, marker, content) {
     }
     if (dstStat.isFile() && dstStat.nlink > 1) {
       return { skipped: true, path: dst, reason: 'hardlink' };
+    }
+    if (!dstStat.isFile()) {
+      const reason = dstStat.isDirectory() ? 'directory' : (dstStat.isFIFO() ? 'fifo' : (dstStat.isSocket() ? 'socket' : 'non-regular'));
+      return { skipped: true, path: dst, reason };
     }
     let readFd;
     const noFollow = constants.O_NOFOLLOW || 0;
@@ -446,8 +506,7 @@ function safeAppendMarker(dst, marker, content) {
       existing = readFileSync(readFd, 'utf8');
     } catch (err) {
       if (err instanceof UnsafeTargetRefused || err.name === 'UnsafeTargetRefused') {
-        const isHard = err.message?.includes('hard link');
-        return { skipped: true, path: dst, reason: isHard ? 'hardlink' : 'symlink' };
+        return { skipped: true, path: dst, reason: refusalReason(err, dst) };
       }
       throw err;
     } finally {
@@ -462,8 +521,7 @@ function safeAppendMarker(dst, marker, content) {
     return { skipped: false };
   } catch (err) {
     if (err instanceof UnsafeTargetRefused || err.name === 'UnsafeTargetRefused' || err.code === 'ELOOP' || err.code === 'EMLINK') {
-      const isHard = err.message?.includes('hard link');
-      return { skipped: true, path: dst, reason: isHard ? 'hardlink' : 'symlink' };
+      return { skipped: true, path: dst, reason: refusalReason(err, dst) };
     }
     throw err;
   }
@@ -479,8 +537,7 @@ function applyStep(step, projectRoot = null) {
 
   const linkComponent = refusedLinkComponent(step.to, projectRoot);
   if (linkComponent) {
-    const isHard = lstatSync(linkComponent, { throwIfNoEntry: false })?.nlink > 1;
-    const reason = isHard ? 'hardlink' : 'symlink';
+    const reason = refusalReason(null, linkComponent);
     step.skippedFiles.push({ path: linkComponent, reason, refused: true });
     if (linkComponent !== step.to) {
       step.skippedFiles.push({ path: step.to, reason, refused: true });
@@ -491,8 +548,7 @@ function applyStep(step, projectRoot = null) {
   const toDir = dirname(step.to);
   const dirLink = refusedLinkComponent(toDir, projectRoot);
   if (dirLink) {
-    const isHard = lstatSync(dirLink, { throwIfNoEntry: false })?.nlink > 1;
-    const reason = isHard ? 'hardlink' : 'symlink';
+    const reason = refusalReason(null, dirLink);
     step.skippedFiles.push({ path: dirLink, reason, refused: true });
     if (dirLink !== step.to) {
       step.skippedFiles.push({ path: step.to, reason, refused: true });
@@ -508,7 +564,7 @@ function applyStep(step, projectRoot = null) {
   if (step.action === 'copy-file') {
     const res = safeCopyFileSync(step.from, step.to);
     if (res.skipped) {
-      step.skippedFiles.push({ path: res.path, reason: res.reason, refused: true });
+      step.skippedFiles.push({ path: res.path, reason: res.reason, refused: true, isSource: !!res.isSource });
     }
   } else if (step.action === 'write') {
     const res = safeWriteFileSync(step.to, step.content);
@@ -530,8 +586,7 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = 
   }
   const toLink = refusedLinkComponent(to, projectRoot);
   if (toLink) {
-    const isHard = lstatSync(toLink, { throwIfNoEntry: false })?.nlink > 1;
-    const reason = isHard ? 'hardlink' : 'symlink';
+    const reason = refusalReason(null, toLink);
     acc.skippedFiles.push({ path: toLink, reason, refused: true });
     if (toLink !== to) {
       acc.skippedFiles.push({ path: to, reason, refused: true });
@@ -547,10 +602,13 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = 
       acc.skippedFiles.push({ path: src, reason: 'symlink' });
       continue;
     }
+    if (!st.isDirectory() && !st.isFile()) {
+      acc.skippedFiles.push({ path: src, reason: refusalReason(null, src), refused: true });
+      continue;
+    }
     const dstStat = lstatSync(dst, { throwIfNoEntry: false });
-    if (dstStat?.isSymbolicLink() || (dstStat?.isFile() && dstStat.nlink > 1)) {
-      const reason = dstStat.isSymbolicLink() ? 'symlink' : 'hardlink';
-      acc.skippedFiles.push({ path: dst, reason, refused: true });
+    if (dstStat?.isSymbolicLink() || (dstStat?.isFile() && dstStat.nlink > 1) || (dstStat && !dstStat.isFile() && !dstStat.isDirectory())) {
+      acc.skippedFiles.push({ path: dst, reason: refusalReason(null, dst), refused: true });
       continue;
     }
     if (st.isDirectory()) copyDir(src, dst, acc, depth + 1, projectRoot);
@@ -578,30 +636,31 @@ function dependencyCopySteps(rootNames, destNodeModules) {
     seen.set(name, null);
 
     let pkgJsonPath;
-    try {
-      pkgJsonPath = require.resolve(`${name}/package.json`);
-    } catch {
-      try {
-        const entry = require.resolve(name);
-        let cur = dirname(entry);
-        while (cur && cur !== dirname(cur)) {
-          const candidate = join(cur, 'package.json');
-          if (existsSync(candidate)) {
-            pkgJsonPath = candidate;
-            break;
-          }
-          cur = dirname(cur);
+    let curDir = dirname(fileURLToPath(import.meta.url));
+    while (curDir && curDir !== dirname(curDir)) {
+      const cand = join(curDir, 'node_modules', ...name.split('/'), 'package.json');
+      const st = lstatSync(cand, { throwIfNoEntry: false });
+      if (st) {
+        if (!st.isFile() || st.isSymbolicLink()) {
+          throw new Error(`Cannot vendor dependency "${name}": ${cand} is not a regular file.`);
         }
-      } catch {}
-      if (!pkgJsonPath) {
-        throw new Error(
-          `Cannot vendor dependency "${name}" because it could not be resolved. ` +
-            'Run npm install in the web-uplift package first.',
-        );
+        pkgJsonPath = cand;
+        break;
       }
+      curDir = dirname(curDir);
+    }
+    if (!pkgJsonPath) {
+      throw new Error(
+        `Cannot vendor dependency "${name}" because it could not be resolved. ` +
+          'Run npm install in the web-uplift package first.',
+      );
     }
     const pkgDir = dirname(pkgJsonPath);
 
+    const pkgStat = lstatSync(pkgJsonPath, { throwIfNoEntry: false });
+    if (!pkgStat || !pkgStat.isFile() || pkgStat.isSymbolicLink()) {
+      throw new Error(`Cannot vendor dependency "${name}": ${pkgJsonPath} is not a regular file.`);
+    }
     const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
     seen.set(name, pkg.version ?? 'unknown');
     for (const dep of Object.keys(pkg.dependencies ?? {})) visit(dep);

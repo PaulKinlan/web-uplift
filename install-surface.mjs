@@ -14,6 +14,17 @@ import { dirname, join, relative, isAbsolute, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+export function describeKind(st) {
+  if (!st) return 'missing';
+  if (st.isDirectory()) return 'a directory';
+  if (st.isFIFO()) return 'a FIFO';
+  if (st.isSocket()) return 'a socket';
+  if (st.isCharacterDevice()) return 'a character device';
+  if (st.isBlockDevice()) return 'a block device';
+  if (st.isSymbolicLink()) return 'a symbolic link';
+  return 'not a regular file';
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(__filename));
 
@@ -61,7 +72,7 @@ export const VENDORED_DEPENDENCIES = ['chrome-remote-interface', 'web-features']
 //                               generated per agent rather than copied, and the
 //                               guard has no source to compare them against.
 
-function copyDir(from, to, depth = 1) {
+function copyDir(from, to, depth = 1, context = null) {
   if (depth > 64) return;
   mkdirSync(to, { recursive: true });
   for (const name of readdirSync(from)) {
@@ -69,8 +80,15 @@ function copyDir(from, to, depth = 1) {
     const dst = join(to, name);
     const st = lstatSync(src);
     if (st.isSymbolicLink()) continue;
-    if (st.isDirectory()) copyDir(src, dst, depth + 1);
-    else copyFileSync(src, dst);
+    if (!st.isFile() && !st.isDirectory()) {
+      if (context?.skippedSymlinks) {
+        context.skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(st), side: 'source' });
+        console.error(`web-uplift: refusing to copy ${describeKind(st)}: ${src}`);
+      }
+      continue;
+    }
+    if (st.isDirectory()) copyDir(src, dst, depth + 1, context);
+    else if (st.isFile()) copyFileSync(src, dst);
   }
 }
 
@@ -342,7 +360,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
   const refusesSymlink = (dst) => {
     const refused = refusedDestination(dst, targetRoot);
     if (!refused) return false;
-    skippedSymlinks.push({ path: refused.path, symlinkComponent: refused.symlinkComponent, isHard: refused.isHard, kind: refused.kind });
+    skippedSymlinks.push({ path: refused.path, symlinkComponent: refused.symlinkComponent, isHard: refused.isHard, kind: refused.kind, side: 'destination' });
     const noun = refused.kind || (refused.isHard ? 'a hard link' : 'a symlink');
     const remedy = (refused.isHard || (refused.kind && refused.kind !== 'a symlink')) ? 'remove or replace the link' : 'remove or replace the symlink';
     console.error(
@@ -383,7 +401,7 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     const staged = join(scratchRoot, `.stage-${process.pid}-${dir.dest}`);
     rmSync(staged, { recursive: true, force: true });
     mkdirSync(staged, { recursive: true });
-    if (existsSync(src)) copyDir(src, staged);
+    if (existsSync(src)) copyDir(src, staged, 1, { skippedSymlinks });
     pruneObsoleteEntries(dst, publishStagedTree(staged, dst));
     rmSync(staged, { recursive: true, force: true });
   }
@@ -392,7 +410,13 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     const src = join(targetRoot, file.source);
     const dst = join(vendorRoot, file.dest);
     if (refusesSymlink(dst)) continue;
-    if (existsSync(src)) {
+    const srcStat = lstatSync(src, { throwIfNoEntry: false });
+    if (srcStat && (!srcStat.isFile() || srcStat.isSymbolicLink())) {
+      skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(srcStat), side: 'source' });
+      console.error(`web-uplift: refusing to copy ${describeKind(srcStat)}: ${src}`);
+      continue;
+    }
+    if (srcStat?.isFile()) {
       mkdirSync(dirname(dst), { recursive: true });
       // A single file is published by rename too: copyFileSync truncates the destination first, so a reader
       // could see a partially written module. Renamed from a sibling temp name in the same directory, which
@@ -413,7 +437,13 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
     const src = join(targetRoot, file.source);
     const dst = join(targetRoot, file.dest);
     if (refusesSymlink(dst)) continue;
-    if (existsSync(src)) {
+    const srcStat = lstatSync(src, { throwIfNoEntry: false });
+    if (srcStat && (!srcStat.isFile() || srcStat.isSymbolicLink())) {
+      skippedSymlinks.push({ path: src, symlinkComponent: src, isHard: false, kind: describeKind(srcStat), side: 'source' });
+      console.error(`web-uplift: refusing to copy ${describeKind(srcStat)}: ${src}`);
+      continue;
+    }
+    if (srcStat?.isFile()) {
       if (trackedCopyHasLocalEdits(targetRoot, file.dest).state === 'edited') {
         skippedTrackedCopies.push(file.dest);
         continue;
@@ -440,9 +470,16 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
 
   // Write .web-uplift/manifest.json
   let pkg = { name: 'web-uplift', version: '0.5.0' };
-  try {
-    pkg = JSON.parse(readFileSync(join(targetRoot, 'package.json'), 'utf8'));
-  } catch {}
+  const rootPkgPath = join(targetRoot, 'package.json');
+  const rootPkgStat = lstatSync(rootPkgPath, { throwIfNoEntry: false });
+  if (rootPkgStat && (!rootPkgStat.isFile() || rootPkgStat.isSymbolicLink())) {
+    skippedSymlinks.push({ path: rootPkgPath, symlinkComponent: rootPkgPath, isHard: false, kind: describeKind(rootPkgStat), side: 'source' });
+    console.error(`web-uplift: refusing to copy ${describeKind(rootPkgStat)}: ${rootPkgPath}`);
+  } else if (rootPkgStat?.isFile()) {
+    try {
+      pkg = JSON.parse(readFileSync(rootPkgPath, 'utf8'));
+    } catch {}
+  }
 
   const manifestPath = join(vendorRoot, 'manifest.json');
   const manifestRefused = refusesSymlink(manifestPath);
@@ -459,13 +496,19 @@ export function generateVendoredSurface({ targetRoot = repoRoot } = {}) {
 
   const vendoredDeps = [];
   for (const dep of ['chrome-remote-interface', 'commander', 'web-features', 'ws']) {
-    try {
-      const depPkgPath = join(targetRoot, 'node_modules', dep, 'package.json');
-      if (existsSync(depPkgPath)) {
+    const depPkgPath = join(targetRoot, 'node_modules', dep, 'package.json');
+    const depStat = lstatSync(depPkgPath, { throwIfNoEntry: false });
+    if (depStat && (!depStat.isFile() || depStat.isSymbolicLink())) {
+      skippedSymlinks.push({ path: depPkgPath, symlinkComponent: depPkgPath, isHard: false, kind: describeKind(depStat), side: 'source' });
+      console.error(`web-uplift: refusing to copy ${describeKind(depStat)}: ${depPkgPath}`);
+      continue;
+    }
+    if (depStat?.isFile()) {
+      try {
         const depPkg = JSON.parse(readFileSync(depPkgPath, 'utf8'));
         vendoredDeps.push({ name: dep, version: depPkg.version });
-      }
-    } catch {}
+      } catch {}
+    }
   }
   if (vendoredDeps.length === 0) {
     vendoredDeps.push(
@@ -493,16 +536,27 @@ const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLT
 if (invokedDirectly) {
   const { skippedSymlinks = [] } = generateVendoredSurface();
   if (skippedSymlinks.length > 0) {
-    // A refusal that still exited 0 would let a caller treat an incomplete surface as a generated
-    // one, which is the failure mode the refusal exists to prevent.
-    const hasSymlink = skippedSymlinks.some((s) => !s.isHard && (!s.kind || s.kind === 'a symlink'));
-    const hasHard = skippedSymlinks.some((s) => s.isHard);
-    const nonRegular = skippedSymlinks.find((s) => s.kind && s.kind !== 'a symlink' && s.kind !== 'a hard link');
-    let noun = 'a symlink';
-    if (hasSymlink && hasHard) noun = 'a link';
-    else if (hasHard) noun = 'a hard link';
-    else if (nonRegular) noun = nonRegular.kind;
-    console.error(`web-uplift: ${skippedSymlinks.length} destination(s) refused because ${noun} was in the way; the vendored surface was NOT generated.`);
+    const destRefusals = skippedSymlinks.filter((s) => s.side === 'destination');
+    const srcRefusals = skippedSymlinks.filter((s) => s.side === 'source');
+
+    const describeNoun = (list) => {
+      const hasSymlink = list.some((s) => !s.isHard && (!s.kind || s.kind === 'a symlink'));
+      const hasHard = list.some((s) => s.isHard);
+      const hasOther = list.some((s) => s.kind && s.kind !== 'a symlink' && !s.isHard);
+      if ([hasSymlink, hasHard, hasOther].filter(Boolean).length > 1) return 'a link';
+      if (hasHard) return 'a hard link';
+      if (hasOther) return list.find((s) => s.kind && s.kind !== 'a symlink')?.kind || 'a link';
+      return 'a symlink';
+    };
+
+    if (destRefusals.length > 0) {
+      const noun = describeNoun(destRefusals);
+      console.error(`web-uplift: ${destRefusals.length} destination(s) refused because ${noun} was in the way; the vendored surface was NOT generated.`);
+    }
+    if (srcRefusals.length > 0) {
+      const noun = describeNoun(srcRefusals);
+      console.error(`web-uplift: ${srcRefusals.length} source node(s) refused because ${noun} was in the way; the vendored surface is incomplete.`);
+    }
     process.exitCode = 1;
   } else {
     console.log('web-uplift: vendored surface generated under .web-uplift/');
