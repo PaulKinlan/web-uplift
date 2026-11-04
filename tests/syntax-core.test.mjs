@@ -12,6 +12,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  linkSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -1853,6 +1854,48 @@ export async function testScorecardScoringAndRender() {
 // outside its run directory must not read the file, and must not be emitted as a
 // relative src either. Before the fix, `join(dir, relPath)` collapsed `..` and the
 // scorecard read and inlined an arbitrary image into the published HTML.
+// web-uplift-yatx: the launch-attribution marker ('launches.jsonl') was appended with plain appendFileSync, which
+// follows a symbolic link and grows a file that has other names. A redirect there is worse than a lost write: the
+// marker is the run's FORENSIC record of which browser pid belongs to which primitive, so a planted link corrupts
+// attribution as well as writing outside the run tree. Both the launch and its failure twin are covered.
+//
+// Tested at the seam (recordLaunch/recordLaunchFailure with an explicit launchesFile), because that is the write the
+// finding names; no browser is launched and nothing here depends on CDP being reachable.
+export async function testLaunchMarkerAppendRefusesPlantedLinks() {
+  const { recordLaunch, recordLaunchFailure } = await import('../evidence/cdp.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-launch-marker-'));
+  try {
+    const victim = join(root, 'victim.jsonl');
+    writeFileSync(victim, 'UNCHANGED');
+    const chrome = { proc: { pid: 4242 }, userDataDir: join(root, 'profile') };
+
+    // 1. A SYMBOLIC LINK as the marker file.
+    const symlinkMarker = join(root, 'symlinked.jsonl');
+    symlinkSync(victim, symlinkMarker);
+    recordLaunch({ primitive: 'probe', url: 'https://example.test/', chrome, launchesFile: symlinkMarker });
+    recordLaunchFailure({ pid: 4242, profileDir: join(root, 'profile'), reason: 'boom', launchesFile: symlinkMarker });
+    assert(readFileSync(victim, 'utf8') === 'UNCHANGED', 'neither launch marker may be appended through a symlinked marker file');
+
+    // 2. A HARD LINK as the marker file, which needs no resolution at all.
+    const hardMarker = join(root, 'hardlinked.jsonl');
+    linkSync(victim, hardMarker);
+    recordLaunch({ primitive: 'probe', url: 'https://example.test/', chrome, launchesFile: hardMarker });
+    recordLaunchFailure({ pid: 4242, profileDir: join(root, 'profile'), reason: 'boom', launchesFile: hardMarker });
+    assert(readFileSync(victim, 'utf8') === 'UNCHANGED', 'neither launch marker may grow a hard-linked marker file');
+
+    // 3. Positive control: a plain marker file still records both outcomes, so the guard is not a blanket refusal.
+    const normal = join(root, 'launches.jsonl');
+    recordLaunch({ primitive: 'probe', url: 'https://example.test/', chrome, launchesFile: normal });
+    recordLaunchFailure({ pid: 4242, profileDir: join(root, 'profile'), reason: 'boom', launchesFile: normal });
+    const lines = readFileSync(normal, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert(lines.length === 2, `a plain marker file must still record both outcomes, got ${lines.length} line(s)`);
+    assert(lines[0].outcome === 'launched' && lines[0].pid === 4242, `the launch line must carry the pid, got ${JSON.stringify(lines[0])}`);
+    assert(lines[1].outcome === 'failed' && lines[1].reason === 'boom', `the failure line must carry the reason, got ${JSON.stringify(lines[1])}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export async function testScorecardArtifactContainment() {
   const { scoreReport, renderScorecard } = await import('../aggregate/scorecard.mjs');
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-artifact-'));
@@ -2539,6 +2582,7 @@ export const syntaxCoreTests = [
   testSourceTreeDepthGuard,
   testCompareReportsUnconcludedChecks,
   testScorecardScoringAndRender,
+  testLaunchMarkerAppendRefusesPlantedLinks,
   testScorecardArtifactContainment,
   testCompareArtifactContainment,
   testCensusTargetsAreTracked,

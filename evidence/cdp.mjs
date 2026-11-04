@@ -13,12 +13,13 @@
 // page. The intelligence lives in the model (following SKILL.md), not here.
 
 import { spawn } from 'node:child_process';
-import { appendFileSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from 'node:fs';
 import { homedir, networkInterfaces, tmpdir } from 'node:os';
 import { connect as netConnect } from 'node:net';
 import { join } from 'node:path';
 import CDP from 'chrome-remote-interface';
 import { redactUrlCredentialValues, redactUrlsInText } from './credential-terms.mjs';
+import { appendFileNoFollowSync } from '../runner/safe-write.mjs';
 
 // Chrome binary discovery. Env overrides come first (CHROME_PATH is honoured as
 // an alias of CHROME_BIN because other Chrome tooling uses it), then the
@@ -1487,7 +1488,12 @@ export async function launchChrome({
 export function recordLaunch({ primitive, url, chrome, shared = false, launchesFile = process.env.WEB_UPLIFT_LAUNCH_LOG } = {}) {
   if (!launchesFile || !chrome) return;
   try {
-    appendFileSync(
+    // The marker is appended with the leaf guard, not plain appendFileSync (web-uplift-yatx): a planted link on
+    // launches.jsonl would redirect this run's FORENSIC marker, so the file that later evidence uses to attribute a
+    // browser launch could be written somewhere else - worse than losing the write, because the attribution itself
+    // would be sourced from the wrong file. Still best-effort: a refusal is swallowed by the catch below, which
+    // skips the marker rather than following the link.
+    appendFileNoFollowSync(
       launchesFile,
       JSON.stringify({
         ts: new Date().toISOString(),
@@ -1518,7 +1524,9 @@ export function recordLaunch({ primitive, url, chrome, shared = false, launchesF
 export function recordLaunchFailure({ pid, profileDir, reason, launchesFile = process.env.WEB_UPLIFT_LAUNCH_LOG } = {}) {
   if (!launchesFile) return;
   try {
-    appendFileSync(
+    // Same leaf guard as recordLaunch (web-uplift-yatx): the failure twin writes the same forensic file, so a
+    // planted link there redirects half the attribution story.
+    appendFileNoFollowSync(
       launchesFile,
       JSON.stringify({
         ts: new Date().toISOString(),

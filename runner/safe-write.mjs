@@ -34,7 +34,7 @@
 // content an agent wrote earlier, and on a platform without O_NOFOLLOW it degrades to
 // lstat-then-write, which keeps the hard-link and non-regular-file checks but reopens a check-then-use
 // window for symlinks. The honest boundary for that is operator-supplied isolation.
-import { constants, closeSync, fstatSync, ftruncateSync, lstatSync, openSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, constants, closeSync, fstatSync, ftruncateSync, lstatSync, openSync, statSync, writeFileSync } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
@@ -108,6 +108,32 @@ export async function writeFileNoFollow(path, data, options) {
 }
 
 // Same guard for the synchronous write paths.
+// The APPEND twin (web-uplift-yatx): a marker or log line is appended to a file the run owns, and append is
+// exactly where the leaf guard is easiest to forget - `appendFileSync` follows a symbolic link and happily grows a
+// file that has other names. A redirected append is worse than a lost write when the file is a FORENSIC marker
+// (evidence/cdp.mjs's launches.jsonl), because the same file is what later evidence uses to attribute a launch.
+export function appendFileNoFollowSync(path, data) {
+  {
+    let st = null;
+    try { st = lstatSync(path); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+    if (st?.isSymbolicLink()) throw refusedSymlink(path, 'append');
+    if (st) assertSafeDescriptor(st, path, 'append');
+  }
+  let fd;
+  try {
+    fd = openSync(path, 'a');
+  } catch (err) {
+    if (err.code === 'ELOOP') throw refusedSymlink(path, 'append');
+    throw err;
+  }
+  try {
+    assertSafeDescriptor(fstatSync(fd), path, 'append');
+    appendFileSync(fd, data);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function writeFileNoFollowSync(path, data, options) {
   {
     let st = null;
