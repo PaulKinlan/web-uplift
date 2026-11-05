@@ -1004,22 +1004,52 @@ export function testCommittedSiblingProbesAreInert() {
     }
   };
   walk(outRoot);
-  const probes = walked.filter((p) => /[\\/]scratch[\\/]/.test(p));
+  // SCOPE BY PATTERN, NOT BY PATH (web-uplift-tdec). The population used to be 'anything under a
+  // scratch/ directory', which left a probe committed anywhere else in evidence-out unchecked - the
+  // enforcement half of xcij, holding a rule whose scope was too narrow. A probe is a COMMITTED SCRIPT in
+  // the evidence tree, wherever it sits, so the pattern is the file extension and the root, not a
+  // directory name. Directories that are never sources are still skipped above.
+  const isScript = (p) => /\.(?:m?js|cjs)$/i.test(p);
+  const probes = walked.filter(isScript);
+  // Prove the wider scope, rather than claiming it: plant a known-bad probe OUTSIDE the old path,
+  // check the sweep would have swept it, then remove it before the inertness loop runs (this case
+  // asserts the tree is inert, so it must not leave a live request behind - the file is removed in a
+  // finally even if the assert above throws).
+  const planted = join(outRoot, 'tdec-scope-probe.mjs');
+  try {
+    writeFileSync(planted, 'export const bad = () => fetch("https://example.test/", { method: "POST" });\n');
+    const plantedWalked = [];
+    const walkPlanted = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (NEVER_SOURCE.has(entry.name)) continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walkPlanted(full);
+        else if (entry.isFile()) plantedWalked.push(full);
+      }
+    };
+    walkPlanted(outRoot);
+    assert(
+      plantedWalked.filter(isScript).includes(planted),
+      'the sweep population must be discovered by pattern, so a probe committed outside scratch/ is still swept',
+    );
+  } finally {
+    rmSync(planted, { force: true });
+  }
   // The population is compared against what git actually has COMMITTED under any
   // evidence-out scratch directory, not against a count someone remembered to update:
   // a new run directory full of probes is then swept the day it is committed, which is
   // the failure mode that let 17q neutralise one sibling and miss the other.
-  const committed = run('git', ['ls-files', 'evidence-out/**/scratch/**']);
+  const committed = run('git', ['ls-files', 'evidence-out/**/*.js', 'evidence-out/**/*.mjs', 'evidence-out/**/*.cjs']);
   assert(committed.status === 0, `git ls-files failed: ${committed.stderr}`);
   const committedProbes = committed.stdout.split('\n').filter(Boolean).map((p) => join(repoRoot, p));
   // Non-vacuity: the sweep must find at least the committed probes, or passing says
   // nothing. The known defects are included by name below for the same reason.
   assert(
     committedProbes.length >= 10 && probes.length >= committedProbes.length,
-    `the sweep must cover every committed scratch probe (committed ${committedProbes.length}, walked ${probes.length} of ${walked.length} files)`,
+    `the sweep must cover every committed script in the evidence tree (committed ${committedProbes.length}, walked ${probes.length} of ${walked.length} files)`,
   );
   for (const file of committedProbes) {
-    assert(probes.includes(file), `the sweep must cover every committed scratch probe, missed: ${relative(outRoot, file)}`);
+    assert(probes.includes(file), `the sweep must cover every committed script in the evidence tree, missed: ${relative(outRoot, file)}`);
   }
   for (const known of [
     join(outRoot, 'web-uplift-cpa', 'model-led', 'contact-lead', 'scratch', 'flow-probe.js'),
