@@ -13,6 +13,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  linkSync,
   symlinkSync,
   unlinkSync,
   utimesSync,
@@ -1996,6 +1997,69 @@ export async function testScorecardArtifactContainment() {
 // bare `join(dir, p)`, and it ALSO passed absolute paths straight through, so a
 // report-supplied HAR path could be read from anywhere on disk. compare.md also
 // emitted before/after paths verbatim.
+// web-uplift-kjis: the comparison wrote compare.json and compare.md with plain writeFileSync into FIXED names in
+// an agent-writable run directory. The family rule settled this week is guard BEFORE the act, both link kinds, leaf
+// AND ancestors - and the proof is that the filesystem outside the tree did not change, not that an error was
+// thrown, because a guard that fires after the write also throws.
+export async function testCompareWriteRefusesPlantedLinks() {
+  const { writeCompareArtifacts } = await import('../aggregate/compare.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-compare-write-'));
+  try {
+    const dest = join(root, 'run-b');
+    mkdirSync(dest, { recursive: true });
+    const victim = join(root, 'victim.txt');
+    writeFileSync(victim, 'UNCHANGED');
+    const payload = { json: '{"a":1}\n', md: '# compare\n' };
+
+    // 1. A SYMBOLIC LINK at the compare.json leaf.
+    symlinkSync(victim, join(dest, 'compare.json'));
+    let refused = false;
+    try {
+      writeCompareArtifacts(dest, payload);
+    } catch {
+      refused = true;
+    }
+    assert(refused, 'a planted symlink at compare.json must be refused');
+    assert(readFileSync(victim, 'utf8') === 'UNCHANGED', 'a symlink leaf must not change the file it points at');
+
+    // 2. A HARD LINK at the compare.md leaf.
+    rmSync(join(dest, 'compare.json'), { force: true });
+    linkSync(victim, join(dest, 'compare.md'));
+    refused = false;
+    try {
+      writeCompareArtifacts(dest, payload);
+    } catch {
+      refused = true;
+    }
+    assert(refused, 'a planted hard link at compare.md must be refused');
+    assert(readFileSync(victim, 'utf8') === 'UNCHANGED', 'a hard-linked leaf must not be truncated');
+
+    // 3. A SYMBOLIC LINK as the destination directory itself: nothing may be created through it.
+    rmSync(join(dest, 'compare.md'), { force: true });
+    const outsideDir = join(root, 'outside-dir');
+    mkdirSync(outsideDir, { recursive: true });
+    symlinkSync(outsideDir, join(root, 'link-run'));
+    refused = false;
+    try {
+      writeCompareArtifacts(join(root, 'link-run'), payload);
+    } catch {
+      refused = true;
+    }
+    assert(refused, 'a symlinked destination directory must be refused');
+    assert(
+      readdirSync(outsideDir).length === 0,
+      `no file may be created outside the tree, found ${JSON.stringify(readdirSync(outsideDir))}`,
+    );
+
+    // 4. Positive control: an honest run directory still gets both artefacts.
+    writeCompareArtifacts(dest, payload);
+    assert(readFileSync(join(dest, 'compare.json'), 'utf8') === payload.json, 'compare.json must still be written for an honest directory');
+    assert(readFileSync(join(dest, 'compare.md'), 'utf8') === payload.md, 'compare.md must still be written for an honest directory');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export async function testCompareArtifactContainment() {
   const { compareReports, renderCompareMd } = await import('../aggregate/compare.mjs');
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-compare-'));
@@ -2542,6 +2606,7 @@ export const syntaxCoreTests = [
   testCompareReportsUnconcludedChecks,
   testScorecardScoringAndRender,
   testScorecardArtifactContainment,
+  testCompareWriteRefusesPlantedLinks,
   testCompareArtifactContainment,
   testCensusTargetsAreTracked,
   testSuiteListsMatchRegressionRegistry,

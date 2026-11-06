@@ -19,12 +19,27 @@
  * paths); it makes no judgements of its own. The model produced the reports;
  * compare just diffs them.
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { assertRealParentUnder, isRealDir, writeFileNoFollowSync } from '../runner/safe-write.mjs';
 import { join, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostSlug, pickRuns } from '../runner/run-history.mjs';
 import { countOutstanding, completionState } from '../runner/remaining-work.mjs';
 import { containedReadPath, isSafeArtifactPath } from './artifact-path.mjs';
+
+// The write seam for the comparison artefacts, exported so the guard is testable on its own (web-uplift-kjis).
+// Both leaves are guarded, and so is the directory they land in: a symlink at any of the three would redirect the
+// comparison, which is the shape this family keeps producing.
+export function writeCompareArtifacts(dest, { json, md }) {
+  if (!isRealDir(dest)) {
+    throw new Error(`refusing to write the comparison into ${dest}: it is a symbolic link or not a directory, so the artefacts would land wherever it points`);
+  }
+  for (const [name, data] of [['compare.json', json], ['compare.md', md]]) {
+    const target = join(dest, name);
+    assertRealParentUnder(dest, target, 'write', { what: 'the run directory the comparison describes', includeBase: true });
+    writeFileNoFollowSync(target, data);
+  }
+}
 
 export function compareReports(reportA, reportB, { dirA, dirB } = {}) {
   const principleChanges = diffPrinciples(reportA, reportB);
@@ -429,15 +444,14 @@ async function main() {
     runB: b.runId,
     ...cmp,
   };
-  writeFileSync(join(dest, 'compare.json'), JSON.stringify(json, null, 2) + '\n');
-  const md = renderCompareMd(cmp, {
-    hostName: host,
-    runAId: a.runId,
-    runBId: b.runId,
-    dirA: a.dir,
-    dirB: dest,
+  // Guarded BEFORE the act and for both leaves (web-uplift-kjis): compare.json and compare.md are FIXED names in
+  // an agent-writable run directory, so a planted link at either leaf - or at the directory itself - would both
+  // lose the comparison and plant it wherever the link points. Order matters on its own: the family rule is guard
+  // before the act, so nothing here is created or truncated before the chain has been checked.
+  writeCompareArtifacts(dest, {
+    json: JSON.stringify(json, null, 2) + '\n',
+    md: renderCompareMd(cmp, { hostName: host, runAId: a.runId, runBId: b.runId, dirA: a.dir, dirB: dest }),
   });
-  writeFileSync(join(dest, 'compare.md'), md);
-  console.log(md);
+  console.log(renderCompareMd(cmp, { hostName: host, runAId: a.runId, runBId: b.runId, dirA: a.dir, dirB: dest }));
   console.log(`-> wrote ${join(dest, 'compare.md')} and compare.json`);
 }
