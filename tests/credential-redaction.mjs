@@ -1409,6 +1409,39 @@ export async function testFragmentRedactionKeepsSiblingParamsByteIdentical() {
     assert(cli.redactUrlCredentialValues(anchor) === anchor, `an ordinary anchor must survive untouched: ${anchor}`);
   }
 
+  // Innocent anchor deep links must NOT be over-redacted (web-uplift-j3co):
+  for (const deepLink of [
+    'https://x.test/a#/commit/abc123def456',
+    'https://x.test/a#/build/3f2a9c8e1b7d4f60',
+    'https://x.test/a#/tree/1234567890abcdef',
+  ]) {
+    assert(cli.redactUrlCredentialValues(deepLink) === deepLink,
+      `innocent anchor deep link must survive untouched (web-uplift-j3co): ${deepLink}`);
+  }
+
+  // Hash-route token segment followed by query (web-uplift-tuiw):
+  const GHP_SECRET = 'ghp_' + 'C'.repeat(20) + '7777';
+  for (const hrToken of [
+    { in: `https://a.test/#/invite/${GHP_SECRET}?ref=email`, exp: 'https://a.test/#/invite/%5Bredacted%5D?ref=email' },
+    { in: `https://a.test/#/r/${GHP_SECRET}?ref=email`, exp: 'https://a.test/#/r/%5Bredacted%5D?ref=email' },
+  ]) {
+    const out = cli.redactUrlCredentialValues(hrToken.in);
+    assert(out === hrToken.exp, `token segment before query must be redacted (web-uplift-tuiw): got ${out}, expected ${hrToken.exp}`);
+  }
+
+  // Encoded or ';'-separated hash-route fragment params (web-uplift-gnt3):
+  const gnt3Cases = [
+    { in: 'https://app.test/#/cb%3Fcode=AUTHCODE_SECRET_123456', exp: 'https://app.test/#/cb%3Fcode=%5Bredacted%5D' },
+    { in: 'https://app.test/#%2Fcb%3Fcode=AUTHCODE_SECRET_123456', exp: 'https://app.test/#%2Fcb%3Fcode=%5Bredacted%5D' },
+    { in: 'https://app.test/#/cb;code=AUTHCODE_SECRET_123456', exp: 'https://app.test/#/cb;code=%5Bredacted%5D' },
+    { in: 'https://app.test/#/cb%3Fcode%3DSECRETCODE_123456', exp: 'https://app.test/#/cb%3Fcode%3D%5Bredacted%5D' },
+    { in: 'https://app.test/#/cb?code=SECRET;state=1', exp: 'https://app.test/#/cb?code=%5Bredacted%5D;state=1' },
+  ];
+  for (const c of gnt3Cases) {
+    const out = cli.redactUrlCredentialValues(c.in);
+    assert(out === c.exp, `encoded or semicolon-delimited fragment param must be redacted (web-uplift-gnt3): got ${out}, expected ${c.exp}`);
+  }
+
   // SPA hash routes with query strings ('#/callback?code=...', '#/x?key=...'; web-uplift-pyvv)
   const hashRoutes = [
     { in: 'https://app.test/#/callback?code=AUTHCODE_SECRET_123456&state=xyz', secret: 'AUTHCODE_SECRET_123456', sibling: 'state=xyz', prefix: '#/callback?' },
