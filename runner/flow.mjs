@@ -30,6 +30,180 @@ import { assertRealParentUnder, isRealDir, writeFileNoFollowSync } from './safe-
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchChrome, newSession, navigate, evaluate, sleep, recordLaunch } from '../evidence/cdp.mjs';
+import {
+  isCredentialName,
+  isSensitiveName,
+  looksLikeToken,
+  redactTokenShapesInText,
+  redactUrlCredentialValues,
+  redactUrlsInText,
+} from '../evidence/credential-terms.mjs';
+
+function isSensitiveSelectorText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const words = text.toLowerCase().split(/[^a-z0-9_-]+/).filter(Boolean);
+  for (const w of words) {
+    const subwords = w.split(/[-_]+/).filter(Boolean);
+    for (const sw of subwords) {
+      if (isCredentialName(sw) || isSensitiveName(sw)) return true;
+      if (/^(?:password|passwd|passcode|passphrase|token|secret|auth|credit|card|cvv|pin|ssn|key|otp|mfa|totp|2fa)$/i.test(sw)) return true;
+    }
+  }
+  if (/\b(?:one[- ]?time[- ]?code|security[- ]?(?:code|answer)|verification[- ]?code|authenticat(?:ion|or)[- ]?code)\b/i.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function isSensitiveStep(step) {
+  if (!step || typeof step !== 'object') return false;
+  if (step.sensitive || step.redacted) return true;
+  if (step.descriptor?.sensitive || step.descriptor?.type === 'password') return true;
+  if (Array.isArray(step.selectors)) {
+    for (const sel of step.selectors) {
+      const selStr = Array.isArray(sel) ? sel.join(' ') : String(sel);
+      if (isSensitiveSelectorText(selStr)) return true;
+    }
+  }
+  if (step.type === 'change' && looksLikeToken(step.value)) return true;
+  return false;
+}
+
+function isSensitiveStepField(key, step, str) {
+  if (!key) return false;
+  if (isCredentialName(key) || isSensitiveName(key)) return true;
+  if (key === 'value') {
+    if (isSensitiveStep(step)) return true;
+    if (looksLikeToken(str)) return true;
+  }
+  return false;
+}
+
+export function redactRecordedStructure(node, parentKey = '', step = null) {
+  if (typeof node === 'string') {
+    return redactStepString(node, parentKey, step);
+  }
+  if (Array.isArray(node)) {
+    return node.map((item) => redactRecordedStructure(item, parentKey, step));
+  }
+  if (node && typeof node === 'object') {
+    const isStep = (typeof node.type === 'string' || typeof node.index === 'number') && (step === null || step === undefined);
+    const activeStep = isStep ? node : step;
+    const out = {};
+    for (const [k, v] of Object.entries(node)) {
+      out[k] = redactRecordedStructure(v, k, activeStep);
+    }
+    return out;
+  }
+  return node;
+}
+
+function redactStepString(str, key = '', step = null) {
+  if (typeof str !== 'string' || !str) return str;
+
+  // 1. Step result detail carrying typed credential
+  if (key === 'detail' && (step?.sensitive || step?.redacted || isSensitiveStep(step))) {
+    if (str.startsWith('typed ')) {
+      return 'typed "[redacted]"';
+    }
+  }
+
+  // 2. Sensitive field or credential name (headers like Authorization, sensitive form fields, etc.)
+  if (isSensitiveStepField(key, step, str)) {
+    if (/^Bearer\s+/i.test(str)) {
+      return 'Bearer [redacted]';
+    }
+    if (/^Basic\s+/i.test(str)) {
+      return 'Basic [redacted]';
+    }
+    return '[redacted]';
+  }
+
+  // 3. URLs (target URL, secondary navigation URLs, or URLs embedded in text)
+  let out = str;
+  if (out.includes('://') || /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(out)) {
+    out = redactUrlsInText(out);
+  } else if (out.startsWith('/') && out.includes('?')) {
+    out = redactUrlCredentialValues(out);
+  }
+
+  // 4. Provider token shapes embedded in strings
+  out = redactTokenShapesInText(out);
+
+  return out;
+}
+
+export function createFlowReplayLogger(flow, targetUrl, sink = console.error) {
+  const replacements = [];
+
+  // Target URL
+  if (typeof targetUrl === 'string' && targetUrl) {
+    const shown = redactUrlCredentialValues(targetUrl);
+    if (shown !== targetUrl) {
+      replacements.push([targetUrl, shown]);
+    }
+  }
+
+  // Extract secret values from the recorded structure
+  if (flow && Array.isArray(flow.steps)) {
+    for (const s of flow.steps) {
+      if (s.type === 'change' && typeof s.value === 'string' && isSensitiveStep(s)) {
+        replacements.push([s.value, '[redacted]']);
+        replacements.push([`typed "${s.value}"`, 'typed "[redacted]"']);
+        replacements.push([`typed '${s.value}'`, 'typed "[redacted]"']);
+      }
+      const collectReplacements = (val, key = '', step = null) => {
+        if (typeof val === 'string') {
+          const redacted = redactStepString(val, key, step);
+          if (redacted !== val) {
+            replacements.push([val, redacted]);
+            const bearerMatch = /^Bearer\s+(\S+)$/i.exec(val);
+            if (bearerMatch) {
+              replacements.push([bearerMatch[1], '[redacted]']);
+            }
+            const basicMatch = /^Basic\s+(\S+)$/i.exec(val);
+            if (basicMatch) {
+              replacements.push([basicMatch[1], '[redacted]']);
+            }
+          }
+        } else if (Array.isArray(val)) {
+          for (const item of val) collectReplacements(item, key, step);
+        } else if (val && typeof val === 'object') {
+          for (const [k, v] of Object.entries(val)) {
+            collectReplacements(v, k, step);
+          }
+        }
+      };
+      collectReplacements(s, '', s);
+    }
+  }
+
+  // Deduplicate and sort by raw string length descending
+  const seen = new Set();
+  const sortedReplacements = [];
+  for (const [raw, rep] of replacements) {
+    if (!raw || seen.has(raw)) continue;
+    seen.add(raw);
+    sortedReplacements.push([raw, rep]);
+  }
+  sortedReplacements.sort((a, b) => b[0].length - a[0].length);
+
+  return function log(message) {
+    if (typeof message !== 'string') {
+      sink(message);
+      return;
+    }
+    let text = message;
+    text = redactUrlsInText(text);
+    text = redactTokenShapesInText(text);
+    for (const [raw, rep] of sortedReplacements) {
+      if (text.includes(raw)) {
+        text = text.split(raw).join(rep);
+      }
+    }
+    sink(text);
+  };
+}
 
 // --- format validation + normalisation ---------------------------------------
 
@@ -573,11 +747,17 @@ export async function replayFlow(client, flow, { startUrl, outDir, log = () => {
       outcome = { ok: false, detail: e.message };
     }
     const shot = outDir ? await screenshot(client, outDir, index, label, log) : null;
+    const isSensitive = isSensitiveStep(step);
+    let detail = outcome.detail || '';
+    if (isSensitive && step.type === 'change' && detail.startsWith('typed ')) {
+      detail = 'typed "[redacted]"';
+    }
     const rec = {
       index,
       type: step.type,
       ok: outcome.ok,
-      detail: outcome.detail || '',
+      detail,
+      sensitive: isSensitive,
       mutationBlocked: !!outcome.mutationBlocked,
       schemeRefused: !!outcome.schemeRefused,
       skipped: !!outcome.skipped,
@@ -640,7 +820,7 @@ async function main() {
     const startUrl = options.url || options['start-url'];
     const outDir = options.out || `reports/flow-${Date.now()}/evidence`;
     const allowMutations = flags.has('--allow-mutations');
-    const log = (m) => console.error(m);
+    const log = createFlowReplayLogger(flow, startUrl, (m) => console.error(m));
     const chrome = await launchChrome({ log });
     // Operator-present launch, attributed like every agent-run primitive
     // (web-uplift-6x7): env-unset is a no-op.
@@ -651,11 +831,11 @@ async function main() {
         const res = await replayFlow(session.client, flow, { startUrl, outDir, log, allowMutations });
         const summaryPath = join(outDir, '..', 'flow-result.json');
         assertRealParentUnder(dirname(outDir), summaryPath, 'write', { what: 'the flow run directory' });
-        writeFileNoFollowSync(summaryPath, JSON.stringify(res, null, 2) + '\n');
+        writeFileNoFollowSync(summaryPath, JSON.stringify(redactRecordedStructure(res), null, 2) + '\n');
         const failed = res.steps.filter((s) => !s.ok).length;
         const blocked = res.steps.filter((s) => s.mutationBlocked).length;
         console.error(`[flow] replayed ${res.steps.length} step(s), ${failed} failed${blocked > 0 ? ', ' + blocked + ' mutating step(s) blocked (dry-run)' : ''}; screenshots + flow-result.json in ${join(outDir, '..')}`);
-        process.stdout.write(JSON.stringify(res, null, 2) + '\n');
+        process.stdout.write(JSON.stringify(redactRecordedStructure(res), null, 2) + '\n');
       } finally {
         await session.close();
       }
