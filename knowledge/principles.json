@@ -13,7 +13,7 @@
       "id": "modern-web-guidance",
       "type": "catalog",
       "title": "Modern Web Guidance",
-      "version": "modern-web-guidance@0.0.194",
+      "version": "modern-web-guidance@0.0.197",
       "usedFor": "Guide mappings and implementation guidance across the principle checks."
     },
     {
@@ -155,7 +155,7 @@
       "usedFor": "Optional memory-leak workflow for heap snapshots, baseline/target/final comparison, memlab analysis, and common leak-pattern diagnosis when an agent has Chrome DevTools MCP available."
     }
   ],
-  "guidanceCatalogVersion": "modern-web-guidance@0.0.194",
+  "guidanceCatalogVersion": "modern-web-guidance@0.0.197",
   "baselineCatalogVersion": "web-features@3.40.0",
   "appliesAnalysis": "docs/principles-analysis.md",
   "applicabilityModel": {
@@ -220,11 +220,12 @@
       "checks": [
         {
           "id": "view-transitions",
-          "summary": "State and route changes use View Transitions (including same-document, cross-document and scroll-driven/staggered) rather than instant, jarring swaps.",
-          "detectableVia": "HINT: a transition video of a route/state change shows whether it animates; the page source / ::view-transition usage corroborates. The model chooses.",
+          "summary": "State and route changes use View Transitions (including same-document, cross-document, element-scoped component transitions via element.startViewTransition() that keep external UI interactive and preserve DOM node identity for match-element, and scroll-driven/staggered transitions) rather than instant, jarring swaps.",
+          "detectableVia": "HINT: a transition video of a route/state change shows whether it animates; the page source / ::view-transition and element.startViewTransition() usage corroborates. The model chooses.",
           "guides": [
             "same-document-transitions",
             "cross-document-transitions",
+            "scoped-component-transitions",
             "group-element-transitions",
             "faster-spa-view-transitions",
             "view transitions smooth state route change"
@@ -244,8 +245,8 @@
         },
         {
           "id": "physical-gestures",
-          "summary": "Gesture-driven interactions and entry/exit motion feel native (declarative overscroll/scroll-snap, physics-based easing, animating to intrinsic sizes, pull/swipe gestures) rather than fighting the platform with custom pointer handlers. A swipe-to-reveal pane is a scroll-snap container rather than a JavaScript pointer interceptor.",
-          "detectableVia": "HINT: CSS inspection for scroll-snap / overscroll-behavior / physics-based easing vs custom pointermove listeners; note top-layer animations in Firefox 129+ require a runtime probe element as CSS.supports('transition-behavior', 'allow-discrete') alone is insufficient. The model chooses.",
+          "summary": "Gesture-driven interactions and entry/exit motion feel native (declarative overscroll/scroll-snap, scroll-axis-lock: none with overscroll-behavior containment and scrollLeft/scrollTop panning on 2D surfaces rather than CSS transform, physics-based easing, animating to intrinsic sizes, pull/swipe gestures) rather than fighting the platform with custom pointer handlers. A swipe-to-reveal pane is a scroll-snap container rather than a JavaScript pointer interceptor.",
+          "detectableVia": "HINT: CSS inspection for scroll-snap / overscroll-behavior / scroll-axis-lock / physics-based easing vs custom pointermove listeners; note top-layer animations in Firefox 129+ require a runtime probe element as CSS.supports('transition-behavior', 'allow-discrete') alone is insufficient. The model chooses.",
           "guides": [
             "physics-based-easing",
             "individual-transform-properties",
@@ -258,6 +259,7 @@
             "swipe-to-remove",
             "drag",
             "swipe-to-reveal",
+            "2d-panning",
             "natural gesture interaction scroll snap overscroll"
           ]
         }
@@ -293,14 +295,16 @@
         },
         {
           "id": "anchored-positioning",
-          "summary": "Tooltips, popovers and menus use CSS anchor positioning (with fallback positions) so they stay attached and reposition correctly rather than being manually positioned. Interest invokers with a hint popover drive hovercards so hover and focus behave the same.",
-          "detectableVia": "HINT: `features` finds anchor-name / position-anchor / position-try / position-try-fallbacks on the live CSSOM; a screenshot of an open overlay near a viewport edge can show drift. The model chooses.",
+          "summary": "Tooltips, popovers, action panels and menus use CSS anchor positioning (implicit anchors from popovertarget/commandfor/interestfor, logical position-area keywords without mixing physical and logical terms, and position-try-fallbacks such as flip-block/flip-inline so submenus and dropdowns never clip or cover their trigger) rather than manual coordinates. Interest invokers with a hint popover drive hovercards so hover and focus behave the same.",
+          "detectableVia": "HINT: `features` finds anchor-name / position-anchor / position-area / position-try / position-try-fallbacks on the live CSSOM; a screenshot of an open overlay near a viewport edge can show drift. The model chooses.",
           "guides": [
             "anchor-positioning-tab-underline",
             "position-aware-tooltips",
             "interest-triggered-tooltips",
             "interest-triggered-action-previews",
             "hovercard",
+            "viewport-aware-dropdowns",
+            "menu",
             "anchor positioning tooltip popover position-try"
           ]
         },
@@ -334,9 +338,10 @@
       "checks": [
         {
           "id": "no-intrusive-interruptions",
-          "summary": "No intrusive pop-ups, interstitials or banners that obscure content on load; overlays are dismissible and content-first.",
+          "summary": "No intrusive pop-ups, interstitials or banners that obscure content on load; required consent notices are non-modal bars well under 15% of the viewport, persistent fixed or sticky bars stay single-row under 12% of viewport height and hide while scrolling down via scroll-state queries (staying visible on :focus-within), and secondary content moves behind on-demand popovers or <details>.",
           "detectableVia": "HINT: a screenshot on load, or a DOM probe for full-viewport overlays present before interaction. The model chooses.",
           "guides": [
+            "content-first-noise-reduction",
             "light-dismiss-a-dialog",
             "platform-controls-dismiss-dialog",
             "avoid intrusive interstitial popup content first"
@@ -344,9 +349,12 @@
         },
         {
           "id": "semantic-dismissible-primitives",
-          "summary": "Overlays and rich controls use the right primitive: popover (with declarative light-dismiss) for transient UI, dialog for modal flows, details for disclosure, native-but-branded selects and pickers, rather than ad-hoc divs. Popover polyfills are loaded conditionally only when 'popover' in HTMLElement.prototype is absent; CommandEvent is feature-detected with manual ARIA state synchronization. An open modal contains its own scrolling rather than locking the root document.",
+          "summary": "Overlays and rich controls use the right primitive: popover (with declarative light-dismiss) for transient UI, native <dialog> opened via command='show-modal' or showModal() for modal flows (named via aria-labelledby/aria-label, deliberate closedby mode, returnValue reset on close, no redundant role='dialog'/aria-modal/manual focus trap, and <dialog popover> with a visible close button for non-modal top-layer panels), popup menus built with command='toggle-popover' and nested <div focusgroup='menu nomemory'>, <details> for disclosure, and native-but-branded selects and pickers rather than ad-hoc divs. Popover and invoker polyfills are loaded conditionally after prototype feature detection; an open modal contains scroll on dialog:modal and dialog::backdrop rather than locking html or body.",
           "detectableVia": "HINT: `features` censuses native dialog / [popover] / details against role=dialog, aria-modal and high z-index divs, and `a11ytree` plus `axe` show whether the overlay is actually exposed to assistive technology. The model chooses.",
           "guides": [
+            "dialog",
+            "menu",
+            "viewport-aware-dropdowns",
             "declarative-dialog-popover-control",
             "animated-select-picker",
             "branded-select-styling",
@@ -359,9 +367,11 @@
         },
         {
           "id": "reduced-chrome",
-          "summary": "Minimise non-content chrome and borders so the content is the focus, not the application frame; expressive/decorative visuals serve the content rather than crowd it. Canvas textures use the modern 3-argument texElementImage2D with RGBA8 format.",
+          "summary": "Minimise non-content chrome and borders so the content is the focus, not the application frame; expressive/decorative visuals and custom text decorations (native text-decoration with offset/thickness/inset, or @supports-gated border-shape, corner-shape, and background-clip: border-area) serve the content rather than crowd it. HTML-in-Canvas elements use <canvas content='drawable'> with drawable descendants (feature-detected via 'content' in HTMLCanvasElement.prototype), sizing WebGL RGBA8 textures from captureElementImage() and uploading in onpaint via texElementSubImage2D().",
           "detectableVia": "HINT: a screenshot plus layout metrics can show the proportion of the viewport given to chrome vs content. The model chooses.",
           "guides": [
+            "content-first-noise-reduction",
+            "custom-text-decorations",
             "complex-shapes",
             "shaped-cutouts",
             "overflow-clipping-control",
@@ -404,9 +414,10 @@
         },
         {
           "id": "component-level-responsiveness",
-          "summary": "Components adapt to their container with container queries (incl. anchored container queries) and content/state-based styling where reused at different sizes, not only global viewport breakpoints.",
+          "summary": "Components adapt to their container with container queries (incl. anchored container queries) and content/state-based styling where reused at different sizes, not only global viewport breakpoints; cards (<article>, or <label> with :has(:checked) for choice cards without layout-shifting border changes) size from their own inline-size container, guard side-media columns with :has() so media-less cards stay single-column, align peer rows with subgrid when needed, and stretch a single heading link hit area while elevating sibling controls.",
           "detectableVia": "HINT: the first-party `features` primitive reads the LIVE CSSOM for @container and container-type/container-name (and the conditions they run under), so do not grep `dom`'s capped css string for them; a computed-style probe of the same component in a wide vs narrow container shows whether it adapts. The model chooses.",
           "guides": [
+            "card",
             "size-aware-styling",
             "content-based-styling",
             "child-state-based-styling",
@@ -462,13 +473,14 @@
         },
         {
           "id": "clear-system-state-and-recovery",
-          "summary": "Loading, empty, success, error, offline, and partial-completion states are visible and actionable; users can retry, undo, cancel, go back, or continue without losing context.",
+          "summary": "Loading, empty, success, error, offline, and partial-completion states are visible and actionable; task progress uses native labelled <progress> (omitting value only for temporary indeterminate states, keeping ::-webkit-progress-value and ::-moz-progress-bar in separate rules, slowing rather than disabling cqi translate animations under prefers-reduced-motion, and announcing completion via polite status regions without stealing focus); users can retry, undo, cancel, go back, or continue without losing context.",
           "detectableVia": "HINT: exercise network delay/failure, invalid input, empty data and success states; screenshot the state messaging and recovery controls; inspect whether browser history and focus remain sensible. The model chooses.",
           "guides": [
             "accessible-error-announcement",
             "required-field-feedback",
             "validate-input-after-interaction",
             "persistent-toast-notifications",
+            "progress",
             "progress-ring",
             "spinner",
             "loading empty error success retry undo cancel state"
@@ -568,10 +580,11 @@
       "checks": [
         {
           "id": "names-roles-labels",
-          "summary": "Interactive elements have accessible names, correct roles, and form fields have labels; images have alt text where meaningful; CSS generated content and canvas/expressive content are exposed to assistive technology; toggle controls manage aria-pressed/aria-expanded. Native form controls are used with their label association and state (checkbox, switch, range input) rather than divs styled to look like them.",
+          "summary": "Interactive elements have accessible names, correct roles, and form fields have labels; images have alt text where meaningful; icons use CSS custom-property mask tokens (@property non-inheriting --icon-start/--icon-end with forced-color-adjust: none and content alt text) or same-origin <svg>/<use> with aria-hidden='true' on decorative icons and explicit labels on icon-only controls; CSS generated content and canvas/expressive content are exposed to assistive technology; toggle controls and invoker buttons manage aria-pressed, aria-expanded, aria-haspopup, and aria-disabled. Native form controls are used with their label association and state (checkbox, switch, range input) rather than divs styled to look like them.",
           "detectableVia": "HINT: the `a11ytree` primitive is the first-party source - the COMPUTED role and accessible name, so an aria-label overridden by aria-labelledby or a name from title is visible - with the `axe` primitive enumerating violations (vendored axe-core, works under strict CSP). Lighthouse's a11y audits corroborate; a DOM-attribute probe is the weakest form of this evidence. The model chooses.",
           "guides": [
             "accessibility",
+            "icons",
             "expose-canvas-content-to-browser-features",
             "accessible-generated-content",
             "accessible-web-components",
@@ -602,10 +615,11 @@
         },
         {
           "id": "legible-text",
-          "summary": "Text layout maintains reading comfort across viewport sizes and respects the operating system text scale preference; line lengths, text wrapping/balancing, and font scaling stay legible.",
-          "detectableVia": "HINT: a screenshot of body and heading text, plus CSS inspection for text-wrap / text alignment / font fallback handling. The model chooses.",
+          "summary": "Text layout maintains reading comfort across viewport sizes and respects the operating system text scale preference; line lengths, text wrapping/balancing, native text-decoration styling (em-scaled thickness with 1px floor, underline offset, skip-ink, and reduced-motion-safe text-decoration-inset reveals rather than fake border underlines), and font scaling stay legible.",
+          "detectableVia": "HINT: a screenshot of body and heading text, plus CSS inspection for text-wrap / text-decoration / text alignment / font fallback handling. The model chooses.",
           "guides": [
             "improve-text-layout-and-legibility",
+            "custom-text-decorations",
             "precise-text-alignment",
             "visually-stable-mixed-fonts",
             "respect-os-text-scale",
@@ -727,10 +741,11 @@
       "checks": [
         {
           "id": "secure-transport-and-headers",
-          "summary": "Served over HTTPS with a sensible Content-Security-Policy (mandatory object-src 'none', frame-ancestors 'self', require-trusted-types-for 'script'; enforced directly without report-only delay) and secure SameSite cookies (HttpOnly on auth/session cookies); no mixed content or untrusted un-sanitized HTML.",
+          "summary": "Served over HTTPS with a sensible Content-Security-Policy (mandatory object-src 'none', base-uri 'none', frame-ancestors 'none' by default or frame-ancestors 'self' when same-origin framing is needed, require-trusted-types-for 'script'; enforced directly without report-only delay), build-time Subresource Integrity (sha384/sha512/sha256) with crossorigin and referrerpolicy on immutable third-party HTML and CSS url() subresources, and secure SameSite cookies (HttpOnly on auth/session cookies); no mixed content, regex nonce-stamping on rendered HTML, or untrusted un-sanitized HTML.",
           "detectableVia": "HINT: inspect response headers / page protocol via an evaluate probe or the network layer; Lighthouse best-practices flags HTTPS and CSP issues. The model chooses.",
           "guides": [
             "security",
+            "secure-external-subresources",
             "sanitize-untrusted-html",
             "https csp secure cookies content security policy"
           ]
@@ -749,10 +764,11 @@
         },
         {
           "id": "in-context-permissions-and-modern-auth",
-          "summary": "Permission prompts are requested in context (not on load), email ownership is verified without magic links where possible, and authentication uses modern phishing-resistant methods (passkeys / WebAuthn, feature-detecting Signal API methods) where relevant rather than passwords alone.",
+          "summary": "Permission prompts are requested in context (not on load), email ownership is verified without magic links where possible, contextual sign-in interception before navigation uses Immediate UI mode (navigator.credentials.get with password: true, publicKey, and uiMode: 'immediate' gated on PublicKeyCredential.getClientCapabilities() immediateGet under transient user activation, omitting allowCredentials and signal, falling back on NotAllowedError, and never used on dedicated sign-in pages or step-up reauthentication), and authentication uses modern phishing-resistant methods (passkeys / WebAuthn, feature-detecting Signal API methods) where relevant rather than passwords alone.",
           "detectableVia": "HINT: a probe for permission requests fired on load; source inspection for passkey / WebAuthn / navigator.credentials usage in auth flows. The model chooses.",
           "guides": [
             "passkeys",
+            "quick-sign-ins",
             "passkey-registration",
             "passkey-authentication",
             "passkey-reauthentication",
@@ -764,10 +780,11 @@
         },
         {
           "id": "defensive-browser-policies",
-          "summary": "Browser-enforced defenses are configured where appropriate: HSTS, clickjacking protection (frame-ancestors 'self' mandatory in CSP), Trusted Types enforced directly without pass-through policies, origin isolation and safe origin validation, local network access restrictions, outbound connection restrictions, privacy-preserving third-party cookie posture, and sensible Referrer-Policy / Permissions-Policy.",
+          "summary": "Browser-enforced defenses are configured where appropriate: HSTS, clickjacking protection (frame-ancestors 'none' with X-Frame-Options: DENY by default, frame-ancestors 'self' with SAMEORIGIN for same-origin framing, or frame-ancestors allowlist omitting X-Frame-Options for cross-origin framing), Trusted Types enforced directly without pass-through policies, origin isolation and safe origin validation via Origin.from()/isSameOrigin() or URL parsing rejecting 'null', local network access restrictions, outbound connection restrictions, Subresource Integrity and CSS url() request modifiers (cross-origin(), referrer-policy(), integrity() with separate cascading @font-face src declarations), privacy-preserving third-party cookie posture, and sensible Referrer-Policy / Permissions-Policy.",
           "detectableVia": "HINT: inspect response headers and browser security state; Lighthouse/DevTools security audits can corroborate HSTS, clickjacking, Trusted Types, origin isolation and third-party cookie findings. The model chooses.",
           "guides": [
             "security",
+            "secure-external-subresources",
             "privacy",
             "local-network-access",
             "restrict-outbound-connections",
@@ -808,26 +825,26 @@
       "checks": [
         {
           "id": "progressive-enhancement",
-          "summary": "Core content and primary flows are reachable and usable without JavaScript and on older or non-Baseline browsers; modern features layer on as enhancements with fallbacks, cross-document view transitions preload transition images and avoid blocking analytics, and reactive state stabilises rather than flickering.",
+          "summary": "Core content and primary flows are reachable and usable without JavaScript and on older or non-Baseline browsers; modern features layer on as enhancements with fallbacks, and cross-document view transitions preload transition images and avoid blocking analytics.",
           "detectableVia": "HINT: load with scripting disabled or compare a no-JS fetch of the HTML against the rendered page; check for Baseline-aware fallbacks in source. The model chooses.",
           "guides": [
             "flicker-free-client-side-ab-testing",
             "consistent-cross-document-transitions",
-            "stabilize-reactive-state",
             "progressive enhancement graceful degradation no javascript baseline fallback"
           ]
         },
         {
           "id": "resilient-runtime-behaviour",
-          "summary": "The page behaves robustly at runtime: overlays and menus never get cut off, DOM state survives moves, background work and async dependencies are sequenced and conditional rather than fragile, and initial visibility state is detected correctly.",
+          "summary": "The page behaves robustly at runtime: overlays, dropdowns, and cascading menus stay within the viewport via top-layer popovers and CSS anchor positioning fallbacks without getting clipped, DOM state survives moves via moveBefore(), background work and async dependencies are conditional rather than fragile, high-precision ISO 8601 timestamps preserve nanosecond ordering via Temporal.Instant.from() and Temporal.Instant.compare() rather than Date.parse(), and initial visibility state is detected correctly.",
           "detectableVia": "HINT: exercise menus near viewport edges with a screenshot; a probe of async/visibility behaviour. The model chooses.",
           "guides": [
-            "resilient-context-menus-and-nested-dropdowns",
+            "viewport-aware-dropdowns",
+            "menu",
             "move-dom-element-without-losing-state",
             "persistent-top-layer-ui",
             "detect-initial-visibility-state",
             "conditional-async-dependencies",
-            "sequence-distributed-events",
+            "sort-high-precision-timestamps",
             "web-components",
             "custom-elements",
             "shadow-dom",
@@ -882,24 +899,23 @@
         },
         {
           "id": "locale-aware-data",
-          "summary": "Dates, numbers, currencies, durations and calendar systems are formatted locale-aware (Intl), location-agnostic where stored, and recurring intervals and event differentials are modelled correctly.",
+          "summary": "Dates, numbers, currencies, durations and calendar systems are formatted locale-aware (Intl and Temporal Duration.toLocaleString() / Intl.DurationFormat), location-agnostic values are stored with Temporal PlainDate, PlainTime, PlainYearMonth, and PlainMonthDay rather than legacy Date, and recurring calendar intervals (.add with explicit overflow) and event differentials (.until / .since) are modelled accurately.",
           "detectableVia": "HINT: source inspection for Intl.* usage vs hand-rolled formatting; a probe of rendered dates/numbers under a different locale. The model chooses.",
           "guides": [
             "support-global-calendar-systems",
             "capture-location-agnostic-data",
-            "format-human-readable-durations",
-            "manage-recurring-intervals",
             "calculate-event-differentials",
             "locale aware dates numbers currency intl calendar"
           ]
         },
         {
           "id": "time-zone-correctness",
-          "summary": "Time handling survives time zones and DST: events coordinate across zones, partial time concepts are modelled, and stored times are unambiguous.",
+          "summary": "Time handling survives time zones, DST transitions, and sub-millisecond precision: events coordinate across zones with Temporal.ZonedDateTime, partial calendar concepts use Temporal.PlainMonthDay and Temporal.PlainYearMonth, and exact points in time use Temporal.Instant without millisecond truncation.",
           "detectableVia": "HINT: source inspection for time-zone-aware date handling vs naive local Date math. The model chooses.",
           "guides": [
             "coordinate-global-events",
-            "model-partial-time-concepts",
+            "capture-location-agnostic-data",
+            "sort-high-precision-timestamps",
             "time zone dst event coordination partial time"
           ]
         }
@@ -1032,7 +1048,7 @@
       "checks": [
         {
           "id": "structured-agent-capabilities",
-          "summary": "Where it makes sense, the site exposes structured, safe capabilities to agents via WebMCP tools, agentic forms, and agentic JavaScript tools rather than leaving agents to scrape and guess. Tool registration is async (await registerTool), executes with AbortSignal, and returns structured errors rather than throwing.",
+          "summary": "Where it makes sense, the site exposes structured, safe capabilities to agents via WebMCP tools, agentic forms, and agentic JavaScript tools (using official framework hooks such as useWebMCP or Angular experimental WebMCP providers in component apps) rather than leaving agents to scrape and guess. Tool registration is async (await registerTool), keeps constraints in inputSchema rather than duplicating them in description prose, executes with AbortSignal, and returns structured errors rather than throwing.",
           "detectableVia": "HINT: source inspection for WebMCP / agentic-tool registration and agent-readable affordances. The model chooses.",
           "guides": [
             "webmcp",
@@ -1109,7 +1125,6 @@
           "summary": "No growing population of detached DOM nodes, and no ever-accumulating event listeners or timers that are added but never removed across a session.",
           "detectableVia": "HINT: the `heap` summary by constructor (Detached* nodes) compared across a before/after pair shows a growing detached-DOM population; an `evaluate` probe can sample listener/timer counts (e.g. getEventListeners-style counting, or instrumenting addEventListener/setInterval) before and after the repeated interaction to spot growth. Chrome DevTools MCP heap snapshots plus the memory-leak-debugging skill's common-leak guidance can corroborate detached DOM, listeners, closures, globals, and unbounded caches. Caveat from the memory-tracer and Chrome DevTools MCP guidance: detached nodes can be intentional caches, so judge confidence rather than asserting a bug. The model chooses.",
           "guides": [
-            "manage-recurring-intervals",
             "detached DOM nodes event listener leak uncleared timers observers caches"
           ],
           "references": [

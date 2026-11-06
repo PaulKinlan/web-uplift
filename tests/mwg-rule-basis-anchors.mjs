@@ -22,6 +22,7 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 // appliedRulesVersion -> sha256 of the [[rule id, anchors], ...] pairs as verified.
 const PINNED_ANCHOR_SETS = {
   '0.0.194': '25121802a4e9dc188891f7e4d85cf887b45e786c4b4f0d59748c8ef4f392baca',
+  '0.0.197': '500e0c48335fc0e9a4fbdc040d8f4bc2d49e508d4ac6954204ef0370995b4b83',
 };
 
 export function testRuleBasisAnchorsArePinnedPerAppliedVersion() {

@@ -174,7 +174,7 @@ export async function testMwgCatalogRegenerateAgreement() {
 }
 
 
-// Validates that every guide in the current Modern Web Guidance catalog (0.0.194)
+// Validates that every guide in the current Modern Web Guidance catalog (0.0.197)
 // is covered by principles.json, dead/renamed ids are rejected, and changed-guidance
 // deltas (CSP object-src none, custom-button-actions, top-layer probe, etc.) are
 // actively asserted so regressions would fail.
@@ -189,15 +189,15 @@ export function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
     `principles.json guidanceCatalogVersion (${principles.guidanceCatalogVersion}) must match mwg-catalog.json version (modern-web-guidance@${catalog.version})`,
   );
 
-  // Assert the canonical catalog has the full guide set (187 as of the 0.0.194 reanalysis, web-uplift-lcth),
+  // Assert the canonical catalog has the full guide set (194 as of the 0.0.197 reanalysis),
   // includes prompt-api, and has a sorted guideIds list
   assert(
-    catalog.guideCount === 187,
-    `mwg-catalog.json guideCount must be 187, got ${catalog.guideCount}`,
+    catalog.guideCount === 194,
+    `mwg-catalog.json guideCount must be 194, got ${catalog.guideCount}`,
   );
   assert(
-    catalog.guides.length === 187,
-    `mwg-catalog.json guides array must contain 187 entries, got ${catalog.guides.length}`,
+    catalog.guides.length === 194,
+    `mwg-catalog.json guides array must contain 194 entries, got ${catalog.guides.length}`,
   );
   assert(
     catalogIds.has('prompt-api'),
@@ -209,8 +209,8 @@ export function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
     `prompt-api category must be built-in-ai, got ${promptApi?.category}`,
   );
   assert(
-    Array.isArray(catalog.guideIds) && catalog.guideIds.length === 187,
-    'mwg-catalog.json must declare a sorted guideIds array of 187 items',
+    Array.isArray(catalog.guideIds) && catalog.guideIds.length === 194,
+    'mwg-catalog.json must declare a sorted guideIds array of 194 items',
   );
   assert(
     catalog.guideIds.includes('prompt-api'),
@@ -253,7 +253,16 @@ export function testPrinciplesMwgCatalogSyncAndChangedGuidance() {
 
   // 1. Every catalog guide is covered by exact ID in principles.json, and no unknown guide IDs exist
   const coveredGuides = new Set();
-  const deadIds = ['prevent-text-wrapping', 'declarative-button-actions'];
+  const deadIds = [
+    'prevent-text-wrapping',
+    'declarative-button-actions',
+    'format-human-readable-durations',
+    'manage-recurring-intervals',
+    'model-partial-time-concepts',
+    'resilient-context-menus-and-nested-dropdowns',
+    'sequence-distributed-events',
+    'stabilize-reactive-state',
+  ];
   for (const p of principles.principles) {
     for (const c of p.checks) {
       for (const g of c.guides || []) {

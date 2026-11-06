@@ -40,7 +40,7 @@
 //   MWG_DRIFT_STATE: Path to state JSON (default: knowledge/mwg-state.json).
 //   MWG_DRIFT_CATALOG: Path to catalog JSON (default: knowledge/mwg-catalog.json).
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -214,7 +214,15 @@ function readRuleSources() {
   };
 }
 
-const isDirectRun = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+function canonicalPath(p) {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+const isDirectRun = Boolean(process.argv[1]) && canonicalPath(process.argv[1]) === canonicalPath(fileURLToPath(import.meta.url));
 
 if (isDirectRun) {
   const args = process.argv.slice(2);

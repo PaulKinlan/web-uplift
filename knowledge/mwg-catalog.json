@@ -1,10 +1,11 @@
 {
   "source": "modern-web-guidance",
-  "version": "0.0.194",
-  "retrievedAt": "2026-10-14T02:21:05.048Z",
+  "version": "0.0.197",
+  "retrievedAt": "2026-11-06T20:15:11.201Z",
   "regenerate": "Regenerate with the committed generator: `node tests/mwg-catalog.mjs --package-dir <unpacked modern-web-guidance package> --version <x.y.z> --out knowledge/mwg-catalog.json` (see \"How to Regenerate\" in knowledge/mwg-catalog.md). It unions the USE_CASES table from the package's skills/modern-web-guidance/modern-web.mjs with the package guides/*/*.md file enumeration to ensure guides omitted from USE_CASES like prompt-api are included; the CLI `list` command does not emit featuresUsed/tokenCount.",
-  "guideCount": 187,
+  "guideCount": 194,
   "guideIds": [
+    "2d-panning",
     "accessibility",
     "accessible-error-announcement",
     "accessible-generated-content",
@@ -33,6 +34,7 @@
     "calculate-total-foreground-time",
     "calculate-with-intrinsic-sizes",
     "capture-location-agnostic-data",
+    "card",
     "carousel-slide-effects",
     "carousel-snap-highlights",
     "checkbox",
@@ -44,6 +46,7 @@
     "conditional-async-dependencies",
     "consistent-cross-document-transitions",
     "content-based-styling",
+    "content-first-noise-reduction",
     "contrast-color",
     "coordinate-global-events",
     "cpp-on-the-web",
@@ -53,6 +56,7 @@
     "custom-button-actions",
     "custom-elements",
     "custom-select-picker-layouts",
+    "custom-text-decorations",
     "customize-scrollbar-color-and-thickness",
     "dark-mode",
     "dark-mode-toggle",
@@ -63,6 +67,7 @@
     "deprioritize-background-fetches",
     "design-token-reactivity",
     "detect-initial-visibility-state",
+    "dialog",
     "digital-signatures",
     "directional-navigation-transitions",
     "drag",
@@ -77,13 +82,13 @@
     "fluid-scaling",
     "form-associated-custom-elements",
     "form-fields-automatically-fit-contents",
-    "format-human-readable-durations",
     "forms",
     "full-session-analytics",
     "group-element-transitions",
     "highlight-text-ranges",
     "hovercard",
     "html",
+    "icons",
     "identify-heavy-scripts",
     "identify-inp-causes",
     "ime-safe-enter-submit",
@@ -101,9 +106,8 @@
     "lazy-load-video-and-audio",
     "light-dismiss-a-dialog",
     "local-network-access",
-    "manage-recurring-intervals",
+    "menu",
     "migrate-web-app-origin",
-    "model-partial-time-concepts",
     "motion",
     "move-dom-element-without-losing-state",
     "navigation-drawer",
@@ -130,12 +134,13 @@
     "prerendering-custom-elements",
     "prevent-page-scroll-under-modal-dialog",
     "privacy",
+    "progress",
     "progress-ring",
     "prompt-api",
     "pull-to-reveal",
+    "quick-sign-ins",
     "reduce-style-repetition",
     "required-field-feedback",
-    "resilient-context-menus-and-nested-dropdowns",
     "resolution-optimized-pseudo-elements",
     "respect-os-text-scale",
     "responsive-design",
@@ -145,6 +150,7 @@
     "same-document-transitions",
     "sanitize-untrusted-html",
     "schedule-tasks-by-priority",
+    "scoped-component-transitions",
     "scroll-completion-effects",
     "scroll-entry-exit-effects",
     "scroll-position-aware-elements",
@@ -156,10 +162,10 @@
     "scrollspy",
     "scrollytelling",
     "search-hidden-content",
+    "secure-external-subresources",
     "security",
     "select-menu-interaction",
     "selector-atrule-combinations",
-    "sequence-distributed-events",
     "shadow-dom",
     "shaped-cutouts",
     "shrinking-header-on-scroll",
@@ -167,9 +173,9 @@
     "slider",
     "sms-otp-form",
     "soft-edge-content-fade",
+    "sort-high-precision-timestamps",
     "spatial-navigation",
     "spinner",
-    "stabilize-reactive-state",
     "stack-drill-down",
     "state-aware-sticky-headers",
     "style-parent-with-has",
@@ -186,6 +192,7 @@
     "validate-input-after-interaction",
     "validate-origins",
     "verify-email-ownership",
+    "viewport-aware-dropdowns",
     "visual-effects",
     "visually-stable-font-fallbacks",
     "visually-stable-mixed-fonts",
@@ -193,15 +200,15 @@
     "web-components",
     "webmcp"
   ],
-  "guideIdsSha256": "f17c59bfcd725643bbc58dcc66da50ab615bf4b2e42d72d58e8435e82b15f902",
-  "comment": "Catalog extracted from modern-web-guidance@0.0.194. The package CLI list command outputs id, category, and description; the package USE_CASES table and guides file enumeration additionally provide featuresUsed, tokenCount, and unlisted guides (such as prompt-api).",
+  "guideIdsSha256": "1c0abc856e242d42b004e1f156886c3be5c95af16f70f15476e3a2271e108bb5",
+  "comment": "Catalog extracted from modern-web-guidance@0.0.197. The package CLI list command outputs id, category, and description; the package USE_CASES table and guides file enumeration additionally provide featuresUsed, tokenCount, and unlisted guides (such as prompt-api).",
   "guides": [
     {
       "id": "accessibility",
       "category": "accessibility",
       "description": "Actionable coding guidelines for building accessible web applications, covering semantic HTML, focus management, forms, media, and testing. Use this skill when auditing or implementing accessibility features, keyboard navigation, or ARIA.",
       "featuresUsed": [],
-      "tokenCount": 7232
+      "tokenCount": 14305
     },
     {
       "id": "accessible-error-announcement",
@@ -220,7 +227,7 @@
         "Content",
         "Alt text for generated content"
       ],
-      "tokenCount": 349
+      "tokenCount": 645
     },
     {
       "id": "respect-os-text-scale",
@@ -247,7 +254,7 @@
       "featuresUsed": [
         "LanguageModel"
       ],
-      "tokenCount": 4319
+      "tokenCount": 4313
     },
     {
       "id": "prompt-api",
@@ -256,7 +263,7 @@
       "featuresUsed": [
         "LanguageModel"
       ],
-      "tokenCount": 4319
+      "tokenCount": 4313
     },
     {
       "id": "summarizer",
@@ -293,7 +300,7 @@
       "featuresUsed": [
         "at-rule()"
       ],
-      "tokenCount": 1574
+      "tokenCount": 1579
     },
     {
       "id": "calculate-with-intrinsic-sizes",
@@ -372,7 +379,7 @@
         "aspect-ratio",
         "Logical properties"
       ],
-      "tokenCount": 6142
+      "tokenCount": 6110
     },
     {
       "id": "design-token-reactivity",
@@ -486,16 +493,16 @@
       "featuresUsed": [
         "Customizable <select>"
       ],
-      "tokenCount": 2429
+      "tokenCount": 2436
     },
     {
       "id": "autofill-address-form",
       "category": "forms",
       "description": "Build an address form with correct autocomplete attributes and autofill support.",
       "featuresUsed": [
-        ":autofill"
+        "<input>"
       ],
-      "tokenCount": 1033
+      "tokenCount": 1236
     },
     {
       "id": "autofill-highlight-inputs",
@@ -504,7 +511,7 @@
       "featuresUsed": [
         ":autofill"
       ],
-      "tokenCount": 606
+      "tokenCount": 596
     },
     {
       "id": "autofill-payment-form",
@@ -515,7 +522,7 @@
         "Email, telephone, and URL <input> types",
         "inputmode"
       ],
-      "tokenCount": 2272
+      "tokenCount": 2539
     },
     {
       "id": "autofill-sign-in-form",
@@ -526,7 +533,7 @@
         "Email, telephone, and URL <input> types",
         "inputmode"
       ],
-      "tokenCount": 2574
+      "tokenCount": 2557
     },
     {
       "id": "autofill-sign-up-form",
@@ -537,7 +544,7 @@
         "Email, telephone, and URL <input> types",
         "inputmode"
       ],
-      "tokenCount": 2832
+      "tokenCount": 2825
     },
     {
       "id": "brand-consistent-forms",
@@ -555,7 +562,7 @@
       "featuresUsed": [
         "Customizable <select>"
       ],
-      "tokenCount": 1486
+      "tokenCount": 1493
     },
     {
       "id": "custom-select-picker-layouts",
@@ -564,7 +571,7 @@
       "featuresUsed": [
         "Customizable <select>"
       ],
-      "tokenCount": 2013
+      "tokenCount": 2020
     },
     {
       "id": "form-fields-automatically-fit-contents",
@@ -585,11 +592,11 @@
     {
       "id": "ime-safe-enter-submit",
       "category": "forms",
-      "description": "Implement keyboard text submission (like enter-to-submit in chat/textareas) safely for IME (Input Method Editor) users to prevent premature submission of incomplete text.",
+      "description": "Implement Enter-to-submit in textareas and single-line inputs (chat, search, inline rename) safely for IME (Input Method Editor) users to prevent submitting incomplete text.",
       "featuresUsed": [
         "Keyboard events"
       ],
-      "tokenCount": 1453
+      "tokenCount": 1744
     },
     {
       "id": "required-field-feedback",
@@ -607,7 +614,7 @@
       "featuresUsed": [
         "Customizable <select>"
       ],
-      "tokenCount": 1903
+      "tokenCount": 1910
     },
     {
       "id": "select-menu-interaction",
@@ -630,7 +637,7 @@
         "attr()",
         ":dir()"
       ],
-      "tokenCount": 2157
+      "tokenCount": 2181
     },
     {
       "id": "sms-otp-form",
@@ -642,7 +649,7 @@
         "AbortController and AbortSignal",
         "Permissions policy"
       ],
-      "tokenCount": 3681
+      "tokenCount": 3686
     },
     {
       "id": "switch",
@@ -743,20 +750,21 @@
     {
       "id": "calculate-event-differentials",
       "category": "js",
-      "description": "Calculate the duration and time remaining between dates and times.",
+      "description": "Calculate elapsed or remaining time between dates and times, balance duration units, and format human-readable localized durations using Temporal.Duration and Intl.DurationFormat.",
       "featuresUsed": [
-        "Temporal"
+        "Temporal",
+        "Intl.DurationFormat"
       ],
-      "tokenCount": 1317
+      "tokenCount": 2579
     },
     {
       "id": "capture-location-agnostic-data",
       "category": "js",
-      "description": "Record chronological data that should not change based on a user's location, such as birthdates, recurring alarms, or national holidays.",
+      "description": "Model location-agnostic calendar dates, wall-clock times, partial dates (recurring birthdays, credit card expirations), and recurring monthly intervals without time zone drift using Temporal Plain types.",
       "featuresUsed": [
         "Temporal"
       ],
-      "tokenCount": 1003
+      "tokenCount": 2848
     },
     {
       "id": "coordinate-global-events",
@@ -765,44 +773,16 @@
       "featuresUsed": [
         "Temporal"
       ],
-      "tokenCount": 992
+      "tokenCount": 1124
     },
     {
-      "id": "format-human-readable-durations",
+      "id": "sort-high-precision-timestamps",
       "category": "js",
-      "description": "Present elapsed time or durations to users in a readable, localized format, with the flexibility to display either detailed unit breakdowns (e.g., \"1 hour and 30 minutes\") or total unit counts (e.g., \"90 minutes\") depending on context.",
-      "featuresUsed": [
-        "Temporal",
-        "Intl.DurationFormat"
-      ],
-      "tokenCount": 1226
-    },
-    {
-      "id": "manage-recurring-intervals",
-      "category": "js",
-      "description": "Calculate recurring intervals for subscription billings or payroll cycles, automatically adjusting for edge cases such as month-end transitions (e.g., adding one month to January 31st) to ensure accurate period calculations.",
+      "description": "Parse, sort, and measure intervals between sub-millisecond or nanosecond ISO 8601 timestamps without Date truncation collisions using Temporal.Instant.",
       "featuresUsed": [
         "Temporal"
       ],
-      "tokenCount": 998
-    },
-    {
-      "id": "model-partial-time-concepts",
-      "category": "js",
-      "description": "Model date and time concepts that inherently lack a standard component (such as a specific year, day, or date) without using arbitrary placeholder values that introduce calculation errors.",
-      "featuresUsed": [
-        "Temporal"
-      ],
-      "tokenCount": 1189
-    },
-    {
-      "id": "stabilize-reactive-state",
-      "category": "js",
-      "description": "Manage task deadlines or schedules in data-driven views without unexpected side effects from shared mutable state.",
-      "featuresUsed": [
-        "Temporal"
-      ],
-      "tokenCount": 930
+      "tokenCount": 1991
     },
     {
       "id": "support-global-calendar-systems",
@@ -811,17 +791,17 @@
       "featuresUsed": [
         "Temporal"
       ],
-      "tokenCount": 1506
+      "tokenCount": 1550
     },
     {
       "id": "batch-analytics-events",
       "category": "performance",
-      "description": "Debounce and batch multiple analytics events together in a single beacon to minimize network contention and reduce server load, while still delivering real-time updates.",
+      "description": "Debounce and batch multiple analytics, telemetry, and Core Web Vitals events together in a single beacon to minimize network contention and reduce server load, while still delivering real-time updates.",
       "featuresUsed": [
         "fetchLater",
         "AbortController and AbortSignal"
       ],
-      "tokenCount": 1761
+      "tokenCount": 1774
     },
     {
       "id": "break-up-long-tasks",
@@ -848,7 +828,7 @@
       "featuresUsed": [
         "Top-level await"
       ],
-      "tokenCount": 964
+      "tokenCount": 1456
     },
     {
       "id": "defer-rendering-heavy-content",
@@ -913,7 +893,7 @@
       "featuresUsed": [
         "content-visibility"
       ],
-      "tokenCount": 860
+      "tokenCount": 917
     },
     {
       "id": "flicker-free-client-side-ab-testing",
@@ -927,12 +907,12 @@
     {
       "id": "full-session-analytics",
       "category": "performance",
-      "description": "Reliably track analytics, errors, and telemetry data across the user's entire page visit, and defer sending of the data until the user leaves the page.",
+      "description": "Reliably track analytics, Core Web Vitals, errors, and telemetry data across the user's entire page visit, and defer sending of the data until the user leaves the page.",
       "featuresUsed": [
         "fetchLater",
         "AbortController and AbortSignal"
       ],
-      "tokenCount": 1559
+      "tokenCount": 1567
     },
     {
       "id": "identify-heavy-scripts",
@@ -946,12 +926,13 @@
     {
       "id": "identify-inp-causes",
       "category": "performance",
-      "description": "Identify slow running JavaScript that is impacting INP metric",
+      "description": "Identify slow-running JavaScript and other causes of poor Interaction to Next Paint (INP) responsiveness.",
       "featuresUsed": [
         "Long animation frames performance entries",
+        "long-animation-frames-style-layout",
         "Event timing performance entries"
       ],
-      "tokenCount": 1221
+      "tokenCount": 2031
     },
     {
       "id": "improve-next-page-load-performance",
@@ -1060,15 +1041,6 @@
       "tokenCount": 631
     },
     {
-      "id": "sequence-distributed-events",
-      "category": "performance",
-      "description": "Log and sequence operations in distributed microservices or high-throughput tracing environments by recording timestamps with nanosecond resolution.",
-      "featuresUsed": [
-        "Temporal"
-      ],
-      "tokenCount": 959
-    },
-    {
       "id": "privacy",
       "category": "privacy",
       "description": "Action-oriented guidelines for web developers to implement privacy by design, data minimization, third-party audits, and secure data handling. Use this skill when designing applications, integrating third-party services, handling user data, or configuring security headers.",
@@ -1174,7 +1146,19 @@
       "featuresUsed": [
         "Web authentication"
       ],
-      "tokenCount": 1212
+      "tokenCount": 1275
+    },
+    {
+      "id": "quick-sign-ins",
+      "category": "security",
+      "description": "Authenticate returning users in place with their saved passkeys or passwords before navigating to a sign-in page or interrupting their workflow.",
+      "featuresUsed": [
+        "Web authentication",
+        "Password credentials",
+        "Credential management",
+        "Web authentication signal methods"
+      ],
+      "tokenCount": 4449
     },
     {
       "id": "restrict-outbound-connections",
@@ -1195,20 +1179,33 @@
       "tokenCount": 1631
     },
     {
+      "id": "secure-external-subresources",
+      "category": "security",
+      "description": "Verify the cryptographic integrity of external scripts, stylesheets, fonts, and images loaded from third-party origins, and control whether those requests send credentials or referrer URLs.",
+      "featuresUsed": [
+        "cross-origin() for url()",
+        "referrer-policy() for url()",
+        "integrity() for url()",
+        "Subresource integrity",
+        "Referrer policy"
+      ],
+      "tokenCount": 4960
+    },
+    {
       "id": "security",
       "category": "security",
       "description": "Preventative security guidelines for web developers (XSS, CSP, Cookies, Cross-Origin Isolation). Use this skill to guide the process of auditing, testing, and deploying security policies safely.",
       "featuresUsed": [],
-      "tokenCount": 7661
+      "tokenCount": 8178
     },
     {
       "id": "trusted-types",
       "category": "security",
-      "description": "Help prevent DOM-based XSS attacks by locking down dangerous DOM sinks so they reject raw strings and only accept policy-validated HTML.",
+      "description": "Prevent DOM-based XSS attacks by defining a Trusted Types policy to sanitize untrusted HTML, using the policy when writing to DOM sinks like innerHTML, and enforcing Trusted Types via Content Security Policy.",
       "featuresUsed": [
         "Trusted types"
       ],
-      "tokenCount": 1706
+      "tokenCount": 2088
     },
     {
       "id": "validate-origins",
@@ -1249,6 +1246,19 @@
       "tokenCount": 2534
     },
     {
+      "id": "icons",
+      "category": "ui-atoms",
+      "description": "Display and manage icons that can be set and parameterized from CSS, are fast to load, crisp at any resolution and are properly exposed to (or hidden from) assistive technologies.",
+      "featuresUsed": [
+        "SVG",
+        "Masks",
+        "image-set()",
+        "Container style queries",
+        "Registered custom properties"
+      ],
+      "tokenCount": 5220
+    },
+    {
       "id": "position-aware-tooltips",
       "category": "ui-atoms",
       "description": "Build tooltips and popovers with directional arrows (or other visual styling) that automatically point the correct way when the element flips to a fallback position.",
@@ -1256,7 +1266,7 @@
         "Anchor position container queries",
         "Popover"
       ],
-      "tokenCount": 1812
+      "tokenCount": 1905
     },
     {
       "id": "pull-to-reveal",
@@ -1269,16 +1279,6 @@
       "tokenCount": 1205
     },
     {
-      "id": "resilient-context-menus-and-nested-dropdowns",
-      "category": "ui-atoms",
-      "description": "Build accessible, responsive menus, tooltips, dropdowns, or contextual overlays that must be tethered to specific UI elements, guaranteeing that the overlay automatically repositions itself (e.g., flipping axes) when it encounters viewport edges, ensuring it never gets cut off.",
-      "featuresUsed": [
-        "Anchor positioning",
-        "Popover"
-      ],
-      "tokenCount": 1819
-    },
-    {
       "id": "responsive-table",
       "category": "ui-atoms",
       "description": "Build a data table that presents tabular data with proper header semantics, and remains readable and navigable on small screens and with assistive technologies.",
@@ -1286,7 +1286,7 @@
         "Sticky positioning",
         "Container queries (size)"
       ],
-      "tokenCount": 1005
+      "tokenCount": 1144
     },
     {
       "id": "scroll-position-aware-elements",
@@ -1295,7 +1295,7 @@
       "featuresUsed": [
         "Container scroll-state queries"
       ],
-      "tokenCount": 967
+      "tokenCount": 966
     },
     {
       "id": "scroll-progress-indicator",
@@ -1334,6 +1334,26 @@
       "tokenCount": 1674
     },
     {
+      "id": "viewport-aware-dropdowns",
+      "category": "ui-atoms",
+      "description": "Position dropdowns, flyouts, or contextual action panels tethered to a trigger button so they automatically flip axes at viewport edges instead of getting clipped.",
+      "featuresUsed": [
+        "Anchor positioning",
+        "Popover"
+      ],
+      "tokenCount": 1966
+    },
+    {
+      "id": "2d-panning",
+      "category": "ui-behaviors",
+      "description": "Allow users to freely pan or scroll two-dimensional surfaces—such as maps, zoomed images, infinite canvases, or large data grids—across both directions (whether diagonally or changing direction mid-gesture) without the gesture locking to a single horizontal or vertical axis.",
+      "featuresUsed": [
+        "scroll-axis-lock",
+        "overscroll-behavior"
+      ],
+      "tokenCount": 2385
+    },
+    {
       "id": "anchor-positioning-tab-underline",
       "category": "ui-behaviors",
       "description": "Transition an element seamlessly between two target element positions. For example, moving a selected tab underline between the previously selected tab and the currently selected tab.",
@@ -1341,7 +1361,7 @@
         "Anchor positioning",
         "prefers-reduced-motion media query"
       ],
-      "tokenCount": 823
+      "tokenCount": 828
     },
     {
       "id": "animate-element-entry-exit",
@@ -1405,7 +1425,7 @@
       "featuresUsed": [
         "Invoker commands"
       ],
-      "tokenCount": 2090
+      "tokenCount": 2302
     },
     {
       "id": "declarative-dialog-popover-control",
@@ -1496,7 +1516,7 @@
         "popover=\"hint\"",
         "Anchor positioning"
       ],
-      "tokenCount": 2761
+      "tokenCount": 2659
     },
     {
       "id": "light-dismiss-a-dialog",
@@ -1524,9 +1544,9 @@
         "display animation",
         "overlay",
         "prefers-reduced-motion media query",
-        "Registered custom properties"
+        "Nesting"
       ],
-      "tokenCount": 1255
+      "tokenCount": 1377
     },
     {
       "id": "move-dom-element-without-losing-state",
@@ -1592,7 +1612,17 @@
       "featuresUsed": [
         "View transitions"
       ],
-      "tokenCount": 2134
+      "tokenCount": 2132
+    },
+    {
+      "id": "scoped-component-transitions",
+      "category": "ui-behaviors",
+      "description": "Animate state changes inside a single component (a card, list, panel, or other subtree) while the rest of the page remains interactive, and other transitions run concurrently.",
+      "featuresUsed": [
+        "Element-scoped view transitions",
+        "View transitions"
+      ],
+      "tokenCount": 3102
     },
     {
       "id": "scroll-completion-effects",
@@ -1686,7 +1716,7 @@
         "Resize observer",
         "Web animations"
       ],
-      "tokenCount": 7589
+      "tokenCount": 7588
     },
     {
       "id": "swipe-to-reveal",
@@ -1701,6 +1731,17 @@
       "tokenCount": 2958
     },
     {
+      "id": "card",
+      "category": "ui-components",
+      "description": "Build a card component that adapts its presentation to its own available space and contents.",
+      "featuresUsed": [
+        ":has()",
+        "Container queries (size)",
+        "Subgrid"
+      ],
+      "tokenCount": 2204
+    },
+    {
       "id": "checkbox",
       "category": "ui-components",
       "description": "Style checkboxes, including custom icons, layout, colors, check/uncheck animations, while preserving native functionality and accessibility.",
@@ -1710,7 +1751,7 @@
         "Individual transform properties",
         "Masks"
       ],
-      "tokenCount": 1461
+      "tokenCount": 1610
     },
     {
       "id": "dark-mode-toggle",
@@ -1725,6 +1766,19 @@
       "tokenCount": 2352
     },
     {
+      "id": "dialog",
+      "category": "ui-components",
+      "description": "Build a modal or non-modal dialog component that is accessible, manages focus appropriately, and can be dismissed the way users expect on each platform.",
+      "featuresUsed": [
+        "<dialog>",
+        "<dialog closedby>",
+        "Invoker commands",
+        "Popover",
+        "overscroll-behavior"
+      ],
+      "tokenCount": 3794
+    },
+    {
       "id": "hovercard",
       "category": "ui-components",
       "description": "Build a hovercard component that displays an interactive structured preview of the page a certain type of link (e.g. a user profile) will navigate to when hovered over.",
@@ -1737,7 +1791,19 @@
         "blocking=\"render\"",
         "<link rel=\"expect\">"
       ],
-      "tokenCount": 3268
+      "tokenCount": 3273
+    },
+    {
+      "id": "menu",
+      "category": "ui-components",
+      "description": "Build a menu component that displays a list of options or actions, with support for nested submenus.",
+      "featuresUsed": [
+        "Popover",
+        "Invoker commands",
+        "Anchor positioning",
+        "focusgroup"
+      ],
+      "tokenCount": 8282
     },
     {
       "id": "navigation-drawer",
@@ -1762,7 +1828,7 @@
         "Popover",
         "Anchor positioning"
       ],
-      "tokenCount": 1595
+      "tokenCount": 1600
     },
     {
       "id": "persistent-toast-notifications",
@@ -1775,6 +1841,19 @@
         "transition-behavior"
       ],
       "tokenCount": 1049
+    },
+    {
+      "id": "progress",
+      "category": "ui-components",
+      "description": "Build a styled progress bar that communicates completion of a task or process, in both determinate and indeterminate states.",
+      "featuresUsed": [
+        "accent-color",
+        "<progress>",
+        "revert-rule",
+        "Container queries (size)",
+        "Individual transform properties"
+      ],
+      "tokenCount": 2868
     },
     {
       "id": "progress-ring",
@@ -1796,7 +1875,7 @@
         "Scroll marker target pseudo-classes",
         "scroll-target-group"
       ],
-      "tokenCount": 1635
+      "tokenCount": 1629
     },
     {
       "id": "spinner",
@@ -1823,6 +1902,18 @@
       "tokenCount": 9248
     },
     {
+      "id": "content-first-noise-reduction",
+      "category": "user-experience",
+      "description": "Maximize content and reduce noise by removing blocking popups, keeping persistent navigation compact, and moving secondary content behind on-demand disclosure.",
+      "featuresUsed": [
+        "Popover",
+        "<details>",
+        "Invoker commands",
+        "Container scroll-state queries"
+      ],
+      "tokenCount": 2430
+    },
+    {
       "id": "adapt-scrollbar-to-contrast-preferences",
       "category": "visual-design",
       "description": "Enhance scrollbar visibility for users who prefer high-contrast interfaces",
@@ -1839,7 +1930,7 @@
       "featuresUsed": [
         "HTML in canvas"
       ],
-      "tokenCount": 2916
+      "tokenCount": 3798
     },
     {
       "id": "browser-ui-theming",
@@ -1862,7 +1953,7 @@
         ":has()",
         "::file-selector-button"
       ],
-      "tokenCount": 946
+      "tokenCount": 998
     },
     {
       "id": "color",
@@ -1901,6 +1992,22 @@
       "tokenCount": 2059
     },
     {
+      "id": "custom-text-decorations",
+      "category": "visual-design",
+      "description": "Add text decorations such as underlines, overlines, strikethroughs, or entirely custom shapes, with reveal animations, custom offsets and end insets, and flexible ink skipping.",
+      "featuresUsed": [
+        "text-decoration",
+        "text-decoration-skip-ink",
+        "text-decoration-skip-ink: all",
+        "text-decoration-inset",
+        "text-decoration-skip-spaces",
+        "background-clip: border-area",
+        "border-shape",
+        "corner-shape"
+      ],
+      "tokenCount": 4658
+    },
+    {
       "id": "customize-scrollbar-color-and-thickness",
       "category": "visual-design",
       "description": "Customize the color or thickness of a scrollbar",
@@ -1922,7 +2029,7 @@
         "image()",
         "accent-color"
       ],
-      "tokenCount": 4519
+      "tokenCount": 4614
     },
     {
       "id": "equal-width-text-lines",
@@ -1933,7 +2040,7 @@
         "text-wrap: balance",
         "text-box"
       ],
-      "tokenCount": 1808
+      "tokenCount": 1790
     },
     {
       "id": "export-html-media-from-canvas",
@@ -1942,7 +2049,7 @@
       "featuresUsed": [
         "HTML in canvas"
       ],
-      "tokenCount": 3283
+      "tokenCount": 4869
     },
     {
       "id": "expose-canvas-content-to-browser-features",
@@ -1951,7 +2058,7 @@
       "featuresUsed": [
         "HTML in canvas"
       ],
-      "tokenCount": 4481
+      "tokenCount": 5798
     },
     {
       "id": "improve-text-layout-and-legibility",
@@ -1970,7 +2077,7 @@
       "featuresUsed": [
         "HTML in canvas"
       ],
-      "tokenCount": 4200
+      "tokenCount": 5581
     },
     {
       "id": "precise-text-alignment",
@@ -2063,7 +2170,7 @@
       "featuresUsed": [
         "Masks"
       ],
-      "tokenCount": 1110
+      "tokenCount": 1109
     },
     {
       "id": "cpp-on-the-web",
@@ -2072,7 +2179,7 @@
       "featuresUsed": [
         "WebAssembly"
       ],
-      "tokenCount": 697
+      "tokenCount": 2419
     },
     {
       "id": "agentic-forms",
@@ -2081,7 +2188,7 @@
       "featuresUsed": [
         "Form-associated WebMCP attributes"
       ],
-      "tokenCount": 1526
+      "tokenCount": 1716
     },
     {
       "id": "agentic-javascript-tools",
@@ -2090,14 +2197,17 @@
       "featuresUsed": [
         "document.modelContext"
       ],
-      "tokenCount": 5043
+      "tokenCount": 6177
     },
     {
       "id": "webmcp",
       "category": "webmcp",
-      "description": "Use this guide to implement WebMCP (Web Model Context Protocol) in browser applications, exposing client-side functionality as tools to AI agents via declarative or imperative APIs.",
-      "featuresUsed": [],
-      "tokenCount": 988
+      "description": "Use this guide to implement WebMCP in browser applications, exposing client-side functionality as tools to AI agents via declarative or imperative APIs.",
+      "featuresUsed": [
+        "Form-associated WebMCP attributes",
+        "document.modelContext"
+      ],
+      "tokenCount": 1174
     }
   ]
 }

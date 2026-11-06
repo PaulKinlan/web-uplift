@@ -8,11 +8,13 @@ import {
   mkdtempSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -1526,7 +1528,7 @@ export async function testLatestPointerCannotEscapeTheRunRoot() {
   );
 
   // Negative, symlink form: the planted target is refused.
-  rmSync(join(hostRoot, 'latest'), { force: true });
+  unlinkSync(join(hostRoot, 'latest'));
   symlinkSync('../pointer-outside', join(hostRoot, 'latest'), 'dir');
   const escapedLink = resolveLatest(hostRoot);
   assert(
@@ -2104,7 +2106,7 @@ export function testSuiteListsMatchRegressionRegistry() {
     'cdp-copy-sync.mjs': 'one behaviour: the copy check it performs. It has no direct-run guard and is imported by nine files, so wrapping it would change import-time behaviour; it is exercised as the case of testCdpCopySyncGuard in install-package.test.mjs.',
     'changelog-version-check.mjs': 'one behaviour: whether CHANGELOG.md records the current version. Its check runs at import so the gate and its importers both see the failure; there is no case to name.',
     'flow-shadow-browser.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
-    'flow.mjs': 'a case LIBRARY: 4 of its 6 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name). The other two, testFlowRecorderOverlayNeverAssignsInnerHTML and testFlowScreenshotNameCannotEscapeOutDir, run through this file direct target, and the register check below verifies both numbers.',
+    'flow.mjs': 'a case LIBRARY: 4 of its 7 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name). The other three, testFlowRecorderOverlayNeverAssignsInnerHTML, testFlowWritesRefusePlantedLinks, and testFlowScreenshotNameCannotEscapeOutDir, run through this file direct target, and the register check below verifies both numbers.',
     'install-copy-symlink.mjs': 'a case LIBRARY, not a standalone suite: it exports the install/sync cases that tests/install-package.test.mjs lists and runs, and its direct-run guard is a convenience. Duplicating them here would trip the one-owner check.',
     'mwg-artefact.mjs': 'tooling entry point (update/verify) rather than a case list; its invariants are asserted by the mwg suites.',
     'mwg-catalog-extract.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/mwg-principles.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
@@ -2607,7 +2609,7 @@ function testHarnessScratchSkipsCannotHideTrackedModules() {
 // so an exit-after-write MUST truncate it. Before the fix the last name is reliably absent and after it reliably
 // present, and the first-name assertion keeps the case from passing merely because nothing was printed.
 function testListPathFlushesItsWholeOutput() {
-  const dir = mkdtempSync(join(tmpdir(), 'ecif-flush-'));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ecif-flush-')));
   const fixture = join(dir, 'list-fixture.mjs');
   // About 156 KB of names: more than a pipe buffer holds, so an exit-after-write cannot have already handed the
   // whole list to the kernel, and the tail is guaranteed to still be queued in the child when it exits.

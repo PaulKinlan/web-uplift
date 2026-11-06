@@ -223,8 +223,8 @@
     "note": "Zero of the nine ground-truth findings on the live playground. The product guard passes."
   },
   "coverage": {
-    "catalogVersion": "modern-web-guidance@0.0.194",
-    "catalogChecksum": "sha256:d91a50de1278d2b407581408d2dc9feef27a7943c440c2cab596f4f456a33e7b",
+    "catalogVersion": "modern-web-guidance@0.0.197",
+    "catalogChecksum": "sha256:e0520fc35bdb0b04565ee1caa0cdb1d9da36a289f43561b8d8bc1e4eb1a491c6",
     "expected": 60,
     "recorded": 60,
     "judged": 60,
