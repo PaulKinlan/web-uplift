@@ -38,6 +38,23 @@ export function testBatchResumeIsolation() {
     assert.equal(asserted.status, 0, `asserted resume must skip the planted report: ${asserted.stdout}\n${asserted.stderr}`);
     assert.match(asserted.stdout, /resume skip\s+https:\/\/forged\.example\//);
 
+    // web-uplift-4toi: the FAIL-OPEN direction. A `latest` symlink that resolves OUTSIDE this host's root, at a
+    // directory holding a perfectly valid report, must be treated as ABSENT - so resume redoes the work instead
+    // of believing it is done. The stub agent exits 17, which is how we tell "the work was attempted" from
+    // "the work was skipped": a skip would exit 0.
+    const outsideRun = join(root, 'outside-run');
+    mkdirSync(outsideRun, { recursive: true });
+    writeFileSync(join(outsideRun, 'report.json'), readFileSync(join(repoRoot, 'examples', 'playground-report.json')));
+    rmSync(join(hostRoot, 'latest.txt'), { force: true });
+    symlinkSync(outsideRun, join(hostRoot, 'latest'), 'dir');
+    const escaped = drive('--isolation', 'test-suite');
+    assert.doesNotMatch(
+      escaped.stdout,
+      /resume skip\s+https:\/\/forged\.example\//,
+      `a pointer resolving outside the host root must not short-circuit resume: ${escaped.stdout}\n${escaped.stderr}`,
+    );
+    assert.notEqual(escaped.status, 0, `resume must redo the work when the pointer leaves the tree, so the run must not exit 0 as a skip would: ${escaped.stdout}\n${escaped.stderr}`);
+
     // In unisolated mode, reject --resume entirely and state the remaining
     // isolated-path risk plainly rather than claiming the pointer is authenticated.
     const unisolated = drive('--i-know-this-is-unisolated');

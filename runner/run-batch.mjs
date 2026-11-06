@@ -615,6 +615,14 @@ function hasCompletedLatest(url) {
   const hostRoot = join(outDir, hostSlug(url));
   const latestDir = latestPointerTarget(hostRoot);
   if (!latestDir) return false; // no pointer: nothing this tool published is current
+  // FAIL CLOSED ON A POINTER WE DID NOT VERIFY (web-uplift-4toi). `readlinkSync` on `latest` returns whatever
+  // the link says, including something outside this host's root, and the old check only asked whether the
+  // resolved path was a real directory - so a planted pointer at, say, an outside directory holding a valid
+  // report made resume believe the work was DONE. That is the fail-open direction: most of this week let
+  // things write where they should not, this let a check SUCCEED on evidence it never verified. A pointer that
+  // does not resolve inside this host's root is therefore treated as ABSENT, and resume redoes the work -
+  // redoing costs a rerun, falsely completing costs missing work.
+  if (!isRealDirUnder(hostRoot, latestDir, { includeBase: true })) return false;
   if (!isRealDir(latestDir)) return false;
   return validateAtomicReport(join(latestDir, 'report.json')).ok;
 }
