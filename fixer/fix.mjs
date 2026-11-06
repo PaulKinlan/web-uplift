@@ -915,7 +915,27 @@ async function copyRegularFile(src, dest, { skipped, root, name }) {
   await writeUnder(root, dest, await readFileNoFollow(src), RETAINED_TREE);
 }
 
+// VALIDATE THE WHOLE CHAIN BEFORE TOUCHING IT (web-uplift-uhi8). This used to be a bare
+// `mkdir(toDir, { recursive: true })` with the chain guard running afterwards, which made the guard an
+// inspection of a path the filesystem had already been asked to create: `mkdir -p` along a linked ancestor
+// creates the tree wherever the link points, so a check that runs after it cannot prevent anything - it can
+// only describe the damage. Every other link finding this week was 'the check exists and is bypassed'; this
+// one was 'the action precedes the check', which is why the test asserts the OUTSIDE DIRECTORY WAS NOT CREATED
+// rather than that an error was thrown.
+function assertRealChainBeforeCreate(target) {
+  let walked = resolve('/');
+  for (const part of resolve(target).split('/')) {
+    if (!part) continue;
+    walked = join(walked, part);
+    if (!existsSync(walked)) return;
+    if (!isRealDir(walked)) {
+      throw new Error(`refusing to create the retained run tree at ${target}: ${walked} is a symbolic link or not a directory, so the tree would be created wherever the link points`);
+    }
+  }
+}
+
 async function snapshotRun(fromDir, toDir, report, root) {
+  assertRealChainBeforeCreate(toDir);
   await mkdir(toDir, { recursive: true });
   const skipped = [];
   // The auxiliary copies run FIRST and stay best effort, but never INTO a planted name: a destination that
