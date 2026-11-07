@@ -1883,7 +1883,20 @@ export async function testLaunchMarkerAppendRefusesPlantedLinks() {
     recordLaunchFailure({ pid: 4242, profileDir: join(root, 'profile'), reason: 'boom', launchesFile: hardMarker });
     assert(readFileSync(victim, 'utf8') === 'UNCHANGED', 'neither launch marker may grow a hard-linked marker file');
 
-    // 3. Positive control: a plain marker file still records both outcomes, so the guard is not a blanket refusal.
+    // 3. A SYMLINKED PARENT DIRECTORY (web-uplift-pio8): every leaf check passes, and the append still lands
+    // outside the tree unless the ANCESTOR chain is checked. This is the shape that made the whole family
+    // recur, so the assertion is that the outside directory is STILL EMPTY - not that an error was thrown.
+    const outsideDir = join(root, 'outside-marker-dir');
+    mkdirSync(outsideDir, { recursive: true });
+    symlinkSync(outsideDir, join(root, 'link-dir'), 'dir');
+    recordLaunch({ primitive: 'probe', url: 'https://example.test/', chrome, launchesFile: join(root, 'link-dir', 'launches.jsonl') });
+    recordLaunchFailure({ pid: 4242, profileDir: join(root, 'profile'), reason: 'boom', launchesFile: join(root, 'link-dir', 'launches.jsonl') });
+    assert(
+      readdirSync(outsideDir).length === 0,
+      `a marker append must not create anything through a symlinked parent, found ${JSON.stringify(readdirSync(outsideDir))}`,
+    );
+
+    // 4. Positive control: a plain marker file still records both outcomes, so the guard is not a blanket refusal.
     const normal = join(root, 'launches.jsonl');
     recordLaunch({ primitive: 'probe', url: 'https://example.test/', chrome, launchesFile: normal });
     recordLaunchFailure({ pid: 4242, profileDir: join(root, 'profile'), reason: 'boom', launchesFile: normal });

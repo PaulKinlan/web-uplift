@@ -112,7 +112,29 @@ export async function writeFileNoFollow(path, data, options) {
 // exactly where the leaf guard is easiest to forget - `appendFileSync` follows a symbolic link and happily grows a
 // file that has other names. A redirected append is worse than a lost write when the file is a FORENSIC marker
 // (evidence/cdp.mjs's launches.jsonl), because the same file is what later evidence uses to attribute a launch.
-export function appendFileNoFollowSync(path, data) {
+export function appendFileNoFollowSync(path, data, { base } = {}) {
+  // ANCESTORS, not only the leaf (web-uplift-pio8): the checks below all ask about the final component, so a
+  // symlinked PARENT directory - `reports/<host>` replaced by a link to somewhere else - redirected the append
+  // outside the tree with every leaf check passing. Every existing component of the parent chain must be a real
+  // directory, checked BEFORE the open, because a guard that runs after the act can only describe the damage
+  // (web-uplift-uhi8).
+  const parent = dirname(path);
+  if (base !== undefined && !isInsidePath(resolve(base), resolve(path))) {
+    throw new UnsafeTargetRefused(`refusing to append to ${path}: it is outside ${resolve(base)}`, { path });
+  }
+  for (let cur = resolve(parent); ; cur = dirname(cur)) {
+    let st = null;
+    try { st = lstatSync(cur); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+    if (st) {
+      if (st.isSymbolicLink() || !st.isDirectory()) {
+        throw refusedSymlink(cur, 'append');
+      }
+      break;
+    }
+    const up = dirname(cur);
+    if (up === cur) break;
+    cur = up;
+  }
   {
     let st = null;
     try { st = lstatSync(path); } catch (err) { if (err.code !== 'ENOENT') throw err; }
@@ -121,7 +143,10 @@ export function appendFileNoFollowSync(path, data) {
   }
   let fd;
   try {
-    fd = openSync(path, 'a');
+    // O_NOFOLLOW, because the lstat above and this open are two syscalls (web-uplift-rimk): without it a leaf
+    // swapped for a symlink in between - which the agent sharing this tree can do - is followed anyway, and the
+    // descriptor check cannot see it, since fstat then reports the TARGET as a regular file.
+    fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (HAS_NOFOLLOW ? NOFOLLOW : 0));
   } catch (err) {
     if (err.code === 'ELOOP') throw refusedSymlink(path, 'append');
     throw err;

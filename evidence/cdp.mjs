@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from 'node:fs';
 import { homedir, networkInterfaces, tmpdir } from 'node:os';
 import { connect as netConnect } from 'node:net';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import CDP from 'chrome-remote-interface';
 import { redactUrlCredentialValues, redactUrlsInText } from './credential-terms.mjs';
 import { appendFileNoFollowSync } from '../runner/safe-write.mjs';
@@ -1507,6 +1507,7 @@ export function recordLaunch({ primitive, url, chrome, shared = false, launchesF
         profileDir: chrome.userDataDir ?? null,
         launcherPid: process.pid,
       }) + '\n',
+      { base: dirname(launchesFile) },
     );
   } catch {
     // Observability is not evidence: never fail the primitive over a marker.
@@ -1536,6 +1537,7 @@ export function recordLaunchFailure({ pid, profileDir, reason, launchesFile = pr
         reason: String(reason ?? 'unknown'),
         launcherPid: process.pid,
       }) + '\n',
+      { base: dirname(launchesFile) },
     );
   } catch {
     // Observability is not evidence: never fail the launch path over a marker.
