@@ -1132,7 +1132,14 @@ export function testCommittedProbesDoNotSpawnAgentsUnguarded() {
     return found;
   };
 
-  const committed = run('git', ['ls-files', 'evidence-out/**/*.mjs', 'evidence-out/*.mjs']);
+  // SCOPE BY WHAT A PROBE IS, not by one extension (web-uplift-ymct). This listed *.mjs only, and .js probes
+  // already exist in the tree, so the guard's reach was decided by a filename suffix rather than by the role the
+  // file plays - an allow-list wearing a wildcard, for the second time this week (tdec widened it from a
+  // directory to a pattern, and the pattern was still extension-shaped). Every committed JavaScript file in the
+  // evidence tree is now a subject, whatever its extension, because the rule is 'committed evidence must not
+  // start a write-capable agent', and that has nothing to do with how the file is named.
+  const PROBE_EXTENSIONS = ['evidence-out/**/*.mjs', 'evidence-out/*.mjs', 'evidence-out/**/*.js', 'evidence-out/*.js', 'evidence-out/**/*.cjs', 'evidence-out/*.cjs'];
+  const committed = run('git', ['ls-files', ...PROBE_EXTENSIONS]);
   assert(committed.status === 0, `git ls-files failed: ${committed.stderr}`);
   const probes = committed.stdout.split('\n').filter(Boolean).sort();
   assert(probes.length > 0, 'the sweep must find the committed probes, or passing says nothing');
@@ -1166,6 +1173,29 @@ export function testCommittedProbesDoNotSpawnAgentsUnguarded() {
   assert(spawnSites("execFileSync(\"gemini\", args);").length === 1, 'negative control: another agent binary must be detected');
   assert(spawnSites("// spawnSync('claude', argv);").length === 0, 'a commented-out spawn is not executable, so it must not be flagged');
   assert(spawnSites("spawnSync('git', ['status']);").length === 0, 'a non-agent spawn must be accepted, or every probe that shells out is refused');
+
+  // A .js PROBE IS A PROBE (web-uplift-ymct): the population above is proven against the extension the rule used
+  // to miss, by planting a known-bad .js file in a covered directory and re-reading it THROUGH THE SAME
+  // ls-files population the sweep uses. A .mjs-only test cannot show a .js hole, so this asserts the population
+  // reaches it and the detector flags it, then removes the file in a finally - the tree must not keep a live
+  // agent spawn, and every other case in this file asserts it does not.
+  const plantedJs = 'evidence-out/ymct-scope-probe.js';
+  try {
+    writeFileSync(join(repoRoot, plantedJs), "import { spawnSync } from 'node:child_process';\nexport const run = () => spawnSync('claude', ['-p', 'go']);\n");
+    // The SAME pattern list the sweep uses, so trimming that list makes this assertion fail rather than
+    // silently passing: the check is about the population the sweep builds, not about a filter written here.
+    const widened = run('git', ['ls-files', '--others', '--exclude-standard', ...PROBE_EXTENSIONS]);
+    const plantedPopulation = [...probes, ...widened.stdout.split('\n').filter(Boolean)];
+    assert(
+      plantedPopulation.includes(plantedJs),
+      'a committed .js probe must be part of the population, or the guard is still extension-shaped and a .js spawn escapes it',
+    );
+    assert(spawnSites(readFileSync(join(repoRoot, plantedJs), 'utf8')).length === 1, 'the detector must flag an agent spawn in a .js probe exactly as it does in .mjs');
+  } finally {
+    rmSync(join(repoRoot, plantedJs), { force: true });
+  }
+  // And a legitimate .js helper must still pass: the control is 'what counts as a probe', not 'refuse every .js'.
+  assert(spawnSites("import { readFileSync } from 'node:fs';\nexport const read = (p) => readFileSync(p, 'utf8');\n").length === 0, 'an ordinary .js helper that spawns nothing must remain acceptable');
 }
 
 export function testCommittedEvidenceProbesImportByRelativePath() {
