@@ -75,7 +75,7 @@
 // invisible to the surrounding snapshots.
 
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 // The only blanket-excluded segment left: the tool's own report output (excluding
@@ -98,6 +98,28 @@ export const EXECUTABLE_HASH_ROOTS = [
   'install-surface.mjs', '.web-uplift',
 ];
 
+// THE AGENT'S OWN INSTRUCTIONS (web-uplift-c28t). Every entry above is something the pipeline RUNS, and every one
+// of them is downstream of the agent: they protect the machinery, not the behaviour. The file below is the one
+// harness input whose TEXT BECOMES THE AGENT'S BEHAVIOUR - the skill it is told to follow - and it was the only
+// pre-spawn input left unchecked, so a rewritten instruction file would be obeyed as legitimate and no later guard
+// would notice, because every later guard is downstream of it. That is a prompt-injection surface reached through
+// our own trust model, which is why it is hashed by CONTENT (not stat) and included in the batch-start baseline:
+// run-batch already refuses to spawn on ANY drift in this snapshot, so a modified instruction file refuses the
+// spawn rather than warning about it.
+//
+// The full pre-spawn enumeration, so the next reader does not have to rediscover which inputs are covered:
+//   CHECKED (content hash, this snapshot) - the skill/instruction file (below), the executed first-party trees
+//     (evidence, runner, fixer, aggregate, schema, knowledge, bin, install-surface.mjs) and the vendored surface
+//     (.web-uplift, which is what actually runs);
+//   CHECKED (other means) - the agent binary and its allowlist (runner/agents.mjs, re-read by
+//     tests/regression.mjs), and the report corpus/validator (schema/, hashed above);
+//   NOT CHECKED - the model's own weights and the provider's endpoint: both are outside this repository and cannot
+//     be pinned from here. That residual is stated rather than implied, because the instruction file used to be in
+//     exactly this position and was worth closing.
+export const AGENT_INSTRUCTION_FILES = [
+  '.claude/skills/web-audit/SKILL.md',
+];
+
 // sha256 stamp for one file, or null when it raced away.
 function hashFile(abs) {
   try {
@@ -116,6 +138,17 @@ export function executableIntegrity(base) {
   const baseAbs = resolve(base);
   const entries = new Map();
   const record = (abs, stamp) => { if (stamp !== null) entries.set(relative(baseAbs, abs), stamp); };
+  // The instruction files are stamped FIRST and always, so a name that is a symlink is recorded as link:target by
+  // the same code path before any missing-file case can hide it.
+  for (const rel of AGENT_INSTRUCTION_FILES) {
+    const abs = join(baseAbs, rel);
+    let st = null;
+    try { st = lstatSync(abs); } catch { /* absent: the project does not use this file */ }
+    if (!st) continue;
+    if (st.isSymbolicLink()) {
+      try { record(abs, `link:${readlinkSync(abs)}`); } catch { /* raced away */ }
+    } else if (st.isFile()) record(abs, hashFile(abs));
+  }
   const walkDir = (abs) => {
     let children;
     try {
