@@ -1372,6 +1372,7 @@ export async function testFragmentRedactionKeepsSiblingParamsByteIdentical() {
   console.log('Testing that fragment redaction rewrites only credential parameters (P3, web-uplift-hjm9)...');
   const cli = await import('../evidence/cli.mjs');
   const flow = await import('../runner/flow-record.mjs');
+  const terms = await import('../evidence/credential-terms.mjs');
 
   // POSITIVE FIRST: the credential value itself must still be gone.
   const secret = 'SECRET-VALUE-1234';
@@ -1407,6 +1408,76 @@ export async function testFragmentRedactionKeepsSiblingParamsByteIdentical() {
   // Ordinary anchors carry no '=' and must be returned untouched, as the function's own comment promises.
   for (const anchor of ['https://x.test/p#section-2', 'https://x.test/p#/route/deep', 'https://x.test/p#a']) {
     assert(cli.redactUrlCredentialValues(anchor) === anchor, `an ordinary anchor must survive untouched: ${anchor}`);
+  }
+
+  // Innocent anchor deep links must NOT be over-redacted (web-uplift-j3co):
+  for (const deepLink of [
+    'https://x.test/a#/commit/abc123def456',
+    'https://x.test/a#/build/3f2a9c8e1b7d4f60',
+    'https://x.test/a#/tree/1234567890abcdef',
+  ]) {
+    assert(cli.redactUrlCredentialValues(deepLink) === deepLink,
+      `innocent anchor deep link must survive untouched (web-uplift-j3co): ${deepLink}`);
+  }
+
+  // Provider tokens and JWTs MUST be redacted even inside innocent route markers (web-uplift-wlnh):
+  const GHP_IN_INNOCENT = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+  const JWT_IN_INNOCENT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+  for (const tokenRoute of [
+    { in: `https://x.test/a#/commit/${GHP_IN_INNOCENT}`, exp: 'https://x.test/a#/commit/%5Bredacted%5D' },
+    { in: `https://x.test/a#/tree/${GHP_IN_INNOCENT}`, exp: 'https://x.test/a#/tree/%5Bredacted%5D' },
+    { in: `https://x.test/a#/release/${GHP_IN_INNOCENT}`, exp: 'https://x.test/a#/release/%5Bredacted%5D' },
+    { in: `https://x.test/a#/blob/${JWT_IN_INNOCENT}`, exp: 'https://x.test/a#/blob/%5Bredacted%5D' },
+  ]) {
+    const out = cli.redactUrlCredentialValues(tokenRoute.in);
+    assert(out === tokenRoute.exp,
+      `provider token/JWT in innocent route must be redacted (web-uplift-wlnh): got ${out}, expected ${tokenRoute.exp}`);
+  }
+
+  // Quadratic backtracking defense for trailing punctuation (web-uplift-g99q):
+  {
+    const pathologicalProse = 'see https://example.com/a?token=SECRET' + '.'.repeat(50000) + 'x';
+    const started = Date.now();
+    const redacted = terms.redactUrlsInText(pathologicalProse);
+    const elapsed = Date.now() - started;
+    assert(!redacted.includes('SECRET'), 'secret must be redacted');
+    assert(elapsed < 200, `trailing punctuation scan must stay linear (web-uplift-g99q): took ${elapsed}ms`);
+  }
+
+  // Bare-hex tokens in non-innocent routes MUST still be redacted (web-uplift-7uae):
+  for (const hexRoute of [
+    { in: 'https://x.test/a#/share/9f8e7d6c5b4a3210deadbeef', exp: 'https://x.test/a#/share/%5Bredacted%5D' },
+    { in: 'https://x.test/a#/magic/9f8e7d6c5b4a3210deadbeef', exp: 'https://x.test/a#/magic/%5Bredacted%5D' },
+    { in: 'https://x.test/a#/callback/3f2a9c8e1b7d4f60', exp: 'https://x.test/a#/callback/%5Bredacted%5D' },
+    { in: 'https://x.test/a#/login/3f2a9c8e1b7d4f60', exp: 'https://x.test/a#/login/%5Bredacted%5D' },
+    { in: 'https://x.test/a#/cb/3f2a9c8e1b7d4f60', exp: 'https://x.test/a#/cb/%5Bredacted%5D' },
+  ]) {
+    const out = cli.redactUrlCredentialValues(hexRoute.in);
+    assert(out === hexRoute.exp,
+      `bare-hex token in non-innocent route must be redacted (web-uplift-7uae): got ${out}, expected ${hexRoute.exp}`);
+  }
+
+  // Hash-route token segment followed by query (web-uplift-tuiw):
+  const GHP_SECRET = 'ghp_' + 'C'.repeat(20) + '7777';
+  for (const hrToken of [
+    { in: `https://a.test/#/invite/${GHP_SECRET}?ref=email`, exp: 'https://a.test/#/invite/%5Bredacted%5D?ref=email' },
+    { in: `https://a.test/#/r/${GHP_SECRET}?ref=email`, exp: 'https://a.test/#/r/%5Bredacted%5D?ref=email' },
+  ]) {
+    const out = cli.redactUrlCredentialValues(hrToken.in);
+    assert(out === hrToken.exp, `token segment before query must be redacted (web-uplift-tuiw): got ${out}, expected ${hrToken.exp}`);
+  }
+
+  // Encoded or ';'-separated hash-route fragment params (web-uplift-gnt3):
+  const gnt3Cases = [
+    { in: 'https://app.test/#/cb%3Fcode=AUTHCODE_SECRET_123456', exp: 'https://app.test/#/cb%3Fcode=%5Bredacted%5D' },
+    { in: 'https://app.test/#%2Fcb%3Fcode=AUTHCODE_SECRET_123456', exp: 'https://app.test/#%2Fcb%3Fcode=%5Bredacted%5D' },
+    { in: 'https://app.test/#/cb;code=AUTHCODE_SECRET_123456', exp: 'https://app.test/#/cb;code=%5Bredacted%5D' },
+    { in: 'https://app.test/#/cb%3Fcode%3DSECRETCODE_123456', exp: 'https://app.test/#/cb%3Fcode%3D%5Bredacted%5D' },
+    { in: 'https://app.test/#/cb?code=SECRET;state=1', exp: 'https://app.test/#/cb?code=%5Bredacted%5D;state=1' },
+  ];
+  for (const c of gnt3Cases) {
+    const out = cli.redactUrlCredentialValues(c.in);
+    assert(out === c.exp, `encoded or semicolon-delimited fragment param must be redacted (web-uplift-gnt3): got ${out}, expected ${c.exp}`);
   }
 
   // SPA hash routes with query strings ('#/callback?code=...', '#/x?key=...'; web-uplift-pyvv)

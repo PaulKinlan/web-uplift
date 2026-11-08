@@ -43,10 +43,11 @@ function isSensitiveSelectorText(text) {
   if (!text || typeof text !== 'string') return false;
   const words = text.toLowerCase().split(/[^a-z0-9_-]+/).filter(Boolean);
   for (const w of words) {
+    if (isSensitiveName(w)) return true;
     const subwords = w.split(/[-_]+/).filter(Boolean);
     for (const sw of subwords) {
-      if (isCredentialName(sw) || isSensitiveName(sw)) return true;
-      if (/^(?:password|passwd|passcode|passphrase|token|secret|auth|credit|card|cvv|pin|ssn|key|otp|mfa|totp|2fa)$/i.test(sw)) return true;
+      if (isSensitiveName(sw)) return true;
+      if (/^(?:password|passwd|passcode|passphrase|token|secret|credit|card|cvv|pin|ssn|otp|mfa|totp|2fa)$/i.test(sw)) return true;
     }
   }
   if (/\b(?:one[- ]?time[- ]?code|security[- ]?(?:code|answer)|verification[- ]?code|authenticat(?:ion|or)[- ]?code)\b/i.test(text)) {
@@ -71,6 +72,7 @@ function isSensitiveStep(step) {
 
 function isSensitiveStepField(key, step, str) {
   if (!key) return false;
+  if (key === 'name' || key === 'label' || key === 'title' || key === 'type' || key === 'id') return false;
   if (isCredentialName(key) || isSensitiveName(key)) return true;
   if (key === 'value') {
     if (isSensitiveStep(step)) return true;
@@ -148,14 +150,34 @@ export function createFlowReplayLogger(flow, targetUrl, sink = console.error) {
   if (flow && Array.isArray(flow.steps)) {
     for (const s of flow.steps) {
       if (s.type === 'change' && typeof s.value === 'string' && isSensitiveStep(s)) {
-        replacements.push([s.value, '[redacted]']);
-        replacements.push([`typed "${s.value}"`, 'typed "[redacted]"']);
-        replacements.push([`typed '${s.value}'`, 'typed "[redacted]"']);
+        const val = s.value;
+        if (/^\d{1,5}$/.test(val)) {
+          // Pure short numbers (<= 5 digits, e.g. PIN 9222): mask when quoted or in step actions,
+          // preserving bare unquoted port numbers in lines like "[cdp] connected to chrome on port 9222" (web-uplift-ov2r)
+          replacements.push([`"${val}"`, '"[redacted]"']);
+          replacements.push([`'${val}'`, "'[redacted]'"]);
+          replacements.push([`typed "${val}"`, 'typed "[redacted]"']);
+          replacements.push([`typed '${val}'`, 'typed "[redacted]"']);
+          replacements.push([`typed ${val}`, 'typed [redacted]']);
+          replacements.push([`input "${val}"`, 'input "[redacted]"']);
+          replacements.push([`input '${val}'`, 'input "[redacted]"']);
+          replacements.push([`input ${val}`, 'input [redacted]']);
+        } else {
+          // Non-numeric passwords (like hunter2, web-uplift-9dhj) or long tokens:
+          // Replace across log messages
+          replacements.push([val, '[redacted]']);
+        }
       }
       const collectReplacements = (val, key = '', step = null) => {
         if (typeof val === 'string') {
+          if (key === 'value' && step?.type === 'change') return;
           const redacted = redactStepString(val, key, step);
           if (redacted !== val) {
+            if (/^\d{1,5}$/.test(val)) {
+              replacements.push([`"${val}"`, '"[redacted]"']);
+              replacements.push([`'${val}'`, "'[redacted]'"]);
+              return;
+            }
             replacements.push([val, redacted]);
             const bearerMatch = /^Bearer\s+(\S+)$/i.exec(val);
             if (bearerMatch) {

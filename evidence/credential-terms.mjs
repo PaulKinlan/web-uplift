@@ -498,77 +498,129 @@ function decodeFragmentKey(raw) {
   }
 }
 
-function redactFragmentCredentialParams(fragment) {
-  if (!fragment.includes('=')) {
-    if (fragment.includes('/')) {
-      let modified = false;
-      const segs = fragment.split('/').map((seg) => {
-        if (looksLikeToken(seg)) {
-          modified = true;
-          return REDACTED_VALUE_ENCODED;
-        }
-        return seg;
-      });
-      return modified ? { fragment: segs.join('/'), hit: true } : { fragment, hit: false };
+const INNOCENT_ROUTE_MARKERS = new Set([
+  'commit', 'build', 'tree', 'blob', 'release', 'tag', 'diff', 'compare',
+  'pull', 'pr', 'issue', 'job', 'run', 'workflow', 'action', 'pkg', 'package',
+  'version', 'v', 'archive', 'assets', 'static', 'images', 'dist'
+]);
+
+const SENSITIVE_ROUTE_MARKERS = new Set([
+  'auth', 'authorize', 'authorization', 'verify', 'verification', 'validate',
+  'confirm', 'confirmation', 'activate', 'activation', 'reset', 'password',
+  'code', 'otp', 'totp', 'invite', 'unlock', 'recover', 'recovery', 'r', 'token', 'session'
+]);
+
+function isProviderTokenOrJwt(str) {
+  if (!str || typeof str !== 'string') return false;
+  if (new RegExp('^' + PROVIDER_TOKEN_SOURCE + '$').test(str)) return true;
+  if (/^eyJ[A-Za-z0-9_-]{4,}(\.[A-Za-z0-9_-]{4,}){1,2}$/.test(str)) return true;
+  return false;
+}
+
+function shouldRedactPathSegment(seg, prevSeg = '') {
+  if (!seg || typeof seg !== 'string') return false;
+  if (isProviderTokenOrJwt(seg)) return true;
+  const p = prevSeg.toLowerCase();
+  if (INNOCENT_ROUTE_MARKERS.has(p)) return false;
+  if (!looksLikeToken(seg)) return false;
+  return true;
+}
+
+function redactPathInFragment(path) {
+  let hit = false;
+  const tokens = path.split(/(\/|%2[fF])/);
+  let prevSeg = '';
+  for (let i = 0; i < tokens.length; i += 2) {
+    let seg = tokens[i];
+    if (shouldRedactPathSegment(seg, prevSeg)) {
+      tokens[i] = REDACTED_VALUE_ENCODED;
+      hit = true;
     }
-    if (looksLikeToken(fragment)) {
+    if (seg) prevSeg = seg;
+  }
+  return { path: tokens.join(''), hit };
+}
+
+function redactFragmentCredentialParams(fragment) {
+  if (!fragment || typeof fragment !== 'string') return { fragment, hit: false };
+
+  let hit = false;
+  let queryStart = -1;
+  let queryDelimLen = 0;
+  const qMatch = /(\?|%3[fF])/.exec(fragment);
+  if (qMatch) {
+    queryStart = qMatch.index;
+    queryDelimLen = qMatch[0].length;
+  }
+
+  let pathPart = queryStart === -1 ? fragment : fragment.slice(0, queryStart);
+  let queryPart = queryStart === -1 ? '' : fragment.slice(queryStart + queryDelimLen);
+  let delim = queryStart === -1 ? '' : fragment.slice(queryStart, queryStart + queryDelimLen);
+
+  let pRes = redactPathInFragment(pathPart);
+  if (pRes.hit) {
+    hit = true;
+    pathPart = pRes.path;
+  }
+
+  if (queryStart === -1 && !pathPart.includes('/') && !/%2[fF]/.test(pathPart)) {
+    if (isProviderTokenOrJwt(pathPart)) {
       return { fragment: REDACTED_VALUE_ENCODED, hit: true };
     }
-    return { fragment, hit: false };
   }
-  // SIBLING PARAMETERS ARE COPIED BYTE-FOR-BYTE (web-uplift-hjm9). This used to run the whole fragment through
-  // URLSearchParams and re-serialise it, which rewrote every sibling: 'a=1%20b' came back as 'a=1+b', and that
-  // is not cosmetic - in a fragment '+' is a literal plus, not a space, so the value actually changed while the
-  // comment above promised it would be kept exactly as it was. The surgery below rebuilds only the parameters
-  // whose NAME is credential-shaped and copies every other byte verbatim, including escapes it would otherwise
-  // normalise ('%2f' stays lowercase).
-  //
-  // It also redacts EVERY occurrence of a repeated credential parameter, where the old code replaced one and
-  // left the rest (URLSearchParams.set rewrites the first match only).
-  const parts = fragment.split('&');
-  let hit = false;
-  const out = parts.map((part) => {
-    const eq = part.indexOf('=');
-    if (eq <= 0) {
-      if (eq === -1 && part.includes('/')) {
-        let segHit = false;
-        const segs = part.split('/').map((seg) => {
-          if (looksLikeToken(seg)) {
-            segHit = true;
-            return REDACTED_VALUE_ENCODED;
-          }
-          return seg;
-        });
-        if (segHit) {
-          hit = true;
-          return segs.join('/');
+
+  function processParamString(paramStr) {
+    if (!paramStr) return { str: '', hit: false };
+    const parts = paramStr.split(/(&|;|%26|%3[bB])/);
+    let modified = false;
+    for (let i = 0; i < parts.length; i += 2) {
+      let part = parts[i];
+      if (!part) continue;
+      const eqMatch = /(=|%3[dD])/.exec(part);
+      if (eqMatch) {
+        const eqIdx = eqMatch.index;
+        const eqStr = eqMatch[0];
+        let rawKey = part.slice(0, eqIdx);
+        let rawVal = part.slice(eqIdx + eqStr.length);
+
+        const lastSlash = Math.max(rawKey.lastIndexOf('/'), rawKey.toLowerCase().lastIndexOf('%2f'));
+        let keyPrefix = '';
+        let keyName = rawKey;
+        if (lastSlash !== -1) {
+          const slashLen = rawKey[lastSlash] === '/' ? 1 : 3;
+          keyPrefix = rawKey.slice(0, lastSlash + slashLen);
+          keyName = rawKey.slice(lastSlash + slashLen);
+        }
+
+        const decodedKey = decodeFragmentKey(keyName);
+        if (rawVal && isCredentialName(decodedKey)) {
+          part = `${keyPrefix}${keyName}${eqStr}${REDACTED_VALUE_ENCODED}`;
+          parts[i] = part;
+          modified = true;
         }
       }
-      return part;
     }
-    const raw = part.slice(0, eq);
-    const splitIdx = Math.max(raw.lastIndexOf('?'), raw.lastIndexOf('/'));
-    const prefix = splitIdx === -1 ? '' : raw.slice(0, splitIdx + 1);
-    const rawName = splitIdx === -1 ? raw : raw.slice(splitIdx + 1);
-    let prefixOut = prefix;
-    if (prefix.includes('/')) {
-      const pSegs = prefix.split('/').map((s) => {
-        if (looksLikeToken(s)) {
-          hit = true;
-          return REDACTED_VALUE_ENCODED;
-        }
-        return s;
-      });
-      prefixOut = pSegs.join('/');
+    return { str: parts.join(''), hit: modified };
+  }
+
+  if (queryPart) {
+    const qRes = processParamString(queryPart);
+    if (qRes.hit) {
+      hit = true;
+      queryPart = qRes.str;
     }
-    if (!part.slice(eq + 1)) return `${prefixOut}${rawName}=`;
-    if (!isCredentialName(decodeFragmentKey(rawName))) {
-      return `${prefixOut}${rawName}=${part.slice(eq + 1)}`;
+  }
+
+  if (pathPart.includes(';') || pathPart.toLowerCase().includes('%3b') || pathPart.includes('=') || pathPart.toLowerCase().includes('%3d')) {
+    const pParamRes = processParamString(pathPart);
+    if (pParamRes.hit) {
+      hit = true;
+      pathPart = pParamRes.str;
     }
-    hit = true;
-    return `${prefixOut}${rawName}=${REDACTED_VALUE_ENCODED}`;
-  });
-  return hit ? { fragment: out.join('&'), hit: true } : { fragment, hit: false };
+  }
+
+  const result = queryStart === -1 ? pathPart : `${pathPart}${delim}${queryPart}`;
+  return { fragment: result, hit };
 }
 
 // Redact the VALUES of credential-named query parameters in a URL; keep the names and
@@ -724,6 +776,12 @@ const URL_START = /(?<=^|[\s,;:([{|"'<=>])(?:https?:)?\/\/?/gi;
 // Where a URL span cannot continue: whitespace, or a delimiter that ends a token in prose.
 const URL_SPAN_STOP = /[\s"'`<>()\[\]{}|]/;
 
+// Trailing punctuation characters held back from URL parsing: . , ; : ! ? = | " ' < ( [ { +
+// Set of charCodes for O(1) backwards scan (web-uplift-g99q):
+const TRAILING_PUNCTUATION_CODES = new Set([
+  46, 44, 59, 58, 33, 63, 61, 124, 34, 39, 60, 40, 91, 123, 43
+]);
+
 export function redactUrlsInText(text) {
   if (typeof text !== 'string' || !text) return text;
   const starts = [];
@@ -753,8 +811,16 @@ export function redactUrlsInText(text) {
     // different shape. So hold trailing punctuation AND boundary separators back, and put them
     // back untouched. A URL whose span legitimately ends in '=' (base64 padding, say) is
     // unaffected in the common case, because the held-back character is re-appended verbatim.
-    const trailing = /[.,;:!?=|"'<([{+]+$/.exec(raw);
-    const body = trailing ? raw.slice(0, -trailing[0].length) : raw;
+    //
+    // Backwards character scan rather than unanchored regex /[.,;:!?=|"'<([{+]+$/ (web-uplift-g99q):
+    // an unanchored match over N characters evaluates at every offset, taking quadratic O(N^2) time
+    // on pathological trailing runs. A backwards scan is strictly linear O(k) in trailing length.
+    let t = raw.length;
+    while (t > 0 && TRAILING_PUNCTUATION_CODES.has(raw.charCodeAt(t - 1))) {
+      t--;
+    }
+    const trailing = t < raw.length ? raw.slice(t) : '';
+    const body = t < raw.length ? raw.slice(0, t) : raw;
     out += text.slice(cursor, start);
     // A span can only hold a credential if it carries a query ('?token='), userinfo ('user:pass@'),
     // or a fragment ('#token='), and checking here keeps the work proportional to the text: the stress
@@ -763,7 +829,7 @@ export function redactUrlsInText(text) {
     // first and caused credentials in prose to leak because the span was skipped before the redactor
     // was ever called.
     out += body && (body.includes('?') || body.includes('@') || body.includes('#')) ? redactUrlCredentialValues(body) : body;
-    out += trailing ? trailing[0] : '';
+    out += trailing;
     cursor = end;
   }
   return out + text.slice(cursor);

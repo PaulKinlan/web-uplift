@@ -767,6 +767,18 @@ export function testSecretsScanDoesNotPersistMatchCharacters() {
   assert(!serialised.includes(value), 'the whole matched value must never be persisted');
 }
 
+// The linear performance guard for scanTextForSecrets (web-uplift-ght8).
+// A pathological run of connection-string colons without '@' caused quadratic backtracking
+// taking hundreds to thousands of milliseconds on large page content.
+export function testSecretsScanLinearPerformance() {
+  const pathological = 'mongodb://' + 'a:'.repeat(20000) + 'a';
+  const started = Date.now();
+  const findings = scanTextForSecrets(pathological, 'pathological fixture');
+  const elapsed = Date.now() - started;
+  assert(elapsed < 100, `secrets scan on pathological input must stay linear (web-uplift-ght8): took ${elapsed}ms`);
+  assert(Array.isArray(findings), 'findings should be an array');
+}
+
 
 // The source read without a browser. `dom --source <dir>` inlines the local tree
 // into an artifact that is committed and republished, so a credential in the tree
@@ -880,6 +892,7 @@ export const redactionTests = [
   testSecretsExternalScriptFetchIsCappedAndDeadlined,
   testSecretsArtifactDoesNotPersistMatches,
   testSecretsScanDoesNotPersistMatchCharacters,
+  testSecretsScanLinearPerformance,
   testSecretsCoverageClassification,
   testSourceTreeRedactsBeforeInlining,
   testDomSourceArtifactIsRedacted,
