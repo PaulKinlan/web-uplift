@@ -1032,6 +1032,18 @@ export function testCommittedSiblingProbesAreInert() {
       plantedWalked.filter(isScript).includes(planted),
       'the sweep population must be discovered by pattern, so a probe committed outside scratch/ is still swept',
     );
+    // AND THE SWEEP MUST REJECT IT (web-uplift-b89u). The first version of this control only proved the file was
+    // in the population and then deleted it before the inertness loop above ever saw it, so a harmless payload
+    // gave the same result as a live POST - a negative control that never runs, which is indistinguishable from a
+    // passing one and is how a guard ends up decorative. The planted file is now run through the SAME detector
+    // the sweep uses, and the assertion is that it MATCHES: this is the case that fails if the detector stops
+    // matching, which is the only thing that makes the control negative.
+    const plantedLive = executableLines(readFileSync(planted, 'utf8'));
+    const plantedHits = STATE_CHANGING.filter((re) => re.test(plantedLive));
+    assert(
+      plantedHits.length > 0,
+      `a known-bad probe outside scratch/ must be REJECTED by the sweep's own detector, or the sweep is decorative: ${JSON.stringify(plantedLive)}`,
+    );
   } finally {
     rmSync(planted, { force: true });
   }
