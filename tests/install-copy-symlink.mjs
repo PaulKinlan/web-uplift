@@ -1016,6 +1016,32 @@ export function testInstallAsksTheSharedSymlinkGuard() {
         `expected 'refused to copy 1 source node(s)', got: ${runSrcSym.stderr}`);
       assert(!runSrcSym.stderr.includes('destination(s) that are links'),
         `must not blame destination links: ${runSrcSym.stderr}`);
+
+      // web-uplift-xles: the SAME source-refusal rule on the COPY-DIR path. A FIFO planted inside a vendored
+      // directory of the PACKAGE tree was counted as a refused destination, so the operator was told to remove a
+      // link in the target that did not exist. The remedy differs with the cause, which is why the two messages
+      // are separate and why this is asserted on both halves rather than only that the install failed.
+      const testDirFifoPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-dirfifo-'));
+      const testDirFifoTarget = mkdtempSync(join(tmpdir(), 'web-uplift-dirfifo-target-'));
+      try {
+        const archive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+        spawnSync('tar', ['-x', '-C', testDirFifoPkg], { input: archive.stdout });
+        cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testDirFifoPkg, 'bin/web-uplift.mjs'));
+        cpSync(join(repoRoot, 'install-surface.mjs'), join(testDirFifoPkg, 'install-surface.mjs'));
+        symlinkSync(join(repoRoot, 'node_modules'), join(testDirFifoPkg, 'node_modules'));
+        spawnSync('mkfifo', [join(testDirFifoPkg, 'evidence', 'zz-fifo')]);
+        const runDirFifo = spawnSync(process.execPath, [
+          join(testDirFifoPkg, 'bin/web-uplift.mjs'), 'install', '--agent', 'codex', '--target', testDirFifoTarget,
+        ], { timeout: 20000, encoding: 'utf8' });
+        assert(runDirFifo.status !== 0, `install with a FIFO inside a vendored directory must fail, got ${runDirFifo.status}`);
+        assert(runDirFifo.stderr.includes('refused to copy 1 source node(s)'),
+          `a FIFO in the copy-dir source must be reported as a SOURCE refusal, got: ${runDirFifo.stderr}`);
+        assert(!runDirFifo.stderr.includes('destination(s) that are links'),
+          `must not blame destination links for a source FIFO: ${runDirFifo.stderr}`);
+      } finally {
+        rmSync(testDirFifoPkg, { recursive: true, force: true });
+        rmSync(testDirFifoTarget, { recursive: true, force: true });
+      }
     } finally {
       rmSync(testSrcSymlinkPkg, { recursive: true, force: true });
       rmSync(testSrcSymlinkTarget, { recursive: true, force: true });
