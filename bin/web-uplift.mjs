@@ -603,7 +603,12 @@ function copyDir(from, to, acc = { skippedFiles: [] }, depth = 1, projectRoot = 
       continue;
     }
     if (!st.isDirectory() && !st.isFile()) {
-      acc.skippedFiles.push({ path: src, reason: refusalReason(null, src), refused: true });
+      // A SOURCE refusal, not a destination one (web-uplift-xles). Without the marker this counted against the
+      // destination and the CLI printed 'refused to write N destination(s) that are links' for a FIFO sitting in
+      // the PACKAGE source tree - sending the operator to remove a link in the target that does not exist. The
+      // copy-file site got this right in f116125; this is the same cause on the copy-dir path, and the two
+      // messages differ because the remedy differs: one says replace the link, the other says replace the source.
+      acc.skippedFiles.push({ path: src, reason: refusalReason(null, src), refused: true, isSource: true });
       continue;
     }
     const dstStat = lstatSync(dst, { throwIfNoEntry: false });
