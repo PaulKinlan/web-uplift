@@ -19,7 +19,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -1996,6 +1996,46 @@ export async function testScorecardArtifactContainment() {
 // bare `join(dir, p)`, and it ALSO passed absolute paths straight through, so a
 // report-supplied HAR path could be read from anywhere on disk. compare.md also
 // emitted before/after paths verbatim.
+// web-uplift-4r68: containment through a VALUE. hostSlug kept dots in its fallback branch, so a host-shaped value
+// of '..' survived sanitising and join(reportsRoot, '..') resolved outside the reports root - a traversal that every
+// LINK guard in this repository would pass, because nothing here is a symlink. Reads use the same helpers, so this
+// was a disclosure question as well as a write one.
+export async function testHostSlugCannotNameAParentDirectory() {
+  const { hostSlug, runDir } = await import('../runner/run-history.mjs');
+  const cases = ['..', '.', 'a..b', '.hidden', '../etc', '..\\..', 'evil..'];
+  for (const value of cases) {
+    const slug = hostSlug(value);
+    assert(slug !== '.' && slug !== '..', `a host value of ${JSON.stringify(value)} must not become a dot segment, got ${JSON.stringify(slug)}`);
+    assert(!slug.includes('..'), `a slug must never contain a parent segment: ${JSON.stringify(value)} -> ${JSON.stringify(slug)}`);
+    assert(!slug.startsWith('.'), `a slug must not start with a dot (a hidden directory on unix): ${JSON.stringify(value)} -> ${JSON.stringify(slug)}`);
+    assert(/^[A-Za-z0-9_-]+$/.test(slug), `a slug must be a plain label: ${JSON.stringify(value)} -> ${JSON.stringify(slug)}`);
+  }
+  // Legitimate hosts are unchanged, including the port separator that the URL branch has always produced.
+  assert(hostSlug('https://example.test/') === 'example_test', 'a normal URL slug must be unchanged');
+  assert(hostSlug('example.test') === 'example.test', 'a bare host slug must be unchanged');
+  // OBSERVED PRE-EXISTING QUIRK, asserted so a change to it is deliberate: a bare host:port is parsed by new URL
+  // as a SCHEME with no host, so the slug collapses to 'page' - which means two different localhost ports share one
+  // report root. It is not this bead's defect and this change does not fix it; it is pinned here so the collapse
+  // cannot move silently, and it is recorded on the bead as a separate observation.
+  assert(hostSlug('localhost:8080') === 'page', 'a bare host:port currently collapses to page - pinned, not endorsed');
+
+  // And the joined path is refused, not merely sanitised: a caller that bypasses hostSlug cannot escape the root.
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-slug-'));
+  try {
+    const { dir } = runDir(root, 'https://inside.example/', 'run-1');
+    assert(readdirSync(dir).length === 0 && dir.startsWith(root), 'an honest run directory must be created inside the root');
+    // The escaped value no longer escapes: whatever the sanitiser does, the created run directory is inside the
+    // root. (Asserting a THROW here would be wrong - the sanitiser now turns '..' into '_', so no exception is
+    // expected; the joined-path refusal exists as defence in depth for a FUTURE sanitiser and is not reachable
+    // through this call any more, which is the stronger outcome.)
+    const escaped = runDir(root, '..', 'run-2');
+    assert(escaped.dir.startsWith(root + sep), `a dot-segment host must still land inside the reports root, got ${escaped.dir}`);
+    assert(!existsSync(join(dirname(root), 'run-2')), 'nothing may be created beside the reports root for a dot-segment host');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export async function testCompareArtifactContainment() {
   const { compareReports, renderCompareMd } = await import('../aggregate/compare.mjs');
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-compare-'));
@@ -2542,6 +2582,7 @@ export const syntaxCoreTests = [
   testCompareReportsUnconcludedChecks,
   testScorecardScoringAndRender,
   testScorecardArtifactContainment,
+  testHostSlugCannotNameAParentDirectory,
   testCompareArtifactContainment,
   testCensusTargetsAreTracked,
   testSuiteListsMatchRegressionRegistry,

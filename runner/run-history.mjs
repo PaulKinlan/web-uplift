@@ -27,8 +27,8 @@ import {
   lstatSync,
   readlinkSync,
 } from 'node:fs';
-import { writeFileNoFollowSync } from './safe-write.mjs';
-import { join, basename } from 'node:path';
+import { isInsidePath, writeFileNoFollowSync } from './safe-write.mjs';
+import { join, basename, resolve } from 'node:path';
 // The containment helpers live with the artifact-path module, which imports nothing
 // itself, so reaching them from runner/ adds no cycle: aggregate/scorecard.mjs already
 // imports this file. Reusing this one helper is deliberate - a second containment
@@ -39,12 +39,22 @@ import { containedChildDir } from '../aggregate/artifact-path.mjs';
 // reports directory name. Mirrors derivedOut() in evidence/cli.mjs and slugify()
 // in the runner so the same site lands in the same place everywhere.
 export function hostSlug(urlOrHost) {
+  // CONTAINMENT THROUGH A VALUE (web-uplift-4r68). The fallback branch kept dots, so a host-shaped value of '..'
+  // or '.hidden..' survived the sanitiser intact and `join(reportsRoot, host)` then resolved OUTSIDE the reports
+  // root - traversal through a value rather than through a link, which is why every link guard in this repository
+  // would have passed. Dot segments are now removed wherever they appear, so no slug can name a parent directory.
+  let slug;
   try {
-    return new URL(urlOrHost).host.replace(/[:.]/g, '_') || 'page';
+    slug = new URL(urlOrHost).host.replace(/[:.]/g, '_');
   } catch {
     // Already a slug or a bare host.
-    return String(urlOrHost).replace(/[^a-z0-9._-]/gi, '_') || 'page';
+    slug = String(urlOrHost).replace(/[^a-z0-9._-]/gi, '_');
   }
+  // Any run of dots becomes one underscore: '..' -> '_', 'a..b' -> 'a_b', '.hidden' -> '_hidden'. A slug that is
+  // only dots therefore cannot survive, and neither can a leading dot that used to hide a directory on unix.
+  slug = slug.replace(/\.{2,}/g, '_').replace(/^\./, '_');
+  if (!slug || slug === '.' || slug === '..') return 'page';
+  return slug;
 }
 
 // A sortable, filesystem-safe run id from a real timestamp. Date.now() is fine in
@@ -61,6 +71,13 @@ export function runDir(reportsRoot, urlOrHost, runId = makeRunId()) {
   const host = hostSlug(urlOrHost);
   const hostRoot = join(reportsRoot, host);
   const dir = join(hostRoot, runId);
+  // Defence in depth on the JOINED path, not only on the slug: this is the same rule the link guards apply, and
+  // stating it here means a future sanitiser change cannot silently reintroduce a traversal. Reads go through the
+  // same helpers (resolveLatest/scorecard), so a value that steered a write also steered a read - which is why this
+  // is a disclosure question too, not only a write bug.
+  if (!isInsidePath(resolve(reportsRoot), resolve(dir))) {
+    throw new Error(`refusing to use ${JSON.stringify(urlOrHost)} as a host: it resolves outside the reports root (${dir})`);
+  }
   mkdirSync(dir, { recursive: true });
   return { dir, hostRoot, host, runId };
 }
