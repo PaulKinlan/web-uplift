@@ -430,7 +430,7 @@ export function testInstallRefusesDestinationSymlinks() {
     const isolatedPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-src-fifo-'));
     const targetSrcFifo = mkdtempSync(join(tmpdir(), 'web-uplift-src-fifo-target-'));
     try {
-      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024, env: gitEnv() });
       assert(runArchive.status === 0, `git archive failed: ${runArchive.stderr}`);
       const runTar = spawnSync('tar', ['-x', '-C', isolatedPkg], { input: runArchive.stdout });
       assert(runTar.status === 0, `tar extract failed: ${runTar.stderr}`);
@@ -936,7 +936,7 @@ export function testInstallAsksTheSharedSymlinkGuard() {
     const testSymlinkPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-symlink-'));
     const testSymlinkTarget = mkdtempSync(join(tmpdir(), 'web-uplift-symlink-target-'));
     try {
-      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024, env: gitEnv() });
       spawnSync('tar', ['-x', '-C', testSymlinkPkg], { input: runArchive.stdout });
       cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testSymlinkPkg, 'bin/web-uplift.mjs'));
       cpSync(join(repoRoot, 'install-surface.mjs'), join(testSymlinkPkg, 'install-surface.mjs'));
@@ -957,7 +957,7 @@ export function testInstallAsksTheSharedSymlinkGuard() {
     const testDepFifoPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-depfifo-'));
     const testDepFifoTarget = mkdtempSync(join(tmpdir(), 'web-uplift-depfifo-target-'));
     try {
-      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024, env: gitEnv() });
       spawnSync('tar', ['-x', '-C', testDepFifoPkg], { input: runArchive.stdout });
       cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testDepFifoPkg, 'bin/web-uplift.mjs'));
       cpSync(join(repoRoot, 'install-surface.mjs'), join(testDepFifoPkg, 'install-surface.mjs'));
@@ -979,7 +979,7 @@ export function testInstallAsksTheSharedSymlinkGuard() {
     const testBinFifoPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-binfifo-'));
     const testBinFifoTarget = mkdtempSync(join(tmpdir(), 'web-uplift-binfifo-target-'));
     try {
-      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024, env: gitEnv() });
       spawnSync('tar', ['-x', '-C', testBinFifoPkg], { input: runArchive.stdout });
       cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testBinFifoPkg, 'bin/web-uplift.mjs'));
       cpSync(join(repoRoot, 'install-surface.mjs'), join(testBinFifoPkg, 'install-surface.mjs'));
@@ -1001,7 +1001,7 @@ export function testInstallAsksTheSharedSymlinkGuard() {
     const testSrcSymlinkPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-srcsym-'));
     const testSrcSymlinkTarget = mkdtempSync(join(tmpdir(), 'web-uplift-srcsym-target-'));
     try {
-      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+      const runArchive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024, env: gitEnv() });
       spawnSync('tar', ['-x', '-C', testSrcSymlinkPkg], { input: runArchive.stdout });
       cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testSrcSymlinkPkg, 'bin/web-uplift.mjs'));
       cpSync(join(repoRoot, 'install-surface.mjs'), join(testSrcSymlinkPkg, 'install-surface.mjs'));
@@ -1024,7 +1024,7 @@ export function testInstallAsksTheSharedSymlinkGuard() {
       const testDirFifoPkg = mkdtempSync(join(tmpdir(), 'web-uplift-pkg-dirfifo-'));
       const testDirFifoTarget = mkdtempSync(join(tmpdir(), 'web-uplift-dirfifo-target-'));
       try {
-        const archive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024 });
+        const archive = spawnSync('git', ['archive', 'HEAD'], { cwd: repoRoot, maxBuffer: 32 * 1024 * 1024, env: gitEnv() });
         spawnSync('tar', ['-x', '-C', testDirFifoPkg], { input: archive.stdout });
         cpSync(join(repoRoot, 'bin/web-uplift.mjs'), join(testDirFifoPkg, 'bin/web-uplift.mjs'));
         cpSync(join(repoRoot, 'install-surface.mjs'), join(testDirFifoPkg, 'install-surface.mjs'));
