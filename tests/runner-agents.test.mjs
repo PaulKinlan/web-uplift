@@ -468,4 +468,4 @@ export const runnerAgentsTests = [
   testAgentChildEnvAllowlist,
 ];
 
-await runSuite(runnerAgentsTests, import.meta.url, { timeoutMs: 60000, concurrency: 1 });
+await runSuite(runnerAgentsTests, import.meta.url, { timeoutMs: 30000, concurrency: 1 });

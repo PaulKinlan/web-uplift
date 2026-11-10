@@ -54,8 +54,10 @@ rather than a ceiling to live with.
 The fifth measured bound is the first one stated as data rather than as a `timeoutMs` on one target:
 `scripts/test-fast.mjs` carries `DIRECT_TARGET_BUDGETS`, keyed by repo-relative path, and the plan applies it
 to every node target naming that path, so `--dry-run`, `--manifest` and the run cannot disagree about it.
-`tests/runner-agents.test.mjs` was originally **480s** (web-uplift-dysm) because it bundled 34 cases across agent
-dispatch, batch runner, and fix mode. In web-uplift-7nr1, the suite was decomposed into three independent suites:
+`tests/runner-agents.test.mjs` carried a `DIRECT_TARGET_BUDGETS` entry of **480s** (web-uplift-dysm), set after
+historical runs under high load on 2026-10-30 measured 282.3s - 397s because it bundled 34 cases across agent
+dispatch, batch runner, and fix mode. At the `9df6596` merge-base under idle conditions, the unsplit 34-case suite
+executed in **15.2s** (with `testBatchWriteScope` taking ~3.1s). In web-uplift-7nr1, the suite was decomposed into three independent suites:
 1. `tests/runner-agents.test.mjs` (5 cases: agent env allowlist, proxy credential withholding, headless Claude rules)
    with measured budget **60s**. Standalone run is 0.54s; paired 3-sample fast-gate runs on `runner/agents.mjs`
    measured **0.80s, 0.74s, 0.75s** (median **0.74s**, load 2.9).
@@ -77,7 +79,7 @@ A ninth measured bound is `Direct test: tests/syntax-core.test.mjs` at **360s**.
 (31 cases, measured 2026-10-31 on a VM at load 1.4) against the 240s generic default for a `*.test.mjs` - 1.76x
 headroom, which contention eats: it was killed at 240.4s on 2026-10-30 and again on 2026-11-01, each time AFTER
 every case in the file had passed. The expensive cases are `testSuiteListsMatchRegressionRegistry` (30-89s, it
-spawns all 30 suites to build the parity list) and the browser scorecard/CSP cases (6-21s each), so this is
+spawns all 32 suites to build the parity list) and the browser scorecard/CSP cases (6-21s each), so this is
 breadth rather than one slow test.
 
 A further measured bound is `Direct test: tests/chrome-cdp.test.mjs` at **420s**. It was killed at the 240s generic

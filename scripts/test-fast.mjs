@@ -489,10 +489,10 @@ export const SUBSYSTEMS = [
     match: (f) => f.startsWith('fixer/'),
     targets: [
       { type: 'node', path: 'tests/fix-mode.test.mjs', label: 'Fixer mode and isolation tests' },
-      // MEASURED BUDGET, same rule as the Batch filter above (web-uplift-eh9m). The 13 fix-mode cases measured
-      // 139.3s and 149.2s on this VM on 2026-10-30 (`node tests/regression.mjs --only Fix`), so a fixer/ change
-      // alone was being killed at the 120s default - the route its own subsystem selects, and the one the
-      // direct-target budget cannot reach because a regression target has a FILTER, not a path.
+      // MEASURED BUDGET: the 13 fix-mode cases now run directly under tests/fix-mode.test.mjs (~7.3s),
+      // which dedupe excludes from this filter target. The remaining non-suite Fix cases (such as
+      // testTrackersThirdPartySuffix, testFixtureSitesAreStructured, testFixtureSiteChecksRejectBrokenModules,
+      // and testInstallFixturesTolerateLeftoversFromAKilledRun) run here (~3.6s).
       { type: 'regression', filter: 'Fix', label: 'Regression: Fix mode tests', timeoutMs: 240000 },
     ],
   },
@@ -515,12 +515,9 @@ export const SUBSYSTEMS = [
       { type: 'node', path: 'tests/batch-resume-isolation.mjs', label: 'Batch resume isolation tests' },
       { type: 'node', path: 'tests/skill-write-contract.mjs', label: 'Skill write contract tests' },
       { type: 'node', path: 'tests/runner-batch.test.mjs', label: 'Runner batch and write-scope tests' },
-      // MEASURED BUDGET, not a raised ceiling on a hunch (web-uplift-rsbb). This target took 148.3s idle on
-      // 2026-10-27 (testBatchWriteScope alone 76.9s: 52% of it; resume isolation 7.3s; the rest 3.6-4.6s each)
-      // and was being killed at the default 120s, so every runner change failed the fast gate on a target that
-      // was already over budget before it ran anything new. The bound now matches the measurement with room for
-      // a busy VM. The slow path is still the design defect and the real fix is to split testBatchWriteScope
-      // (web-uplift-...) - raising this again without splitting it is not free.
+      // MEASURED BUDGET: testBatchWriteScope and the other batch runner cases now run directly under
+      // tests/runner-batch.test.mjs (~8.2s), which dedupe excludes from this filter target. Any remaining
+      // non-suite Batch cases run here.
       { type: 'regression', filter: 'Batch', label: 'Regression: Batch isolation and scope tests', timeoutMs: 240000 },
       { type: 'regression', filter: 'Agent', label: 'Regression: Agent environment allowlist tests' },
     ],
