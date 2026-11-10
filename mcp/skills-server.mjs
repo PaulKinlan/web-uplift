@@ -17,6 +17,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { assertTargetUrlAllowed, parseSchemeOptIn } from '../evidence/target-url.mjs';
 
 const SKILL_PATH = new URL('../.claude/skills/web-audit/SKILL.md', import.meta.url);
 const DESCRIPTION =
@@ -29,6 +30,18 @@ const DESCRIPTION =
   'checks, no fast path.';
 
 const skillText = () => readFile(SKILL_PATH, 'utf8');
+
+// The opt-in is expressed the same way on every surface: `--allow-scheme <list>`
+// inside the free-form flags string is the SAME flag the CLI's parseArgs reads, so
+// an operator (or agent) says it once and both doors accept it (web-uplift-fs20).
+function optInFromFlags(flags) {
+  if (!flags) return [];
+  const values = [];
+  const re = /--allow-scheme[ =]([^\s]+)/g;
+  let m;
+  while ((m = re.exec(flags)) !== null) values.push(m[1]);
+  return parseSchemeOptIn(values);
+}
 
 const server = new McpServer({ name: 'web-uplift', version: '0.1.0' });
 
@@ -46,19 +59,50 @@ server.registerPrompt(
         ),
     },
   },
-  async ({ url, flags }) => ({
-    messages: [
-      {
-        role: 'user',
-        content: {
-          type: 'text',
-          text:
-            `${await skillText()}\n\n---\n\n` +
-            `Follow the skill above with these arguments: ${url}${flags ? ` ${flags}` : ''}`,
+  async ({ url, flags }) => {
+    // Target-URL scheme gate (web-uplift-fs20), the MCP door of the ONE allow-list:
+    // without this, a caller-supplied file:/javascript:/data: url reached the agent
+    // as instructions whose first navigation had no gate at all (the bug: flow
+    // replay had a scheme check, the audited target did not). A refusal renders AS
+    // the prompt, so the calling agent reads why instead of a skill it must not
+    // run; the CLI's gather() still re-checks at the navigation boundary.
+    let refusal = null;
+    try {
+      assertTargetUrlAllowed(url, { optInSchemes: optInFromFlags(flags) });
+    } catch (err) {
+      refusal = err.message;
+    }
+    const skill = await skillText();
+    if (refusal) {
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text:
+                `${refusal}\n\n` +
+                `Do not run the web-audit skill for this target: the URL was refused by the target-URL scheme gate before any browser was launched. ` +
+                `Audit the http(s) URL the operator intended, or re-run with --allow-scheme <scheme> if this non-web target is deliberate.`,
+            },
+          },
+        ],
+      };
+    }
+    return {
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text:
+              `${skill}\n\n---\n\n` +
+              `Follow the skill above with these arguments: ${url}${flags ? ` ${flags}` : ''}`,
+          },
         },
-      },
-    ],
-  })
+      ],
+    };
+  }
 );
 
 server.registerResource(

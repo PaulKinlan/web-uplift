@@ -156,6 +156,19 @@ Use whichever invocation resolves in your context (they run the SAME CLI):
 Pick the first that exists; the rest of this file writes `node evidence/cli.mjs`
 for brevity, but the `web-uplift evidence ...` form is equivalent everywhere.
 
+**Target-URL scheme gate (web-uplift-fs20).** The audited target must be http or
+https; every other scheme (`file:`, `javascript:`, `data:`, `blob:`, ...) and a
+scheme-less value like `example.com` is refused before any browser is launched,
+with a message that says why. Auditing a non-web target on purpose takes an
+explicit per-scheme opt-in, `--allow-scheme <scheme,..>`, which is recorded as
+`targetUrlPolicy` on the JSON result (and the same gate sits on the MCP web-audit
+prompt, so a non-web url is refused there too). The gate decides the TARGET URL
+only: it does not police server redirects or page-initiated subresource/frame
+loads after an allowed navigation - those are the audited page's own behaviour,
+bounded by Chrome's own origin rules - while the Node-side fetches a page can
+cause are guarded per hop by safeFetch, and flow replay keeps its own scheme gate
+on recorded steps.
+
 Primitives, all content- and tool-agnostic:
 
 | Primitive | What it gives you | Key CDP |

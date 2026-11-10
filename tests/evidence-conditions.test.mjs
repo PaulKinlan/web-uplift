@@ -27,6 +27,10 @@ export async function testPreNavigationEmulation() {
     {
       quiet: true,
       wait: 0,
+      // web-uplift-fs20: a data: fixture is exactly the non-web target the new scheme
+      // gate refuses by default, so the deliberate opt-in is stated here and recorded
+      // on the result like any other.
+      allowSchemes: ['data'],
       emulateMedia: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
       expr:
         "({ initial: window.initialReduce, current: matchMedia('(prefers-reduced-motion: reduce)').matches })",
@@ -162,9 +166,12 @@ export async function testLocaleTimezoneConditions() {
     ' rendered: new Date(Date.UTC(2026, 0, 15, 2, 0)).toLocaleString(),' +
     ' num: (12345.678).toLocaleString() })';
   const url = 'data:text/html,<h1>i18n</h1>';
+  // web-uplift-fs20: the same data: opt-in as the pre-navigation case above - the
+  // fixture is a document the test authors chose, not a web page.
+  const fixtureOpts = { quiet: true, wait: 0, expr: probe, allowSchemes: ['data'] };
 
-  const tokyo = await gather('evaluate', url, { quiet: true, wait: 0, expr: probe, timezone: 'Asia/Tokyo' });
-  const newYork = await gather('evaluate', url, { quiet: true, wait: 0, expr: probe, timezone: 'America/New_York' });
+  const tokyo = await gather('evaluate', url, { ...fixtureOpts, timezone: 'Asia/Tokyo' });
+  const newYork = await gather('evaluate', url, { ...fixtureOpts, timezone: 'America/New_York' });
   assert(tokyo.tz === 'Asia/Tokyo' && newYork.tz === 'America/New_York',
     `i18n: the timezone override must apply: ${tokyo.tz} / ${newYork.tz}`);
   assert(tokyo.rendered !== newYork.rendered,
@@ -172,7 +179,7 @@ export async function testLocaleTimezoneConditions() {
   assert(tokyo.conditions?.timezone === 'Asia/Tokyo' && newYork.conditions?.timezone === 'America/New_York',
     `i18n: each side of the diff must record its timezone: ${JSON.stringify(tokyo.conditions)} / ${JSON.stringify(newYork.conditions)}`);
 
-  const german = await gather('evaluate', url, { quiet: true, wait: 0, expr: probe, locale: 'de-DE' });
+  const german = await gather('evaluate', url, { ...fixtureOpts, locale: 'de-DE' });
   assert(german.num === '12.345,678',
     `i18n: de-DE must render the comma decimal separator: ${german.num}`);
   assert(german.conditions?.locale === 'de-DE',
@@ -180,7 +187,7 @@ export async function testLocaleTimezoneConditions() {
 
   // The screenshot primitive records its conditions too (it bypasses emit()
   // because its artifact is binary).
-  const shot = await gather('screenshot', url, { quiet: true, wait: 0, locale: 'fr-FR', out: join(tmp, 'i18n-shot.png') });
+  const shot = await gather('screenshot', url, { quiet: true, wait: 0, locale: 'fr-FR', out: join(tmp, 'i18n-shot.png'), allowSchemes: ['data'] });
   assert(shot.conditions?.locale === 'fr-FR',
     `i18n: the screenshot must record its locale: ${JSON.stringify(shot)}`);
 
@@ -191,7 +198,7 @@ export async function testLocaleTimezoneConditions() {
   ]) {
     let rejected = false;
     try {
-      await gather('evaluate', url, { quiet: true, wait: 0, expr: '1', ...opts });
+      await gather('evaluate', url, { quiet: true, wait: 0, expr: '1', allowSchemes: ['data'], ...opts });
     } catch (err) {
       rejected = pattern.test(err.message);
     }
