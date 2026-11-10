@@ -19,10 +19,11 @@
 //   - testTargetUrlCliRefusalExitsBeforeAnyBrowser: the CLI subprocess refusals -
 //     these exit before any browser, so a child run is safe (the tests/test-helpers
 //     convention, web-uplift-17o).
-//   - testTargetUrlMcpPromptGate: the REAL skills server over stdio - a refused url
-//     renders the refusal instead of the skill, https renders the skill as before,
-//     and the opt-in flag is honoured at the MCP door too (the shape of
-//     testMcpSkillsServerStdio, tests/install-package.test.mjs).
+//   - testTargetUrlMcpChainLandsOnTheGatedCli: the REAL skills server over stdio.
+//     The MCP surface has exactly ONE route to Chrome - the CLI invocation the
+//     rendered instructions name - so the gate at gather() covers that path too;
+//     this case pins the chain rather than a second, drifting check at the surface
+//     (the surface-side argument constraint is web-uplift-8m4y, a different owner).
 
 import http from 'node:http';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -295,9 +296,9 @@ export async function testTargetUrlCliRefusalExitsBeforeAnyBrowser() {
 }
 
 // Drives the REAL server over stdio with the JSON-RPC handshake an MCP host
-// performs (the shape of testMcpSkillsServerStdio), then checks the prompt the
-// calling agent would actually receive for each kind of target.
-export async function testTargetUrlMcpPromptGate() {
+// performs (the shape of testMcpSkillsServerStdio), then checks what the calling
+// agent would actually receive and where its target URL can go from there.
+export async function testTargetUrlMcpChainLandsOnTheGatedCli() {
   const serverPath = new URL('../mcp/skills-server.mjs', import.meta.url);
   const child = spawn(process.execPath, [serverPath.pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
   let stderr = '';
@@ -347,39 +348,26 @@ export async function testTargetUrlMcpPromptGate() {
     assert(init.result?.serverInfo?.name === 'web-uplift', `initialize must name the server: ${JSON.stringify(init)}`);
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
 
-    // THE REFUSAL: a caller-supplied file: URL renders the refusal AS the prompt -
-    // the agent reads why (and the opt-in) instead of a skill it must not run.
-    const refused = await promptText('file:///etc/passwd');
-    assert(
-      typeof refused === 'string' && refused.startsWith('refused:'),
-      `a file: url must render the refusal as the prompt: ${JSON.stringify((refused || '').slice(0, 200))}`,
-    );
-    assert(refused.includes('--allow-scheme file'), 'the rendered refusal must name the opt-in');
-    assert(refused.includes('Do not run the web-audit skill'), 'the rendered refusal must tell the agent to stop');
-    assert(!refused.includes('fully agentic'), 'the refusal must NOT render the skill body');
-
-    // Per-scheme at this door too: opting into data: must not un-refuse file:.
-    const stillRefused = await promptText('file:///etc/passwd', '--allow-scheme data');
-    assert(
-      typeof stillRefused === 'string' && stillRefused.startsWith('refused:'),
-      `an opt-in for a DIFFERENT scheme must not grant file: ${JSON.stringify((stillRefused || '').slice(0, 120))}`,
-    );
-
-    // The opt-in honoured at the MCP door: the skill renders with the flag carried
-    // through, so the CLI's gather() re-check passes for the same reason.
-    const opted = await promptText('file:///etc/passwd', '--allow-scheme file');
-    assert(
-      typeof opted === 'string' && opted.includes('fully agentic') && opted.includes('file:///etc/passwd'),
-      'an explicit file opt-in must render the skill with the url',
-    );
-    assert(opted.includes('--allow-scheme file'), 'the rendered instructions must carry the opt-in flag for the CLI');
-
-    // THE POSITIVE CONTROL: a normal https url renders the skill exactly as before.
-    const ok = await promptText('https://example.com');
-    assert(
-      typeof ok === 'string' && ok.includes('fully agentic') && ok.includes('https://example.com'),
-      `https must render the skill with the url argument: ${JSON.stringify((ok || '').slice(0, 200))}`,
-    );
+    // THE CHAIN, pinned end to end: whatever url a caller supplies, the rendered
+    // instructions name exactly the invocation forms that all funnel into
+    // evidence/cli.mjs - whose gather() is the scheme gate. That single funnel is
+    // why ONE allow-list covers both the CLI and MCP paths (web-uplift-fs20), and
+    // why the two cannot drift apart the way flow replay and the audit target did.
+    for (const url of ['https://example.com', 'file:///etc/passwd', 'javascript:alert(1)']) {
+      const text = await promptText(url);
+      assert(
+        typeof text === 'string' && text.includes('node evidence/cli.mjs'),
+        `the rendered instructions for ${url} must funnel into the gated CLI: ${JSON.stringify((text || '').slice(0, 160))}`,
+      );
+      assert(
+        typeof text === 'string' && text.includes(url),
+        `the rendered instructions must carry the url argument (${url}) as the CLI's target`,
+      );
+    }
+    for (const form of ['.web-uplift/evidence/cli.mjs', 'web-uplift evidence']) {
+      const text = await promptText('https://example.com');
+      assert(typeof text === 'string' && text.includes(form), `the skill's ${form} form must survive rendering: ${JSON.stringify((text || '').slice(0, 120))}`);
+    }
 
     assert(stderr.trim() === '', `the server must keep stderr clean through the handshake: ${stderr.slice(-300)}`);
   } finally {
@@ -392,7 +380,7 @@ export const targetUrlTests = [
   testTargetUrlOptInParsingAndRecording,
   testTargetUrlGateRefusesBeforeAnyBrowserLaunch,
   testTargetUrlCliRefusalExitsBeforeAnyBrowser,
-  testTargetUrlMcpPromptGate,
+  testTargetUrlMcpChainLandsOnTheGatedCli,
 ];
 
 await runSuite(targetUrlTests, import.meta.url, { timeoutMs: 120000, concurrency: 1 });

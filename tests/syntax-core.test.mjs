@@ -2286,7 +2286,11 @@ const EXPECTED_SUITE_FILES = 31;
     'tests/target-url.test.mjs': [
       'testTargetUrlSchemeGatePredicate', 'testTargetUrlOptInParsingAndRecording',
       'testTargetUrlGateRefusesBeforeAnyBrowserLaunch', 'testTargetUrlCliRefusalExitsBeforeAnyBrowser',
-      'testTargetUrlMcpPromptGate',
+      // testTargetUrlMcpPromptGate was renamed to testTargetUrlMcpChainLandsOnTheGatedCli in the
+      // same commit (web-uplift-fs20): mcp/skills-server.mjs is another owner's surface (web-uplift-8m4y),
+      // so the case pins the CHAIN - the rendered instructions name only the gated evidence/cli.mjs
+      // forms - instead of a second scheme check at the prompt that would drift from gather().
+      'testTargetUrlMcpChainLandsOnTheGatedCli',
     ],
     'tests/mwg-principles.test.mjs': [
       'testMwgDriftExtractPipe', 'testMwgDriftBasisFloor', 'testGuidanceUsage', 'testGuidanceVersionPinnedInDocs',

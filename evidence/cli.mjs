@@ -249,11 +249,13 @@ export async function gather(primitive, url, opts = {}) {
   // Target-URL scheme gate (web-uplift-fs20): EVERY caller-supplied target passes the
   // one allow-list here, BEFORE validateConditions and BEFORE the browser launch, so a
   // refused run costs nothing (the fail-cheap shape of web-uplift-3mrg). This is the
-  // single place a target URL becomes a navigation: the CLI passes the argv URL in,
-  // and the MCP web-audit prompt validates its argument with the same allow-list
-  // (evidence/target-url.mjs) before rendering instructions that end up back here.
-  // A non-http(s) target needs an explicit per-scheme opt-in (--allow-scheme / the
-  // allowScheme/allowSchemes opts), and the opt-in is recorded on the result below.
+  // single place a target URL becomes a navigation. The MCP web-audit prompt is
+  // covered by the same gate without a second check: the instructions it renders name
+  // only the evidence/cli.mjs invocation forms, so the MCP path has exactly one route
+  // to Chrome and it ends here (the surface-side constraint of the url ARGUMENT is
+  // web-uplift-8m4y, a different owner). A non-http(s) target needs an explicit
+  // per-scheme opt-in (--allow-scheme / the allowScheme/allowSchemes opts), and the
+  // opt-in is recorded on the result below.
   const targetUrl = assertTargetUrlAllowed(url, { optInSchemes: parseSchemeOptIn(opts.allowScheme ?? opts.allowSchemes) });
   if (targetUrl.optIn.length > 0) {
     log(`[evidence] target URL scheme opt-in: ${targetUrl.optIn.join(', ')} (recorded as targetUrlPolicy in the result)`);

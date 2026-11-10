@@ -11,11 +11,15 @@
 // in a page context - a disclosure/execution primitive rather than a fetch.
 //
 // WHERE THE GATE LIVES: gather() in evidence/cli.mjs, the harness boundary every
-// caller funnels through - the CLI passes the argv URL there, and the MCP web-audit
-// prompt (mcp/skills-server.mjs) validates its url argument with THIS SAME function
-// before it renders the skill into instructions (the agent then runs this CLI, whose
-// gather() re-checks at the navigation boundary). One allow-list, two doors, so the
-// two surfaces cannot drift apart the way they did before.
+// caller funnels through. The CLI passes the argv URL there; the MCP web-audit
+// prompt (mcp/skills-server.mjs) embeds the SKILL whose ONLY invocation forms are
+// this same CLI (`node evidence/cli.mjs`, `node .web-uplift/evidence/cli.mjs`,
+// `web-uplift evidence`), so the MCP path has exactly one route to Chrome and that
+// route ends at this gate. ONE allow-list, both paths, so they cannot drift apart
+// the way flow replay and the audit target did. A surface-side constraint of the
+// MCP url ARGUMENT itself (before it becomes instruction text) is a different
+// fault - web-uplift-8m4y, a different owner - and can reuse this module's
+// assertTargetUrlAllowed when it lands.
 //
 // THE OPT-IN: auditing a non-web target is sometimes deliberate (a local fixture
 // file, a data: document). `--allow-scheme <scheme,..>` widens THIS RUN's allow-list
@@ -25,17 +29,20 @@
 // an opt-in says so on its face.
 //
 // SCOPE AND THE RECORDED GAP (web-uplift-fs20 acceptance 4): this gate decides the
-// CALLER-SUPPLIED TARGET URL only, at the one place it becomes a navigation. It does
-// NOT police what happens after an allowed navigation: server redirects and
-// page-initiated frame/subresource loads are the audited page's own behaviour, and
-// blocking them here would change what an audit observes. Chrome's own rules still
-// bound that surface: a page loaded from http(s) cannot load file: subresources, and
-// per the fetch specification a navigation redirect to a non-http(s) scheme is not
-// followed. The Node-side fetches a page can cause are covered separately and PER
-// HOP by safeFetch (assertPageDerivedFetchAllowed in evidence/fetch.mjs: scheme plus
-// private-address guards on every redirect hop), and flow replay keeps its own gate
-// (classifyReplayUrl, web-uplift-w0zq) because a flow step is untrusted input rather
-// than the operator's chosen target.
+// CALLER-SUPPLIED TARGET URL only, at the one place it becomes a navigation, and by
+// SCHEME only. It does NOT police what happens after an allowed navigation: server
+// redirects and page-initiated frame/subresource loads are the audited page's own
+// behaviour, and blocking them here would change what an audit observes. Chrome's
+// own rules still bound that surface: a page loaded from http(s) cannot load file:
+// subresources, and per the fetch specification a navigation redirect to a
+// non-http(s) scheme is not followed. The Node-side fetches a page can cause are
+// covered separately and PER HOP by safeFetch (assertPageDerivedFetchAllowed in
+// evidence/fetch.mjs: scheme plus private-address guards on every redirect hop),
+// and flow replay keeps its own gate (classifyReplayUrl, web-uplift-w0zq) because a
+// flow step is untrusted input rather than the operator's chosen target. The
+// resolved-address half of that replay threat (private ranges behind an allowed
+// scheme) is web-uplift-x1ru; the audited target keeps its operator-choice
+// exemption here, the same principle as fetch.mjs's targetOrigin exemption.
 
 export const TARGET_URL_SCHEMES = new Set(['http:', 'https:']);
 
