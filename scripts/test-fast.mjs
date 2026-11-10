@@ -308,11 +308,13 @@ export const UNWIRED_SHARED_MODULES = [
  * exists so a change can be VERIFIED in the meantime, which is why web-uplift-dysm exists at all.
  */
 export const DIRECT_TARGET_BUDGETS = {
-  // 282.3s on this VM on 2026-10-30 (fast log 08eb3199be80120061f7018f8b90ac084acb773d, 31 cases),
-  // 317.6s and 397s on the same evening under load, against the 240s generic default that was KILLING
-  // it (exit 124, no verdict cached) rather than failing it (web-uplift-dysm). testBatchWriteScope
-  // alone is 56-77s of that; the fix-mode and batch cases are the rest.
-  'tests/runner-agents.test.mjs': 480000,
+  // Split from the old 480s runner-agents monolith (web-uplift-7nr1):
+  // tests/runner-agents.test.mjs now runs only the 5 agent env / proxy / allowlist cases in ~0.5s.
+  'tests/runner-agents.test.mjs': 60000,
+  // The 16 batch, snapshot and write-scope cases split from runner-agents (web-uplift-7nr1):
+  'tests/runner-batch.test.mjs': 240000,
+  // The 13 fix-mode cases split from runner-agents (web-uplift-7nr1):
+  'tests/fix-mode.test.mjs': 240000,
   // 136.6s standalone on 2026-10-31 (31 cases, on a VM at load 1.4) against the 240s generic default - 1.76x
   // headroom, which contention eats: killed at 240.4s on 2026-10-30 and again at 240.x s on 2026-11-01, each
   // time AFTER every case in the file had passed. The expensive ones are testSuiteListsMatchRegressionRegistry
@@ -486,6 +488,7 @@ export const SUBSYSTEMS = [
     description: 'Model-driven fix loop and report updates',
     match: (f) => f.startsWith('fixer/'),
     targets: [
+      { type: 'node', path: 'tests/fix-mode.test.mjs', label: 'Fixer mode and isolation tests' },
       // MEASURED BUDGET, same rule as the Batch filter above (web-uplift-eh9m). The 13 fix-mode cases measured
       // 139.3s and 149.2s on this VM on 2026-10-30 (`node tests/regression.mjs --only Fix`), so a fixer/ change
       // alone was being killed at the 120s default - the route its own subsystem selects, and the one the
@@ -505,12 +508,13 @@ export const SUBSYSTEMS = [
     id: 'runner',
     description: 'Batch runner, agent dispatch, and execution history',
     match: (f) =>
-      (f.startsWith('runner/') && !/^runner\/flow(-record)?\.mjs$/.test(f)) ||
+      (f.startsWith('runner/') && !/^runner\/flow(-record)?\.mjs$/.test(f) && f !== 'runner/agents.mjs') ||
       f === 'tests/batch-resume-isolation.mjs',
     targets: [
       { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
       { type: 'node', path: 'tests/batch-resume-isolation.mjs', label: 'Batch resume isolation tests' },
       { type: 'node', path: 'tests/skill-write-contract.mjs', label: 'Skill write contract tests' },
+      { type: 'node', path: 'tests/runner-batch.test.mjs', label: 'Runner batch and write-scope tests' },
       // MEASURED BUDGET, not a raised ceiling on a hunch (web-uplift-rsbb). This target took 148.3s idle on
       // 2026-10-27 (testBatchWriteScope alone 76.9s: 52% of it; resume isolation 7.3s; the rest 3.6-4.6s each)
       // and was being killed at the default 120s, so every runner change failed the fast gate on a target that
@@ -532,7 +536,7 @@ export const SUBSYSTEMS = [
     // 'Agent' would have dropped the whole suite from the gate with no other signal.
     match: (f) => f === 'runner/agents.mjs',
     targets: [
-      { type: 'node', path: 'tests/runner-agents.test.mjs', label: 'Agent env, proxy and write-scope tests' },
+      { type: 'node', path: 'tests/runner-agents.test.mjs', label: 'Agent env, allowlist and proxy tests' },
     ],
   },
   {

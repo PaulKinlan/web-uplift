@@ -135,6 +135,7 @@ const DECLARED_TRACKED_MODULES = [
   'tests/credential-redaction.mjs', 'tests/evidence-axe.test.mjs', 'tests/evidence-cli-source-containment.mjs',
   'tests/evidence-conditions.test.mjs', 'tests/evidence-console.test.mjs', 'tests/evidence-content.test.mjs',
   'tests/evidence-network-har.test.mjs', 'tests/evidence-network-headers.test.mjs', 'tests/evidence-network-resilience.test.mjs',
+  'tests/fix-mode.test.mjs',
   'tests/fixture-sites.test.mjs', 'tests/fixtures/mwg-catalog/evil/skills/modern-web-guidance/modern-web.mjs', 'tests/fixtures/mwg-catalog/ok/skills/modern-web-guidance/modern-web.mjs',
   'tests/fixtures/mwg-catalog/traversal/skills/modern-web-guidance/modern-web.mjs', 'tests/fixtures/mwg-drift/pkg-evil/skills/modern-web-guidance/modern-web.mjs', 'tests/fixtures/mwg-drift/pkg-ok/skills/modern-web-guidance/modern-web.mjs',
   'tests/flow-shadow-browser.mjs', 'tests/flow.mjs', 'tests/install-copy-symlink.mjs',
@@ -143,6 +144,7 @@ const DECLARED_TRACKED_MODULES = [
   'tests/mwg-drift-anchor-subject.mjs', 'tests/mwg-drift-basis-floor.mjs', 'tests/mwg-drift-check.mjs', 'tests/mwg-drift-classify.mjs',
   'tests/mwg-drift-extract-pipe.mjs', 'tests/mwg-principles.test.mjs', 'tests/no-orphan-browser.mjs',
   'tests/redaction.test.mjs', 'tests/regression.mjs', 'tests/runner-agents.test.mjs',
+  'tests/runner-batch.test.mjs',
   'tests/safe-fetch.mjs', 'tests/secrets-coverage.mjs', 'tests/skill-write-contract.mjs',
   'tests/snapshot-run.mjs', 'tests/source-tree-symlink.mjs', 'tests/syntax-core.test.mjs',
   'tests/test-fast.mjs', 'tests/test-helpers.mjs', 'tests/verdict-provenance.test.mjs',
@@ -2102,17 +2104,17 @@ export function testSuiteListsMatchRegressionRegistry() {
   // be silently absent - and an entry with an EMPTY declaration list is refused, because that is the shape
   // that looks complete while guarding nothing (web-uplift-yfbk).
   const REGISTERED_NON_CASE_TARGETS = {
-    'batch-resume-isolation.mjs': 'a case LIBRARY: 1 of its 6 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name). The other five run through this file direct target, and the register check below verifies both numbers.',
+    'batch-resume-isolation.mjs': 'a case LIBRARY: 1 of its 6 --list names are also listed and run by tests/runner-batch.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name). The other five run through this file direct target, and the register check below verifies both numbers.',
     'cdp-copy-sync.mjs': 'one behaviour: the copy check it performs. It has no direct-run guard and is imported by nine files, so wrapping it would change import-time behaviour; it is exercised as the case of testCdpCopySyncGuard in install-package.test.mjs.',
     'changelog-version-check.mjs': 'one behaviour: whether CHANGELOG.md records the current version. Its check runs at import so the gate and its importers both see the failure; there is no case to name.',
-    'flow-shadow-browser.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
-    'flow.mjs': 'a case LIBRARY: 4 of its 7 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name). The other three, testFlowRecorderOverlayNeverAssignsInnerHTML, testFlowWritesRefusePlantedLinks, and testFlowScreenshotNameCannotEscapeOutDir, run through this file direct target, and the register check below verifies both numbers.',
+    'flow-shadow-browser.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/runner-batch.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'flow.mjs': 'a case LIBRARY: 4 of its 7 --list names are also listed and run by tests/runner-batch.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name). The other three, testFlowRecorderOverlayNeverAssignsInnerHTML, testFlowWritesRefusePlantedLinks, and testFlowScreenshotNameCannotEscapeOutDir, run through this file direct target, and the register check below verifies both numbers.',
     'install-copy-symlink.mjs': 'a case LIBRARY, not a standalone suite: it exports the install/sync cases that tests/install-package.test.mjs lists and runs, and its direct-run guard is a convenience. Duplicating them here would trip the one-owner check.',
     'mwg-artefact.mjs': 'tooling entry point (update/verify) rather than a case list; its invariants are asserted by the mwg suites.',
     'mwg-catalog-extract.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/mwg-principles.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
     'safe-fetch.mjs': 'a case LIBRARY: 2 of its 2 --list names are also listed and run by tests/syntax-core.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
     'skill-write-contract.mjs': 'one behaviour: the skill write contract, exercised as a whole rather than in named cases.',
-    'snapshot-run.mjs': 'a case LIBRARY: 4 of its 4 --list names are also listed and run by tests/runner-agents.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'snapshot-run.mjs': 'a case LIBRARY: 4 of its 4 --list names are also listed and run by tests/runner-batch.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
     'source-tree-symlink.mjs': 'a case LIBRARY: 4 of its 4 --list names are also listed and run by tests/syntax-core.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
   };
   const byName = new Map();
@@ -2209,10 +2211,10 @@ export function testSuiteListsMatchRegressionRegistry() {
   // These two numbers ARE the pin. A failure here does not mean the tree is broken; it means the gate's
   // population changed without saying so. When a case or a suite file is added or removed deliberately,
   // update the number in the same commit and say why in the message.
-  // 17 *.test.mjs suites plus the 13 gate targets that are not *.test.mjs files (web-uplift-yfbk). The
+  // 19 *.test.mjs suites plus the 13 gate targets that are not *.test.mjs files (web-uplift-yfbk). The
 // constant catches a change in the NUMBER of things the gate runs, which is what makes a silently dropped
 // suite visible; it is not the count of test files.
-const EXPECTED_SUITE_FILES = 30;
+const EXPECTED_SUITE_FILES = 32;
   // web-uplift-rkcs: the case population is DECLARED BY NAME PER SUITE FILE, for the web-uplift-j3go
   // reason. A count cannot tell an addition in one file from a removal in another, and the reviewer showed a
   // global floor still passing after exactly that pair of edits (add a case, drop a preexisting one). Every
@@ -2294,12 +2296,18 @@ const EXPECTED_SUITE_FILES = 30;
       'testSecretsCoverageClassification', 'testSourceTreeRedactsBeforeInlining', 'testDomSourceArtifactIsRedacted', 'testLogUrlRedaction',
       'testCredentialRedactorsAgree', 'testTrackedBeadsExportHasNoSecretShapes', 'testBeadsExportRedactionRuleCanFire',
     ],
-    'tests/runner-agents.test.mjs': [
-      'testAgentChildEnvProxyCredentials', 'testHeadlessAllowlistIsScoped', 'testHeadlessAllowlistMatchesSkillContract', 'testSkillWriteContractGuard',
-      'testAgentChildEnvAllowlist', 'testBatchIsolationGate', 'testBatchDryRunUsesRetainedDirs', 'testBatchFlowDryRun',
+    'tests/fix-mode.test.mjs': [
       'testFixSurvivesUnscoreableReports', 'testFixRefusesPassOnIncompleteCoverage', 'testFixRefusesContradictoryCoverageClaim', 'testFixRejectsMalformedReports',
       'testFixWriteScopeDiffing', 'testFixModeRefusesOutOfScopeWrites', 'testFixModeScopeEdgeCases', 'testFixIsolationAssertion',
-      'testFixIsolatedRunPublishes', 'testSnapshotRunStructure', 'testSnapshotRunCopiesArtifacts', 'testSnapshotRunMissingArtifactsBestEffort',
+      'testFixIsolatedRunPublishes',
+    ],
+    'tests/runner-agents.test.mjs': [
+      'testAgentChildEnvProxyCredentials', 'testHeadlessAllowlistIsScoped', 'testHeadlessAllowlistMatchesSkillContract', 'testSkillWriteContractGuard',
+      'testAgentChildEnvAllowlist',
+    ],
+    'tests/runner-batch.test.mjs': [
+      'testBatchIsolationGate', 'testBatchDryRunUsesRetainedDirs', 'testBatchFlowDryRun',
+      'testSnapshotRunStructure', 'testSnapshotRunCopiesArtifacts', 'testSnapshotRunMissingArtifactsBestEffort',
       'testSnapshotRunCopyErrorTolerance', 'testBatchWriteScope', 'testBatchResumeIsolation', 'testWriteScopeCoversExecutedTrees',
       'testBatchIntegrityGateAbortsOnTamperedExecutedTree', 'testFlowNormalize', 'testFlowRecordSensitiveRedaction', 'testFlowReplayMutationGate', 'testFlowReplaySchemeGate',
       'testFlowPierceShadowRootBrowser',
