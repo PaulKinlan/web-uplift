@@ -14,7 +14,7 @@ const SECRET_PATTERNS = [
   { id: 'slack-token', re: /xox[baprs]-[0-9A-Za-z-]{10,}/g, severity: 'critical', desc: 'Slack Token' },
   { id: 'jwt', re: /eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, severity: 'high', desc: 'JWT Token' },
   { id: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, severity: 'critical', desc: 'Private Key' },
-  { id: 'connection-string', re: /(?:mongodb|postgres|postgresql|mysql|redis):\/\/[^"]+:[^"]+@[^"]+/g, severity: 'critical', desc: 'Database Connection String with credentials' },
+  { id: 'connection-string', re: /(?:mongodb|postgres|postgresql|mysql|redis):\/\/[^"/\s:@]+:[^"/\s@]+@[^"/\s]+/g, severity: 'critical', desc: 'Database Connection String with credentials' },
   { id: 'generic-api-key', re: /(?:api[_-]?key|apikey|api[_-]?secret)["\s:=]+['"]([A-Za-z0-9_-]{32,})['"]/gi, severity: 'high', desc: 'Generic API Key/Secret (32+ chars)' },
   { id: 'bearer-token', re: /(?:bearer|authorization)["\s:=]+([A-Za-z0-9_-]{20,})/gi, severity: 'high', desc: 'Bearer/Authorization token' },
 ];
@@ -25,10 +25,15 @@ const SECRET_PATTERNS = [
 // an artifact can never republish credential material (web-uplift-u5n).
 export function scanTextForSecrets(text, source, seen = new Set()) {
   const findings = [];
+  if (typeof text !== 'string' || !text) return findings;
+  // Bound input size to 1 MB to prevent linear scans over megabytes of adversarial text (web-uplift-ght8)
+  const MAX_SCAN_BYTES = 1024 * 1024;
+  const content = text.length > MAX_SCAN_BYTES ? text.slice(0, MAX_SCAN_BYTES) : text;
+
   for (const p of SECRET_PATTERNS) {
     p.re.lastIndex = 0;
     let m, count = 0;
-    while ((m = p.re.exec(text)) !== null) {
+    while ((m = p.re.exec(content)) !== null) {
       count++;
       if (count <= 3) {
         const matched = m[0];
@@ -43,6 +48,10 @@ export function scanTextForSecrets(text, source, seen = new Set()) {
           match: '[redacted]',
           matchLength: matched.length,
         });
+      }
+      // Bound total matches per pattern to prevent runaway iterations (web-uplift-ght8)
+      if (count >= 50) {
+        break;
       }
     }
     if (count > 3) {

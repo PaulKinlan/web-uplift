@@ -404,6 +404,60 @@ export async function testFlowReplayLogRedaction() {
   assert(capInnocent[2].includes('Ada Lovelace'), 'author selector value must survive (web-uplift-1dei)');
   const innocentJson = JSON.stringify(redactRecordedStructure(flowInnocent));
   assert(!innocentJson.includes('[redacted]'), 'innocent structure must not be redacted');
+
+  // 9. Short PIN does NOT replace unrelated port numbers across the log (web-uplift-ov2r):
+  const flowPin = {
+    title: 'pin',
+    steps: [{ type: 'change', selectors: ['#pin'], value: '9222' }],
+  };
+  const capPin = [];
+  const logPin = createFlowReplayLogger(flowPin, 'https://t.test/', (m) => capPin.push(m));
+  logPin('[cdp] connected to chrome on port 9222');
+  logPin('[flow] step 1 change: ok - typed "9222"');
+  assert(capPin[0] === '[cdp] connected to chrome on port 9222',
+    `short PIN must not mangle unrelated port in log (web-uplift-ov2r): got ${capPin[0]}`);
+  assert(capPin[1].includes('typed "[redacted]"'),
+    `short PIN must be redacted in typed action log (web-uplift-ov2r): got ${capPin[1]}`);
+
+  // Short alphanumeric password (like hunter2) is redacted across log lines (web-uplift-9dhj):
+  const flowHunter2 = {
+    title: 'pw',
+    steps: [{ type: 'change', selectors: ['#password'], value: 'hunter2' }],
+  };
+  const capHunter2 = [];
+  const logHunter2 = createFlowReplayLogger(flowHunter2, 'https://t.test/', (m) => capHunter2.push(m));
+  logHunter2('[flow] step 1 change: ok - inserted hunter2 into field');
+  logHunter2('[cdp] evaluate: element.value === "hunter2"');
+  assert(capHunter2[0] === '[flow] step 1 change: ok - inserted [redacted] into field',
+    `short alphanumeric password must be redacted in action line (web-uplift-9dhj): got ${capHunter2[0]}`);
+  assert(capHunter2[1] === '[cdp] evaluate: element.value === "[redacted]"',
+    `short alphanumeric password must be redacted in eval line (web-uplift-9dhj): got ${capHunter2[1]}`);
+
+  // 10. Bare weak words like #code or #promo-code do not over-redact (web-uplift-aae0):
+  const flowPromo = {
+    title: 'promo',
+    steps: [{ type: 'change', selectors: ['#promo-code', '#code'], value: 'SUMMER20' }],
+  };
+  const capPromo = [];
+  const logPromo = createFlowReplayLogger(flowPromo, 'https://t.test/', (m) => capPromo.push(m));
+  logPromo('[flow] step 1 change: ok - typed "SUMMER20"');
+  assert(capPromo[0].includes('SUMMER20'),
+    `bare promo code field must not be treated as sensitive credential (web-uplift-aae0): got ${capPromo[0]}`);
+
+  // 11. Step metadata like step.name and step.title are not redacted as PII (web-uplift-e6jr/ov2r):
+  const stepWithMeta = {
+    name: 'login-step-1',
+    title: 'Login Step',
+    label: 'Submit Credentials',
+    type: 'change',
+    selectors: ['#password'],
+    value: 'secretpass123',
+  };
+  const redactedMeta = redactRecordedStructure(stepWithMeta);
+  assert(redactedMeta.name === 'login-step-1', 'step name must not be redacted as PII');
+  assert(redactedMeta.title === 'Login Step', 'step title must not be redacted');
+  assert(redactedMeta.label === 'Submit Credentials', 'step label must not be redacted');
+  assert(redactedMeta.value === '[redacted]', 'credential value must be redacted');
 }
 
 function assert(cond, msg) {

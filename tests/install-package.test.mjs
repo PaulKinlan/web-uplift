@@ -75,6 +75,10 @@ export function testVendoredSyncRepairsTheCopyTheGuardCompares() {
   const rel = 'aggregate/artifact-path.mjs';
   const source = join(repoRoot, rel);
   const copy = join(repoRoot, '.web-uplift', rel);
+  if (!existsSync(copy)) {
+    const init = spawnSync(process.execPath, [join(repoRoot, 'tests', 'cdp-copy-sync.mjs'), '--sync'], { encoding: 'utf8' });
+    assert(init.status === 0, `initial sync must succeed if vendored copy is missing:\n${init.stderr || init.stdout}`);
+  }
   const original = readFileSync(copy);
   const stale = original.subarray(0, Math.max(64, Math.floor(original.length / 2)));
   try {
