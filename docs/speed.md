@@ -16,7 +16,7 @@ code does.
 | gate | command | who runs it | budget |
 | --- | --- | --- | --- |
 | full union gate | `npm test` (`npm run sync:vendored && node --test --test-concurrency=2 tests/*.test.mjs`, 14 suites) | deferred: the nightly factory audit; per-landing verification is the fast gate | 282s measured over 145 runs to 2026-10-11; 66.2s median re-measured 2026-10-13 (web-uplift-f5mb), see "What the gate's wall time is made of" below. BOTH of those were taken at the concurrency-6 setting of 2026-10-13 and are historical: the sweep runs at 2 since 2026-10-28 and its paired wall time at 2 is outstanding ("The full sweep runs two suites at a time" below, ADR 0004) |
-| affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a). NOT under that median on a `runner/` or `fixer/` change: those select `tests/runner-agents.test.mjs` whole, which measured 282-397s on 2026-10-30 (web-uplift-dysm) and is the one path carrying a measured direct-target bound below |
+| affected-only fast gate | `npm run test:fast` (`npm run sync:vendored && node scripts/test-fast.mjs`) | every implementer, while iterating | median under 60s (the fleet's ceiling for this repo); 13s direct and 14-20s cached on changes to the gate itself (2026-10-13, web-uplift-5i9a); 0.74s median on `runner/agents.mjs` changes and 11.7s median on `fixer/` changes after decomposing `tests/runner-agents.test.mjs` (web-uplift-7nr1) |
 
 ### Per-target budgets in the fast gate
 
@@ -54,13 +54,18 @@ rather than a ceiling to live with.
 The fifth measured bound is the first one stated as data rather than as a `timeoutMs` on one target:
 `scripts/test-fast.mjs` carries `DIRECT_TARGET_BUDGETS`, keyed by repo-relative path, and the plan applies it
 to every node target naming that path, so `--dry-run`, `--manifest` and the run cannot disagree about it.
-`tests/runner-agents.test.mjs` is **480s** (web-uplift-dysm). Measured on this VM on 2026-10-30:
-**282.3s** for the 31 cases in the fast log `08eb3199be80120061f7018f8b90ac084acb773d`, and **317.6s** and
-**397s** earlier and later the same evening under load - against the generic 240s, which was KILLING the
-target (exit 124, no verdict cached) rather than failing it, so no `runner/` or `fixer/` change could get a
-verdict at all. `testBatchWriteScope` alone is 56-77s of it and the fix-mode and batch cases are the rest;
-this suite is the same shape defect as the mwg file above, and the same remedy applies (split it along the
-filters it already has). The bound is there so those changes can be verified in the meantime.
+`tests/runner-agents.test.mjs` carried a `DIRECT_TARGET_BUDGETS` entry of **480s** (web-uplift-dysm), set after
+historical runs under high load on 2026-10-30 measured 282.3s - 397s because it bundled 34 cases across agent
+dispatch, batch runner, and fix mode. At the `9df6596` merge-base under idle conditions, the unsplit 34-case suite
+executed in **15.2s** (with `testBatchWriteScope` taking ~3.1s). In web-uplift-7nr1, the suite was decomposed into three independent suites:
+1. `tests/runner-agents.test.mjs` (5 cases: agent env allowlist, proxy credential withholding, headless Claude rules)
+   with measured budget **60s**. Standalone run is 0.54s; paired 3-sample fast-gate runs on `runner/agents.mjs`
+   measured **0.80s, 0.74s, 0.75s** (median **0.74s**, load 2.9).
+2. `tests/fix-mode.test.mjs` (13 cases: fix mode report ingestion, write-scope boundaries, and isolation) with budget
+   **240s**. Standalone run is 7.5s; paired 3-sample fast-gate runs on `fixer/fix.mjs` measured **11.99s, 11.71s, 11.14s**
+   (median **11.71s**, load 2.5).
+3. `tests/runner-batch.test.mjs` (16 cases: batch isolation gate, write-scope, and dry-runs) with budget **240s**.
+   Standalone run is 8.6s; fast-gate run on `runner/run-batch.mjs` measured **11.10s**.
 
 The table is keyed by PATH and applied when the plan is assembled, not at the point a target is created, so
 it holds whichever route selects the suite: a changed `*.test.mjs` file, a `SUBSYSTEMS` rule, or the
@@ -74,7 +79,7 @@ A ninth measured bound is `Direct test: tests/syntax-core.test.mjs` at **360s**.
 (31 cases, measured 2026-10-31 on a VM at load 1.4) against the 240s generic default for a `*.test.mjs` - 1.76x
 headroom, which contention eats: it was killed at 240.4s on 2026-10-30 and again on 2026-11-01, each time AFTER
 every case in the file had passed. The expensive cases are `testSuiteListsMatchRegressionRegistry` (30-89s, it
-spawns all 30 suites to build the parity list) and the browser scorecard/CSP cases (6-21s each), so this is
+spawns all 32 suites to build the parity list) and the browser scorecard/CSP cases (6-21s each), so this is
 breadth rather than one slow test.
 
 A further measured bound is `Direct test: tests/chrome-cdp.test.mjs` at **420s**. It was killed at the 240s generic

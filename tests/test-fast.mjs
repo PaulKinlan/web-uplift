@@ -60,6 +60,7 @@ import {
   repoRoot,
   executionSummary,
   buildSelectionManifest,
+  dedupeAgainstDirectSuites,
 } from '../scripts/test-fast.mjs';
 import { parseFilterArgs, gitEnv } from './test-helpers.mjs';
 
@@ -184,6 +185,41 @@ function testSubsystemMappings() {
       `${otherRunnerFile} must NOT match agent-dispatch: the entry names one file, not the directory`,
     );
   }
+
+  // 15b. Fixer and runner-batch fast-gate routes (web-uplift-ln3w).
+  // Ensures fixer/ changes select tests/fix-mode.test.mjs directly and runner/ batch changes
+  // select tests/runner-batch.test.mjs directly, and that deduplication preserves coverage.
+  const fixerPlan = mapFilesToTests(['fixer/fix.mjs']);
+  assert(fixerPlan.matchedSubsystems.includes('fixer'), 'fixer/fix.mjs must map to fixer subsystem');
+  assert(!fixerPlan.isBaseline, 'fixer/fix.mjs must not fall back to baseline');
+  assert(
+    fixerPlan.targets.some((t) => t.type === 'node' && t.path === 'tests/fix-mode.test.mjs'),
+    'fixer/fix.mjs must select tests/fix-mode.test.mjs directly',
+  );
+  assert(
+    fixerPlan.targets.some((t) => t.type === 'regression' && t.filter === 'Fix'),
+    'fixer/fix.mjs must select the Fix regression filter target',
+  );
+  assert(
+    !fixerPlan.targets.some((t) => t.path === 'tests/runner-agents.test.mjs' || t.path === 'tests/runner-batch.test.mjs'),
+    'fixer/fix.mjs must NOT select runner-agents or runner-batch suites',
+  );
+
+  const runnerBatchPlan = mapFilesToTests(['runner/run-batch.mjs']);
+  assert(runnerBatchPlan.matchedSubsystems.includes('runner'), 'runner/run-batch.mjs must map to runner subsystem');
+  assert(!runnerBatchPlan.isBaseline, 'runner/run-batch.mjs must not fall back to baseline');
+  assert(
+    runnerBatchPlan.targets.some((t) => t.type === 'node' && t.path === 'tests/runner-batch.test.mjs'),
+    'runner/run-batch.mjs must select tests/runner-batch.test.mjs directly',
+  );
+  assert(
+    runnerBatchPlan.targets.some((t) => t.type === 'regression' && t.filter === 'Batch'),
+    'runner/run-batch.mjs must select the Batch regression filter target',
+  );
+  assert(
+    !runnerBatchPlan.targets.some((t) => t.path === 'tests/runner-agents.test.mjs' || t.path === 'tests/fix-mode.test.mjs'),
+    'runner/run-batch.mjs must NOT select runner-agents or fix-mode suites',
+  );
   
   // 16. A changed census module must select the guard that READS it (web-uplift-iwof). Measured before this
   // entry existed: changing tests/census-targets.mjs selected four targets - CDP copy sync byte check,
@@ -1371,6 +1407,18 @@ function testDedupeKeepsTheExecutedCaseSetIdentical() {
     missing.length === 0 && added.length === 0,
     `the union of executed case names must be identical with and without the dedupe; missing: ${JSON.stringify(missing)}, added: ${JSON.stringify(added)}`,
   );
+
+  // web-uplift-ln3w: dedupe coverage check for fixer and runner-batch targets
+  const fixerDeduped = dedupeAgainstDirectSuites(mapFilesToTests(['fixer/fix.mjs']).targets);
+  const fixFilterTarget = fixerDeduped.find((t) => t.type === 'regression' && t.filter === 'Fix');
+  assert(fixFilterTarget, 'dedupe must preserve the Fix filter target');
+  assert(fixFilterTarget.excludeSuites.includes('tests/fix-mode.test.mjs'), 'Fix filter must exclude tests/fix-mode.test.mjs');
+
+  const batchDeduped = dedupeAgainstDirectSuites(mapFilesToTests(['runner/run-batch.mjs']).targets);
+  const batchFilterTarget = batchDeduped.find((t) => t.type === 'regression' && t.filter === 'Batch');
+  assert(batchFilterTarget, 'dedupe must preserve the Batch filter target');
+  assert(batchFilterTarget.excludeSuites.includes('tests/runner-batch.test.mjs'), 'Batch filter must exclude tests/runner-batch.test.mjs');
+
   console.log('✔ Dedupe keeps the executed case set identical');
 }
 
