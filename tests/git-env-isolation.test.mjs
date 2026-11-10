@@ -150,15 +150,22 @@ function testASpreadEnvCannotRestoreGitDir() {
 // exactly the shape this scan flags, so the raw scan flagged master's own guard and went red on a clean tree.
 // The fix is NOT an exemption (a broad exemption is a bypass): the scan now classifies each character as
 // executable code or as non-executable content (string literals, template text, comments), and only a match
-// whose CALLABLE NAME is code is a spawn. A spawn hidden inside a string literal is inert data - it cannot
-// execute - so skipping it cannot hide a real spawn; template interpolation stays CODE, so a spawn there is
-// still required to scrub. The classification is tested both ways by testScrubDistinguishesCodeFromStringData.
+// whose CALLABLE NAME is code is a spawn. String/template/comment content cannot execute, so skipping it is
+// inert - WITHIN the limits of the classifier, which are stated precisely in the soundness note above
+// (web-uplift-cly2): the two known misread forms are excluded by construction, and the rest is pinned by
+// testScrubDistinguishesCodeFromStringData. Template interpolation stays CODE, so a spawn there is still
+// required to scrub. The classification is tested both ways by that case.
 //
-// KNOWN LIMITS, stated: (1) regex literals are delimited with the standard division-vs-regex heuristic (a /
-// opens a regex after an operator, open bracket, comma, or keyword; after an identifier or closer it is division).
-// A heuristic can misclassify a pathological line locally, but (2) bounds the damage: a raw NEWLINE inside a
-// ' or " frame is illegal JavaScript, so the frame pops there and the scan resynchronises at the next line
-// instead of poisoning the rest of the file. Template literals legitimately span lines and persist.
+// THE SOUNDNESS PROPERTY, stated precisely (web-uplift-cly2): the skip decision is only as sound as the
+// classifier. Its two KNOWN misread forms - a division after an identifier whose name ends in a keyword
+// ('min / total' reading 'in'), and a division after postfix ++/-- - are excluded by construction (whole-
+// identifier keyword test; +/- absent from the operator set) and pinned by that test, so they cannot mask a
+// live spawn. A residual unknown misread is bounded to ONE LINE (the regex-body scan stops at a newline and
+// quote frames pop there), so it can only over-flag within a line or hide a spawn on the same line as the
+// misread - the standing planted-red drill is the check that the known shapes stay excluded.
+const SCRUB_KEYWORDS = new Set([
+  'return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'do', 'else', 'yield', 'await',
+]);
 function maskNonExecutableContent(text) {
   // 1 = the character is content of a string literal, template text, or comment; 0 = executable code.
   const mask = new Uint8Array(text.length);
@@ -173,15 +180,19 @@ function maskNonExecutableContent(text) {
       if (c === '/' && text[i + 1] === '/') { stack.push('line'); mask[i] = 1; mask[i + 1] = 1; i += 2; continue; }
       if (c === '/' && text[i + 1] === '*') { stack.push('block'); mask[i] = 1; mask[i + 1] = 1; i += 2; continue; }
       if (c === '/') {
-        // Division vs regex: a slash OPENS a regex when the previous significant character puts the parser in
-        // expression position; after an identifier or a closer it is division. Misclassifying a pathological
-        // line shifts flagging only locally, and the newline resync below bounds any damage to that line.
+        // Division vs regex: a slash OPENS a regex when the previous significant token puts the parser in
+        // expression position. The keyword test is a WHOLE-IDENTIFIER test (a suffix match would read the
+        // 'in' in 'min / total' as a keyword and misopen a regex - web-uplift-cly2), and '+' and '-' are
+        // deliberately ABSENT from the operator set: 'i++ / 2' is postfix division, and where plus-slash is
+        // genuinely ambiguous the guard must prefer the LOUD misread (scanning a rare regex as code can only
+        // over-flag) over the SILENT one (masking a live spawn as regex body - web-uplift-cly2's defect).
         let p = i - 1;
         while (p >= 0 && (text[p] === ' ' || text[p] === '\t' || text[p] === '\n')) p -= 1;
         const prev = p >= 0 ? text[p] : '';
         const before = text.slice(0, p + 1);
-        const opensRegex = prev === '' || '([{},;:=!&|?+%*-<>~^'.includes(prev) ||
-          /(?:return|typeof|case|in|of|new|delete|void|do|else|yield|await)$/.test(before);
+        const ident = before.match(/([A-Za-z0-9_$]+)$/);
+        const opensRegex = prev === '' || '([{},;:=!&|?*<>~^'.includes(prev) ||
+          (ident !== null && SCRUB_KEYWORDS.has(ident[1]));
         if (opensRegex) {
           // Consume the regex body: no escapes-to-EOL semantics, just find the closing unescaped slash.
           mask[i] = 1;
@@ -250,14 +261,18 @@ function maskNonExecutableContent(text) {
 }
 
 function findGitSpawnSites(file, text) {
-  const spawnPattern = /(?:execFileSync|execFile|execSync|spawnSync|spawn|exec)\(\s*['"]git['"]/g;
+  // Backtick is included (web-uplift-yrfb): spawn(`git`, ...) is a real spawn shape and was invisible to the
+  // census when only quotes were accepted - the old gap predates the classifier but is fixed here because the
+  // classifier already exists to tell executable from inert text.
+  const spawnPattern = /(?:execFileSync|execFile|execSync|spawnSync|spawn|exec)\(\s*['"`]git['"`]/g;
   const mask = maskNonExecutableContent(text);
   const sites = [];
   let skippedNonExecutable = 0;
   for (const match of text.matchAll(spawnPattern)) {
     // The CALLABLE NAME must be code. In a real call the name is code and only the 'git' argument is a string;
-    // in a negative control the whole shape - name included - is literal content, which is inert and cannot
-    // spawn, so skipping it cannot hide a real spawn.
+    // in a negative control the whole shape - name included - is literal content. The classifier's known
+    // misread forms are excluded by construction (see the soundness note on maskNonExecutableContent,
+    // web-uplift-cly2), so a skip here means inert text; the cly2 repros in the distinguishing case pin it.
     const nameLen = match[0].indexOf('(');
     let nameIsContent = false;
     for (let k = match.index; k < match.index + nameLen; k += 1) {
@@ -317,6 +332,14 @@ function testScrubDistinguishesCodeFromStringData() {
   // Flagged: code is code, whichever quoting the first argument uses.
   assert(flagged(realSpawn) === 1, 'a real unscrubbed spawnSync must be flagged');
   assert(flagged("execFileSync(\"git\", ['ls-files'], { env: cwdOnly });") === 1, 'a double-quoted real spawn must be flagged');
+  assert(flagged('const run = spawnSync(`git`, [\'archive\', \'HEAD\'], { cwd: repoRoot });') === 1, 'a template-literal git argument must be flagged (web-uplift-yrfb)');
+
+  // web-uplift-cly2 repros: a DIVISION that a sloppy heuristic would misread as a regex must NOT mask a real
+  // spawn later on the same line. All three were silent false negatives before the whole-identifier keyword
+  // test and the removal of +/- from the operator set.
+  assert(flagged("const pct = min / total; spawnSync('git', ['status']);") === 1, 'division after an identifier ending in \'in\' must not open a regex');
+  assert(flagged("const q = i++ / 2; spawnSync('git', ['status']);") === 1, 'division after postfix ++ must not open a regex');
+  assert(flagged("const p = begin / n, s = spawnSync('git', ['status']);") === 1, 'division after an identifier ending in \'in\' (begin) must not open a regex');
 
   // Skipped: the same shapes as DATA - string literals and comments cannot spawn.
   assert(flagged("const control = \"spawnSync('git', ['status']);\";") === 0, 'a spawn shape inside a double-quoted string must be skipped');
