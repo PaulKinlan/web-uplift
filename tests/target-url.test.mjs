@@ -143,6 +143,51 @@ export async function testTargetUrlSchemeGatePredicate() {
   assert(refused !== null, 'opting into file: must not grant chrome://');
 }
 
+export async function testTargetUrlPolicyRecordRedactsCredentials() {
+  // web-uplift-alwp: the policy RECORD is an output (stdout JSON + every artifact that carries it), so a
+  // credential-bearing target must reach it redacted. The NAVIGATION keeps the real URL (a session'd page is
+  // the page being audited) - only the recorded provenance is made safe to share.
+  const userinfo = assertTargetUrlAllowed('https://user:pass@example.test/');
+  assert(
+    !userinfo.policy.url.includes('pass') && userinfo.policy.url.includes('%5Bredacted%5D'),
+    `userinfo credentials must be redacted in the policy record: ${userinfo.policy.url}`,
+  );
+  assert.equal(userinfo.url.href, 'https://user:pass@example.test/', 'the NAVIGATION url must stay the real target');
+
+  const session = assertTargetUrlAllowed('https://example.test/?session=review_dummy');
+  assert(
+    !session.policy.url.includes('review_dummy') && session.policy.url.includes('session=%5Bredacted%5D'),
+    `a credential-named query value must be redacted in the policy record: ${session.policy.url}`,
+  );
+
+  // Over-redaction is a defect too: a query parameter that is not a credential name stays readable.
+  const benign = assertTargetUrlAllowed('https://example.test/?q=1&lang=de');
+  assert.equal(benign.policy.url, 'https://example.test/?q=1&lang=de', 'a benign query must survive into the policy record');
+
+  // The refusal MESSAGE is an output too (stderr, run logs). The scheme refusal names the SCHEME, not the
+  // URL, so a token-bearing target is not echoed there; the parseable-URL refusal paths (no-scheme,
+  // invalid-URL) run the same redactor, so a token-bearing URL that reaches them is redacted.
+  let m = null;
+  try {
+    assertTargetUrlAllowed('file:///etc/creds?token=supersecret');
+  } catch (err) {
+    m = err.message;
+  }
+  assert(m !== null && m.startsWith('refused:'), 'the token-bearing refusal must still refuse');
+  assert(!m.includes('supersecret'), `the refusal must not echo the token value: ${m}`);
+  assert(m.includes('file:'), 'the refusal must still name the scheme');
+
+  m = null;
+  try {
+    assertTargetUrlAllowed('https://example.test:bad-port/?token=supersecret');
+  } catch (err) {
+    m = err.message;
+  }
+  assert(m !== null && m.includes('not a valid URL'), `the invalid-URL refusal path must fire: ${m}`);
+  assert(!m.includes('supersecret'), `the invalid-URL refusal must not echo the token: ${m}`);
+  assert(m.includes('%5Bredacted%5D'), 'the invalid-URL refusal must carry the redacted placeholder');
+}
+
 export async function testTargetUrlOptInParsingAndRecording() {
   // Parsing: absent means no opt-in, not an error.
   assert.deepEqual(parseSchemeOptIn(undefined), [], 'an absent opt-in must parse to an empty list');
@@ -377,6 +422,7 @@ export async function testTargetUrlMcpChainLandsOnTheGatedCli() {
 
 export const targetUrlTests = [
   testTargetUrlSchemeGatePredicate,
+  testTargetUrlPolicyRecordRedactsCredentials,
   testTargetUrlOptInParsingAndRecording,
   testTargetUrlGateRefusesBeforeAnyBrowserLaunch,
   testTargetUrlCliRefusalExitsBeforeAnyBrowser,

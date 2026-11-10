@@ -1,6 +1,15 @@
 // Target-URL scheme gate (web-uplift-fs20): the ONE allow-list a caller-supplied
 // audited target must pass before it becomes a Chrome navigation.
 //
+// REDACTION NOTE (web-uplift-alwp): the policy RECORD redacts the URL through the
+// repo's names-based URL redactor (redactUrlCredentialValues) before it is handed
+// to any caller - a target like https://user:pass@host/ or .../?session=... would
+// otherwise write its credentials into stdout JSON and every audit artifact that
+// carries targetUrlPolicy. The NAVIGATION is deliberately NOT redacted: the browser
+// must load the real target (a session'd page is the page being audited); only the
+// recorded provenance is made safe to share, the same split the HAR and log
+// redaction already make between what is fetched and what is kept.
+//
 // The bug this closes: flow replay has refused non-web schemes since web-uplift-w0zq
 // (classifyReplayUrl, runner/flow.mjs), but the AUDIT target had no gate at all -
 // `node evidence/cli.mjs <primitive> <url>` drove the URL straight into
@@ -44,6 +53,8 @@
 // scheme) is web-uplift-x1ru; the audited target keeps its operator-choice
 // exemption here, the same principle as fetch.mjs's targetOrigin exemption.
 
+import { redactUrlCredentialValues } from './credential-terms.mjs';
+
 export const TARGET_URL_SCHEMES = new Set(['http:', 'https:']);
 
 // 'file' -> 'file:' ; 'HTTPS:' -> 'https:' ; anything else is a typo, and a typo
@@ -68,7 +79,10 @@ export function parseSchemeOptIn(raw) {
 // { url, scheme, optIn, policy }; `policy` is the record that goes on the result.
 export function assertTargetUrlAllowed(rawUrl, { optInSchemes } = {}) {
   const optIn = parseSchemeOptIn(optInSchemes);
-  const shown = String(rawUrl ?? '').slice(0, 120);
+  // The refusal text and the policy record are both OUTPUTS: run the URL through the
+  // names-based URL redactor first (web-uplift-alwp), so a credential-bearing target
+  // never reaches stderr or an artifact verbatim. Navigation keeps the real URL.
+  const shown = redactUrlCredentialValues(String(rawUrl ?? '')).slice(0, 120);
   let parsed;
   try {
     parsed = new URL(String(rawUrl));
@@ -90,7 +104,7 @@ export function assertTargetUrlAllowed(rawUrl, { optInSchemes } = {}) {
   const policy = {
     allowed: [...TARGET_URL_SCHEMES],
     optIn,
-    url: parsed.href,
+    url: redactUrlCredentialValues(parsed.href),
     scheme: parsed.protocol,
   };
   return { url: parsed, scheme: parsed.protocol, optIn, policy };
