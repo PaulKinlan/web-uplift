@@ -6,10 +6,10 @@
   "analysedVersion": "0.0.197",
   "appliedRulesVersion": "0.0.197",
   "analysedAt": "2026-11-06T20:15:11.201Z",
-  "lastCheckAt": "2026-11-09T22:31:20.107Z",
-  "lastCheckUpstreamVersion": "0.0.197",
+  "lastCheckAt": "2026-11-10T07:29:48.823Z",
+  "lastCheckUpstreamVersion": "1.0.0",
   "lastCheckSource": "https://registry.npmjs.org/modern-web-guidance/latest",
-  "lastCheckResult": "in-sync",
+  "lastCheckResult": "delta",
   "lastAnalysis": {
     "fromVersion": "0.0.194",
     "toVersion": "0.0.197",
@@ -73,11 +73,11 @@
   "rulesSha256": "7920e887c4f375054ebdf729a0d8491ca8416f47ff47df67c2aee60267bd3443",
   "basisSha256": "8ca68c6480964f44c8a325b653ef1e8fb1d1991aae58e33ef9dfbcc0b9985a8e",
   "lastAnchorCheck": {
-    "upstreamVersion": "0.0.197",
+    "upstreamVersion": "1.0.0",
     "result": "ok",
     "rules": 8,
     "anchors": 16,
-    "checkedAt": "2026-11-09T22:31:20.107Z",
-    "source": "https://registry.npmjs.org/modern-web-guidance/-/modern-web-guidance-0.0.197.tgz"
+    "checkedAt": "2026-11-10T07:29:48.823Z",
+    "source": "https://registry.npmjs.org/modern-web-guidance/-/modern-web-guidance-1.0.0.tgz"
   }
 }
