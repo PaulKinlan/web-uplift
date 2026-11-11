@@ -517,26 +517,37 @@ function isProviderTokenOrJwt(str) {
   return false;
 }
 
-function shouldRedactPathSegment(seg, prevSeg = '') {
+function shouldRedactPathSegment(seg, routeContext = 'none') {
   if (!seg || typeof seg !== 'string') return false;
-  if (isProviderTokenOrJwt(seg)) return true;
-  const p = prevSeg.toLowerCase();
-  if (INNOCENT_ROUTE_MARKERS.has(p)) return false;
-  if (!looksLikeToken(seg)) return false;
-  return true;
+  const val = seg.replace(/^#+/, '');
+  if (!val) return false;
+  if (isProviderTokenOrJwt(val)) return true;
+  if (routeContext === 'innocent') return false;
+  if (looksLikeToken(val)) return true;
+  return false;
 }
 
 function redactPathInFragment(path) {
   let hit = false;
   const tokens = path.split(/(\/|%2[fF])/);
-  let prevSeg = '';
+  let routeContext = 'none';
   for (let i = 0; i < tokens.length; i += 2) {
     let seg = tokens[i];
-    if (shouldRedactPathSegment(seg, prevSeg)) {
-      tokens[i] = REDACTED_VALUE_ENCODED;
+    if (!seg) continue;
+    const clean = seg.replace(/^#+/, '').toLowerCase();
+    if (INNOCENT_ROUTE_MARKERS.has(clean)) {
+      routeContext = 'innocent';
+      continue;
+    }
+    if (SENSITIVE_ROUTE_MARKERS.has(clean)) {
+      routeContext = 'sensitive';
+      continue;
+    }
+    if (shouldRedactPathSegment(seg, routeContext)) {
+      const hashPrefix = seg.startsWith('#') ? '#' : '';
+      tokens[i] = hashPrefix + REDACTED_VALUE_ENCODED;
       hit = true;
     }
-    if (seg) prevSeg = seg;
   }
   return { path: tokens.join(''), hit };
 }
