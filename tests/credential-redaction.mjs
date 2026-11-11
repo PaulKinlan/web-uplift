@@ -1412,14 +1412,28 @@ export async function testFragmentRedactionKeepsSiblingParamsByteIdentical() {
     assert(cli.redactUrlCredentialValues(anchor) === anchor, `an ordinary anchor must survive untouched: ${anchor}`);
   }
 
-  // Innocent anchor deep links must NOT be over-redacted (web-uplift-j3co):
+  // Innocent anchor deep links must NOT be over-redacted (web-uplift-j3co, web-uplift-rx0i):
   for (const deepLink of [
     'https://x.test/a#/commit/abc123def456',
     'https://x.test/a#/build/3f2a9c8e1b7d4f60',
     'https://x.test/a#/tree/1234567890abcdef',
+    'https://x.test/a#/tree/main/src/3f2a9c8e1b7d4f60',
+    'https://x.test/a#/commit/abc123def456/9f8e7d6c5b4a3210deadbeef',
+    'https://x.test/a#/blob/main/packages/x/9f8e7d6c5b4a3210deadbeef',
   ]) {
     assert(cli.redactUrlCredentialValues(deepLink) === deepLink,
-      `innocent anchor deep link must survive untouched (web-uplift-j3co): ${deepLink}`);
+      `innocent anchor deep link must survive untouched (web-uplift-j3co, web-uplift-rx0i): ${deepLink}`);
+  }
+
+  // Sensitive route markers redact token segments regardless of depth (web-uplift-rx0i):
+  for (const sensitiveRoute of [
+    { in: 'https://x.test/a#/auth/3f2a9c8e1b7d4f60', exp: 'https://x.test/a#/auth/%5Bredacted%5D' },
+    { in: 'https://x.test/a#/reset/password/3f2a9c8e1b7d4f60', exp: 'https://x.test/a#/reset/password/%5Bredacted%5D' },
+    { in: 'https://x.test/a#/otp/v2/9f8e7d6c5b4a3210deadbeef', exp: 'https://x.test/a#/otp/v2/%5Bredacted%5D' },
+  ]) {
+    const out = cli.redactUrlCredentialValues(sensitiveRoute.in);
+    assert(out === sensitiveRoute.exp,
+      `token in sensitive route marker must be redacted (web-uplift-rx0i): got ${out}, expected ${sensitiveRoute.exp}`);
   }
 
   // Provider tokens and JWTs MUST be redacted even inside innocent route markers (web-uplift-wlnh):
