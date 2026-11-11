@@ -573,6 +573,12 @@ function redactFragmentCredentialParams(fragment) {
     if (!paramStr) return { str: '', hit: false };
     const parts = paramStr.split(/(&|;|%26|%3[bB])/);
     let modified = false;
+    // web-uplift-ei4w: a semicolon segment WITHOUT '=' directly after a redacted credential value is the
+    // tail of that value, not a sibling parameter - '#/cb?code=SECRET;TAIL' must not re-emit TAIL where the
+    // pre-batch parser redacted the whole run. A segment WITH '=' (';state=xyz') stays a sibling and keeps
+    // its bytes (web-uplift-gnt3's contract). '&' bare segments keep their landed behaviour, which matches
+    // the pre-batch parser too, so this widens nothing that used to be hidden.
+    let inRedactedCredentialRun = false;
     for (let i = 0; i < parts.length; i += 2) {
       let part = parts[i];
       if (!part) continue;
@@ -597,7 +603,21 @@ function redactFragmentCredentialParams(fragment) {
           part = `${keyPrefix}${keyName}${eqStr}${REDACTED_VALUE_ENCODED}`;
           parts[i] = part;
           modified = true;
+          inRedactedCredentialRun = true;
+        } else {
+          inRedactedCredentialRun = false;
         }
+      } else if (inRedactedCredentialRun) {
+        const delim = (parts[i - 1] || '').toLowerCase();
+        if (delim === ';' || delim === '%3b') {
+          parts[i] = REDACTED_VALUE_ENCODED;
+          modified = true;
+          // stay in the run: another bare segment after this one is still value tail
+        } else {
+          inRedactedCredentialRun = false;
+        }
+      } else {
+        inRedactedCredentialRun = false;
       }
     }
     return { str: parts.join(''), hit: modified };

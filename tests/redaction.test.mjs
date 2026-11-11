@@ -632,9 +632,16 @@ export async function testSecretsExternalScriptFetchIsCappedAndDeadlined() {
       result.findings.some((f) => f.source === 'external JS: early.js'),
       `the key before the cap boundary must be found: ${JSON.stringify(sources)}`
     );
+    // web-uplift-21t2: the key after the 2 MiB body cap must NOT be found - but the big.js source must not
+    // be SILENT either: its body exceeds the 1 MB scan bound, so the scan reports its own truncation. Only
+    // actual key findings from big.js are forbidden; the truncation report is required.
     assert(
-      !result.findings.some((f) => f.source === 'external JS: big.js'),
+      !result.findings.some((f) => f.source === 'external JS: big.js' && f.pattern !== 'scan-truncated'),
       `the key AFTER the 2 MiB boundary must NOT be found (body must be capped): ${JSON.stringify(sources)}`
+    );
+    assert(
+      result.findings.some((f) => f.source === 'external JS: big.js' && f.pattern === 'scan-truncated'),
+      `a scan that stopped at the 1 MB bound must report the truncation instead of implying clean (web-uplift-21t2): ${JSON.stringify(sources)}`
     );
     assert(slowRequests >= 1, 'the fixture must actually have been asked for the hanging script');
     assert(
@@ -880,6 +887,61 @@ export async function testDomSourceArtifactIsRedacted() {
 }
 
 
+// web-uplift-pk81: the disjoint-class rewrite of the connection-string pattern (web-uplift-ght8, landed in
+// 9eca158) excluded '/' from the password class, silently stopping detection of passwords that contain a
+// slash - the pre-rewrite pattern reported those as critical findings. This suite pins the parity: every
+// shape the pre-rewrite pattern matched must still be reported, and the innocence shapes must stay innocent
+// (no over-detection) - both directions, because a batch that silently narrows detection is worse than the
+// leaks it closed.
+export function testConnectionStringPasswordsMayContainSlash() {
+  const mustDetect = [
+    'mysql://root:pa/ss@db.host/x',
+    'const url = "postgres://app:S3cr3t/w0rd@db.internal:5432/app";',
+    'mongodb://user:pass@host/db',
+    'mysql://user:pa:ss/wd@host',
+    'redis://default:s3cr3t/word@10.0.0.1:6379/0',
+  ];
+  for (const s of mustDetect) {
+    const hits = scanTextForSecrets(s, 'pk81 fixture').filter((f) => f.pattern === 'connection-string');
+    assert(hits.length >= 1, `a connection string whose password contains '/' must still be reported (web-uplift-pk81): ${JSON.stringify(s)} -> ${JSON.stringify(hits)}`);
+    for (const h of hits) {
+      assert(h.match === '[redacted]' && typeof h.matchLength === 'number', 'the finding must not carry the value');
+    }
+  }
+  const mustStaySilent = [
+    'see https://example.com/page for docs',
+    'postgres://app:nopasshere',
+    'mongodb://a@b@c.com',
+  ];
+  for (const s of mustStaySilent) {
+    const hits = scanTextForSecrets(s, 'pk81 innocent').filter((f) => f.pattern === 'connection-string');
+    assert(hits.length === 0, `a non-credential URL must not be reported (web-uplift-pk81 over-detection): ${JSON.stringify(s)} -> ${JSON.stringify(hits)}`);
+  }
+}
+
+// web-uplift-21t2: the 1 MB scan bound (web-uplift-ght8) truncated SILENTLY - a credential past the cut
+// yielded zero findings with no signal, so a truncated scan was indistinguishable from a clean scan. The
+// truncation must be REPORTED as a finding, emitted first so it survives the artifact's 30-finding slice.
+export function testSecretsScanReportsTruncation() {
+  const past = 'mysql://root:pa/ss@db.host/x';
+  const big = 'x'.repeat(1024 * 1024 + 1) + past;
+  const findings = scanTextForSecrets(big, 'truncated fixture');
+  assert(findings.length >= 1, 'a truncated scan must report something');
+  const report = findings[0];
+  assert(report.pattern === 'scan-truncated', `the FIRST finding must be the truncation report (it must survive the 30-finding slice): ${JSON.stringify(report)}`);
+  assert(/unscanned/.test(report.description), 'the report must say the tail is unscanned, not clean');
+  assert(report.source === 'truncated fixture', 'the report names the source that was cut');
+  assert(!findings.some((f) => f.pattern === 'connection-string'), 'a secret entirely past the cut must not be claimed as found');
+
+  const within = scanTextForSecrets(past, 'within bound');
+  assert(!within.some((f) => f.pattern === 'scan-truncated'), 'an input within the bound must not carry a truncation report');
+  assert(within.some((f) => f.pattern === 'connection-string'), 'a secret within the bound is still reported');
+
+  const tailWithin = scanTextForSecrets('x'.repeat(1024 * 1024 - past.length) + past, 'tail at the bound');
+  assert(!tailWithin.some((f) => f.pattern === 'scan-truncated'), 'an input exactly at the bound is not truncated');
+  assert(tailWithin.some((f) => f.pattern === 'connection-string'), 'a secret ending at the bound is still reported');
+}
+
 export const redactionTests = [
   testFragmentRedactionKeepsSiblingParamsByteIdentical,
   testPassphraseAndPasskeyAreCredentialsAndPassengerIsNot,
@@ -893,6 +955,8 @@ export const redactionTests = [
   testSecretsArtifactDoesNotPersistMatches,
   testSecretsScanDoesNotPersistMatchCharacters,
   testSecretsScanLinearPerformance,
+  testConnectionStringPasswordsMayContainSlash,
+  testSecretsScanReportsTruncation,
   testSecretsCoverageClassification,
   testSourceTreeRedactsBeforeInlining,
   testDomSourceArtifactIsRedacted,
