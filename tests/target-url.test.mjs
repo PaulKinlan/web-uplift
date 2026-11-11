@@ -2,10 +2,13 @@
 // Target-URL scheme gate (web-uplift-fs20): the audited target reached Chrome with
 // NO scheme check, while flow replay refused non-web schemes since web-uplift-w0zq.
 // The gate now lives in gather() (evidence/cli.mjs) - the one place a target URL
-// becomes a navigation - with an explicit per-scheme --allow-scheme opt-in that is
-// recorded on the result, and the SAME allow-list guards the MCP web-audit prompt
-// (mcp/skills-server.mjs), because the MCP surface is exactly how a caller-supplied
-// file:/javascript:/data: URL reached the browser (web-uplift-8m4y).
+// becomes a navigation IN THE HARNESS - with an explicit per-scheme --allow-scheme
+// opt-in recorded on the result. Coverage of the MCP path, stated exactly
+// (web-uplift-sz7g/oxw2): the rendered web-audit prompt names the gated CLI forms,
+// AND it names optional inspection tools (Lighthouse launches its own Chrome), which
+// are SCHEME-CONDITIONAL in the SKILL text - http(s) targets only. That condition is
+// a recorded gap, not a code gate: the surface-side refusal of the url argument is
+// web-uplift-8m4y (mcp/, owner impl3, can reuse this module's check).
 //
 // What each case owns:
 //   - testTargetUrlSchemeGatePredicate: the pure matrix (what is allowed, what is
@@ -20,10 +23,12 @@
 //     these exit before any browser, so a child run is safe (the tests/test-helpers
 //     convention, web-uplift-17o).
 //   - testTargetUrlMcpChainLandsOnTheGatedCli: the REAL skills server over stdio.
-//     The MCP surface has exactly ONE route to Chrome - the CLI invocation the
-//     rendered instructions name - so the gate at gather() covers that path too;
-//     this case pins the chain rather than a second, drifting check at the surface
-//     (the surface-side argument constraint is web-uplift-8m4y, a different owner).
+//     Pins the chain PROPERTY, not a substring: every chrome-launching invocation
+//     form in the rendered instructions must be either the gated CLI or carry the
+//     http(s)-only condition - a rendered prompt that adds a new unconditional
+//     Chrome route (a second `puppeteer <url>`-style form) FAILS this case
+//     (web-uplift-oxw2; the route inventory is web-uplift-sz7g, the surface-side
+//     argument constraint is web-uplift-8m4y, a different owner).
 
 import http from 'node:http';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -393,11 +398,12 @@ export async function testTargetUrlMcpChainLandsOnTheGatedCli() {
     assert(init.result?.serverInfo?.name === 'web-uplift', `initialize must name the server: ${JSON.stringify(init)}`);
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
 
-    // THE CHAIN, pinned end to end: whatever url a caller supplies, the rendered
-    // instructions name exactly the invocation forms that all funnel into
-    // evidence/cli.mjs - whose gather() is the scheme gate. That single funnel is
-    // why ONE allow-list covers both the CLI and MCP paths (web-uplift-fs20), and
-    // why the two cannot drift apart the way flow replay and the audit target did.
+    // THE CHAIN, pinned as a PROPERTY (web-uplift-oxw2 - the old contains-checks passed beside an unguarded
+    // route): every chrome-launching invocation line in the rendered instructions must be either the gated
+    // CLI form or carry the http(s)-only condition (web-uplift-sz7g). A rendered prompt that grows a new
+    // unconditional Chrome route - any second `<tool> <url> --chrome-flags`-style form - fails here, which
+    // is the acceptance-2 property: the CLI is the only CODE route, and every named alternative is
+    // scheme-conditional text with the residual gap recorded for 8m4y's surface-side refusal.
     for (const url of ['https://example.com', 'file:///etc/passwd', 'javascript:alert(1)']) {
       const text = await promptText(url);
       assert(
@@ -407,6 +413,33 @@ export async function testTargetUrlMcpChainLandsOnTheGatedCli() {
       assert(
         typeof text === 'string' && text.includes(url),
         `the rendered instructions must carry the url argument (${url}) as the CLI's target`,
+      );
+      // A rendered form may wrap across lines; judge per BLOCK (a non-indented line plus its indented
+      // continuations), not per line, so a wrapped `--chrome-flags` continuation does not read as an
+      // unconditioned form of its own.
+      const blocks = [];
+      for (const line of (text || '').split('\n')) {
+        if (/^\S/.test(line) || blocks.length === 0) blocks.push([line]);
+        else blocks[blocks.length - 1].push(line);
+      }
+      const chromeLaunchBlocks = blocks.filter((block) =>
+        block.some((l) => /--chrome-flags|chrome-launcher|puppeteer|playwright|--headless/.test(l)),
+      );
+      assert(
+        chromeLaunchBlocks.length >= 1,
+        `the scheme-conditional Lighthouse form must still be named in the rendered prompt for ${url}`,
+      );
+      for (const block of chromeLaunchBlocks) {
+        const blockText = block.join(' ');
+        assert(
+          blockText.includes('http(s)') || blockText.includes('evidence/cli.mjs'),
+          `every chrome-launching form in the rendered prompt must be the gated CLI or carry the http(s)-only condition (web-uplift-sz7g): ${JSON.stringify(blockText.slice(0, 200))}`,
+        );
+      }
+      // The any-tool invitation must be conditioned too - it is the sentence that licenses the second route.
+      assert(
+        /any other tool you judge useful[\s\S]{0,120}?http\(s\) targets only/.test(text || ''),
+        `the any-tool invitation must be scheme-conditional (web-uplift-sz7g): ${JSON.stringify((text || '').slice(0, 120))}`,
       );
     }
     for (const form of ['.web-uplift/evidence/cli.mjs', 'web-uplift evidence']) {

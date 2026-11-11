@@ -20,15 +20,21 @@
 // in a page context - a disclosure/execution primitive rather than a fetch.
 //
 // WHERE THE GATE LIVES: gather() in evidence/cli.mjs, the harness boundary every
-// caller funnels through. The CLI passes the argv URL there; the MCP web-audit
-// prompt (mcp/skills-server.mjs) embeds the SKILL whose ONLY invocation forms are
-// this same CLI (`node evidence/cli.mjs`, `node .web-uplift/evidence/cli.mjs`,
-// `web-uplift evidence`), so the MCP path has exactly one route to Chrome and that
-// route ends at this gate. ONE allow-list, both paths, so they cannot drift apart
-// the way flow replay and the audit target did. A surface-side constraint of the
-// MCP url ARGUMENT itself (before it becomes instruction text) is a different
-// fault - web-uplift-8m4y, a different owner - and can reuse this module's
-// assertTargetUrlAllowed when it lands.
+// caller funnels through. The CLI passes the argv URL there. The MCP web-audit
+// prompt embeds this SKILL and renders TWO kinds of URL-bearing invocation: the
+// gated CLI forms (`node evidence/cli.mjs`, `node .web-uplift/evidence/cli.mjs`,
+// `web-uplift evidence`), and optional inspection tools the caller may run
+// themselves - Lighthouse among them, which launches its own Chrome against the
+// same target. The Lighthouse form is SCHEME-CONDITIONAL in the SKILL text
+// (http(s) targets only), and the MCP chain test enforces that every
+// chrome-launching line in the rendered prompt is either the gated CLI or carries
+// that condition (web-uplift-sz7g). Stated plainly: the text condition is a
+// RECORDED GAP, not a code gate - an instruction-following agent on a non-web
+// target could still hand the URL to a tool that ignores it, and only 8m4y's
+// surface-side refusal (mcp/, owner impl3; it can reuse assertTargetUrlAllowed)
+// closes that route in code. Until then the coverage claim is: ONE code-gated
+// route (the CLI, here) plus text-conditioned optional tools, not 'exactly one
+// route to Chrome'.
 //
 // THE OPT-IN: auditing a non-web target is sometimes deliberate (a local fixture
 // file, a data: document). `--allow-scheme <scheme,..>` widens THIS RUN's allow-list

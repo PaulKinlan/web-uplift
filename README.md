@@ -547,9 +547,11 @@ exchange, per hop (default 30000; env `WEB_UPLIFT_FETCH_DEADLINE_MS`).
 scheme (`file`, `data`, ...): the target-URL scheme gate refuses everything but
 http/https before any browser is launched, the refusal names the scheme and this
 flag, and a run made under an opt-in records the full policy as `targetUrlPolicy`
-on its JSON result. The gate lives where the target URL becomes a navigation; the
-MCP web-audit path is covered by the same gate because its rendered instructions
-name only the evidence/cli.mjs invocation forms. The gate covers the target URL
+on its JSON result. The gate lives where the target URL becomes a navigation in the harness; the
+MCP web-audit path is covered by the same gate for its CLI invocation forms, and the optional
+inspection tools the rendered prompt names (Lighthouse launches its own Chrome) are
+scheme-conditional in the skill text - http(s) targets only - a recorded gap pending 8m4y's
+surface-side refusal. The gate covers the target URL
 only - redirects and page-initiated subresource loads after an allowed navigation
 are the page's own audited behaviour, bounded by Chrome's origin rules, and the
 Node-side fetches a page can cause are guarded per hop by safeFetch. One
