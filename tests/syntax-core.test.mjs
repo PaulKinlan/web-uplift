@@ -123,7 +123,7 @@ const DECLARED_TRACKED_MODULES = [
   'evidence/primitives/heap.mjs', 'evidence/primitives/images.mjs', 'evidence/primitives/layout.mjs',
   'evidence/primitives/resilience.mjs', 'evidence/primitives/screenshot.mjs', 'evidence/primitives/secrets.mjs',
   'evidence/primitives/targets.mjs', 'evidence/primitives/trace.mjs', 'evidence/primitives/trackers.mjs',
-  'evidence/primitives/video.mjs', 'evidence/redaction.mjs', 'fixer/fix.mjs',
+  'evidence/primitives/video.mjs', 'evidence/redaction.mjs', 'evidence/target-url.mjs', 'fixer/fix.mjs',
   'index.mjs', 'install-surface.mjs', 'knowledge/baseline.mjs',
   'mcp/skills-server.mjs', 'runner/agents.mjs', 'runner/flow-record.mjs',
   'runner/flow.mjs', 'runner/remaining-work.mjs', 'runner/run-batch.mjs',
@@ -147,7 +147,7 @@ const DECLARED_TRACKED_MODULES = [
   'tests/runner-batch.test.mjs',
   'tests/safe-fetch.mjs', 'tests/secrets-coverage.mjs', 'tests/skill-write-contract.mjs',
   'tests/snapshot-run.mjs', 'tests/source-tree-symlink.mjs', 'tests/syntax-core.test.mjs',
-  'tests/test-fast.mjs', 'tests/test-helpers.mjs', 'tests/verdict-provenance.test.mjs',
+  'tests/target-url.test.mjs', 'tests/test-fast.mjs', 'tests/test-helpers.mjs', 'tests/verdict-provenance.test.mjs',
 ];
 const DECLARED_EXCLUDED_BY_RULE = 5;
 
@@ -2214,7 +2214,7 @@ export function testSuiteListsMatchRegressionRegistry() {
   // 19 *.test.mjs suites plus the 13 gate targets that are not *.test.mjs files (web-uplift-yfbk). The
 // constant catches a change in the NUMBER of things the gate runs, which is what makes a silently dropped
 // suite visible; it is not the count of test files.
-const EXPECTED_SUITE_FILES = 32;
+const EXPECTED_SUITE_FILES = 33;
   // web-uplift-rkcs: the case population is DECLARED BY NAME PER SUITE FILE, for the web-uplift-j3go
   // reason. A count cannot tell an addition in one file from a removal in another, and the reviewer showed a
   // global floor still passing after exactly that pair of edits (add a case, drop a preexisting one). Every
@@ -2284,6 +2284,15 @@ const EXPECTED_SUITE_FILES = 32;
       'testSyncRefusesEqualByteSymlinkDestination', 'testInstallAsksTheSharedSymlinkGuard', 'testInstallIncompleteExitControl', 'testV167ControlShimNeverWritesIntoTheRepository',
       'testEveryDestinationRefusalCarriesTheMarker', 'testMcpSkillsServerStdio', 'testCdpCopySyncRefusesToOverwriteTrackedEdits', 'testGenerateVendoredSurfaceLeavesTrackedEditsAlone',
       'testGenerateVendoredSurfaceKeepsListedPathsReadable', 'testRepublishReaderInstrumentDetectsDeleteThenCopy', 'testPublishOrderLeavesObsoleteEntriesUntilAfterPublish', 'testRepublishKeepsListedPathsReadableForAConcurrentReader',
+    ],
+    'tests/target-url.test.mjs': [
+      'testTargetUrlSchemeGatePredicate', 'testTargetUrlOptInParsingAndRecording',
+      'testTargetUrlGateRefusesBeforeAnyBrowserLaunch', 'testTargetUrlCliRefusalExitsBeforeAnyBrowser',
+      // testTargetUrlMcpPromptGate was renamed to testTargetUrlMcpChainLandsOnTheGatedCli in the
+      // same commit (web-uplift-fs20): mcp/skills-server.mjs is another owner's surface (web-uplift-8m4y),
+      // so the case pins the CHAIN - the rendered instructions name only the gated evidence/cli.mjs
+      // forms - instead of a second scheme check at the prompt that would drift from gather().
+      'testTargetUrlMcpChainLandsOnTheGatedCli',
     ],
     'tests/mwg-principles.test.mjs': [
       'testMwgDriftExtractPipe', 'testMwgDriftBasisFloor', 'testGuidanceUsage', 'testGuidanceVersionPinnedInDocs',

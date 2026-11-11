@@ -76,6 +76,7 @@ import {
   recordLaunch,
 } from './cdp.mjs';
 import { validateConditions } from './common.mjs';
+import { assertTargetUrlAllowed, parseSchemeOptIn, recordTargetUrlPolicy } from './target-url.mjs';
 
 import { screenshot } from './primitives/screenshot.mjs';
 import { video } from './primitives/video.mjs';
@@ -187,6 +188,7 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--out') args.out = argv[++i];
+    else if (a === '--allow-scheme') args.allowScheme = argv[++i];
     else if (a === '--cdp-deadline') args.cdpDeadline = Number(argv[++i]);
     else if (a === '--fetch-deadline') args.fetchDeadline = Number(argv[++i]);
     else if (a === '--emulate-media') args.emulateMediaRaw = argv[++i];
@@ -244,6 +246,20 @@ export async function gather(primitive, url, opts = {}) {
   const fn = PRIMITIVES[primitive];
   if (!fn) throw new Error(`Unknown primitive "${primitive}". One of: ${Object.keys(PRIMITIVES).join(', ')}`);
   const log = opts.quiet ? () => {} : (m) => console.error(m);
+  // Target-URL scheme gate (web-uplift-fs20): EVERY caller-supplied target passes the
+  // one allow-list here, BEFORE validateConditions and BEFORE the browser launch, so a
+  // refused run costs nothing (the fail-cheap shape of web-uplift-3mrg). This is the
+  // single place a target URL becomes a navigation IN THE HARNESS. The MCP web-audit prompt is covered
+  // by the same gate for its CLI invocation forms, and its optional inspection tools (Lighthouse launches
+  // its own Chrome) are SCHEME-CONDITIONAL in the SKILL text - a recorded gap, not a code gate: the
+  // surface-side refusal of the url argument is web-uplift-8m4y (mcp/, owner impl3, can reuse this
+  // module's check). A non-http(s) target needs an explicit
+  // per-scheme opt-in (--allow-scheme / the allowScheme/allowSchemes opts), and the
+  // opt-in is recorded on the result below.
+  const targetUrl = assertTargetUrlAllowed(url, { optInSchemes: parseSchemeOptIn(opts.allowScheme ?? opts.allowSchemes) });
+  if (targetUrl.optIn.length > 0) {
+    log(`[evidence] target URL scheme opt-in: ${targetUrl.optIn.join(', ')} (recorded as targetUrlPolicy in the result)`);
+  }
   // A caller may hand in a browser it already owns (web-uplift-t2mr: a case that drives several primitives
   // wants ONE launch for the whole case). Then this call must not close it - the caller does - and the
   // browser must not reach the primitive as an option. The default path is unchanged: no browser supplied
@@ -273,6 +289,7 @@ export async function gather(primitive, url, opts = {}) {
       // is captured, not just whatever fires after it settles.
       const collector = await attachConsoleCollector(session.client, { log });
       const result = await fn(session.client, url, primitiveOpts, log, collector);
+      recordTargetUrlPolicy(result, targetUrl.policy);
       const block = attachConsoleEvidence(session.client, result);
       if (block && (block.consoleErrorCount > 0 || block.exceptionCount > 0)) {
         log(
@@ -299,6 +316,7 @@ async function main() {
       'Usage: node evidence/cli.mjs <screenshot|video|heap|layout|dom|evaluate|axe|trace|har|discoverability|console|targets|features|resilience|a11ytree|secrets|headers|cookies|trackers|images> <url> [options]\n' +
         'Options: --out --emulate-media k=v,.. --viewport WxH --wait ms --selector css --max-nodes n --max-stops n\n' +
         '         --cpu-throttle n --network slow-3g|fast-3g|slow-4g|fast-4g|mobile-lighthouse\n' +
+        '         --allow-scheme <scheme,..> permit those non-http(s) target schemes this run (e.g. file); recorded in the output\n' +
         '         --locale de-DE --timezone Asia/Tokyo\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f --interact-deadline ms\n' +
         '         --source dir reads a local source tree: contents are redacted (names-based, as the HAR bodies) and credential-named files are skipped unread before anything is inlined\n' +

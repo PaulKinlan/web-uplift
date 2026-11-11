@@ -288,6 +288,7 @@ export function assertUnknownRawSurface(summary, routeLabel, assertFn = assert) 
     ['type', 'the primitive name - a fact about the run'],
     ['url', 'the audited URL - an input fact'],
     ['finalUrl', 'the REQUESTED URL when the exchange failed (it is assigned only once the exchange resolves), the final URL otherwise - a run fact, not a comparison'],
+    ['targetUrlPolicy', 'the target-URL scheme gate record (allow-list, opt-in, url, scheme) - run provenance from before the navigation, not a claim about the page (web-uplift-fs20)'],
     ['fetchedStatus', 'the recorded status when one arrived (null when none did) - a run fact'],
     ['fetchError', 'the record of the failure - not a claim about the page'],
     ['crawlerUserAgent', 'the user agent used - a run fact'],

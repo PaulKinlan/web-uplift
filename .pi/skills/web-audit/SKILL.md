@@ -156,6 +156,25 @@ Use whichever invocation resolves in your context (they run the SAME CLI):
 Pick the first that exists; the rest of this file writes `node evidence/cli.mjs`
 for brevity, but the `web-uplift evidence ...` form is equivalent everywhere.
 
+**Target-URL scheme gate (web-uplift-fs20).** The audited target must be http or
+https; every other scheme (`file:`, `javascript:`, `data:`, `blob:`, ...) and a
+scheme-less value like `example.com` is refused before any browser is launched,
+with a message that says why. Auditing a non-web target on purpose takes an
+explicit per-scheme opt-in, `--allow-scheme <scheme,..>`, which is recorded as
+`targetUrlPolicy` on the JSON result. The gate lives at the ONE place a target
+URL becomes a navigation IN THE HARNESS (the CLI's `gather()`). Coverage of the
+other routes, stated exactly (web-uplift-sz7g): the MCP web-audit prompt renders
+these CLI forms AND optional inspection tools - Lighthouse launches its own
+Chrome - whose forms are SCHEME-CONDITIONAL (http(s) targets only, see the
+inspection-tools section). That condition is recorded text, not a code gate; the
+surface-side refusal of the url argument is web-uplift-8m4y and can reuse this
+check. The gate decides the
+TARGET URL only: it does not police server redirects or page-initiated
+subresource/frame loads after an allowed navigation - those are the audited
+page's own behaviour, bounded by Chrome's own origin rules - while the
+Node-side fetches a page can cause are guarded per hop by safeFetch, and flow
+replay keeps its own scheme gate on recorded steps.
+
 Primitives, all content- and tool-agnostic:
 
 | Primitive | What it gives you | Key CDP |
@@ -218,10 +237,15 @@ resolves (the requested URL only when it failed before a response), so an operat
 failure is a network condition, so a short budget produces ABSENCE OF EVIDENCE,
 never evidence of absence.
 
-You may also run **any other tool you judge useful** at inspection time. None of
-these is wired into the runtime; you invoke them yourself when they help:
+You may also run **any other tool you judge useful** at inspection time, for
+**http(s) targets only** - never hand a `file:`, `javascript:`, `data:` or
+scheme-less target to a second tool: those are refused at the harness gate
+(web-uplift-fs20) and a second tool would launch Chrome on them without that
+gate. None of these is wired into the runtime; you invoke them yourself when
+they help:
 
-- **Lighthouse**: `npx -y lighthouse <url> --output=json --quiet
+- **Lighthouse** (http(s) targets only): `npx -y lighthouse <url>
+  --output=json --quiet
   --chrome-flags="--headless=new"` for LCP/CLS/TBT and the a11y /
   best-practices / SEO audits. Do NOT add `--no-sandbox`: Lighthouse launches
   its own Chrome against the same untrusted page, and the auditor's posture

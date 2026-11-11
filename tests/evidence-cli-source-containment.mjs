@@ -76,7 +76,10 @@ function runCliAsync(args, timeoutMs = 30000) {
 
 // Test 1: When --source is omitted, dom writes no source block.
 export async function testNoSourceArgumentOmitsSource() {
-  const res = await runCliAsync(['dom', 'about:blank', '--quiet']);
+  // about:blank is a deliberate non-web fixture here (no server needed for a source-flag
+  // check), so it takes the target-URL scheme gate's explicit opt-in (web-uplift-fs20);
+  // the refusal message names this exact flag, which is the contract working.
+  const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--quiet']);
   assert(res.status === 0, `cli exited with status ${res.status}: ${res.stderr}`);
   const data = JSON.parse(res.stdout);
   assert(data.page, 'dom output must have page object');
@@ -137,7 +140,7 @@ export async function testExplicitSourceHonoursOperatorSpecifiedRoot() {
   writeFileSync(join(srcDir, 'app.js'), 'console.log("hello world");\n');
 
   try {
-    const res = await runCliAsync(['dom', 'about:blank', '--source', srcDir, '--quiet']);
+    const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source', srcDir, '--quiet']);
     assert(res.status === 0, `cli exited with status ${res.status}: ${res.stderr}`);
     const data = JSON.parse(res.stdout);
     assert(data.source, 'source block must be present when --source is specified');

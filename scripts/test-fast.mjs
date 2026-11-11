@@ -501,6 +501,7 @@ export const SUBSYSTEMS = [
     description: 'Model Context Protocol skills server',
     match: (f) => f.startsWith('mcp/'),
     targets: [
+      { type: 'node', path: 'tests/target-url.test.mjs', label: 'Target-URL scheme gate (MCP surface)' },
       { type: 'regression', filter: 'Mcp', label: 'Regression: MCP skills server tests' },
     ],
   },
@@ -560,6 +561,7 @@ export const SUBSYSTEMS = [
       { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
       { type: 'node', path: 'tests/safe-fetch.mjs', label: 'Safe-fetch DNS rebinding and decoding' },
       { type: 'node', path: 'tests/source-tree-symlink.mjs', label: 'Source-tree symlink escape tests' },
+      { type: 'node', path: 'tests/target-url.test.mjs', label: 'Target-URL scheme gate (audited target)' },
       // MEASURED BUDGET (web-uplift-91lr), same shape as the Batch bound above: this target took 185.4s on an
       // otherwise idle VM on 2026-10-27 - testInstalledEvidenceCli 74.3s, testEvidenceTruncationReporting 54.0s,
       // testConsoleEvidence 50.1s, the other four 1.2-1.3s each - and was killed at the default 120s, so an
