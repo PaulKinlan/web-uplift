@@ -14,7 +14,12 @@ const SECRET_PATTERNS = [
   { id: 'slack-token', re: /xox[baprs]-[0-9A-Za-z-]{10,}/g, severity: 'critical', desc: 'Slack Token' },
   { id: 'jwt', re: /eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, severity: 'high', desc: 'JWT Token' },
   { id: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, severity: 'critical', desc: 'Private Key' },
-  { id: 'connection-string', re: /(?:mongodb|postgres|postgresql|mysql|redis):\/\/[^"/\s:@]+:[^"/\s@]+@[^"/\s]+/g, severity: 'critical', desc: 'Database Connection String with credentials' },
+  // web-uplift-pk81: the password class deliberately admits '/' - the disjoint-class rewrite that removed
+  // the quadratic backtracking (web-uplift-ght8) had excluded it, which silently stopped detecting
+  // 'mysql://root:pa/ss@host' where the pre-rewrite pattern reported a critical finding. The user class keeps
+  // excluding ':' (deterministic split), the host class keeps excluding '/' (stop at the path), and only the
+  // password class widens - one ambiguous split point ('@') remains, so the scan stays linear.
+  { id: 'connection-string', re: /(?:mongodb|postgres|postgresql|mysql|redis):\/\/[^"/\s:@]+:[^"\s@]+@[^"/\s]+/g, severity: 'critical', desc: 'Database Connection String with credentials' },
   { id: 'generic-api-key', re: /(?:api[_-]?key|apikey|api[_-]?secret)["\s:=]+['"]([A-Za-z0-9_-]{32,})['"]/gi, severity: 'high', desc: 'Generic API Key/Secret (32+ chars)' },
   { id: 'bearer-token', re: /(?:bearer|authorization)["\s:=]+([A-Za-z0-9_-]{20,})/gi, severity: 'high', desc: 'Bearer/Authorization token' },
 ];
@@ -26,9 +31,23 @@ const SECRET_PATTERNS = [
 export function scanTextForSecrets(text, source, seen = new Set()) {
   const findings = [];
   if (typeof text !== 'string' || !text) return findings;
-  // Bound input size to 1 MB to prevent linear scans over megabytes of adversarial text (web-uplift-ght8)
+  // Bound input size to 1 MB to prevent linear scans over megabytes of adversarial text (web-uplift-ght8).
+  // The bound must be VISIBLE when it fires (web-uplift-21t2): silently scanning only the first 1 MB reports
+  // clean on exactly the large page where a secret is most likely to hide - a truncated scan is not a clean
+  // scan, so the truncation itself is pushed as a finding and survives the 30-finding artifact slice (it is
+  // emitted first, before any match findings).
   const MAX_SCAN_BYTES = 1024 * 1024;
-  const content = text.length > MAX_SCAN_BYTES ? text.slice(0, MAX_SCAN_BYTES) : text;
+  const truncated = text.length > MAX_SCAN_BYTES;
+  const content = truncated ? text.slice(0, MAX_SCAN_BYTES) : text;
+  if (truncated) {
+    findings.push({
+      pattern: 'scan-truncated',
+      severity: 'low',
+      description: `Input exceeded the ${MAX_SCAN_BYTES}-byte scan bound; only the first ${MAX_SCAN_BYTES} bytes were scanned. Secrets beyond the cut are NOT reported - treat the unscanned tail as unscanned, not as clean (web-uplift-21t2).`,
+      source,
+      note: `truncated at ${MAX_SCAN_BYTES} bytes`,
+    });
+  }
 
   for (const p of SECRET_PATTERNS) {
     p.re.lastIndex = 0;

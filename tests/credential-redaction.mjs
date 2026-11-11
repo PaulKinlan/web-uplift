@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { redactUrlCredentialValues } from '../evidence/credential-terms.mjs';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -1264,6 +1265,7 @@ const CASES = [
   testCompoundCredentialSpellingsAreClassified,
   testPassphraseAndPasskeyAreCredentialsAndPassengerIsNot,
   testFragmentRedactionKeepsSiblingParamsByteIdentical,
+  testSemicolonTailOfARedactedValueIsRedacted,
 ];
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -1497,4 +1499,42 @@ export async function testFragmentRedactionKeepsSiblingParamsByteIdentical() {
   }
 
   console.log('✔ fragment redaction rewrites only credential parameters; siblings stay byte-identical');
+}
+
+// web-uplift-ei4w (gnt3 residual): a semicolon segment WITHOUT '=' directly after a redacted credential
+// value is the tail of that value - '#/cb?code=SECRET;TAIL' must not re-emit TAIL where the pre-batch
+// parser redacted the whole run. A segment WITH '=' stays a sibling and keeps its bytes, and '&' segments
+// keep the behaviour both parsers agreed on, so the fix widens nothing that used to be hidden.
+export function testSemicolonTailOfARedactedValueIsRedacted() {
+  const redact = redactUrlCredentialValues;
+  const cases = [
+    { in: 'https://t.test/#/cb?code=SECRETVAL123;TAILLEAK456', leak: 'TAILLEAK456' },
+    { in: 'https://t.test/#/cb;code=SECRETVAL123;TAILLEAK456', leak: 'TAILLEAK456' },
+    { in: 'https://t.test/#/cb%3Fcode%3DSECRETVAL123%3BTAILLEAK456', leak: 'TAILLEAK456' },
+  ];
+  for (const c of cases) {
+    const out = redact(c.in);
+    assert(!out.includes(c.leak), `the tail after a redacted credential value must be redacted too (web-uplift-ei4w): ${c.in} -> ${out}`);
+    assert(out.includes('%5Bredacted%5D'), `the redaction placeholder must survive: ${out}`);
+  }
+
+  // The sibling contract is untouched: ';state=xyz' keeps its bytes; multiple bare tails all redact;
+  // the chain stops at the next '='-bearing sibling.
+  assert(
+    redact('https://t.test/#/cb?code=SECRETVAL123;state=xyz') === 'https://t.test/#/cb?code=%5Bredacted%5D;state=xyz',
+    'a semicolon sibling with a key must keep its bytes (web-uplift-gnt3)',
+    );
+  assert(
+    redact('https://t.test/#/cb?code=SECRETVAL123;T1LEAK;T2LEAK;state=xyz') === 'https://t.test/#/cb?code=%5Bredacted%5D;%5Bredacted%5D;%5Bredacted%5D;state=xyz',
+    'chained bare tails redact until the next key=value sibling',
+    );
+
+  // Over-redaction guard: an innocent value's bare tail is not material - the tail rule only arms after a
+  // REDACTED credential value, so 'promo=SUMMER20;TAILLEAK456' keeps its bytes.
+  assert(
+    redact('https://t.test/#/cb?promo=SUMMER20;TAILLEAK456') === 'https://t.test/#/cb?promo=SUMMER20;TAILLEAK456',
+    'an innocent value must not have its bare tail redacted',
+    );
+
+  console.log('✔ semicolon tail of a redacted value is redacted; siblings and innocent values untouched');
 }
