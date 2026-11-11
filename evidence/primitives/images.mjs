@@ -1,4 +1,5 @@
 import { announceCap, emit, round } from '../common.mjs';
+import { redactUrlCredentialValues, redactUrlsInText } from '../credential-terms.mjs';
 import { evaluate, navigate, sleep } from '../cdp.mjs';
 
 export async function images(client, url, opts, log) {
@@ -12,7 +13,8 @@ export async function images(client, url, opts, log) {
       const nw = img.naturalWidth || 0;
       const dw = Math.round(r.width) || 0;
       return {
-        src: (img.src || '').slice(0, 120), alt: img.alt || null,
+        src: (img.src || '').slice(0, 120),
+        alt: img.alt || null,
         hasWidth: img.hasAttribute('width'), hasHeight: img.hasAttribute('height'),
         loading: img.getAttribute('loading'),
         srcset: img.hasAttribute('srcset') || !!img.querySelector('source'),
@@ -24,6 +26,19 @@ export async function images(client, url, opts, log) {
     }) };
   })()`);
   const imgs = data?.items || [];
+  // THE RESOLVED URL IS PAGE-CONTROLLED (web-uplift-7nqs): img.src is whatever the page set, after the document
+  // resolved it, so it can carry user:pass@ credentials, credential-named query parameters, control characters or
+  // an unbounded data: payload - and this artifact is COMMITTED. Redaction happens HERE, in Node, not inside the
+  // page function above: that string is evaluated in the browser, where these helpers do not exist - the first
+  // version of this change threw a ReferenceError inside the page and broke the primitive outright. The shared
+  // redactor is used rather than a local one, because a second implementation is how one of them ends up weaker:
+  // it drops credential VALUES while keeping host and path, which is what keeps the artifact useful.
+  for (const item of imgs) {
+    if (typeof item?.src !== 'string') continue;
+    item.src = redactUrlsInText(redactUrlCredentialValues(item.src))
+      .replace(/[\u0000-\u001f\u007f]/g, '')
+      .slice(0, 120);
+  }
   const totalImages = data?.total ?? imgs.length;
   announceCap('images.inspected', imgs.length, totalImages, log);
   announceCap('images.images', Math.min(imgs.length, 30), imgs.length, log);
