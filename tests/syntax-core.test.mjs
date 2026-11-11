@@ -1896,6 +1896,30 @@ export async function testLaunchMarkerAppendRefusesPlantedLinks() {
       `a marker append must not create anything through a symlinked parent, found ${JSON.stringify(readdirSync(outsideDir))}`,
     );
 
+    // 3b. THE LINK HIGHER UP THE CHAIN (web-uplift-thhl): a real host directory under a symlinked reports root.
+    // The first ancestor guard checked only the first EXISTING component walking up from the parent, so this shape
+    // passed - the parent was a real directory and nothing above it was ever examined. This is the same class as
+    // the leaf-only guard it replaced: a guard that stops early answers a different question.
+    const outsideRoot = join(root, 'outside-reports');
+    mkdirSync(join(outsideRoot, 'example_test'), { recursive: true });
+    symlinkSync(outsideRoot, join(root, 'link-reports'), 'dir');
+    recordLaunch({
+      primitive: 'probe',
+      url: 'https://example.test/',
+      chrome,
+      launchesFile: join(root, 'link-reports', 'example_test', 'launches.jsonl'),
+    });
+    recordLaunchFailure({
+      pid: 4242,
+      profileDir: join(root, 'profile'),
+      reason: 'boom',
+      launchesFile: join(root, 'link-reports', 'example_test', 'launches.jsonl'),
+    });
+    assert(
+      readdirSync(join(outsideRoot, 'example_test')).length === 0,
+      `a link higher up the chain must not be written through, found ${JSON.stringify(readdirSync(join(outsideRoot, 'example_test')))}`,
+    );
+
     // 4. Positive control: a plain marker file still records both outcomes, so the guard is not a blanket refusal.
     const normal = join(root, 'launches.jsonl');
     recordLaunch({ primitive: 'probe', url: 'https://example.test/', chrome, launchesFile: normal });

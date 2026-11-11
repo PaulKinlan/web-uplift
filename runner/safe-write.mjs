@@ -122,18 +122,23 @@ export function appendFileNoFollowSync(path, data, { base } = {}) {
   if (base !== undefined && !isInsidePath(resolve(base), resolve(path))) {
     throw new UnsafeTargetRefused(`refusing to append to ${path}: it is outside ${resolve(base)}`, { path });
   }
-  for (let cur = resolve(parent); ; cur = dirname(cur)) {
+  // EVERY EXISTING COMPONENT, walked from the root DOWN (web-uplift-thhl). The first version walked UP from the
+  // parent and BROKE at the first component that existed, so it checked exactly one node - the parent if it
+  // existed, and nothing above it. A link anywhere HIGHER in the chain (reports -> outside, with the host
+  // directory real underneath it) therefore passed, which is the same class of defect as the leaf-only guard this
+  // replaced: a guard that stops early is not a partial guard, it is a guard that answers a different question.
+  const parentAbs = resolve(parent);
+  const parts = parentAbs.split(sep);
+  let walked = sep;
+  for (const part of parts) {
+    if (!part) continue;
+    walked = join(walked, part);
     let st = null;
-    try { st = lstatSync(cur); } catch (err) { if (err.code !== 'ENOENT') throw err; }
-    if (st) {
-      if (st.isSymbolicLink() || !st.isDirectory()) {
-        throw refusedSymlink(cur, 'append');
-      }
-      break;
+    try { st = lstatSync(walked); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+    if (!st) break; // this component and everything below it does not exist yet: nothing to follow
+    if (st.isSymbolicLink() || !st.isDirectory()) {
+      throw refusedSymlink(walked, 'append');
     }
-    const up = dirname(cur);
-    if (up === cur) break;
-    cur = up;
   }
   {
     let st = null;
