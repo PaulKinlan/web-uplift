@@ -78,13 +78,23 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-// The only blanket-excluded segment left: the tool's own report output (excluding
-// reports/ is what stops the fixer tripping its own detector when the agent
-// writes report.json under --out). `node_modules` and `.web-uplift` were removed
-// from this set by web-uplift-dzd: they are executed trees, and excluding them
-// made the tripwire blind to exactly the paths whose unobserved change matters
-// most. See the header for the strength each covered tree now gets.
-const EXCLUDE_SEGMENTS = new Set(['reports']);
+// The only blanket-excluded location left: the run tree's OWN output root - the
+// top-level 'reports/' directory relative to the snapshot base (excluding it is what
+// stops the fixer tripping its own detector when the agent writes report.json under
+// --out). `node_modules` and `.web-uplift` were removed from this set by
+// web-uplift-dzd: they are executed trees, and excluding them made the tripwire blind
+// to exactly the paths whose unobserved change matters most. See the header for the
+// strength each covered tree now gets.
+//
+// FIRST COMPONENT ONLY, decided on the RESOLVED path (web-uplift-335b): the old rule
+// matched the word 'reports' as ANY component, so a directory named reports planted
+// inside an executed tree (evidence/reports/evil.mjs) dropped out of the integrity
+// walk entirely - the guard reported success while the write went into a tree the next
+// pipeline step executes. The word now decides only where the run tree's output root
+// actually is (base/reports/...), never anywhere else in the path; '..' and '.'
+// segments are collapsed BEFORE the name is matched, so 'reports/../../etc' is judged
+// by where it resolves (outside the tree) and not by the word at the front.
+const EXCLUDE_SEGMENT = 'reports';
 
 // Executed first-party trees, relative to the snapshot base: every file here is
 // run or imported by a LATER step of the same pipeline (the agent's next
@@ -153,8 +163,18 @@ export function executableIntegrity(base) {
 const GIT_KEEP = new Set(['hooks', 'config', 'HEAD', 'info', 'packed-refs']);
 
 export function isExcludedPath(relPath) {
-  const parts = relPath.split(sep);
-  if (parts.some((p) => EXCLUDE_SEGMENTS.has(p))) return true;
+  // Resolve the component path FIRST (web-uplift-335b): collapse '.' and '..' before any
+  // name is matched, and keep leading '..' chains (out-of-tree keys) as '..' - the word
+  // 'reports' decides only for the resolved top-level output root, never for a planted
+  // component somewhere else in the path.
+  const parts = [];
+  for (const part of relPath.split(sep)) {
+    if (part === '' || part === '.') continue;
+    if (part === '..' && (parts.length === 0 || parts[parts.length - 1] === '..')) parts.push('..');
+    else if (part === '..') parts.pop();
+    else parts.push(part);
+  }
+  if (parts[0] === EXCLUDE_SEGMENT) return true;
   // `.git` itself must stay walkable (only its noisy children are skipped), or the
   // hook/config tripwire never gets reached. Matching the LAST `.git` segment, not
   // parts[0], is what makes this work for an out-of-tree --target whose keys start

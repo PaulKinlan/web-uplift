@@ -30,7 +30,7 @@ import {
   noUpdateEnv,
   SKIP_DIRS,
 } from "./test-helpers.mjs";
-import { snapshotTree, diffTrees } from "../runner/write-scope.mjs";
+import { snapshotTree, diffTrees, isExcludedPath } from "../runner/write-scope.mjs";
 
 // scoreReport's (correct) refusal to score incomplete atomic coverage killed the
 // whole fix run with an unhandled throw - including on every report written
@@ -1114,6 +1114,122 @@ export function testFixIsolatedRunPublishes() {
 }
 
 
+// web-uplift-335b: THE EXCLUSION IS POSITIONAL, NOT A SUBSTRING. The old rule matched the word
+// 'reports' as ANY path component, so a directory named reports planted inside a watched tree
+// (src/reports/evil.mjs) dropped out of the integrity walk entirely - the guard reported success
+// while the write went into a location it should have seen. This table pins the component-level
+// semantics: the word decides only for the run tree's OWN output root (the resolved FIRST
+// component), '..' and '.' are collapsed BEFORE the match, and sibling names (myreports,
+// reports-2) are not the word.
+export function testWriteScopeExclusionIsPositionalNotSubstring() {
+  const mustExclude = [
+    'reports/run.json',
+    'reports/sub/deep.json',
+  ];
+  for (const p of mustExclude) {
+    assert(isExcludedPath(p) === true, `the run tree's own output root must stay excluded: ${p}`);
+  }
+  const mustWatch = [
+    join('a', 'reports', 'b', 'evil.mjs'),
+    join('evidence', 'reports', 'evil.mjs'),
+    join('myreports', 'x'),
+    join('reports-2', 'x'),
+    join('reports', '..', '..', 'etc', 'passwd'),
+    join('..', 'sibling', 'reports', 'x'),
+  ];
+  for (const p of mustWatch) {
+    assert(isExcludedPath(p) === false, `a path the word merely CONTAINS must stay watched (web-uplift-335b): ${p}`);
+  }
+
+  // Snapshot level: a file planted under a nested reports dir inside a watched tree must be
+  // VISIBLE to the diff - pre-fix it was invisible, which is the guard-reports-success defect.
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-scope-reports-'));
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'index.html'), '<h1>hi</h1>');
+    const before = snapshotTree(root);
+    // The planted write: a nested reports directory with a file in it, inside the watched tree.
+    mkdirSync(join(root, 'src', 'reports'), { recursive: true });
+    writeFileSync(join(root, 'src', 'reports', 'evil.mjs'), 'planted');
+    // A sibling name that is not the word, and a symlink whose PARENT is a nested reports dir
+    // pointing into the watched tree.
+    mkdirSync(join(root, 'src', 'myreports'), { recursive: true });
+    writeFileSync(join(root, 'src', 'myreports', 'notes.md'), 'notes');
+    symlinkSync(join(root, 'src', 'index.html'), join(root, 'src', 'reports', 'link-to-src'));
+    const after = snapshotTree(root);
+    const diff = diffTrees(before, after);
+    assert(
+      diff.added.includes(join('src', 'reports', 'evil.mjs')),
+      `a planted file under a nested reports dir must be VISIBLE to the walk (web-uplift-335b): ${JSON.stringify(diff.added)}`,
+    );
+    assert(
+      diff.added.includes(join('src', 'myreports', 'notes.md')),
+      `a sibling name that is not the word must be watched: ${JSON.stringify(diff.added)}`,
+    );
+    assert(
+      diff.added.some((p) => p === join('src', 'reports', 'link-to-src')),
+      `a symlink whose parent is a nested reports dir must be recorded (links are never followed, so the record is the control): ${JSON.stringify(diff.added)}`,
+    );
+    // The legitimate output root stays excluded, byte-for-byte the old contract.
+    mkdirSync(join(root, 'reports'), { recursive: true });
+    writeFileSync(join(root, 'reports', 'run.json'), '{}');
+    const withOut = snapshotTree(root);
+    assert(
+      !withOut.has(join('reports', 'run.json')),
+      'the top-level reports output root must stay excluded from the walk',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  console.log('  ok: write-scope exclusion is positional on the resolved path, not a substring');
+}
+
+// web-uplift-335b, end to end: the guard must not REPORT SUCCESS while a write goes where it
+// should not. Pre-fix, an agent write to <root>/runner/reports/planted.mjs was invisible to the
+// snapshot (the word 'reports' anywhere in the path excluded it) and the fixer run PASSED with the
+// file planted outside every legitimate scope. Post-fix the same write is seen and refused.
+export function testFixModeRefusesWritesHiddenBehindANestedReportsDir() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-fix-nestedreports-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(root, 'src', 'index.html'), '<h1>hi</h1>');
+    const findings = join(repoRoot, 'examples', 'playground-report.json');
+    const passReport = join(repoRoot, 'examples', 'playground-report-fixed.json');
+    const planted = join(root, 'tests', 'reports', 'planted.mjs');
+    writeFileSync(join(binDir, 'claude'), [
+      '#!/bin/sh',
+      `mkdir -p ${JSON.stringify(join(root, 'reports', 'fix-example.test'))}`,
+      `cp ${JSON.stringify(passReport)} ${JSON.stringify(join(root, 'reports', 'fix-example.test', 'report.json'))}`,
+      // THE WRITE UNDER TEST: lands behind a 'reports' component, outside the out dir and
+      // outside the fix target - the shape the word-based exclusion hid completely.
+      `mkdir -p ${JSON.stringify(dirname(planted))}`,
+      `printf 'planted' > ${JSON.stringify(planted)}`,
+      'exit 0',
+      '',
+    ].join('\n'));
+    chmodSync(join(binDir, 'claude'), 0o755);
+
+    const res = run(process.execPath, [
+      join(repoRoot, 'fixer', 'fix.mjs'),
+      '--target', 'src', '--audit-url', 'http://example.test/', '--agent', 'claude',
+      '--max-iterations', '1', '--findings', findings,
+      '--isolation', 'host-permission-model',
+      '--reports-root', 'reports',
+    ], { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+    const output = `${res.stdout}\n${res.stderr}`;
+    assert(existsSync(planted), `the fixture must have planted the file, or the refusal assertions are vacuous:\n${output}`);
+    assert(res.status !== 0, `a write hidden behind a nested reports dir must refuse the run, got ${res.status}:\n${output}`);
+    assert(
+      output.includes('CONFINEMENT FAILURE') || /planted\.mjs/.test(output),
+      `the refusal must name the hidden write, not merely fail:\n${output.slice(-600)}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export const fixModeTests = [
   testFixSurvivesUnscoreableReports,
   testFixRefusesPassOnIncompleteCoverage,
@@ -1128,6 +1244,8 @@ export const fixModeTests = [
   testFixModeSnapshotRecordsWritesUnderDefaultReportsOut,
   testFixIsolationAssertion,
   testFixIsolatedRunPublishes,
+  testWriteScopeExclusionIsPositionalNotSubstring,
+  testFixModeRefusesWritesHiddenBehindANestedReportsDir,
 ];
 
 await runSuite(fixModeTests, import.meta.url, { timeoutMs: 180000, concurrency: 1 });
