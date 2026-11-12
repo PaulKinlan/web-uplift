@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -479,6 +479,12 @@ export function testAgentPermissionScopeCoversEveryProvider() {
       for (const flag of flags) {
         assert(built.includes(flag), `"${name}" scoped flag ${JSON.stringify(flag)} must reach the built argv (web-uplift-gsfb): ${JSON.stringify(built)}`);
       }
+      // web-uplift-iods: a SUPPORTED provider's argv must carry NO blanket bypass - a scoped record
+      // whose argv also passes a bypass flag would be a silent widening of exactly the kind this
+      // table exists to prevent.
+      for (const bypass of ['--dangerously-skip-permissions', '--allow-all-tools', '--yolo', '--dangerously-bypass-approvals-and-sandbox']) {
+        assert(!built.includes(bypass), `"${name}" is scoped but its argv carries the bypass ${bypass} (web-uplift-iods): ${JSON.stringify(built)}`);
+      }
     } else {
       assert(typeof scope.reason === 'string' && scope.reason, `"${name}" declares unsupported without a reason - a known limitation needs its reason stated`);
       assert(typeof scope.mitigation === 'string' && scope.mitigation, `"${name}" declares unsupported without a mitigation`);
@@ -507,7 +513,34 @@ export function testAgentPermissionScopeCoversEveryProvider() {
     else AGENTS[ghost] = saved;
   }
 
-  console.log('  ok: every provider carries a permissionScope record and an unrecorded provider refuses to launch');
+  // web-uplift-iods: THE ENUMERATION'S BLIND SPOT, closed structurally. The first version of this
+  // control inspected agents.mjs and run-batch.mjs only, while fixer/fix.mjs still assembled argv
+  // from agent.args() directly - three call sites that silently LOST the scoped permission set the
+  // moment the flags moved into permissionScope, on the write-capable fix path (web-uplift-706s).
+  // The seam must be the ONLY assembly site: scan every harness source for a direct .args( launch
+  // build outside agents.mjs and fail here, so a future second site cannot go unseen.
+  const scanRoots = [join(repoRoot, 'runner'), join(repoRoot, 'fixer'), join(repoRoot, 'aggregate'), join(repoRoot, 'bin')];
+  const assemblyPattern = /\b(?:agent|a)\.args\(|\.args\(\s*prompt/;
+  const offenders = [];
+  const scan = (dir) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules') scan(abs); continue; }
+      if (!entry.name.endsWith('.mjs')) continue;
+      if (abs === join(repoRoot, 'runner', 'agents.mjs')) continue; // the table + the seam themselves
+      const text = readFileSync(abs, 'utf8');
+      if (assemblyPattern.test(text)) offenders.push(abs.replace(repoRoot + '/', ''));
+    }
+  };
+  for (const dir of scanRoots) scan(dir);
+  assert(
+    offenders.length === 0,
+    `agent argv must be assembled ONLY by resolveAgentLaunchArgs (runner/agents.mjs); these files build it directly and will silently drop the scoped permission set (web-uplift-706s/iods): ${JSON.stringify(offenders)}`,
+  );
+
+  console.log('  ok: every provider carries a permissionScope record, the launch seam is the only assembly site, and an unrecorded provider refuses to launch');
 }
 
 // web-uplift-gsfb acceptance 4: PROVE IT BY LAUNCH INSPECTION, not by reading code - "passes the

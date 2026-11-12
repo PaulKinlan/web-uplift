@@ -46,7 +46,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, access, readdir, lstat } from 'node:fs/promises';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { AGENTS, AGENT_NAMES, buildAgentEnv, parseAgentEnvFlag } from '../runner/agents.mjs';
+import { AGENTS, AGENT_NAMES, buildAgentEnv, parseAgentEnvFlag, resolveAgentLaunchArgs } from '../runner/agents.mjs';
 import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
 import { countOutstanding, completionState, remaining } from '../runner/remaining-work.mjs';
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
@@ -255,7 +255,10 @@ if (dryRun) {
   let redactedInEcho = false;
   for (let i = 1; i <= maxIterations; i++) {
     const prompt = iterationPrompt(args.findings, i);
-    const cliArgs = agent.args(prompt, { maxTurns: 120 });
+    // web-uplift-706s: fix mode builds argv through the ONE launch seam, so the scoped
+    // permission set (claude's derived --allowedTools, codex's --sandbox) reaches the
+    // write-capable fix agent exactly as it reaches the batch runner.
+    const cliArgs = resolveAgentLaunchArgs(agentName, prompt, { maxTurns: 120, root: projectRoot });
     const shownIter = shownCommand(cliArgs.join(' '));
     if (shownIter !== cliArgs.join(' ')) redactedInEcho = true;
     console.log(`  [iter ${i}] ${agent.bin} ${shownIter}`);
@@ -265,8 +268,9 @@ if (dryRun) {
   for (const name of AGENT_NAMES) {
     const a = AGENTS[name];
     const prompt = a.prompt(auditUrl ?? '<audit-url>', outDir, fixExtra(args.findings ?? '<findings>', 1));
-    const shownAgent = shownCommand(a.args(prompt, { maxTurns: 120 }).join(' '));
-    if (shownAgent !== a.args(prompt, { maxTurns: 120 }).join(' ')) redactedInEcho = true;
+    const fullAgent = resolveAgentLaunchArgs(name, prompt, { maxTurns: 120, root: projectRoot }).join(' ');
+    const shownAgent = shownCommand(fullAgent);
+    if (shownAgent !== fullAgent) redactedInEcho = true;
     console.log(`  ${name.padEnd(12)} ${a.bin} ${shownAgent}`);
   }
   // Announced rather than silent: a command that quietly differs is a command that fails
@@ -738,7 +742,9 @@ function confinementFailure(where, escaped) {
 function runAgent(prompt, iteration) {
   // `root` is passed so the derived absolute-path Bash rules name the SAME
   // directory the child is spawned with as cwd (the write-scope anchor).
-  const cliArgs = agent.args(prompt, { maxTurns: 120, root: projectRoot });
+  // web-uplift-706s: through the ONE launch seam - the pre-seam call here dropped the
+  // scoped permission set from the WRITE-CAPABLE fix path entirely.
+  const cliArgs = resolveAgentLaunchArgs(agentName, prompt, { maxTurns: 120, root: projectRoot });
   if (verbose) console.log(`[iter ${iteration}] $ ${agent.bin} ${shownCommand(cliArgs.join(' '))}`);
   return new Promise((resolve, reject) => {
     // cwd is the project root, set explicitly rather than inherited: the skill finds
