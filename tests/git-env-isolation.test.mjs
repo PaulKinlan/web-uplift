@@ -101,10 +101,44 @@ function testInheritedGitDirIsStrippedByTheHarness() {
   }
 }
 
+// web-uplift-j176: the resync must hold for the EXACT desync shape the soundness note used to claim was
+// impossible - a residual misread ('o.of /' reading 'of') on a line that also opens a multi-line template
+// swallowes the template's opening backtick; the old scanner left no frame open at the newline, so the
+// template's closing backtick on a later line opened a tpl frame and MASKED a real spawn two lines below.
+// The resync consumes that orphan closer as content, so the spawn stays flagged. RED pre-fix (0 sites).
+function testScrubResyncsATemplateSwallowedByAFakeRegex() {
+  const text = [
+    "const q = o.of / 2; const t = `text",
+    "more text`;",
+    "spawnSync('git', ['status']);",
+    "const u = `tail`;",
+  ].join('\n');
+  const sites = findGitSpawnSites('p.mjs', text).sites;
+  assert(
+    sites.length === 1,
+    `a spawn two lines below a misread that swallowed a template opener must still be flagged (web-uplift-j176): got ${sites.length} site(s)`,
+  );
+  // Control: the same shape WITHOUT the keyword-misread misread ('o.a /' is a plain property division,
+  // never opened as a regex) keeps the template intact and the spawn flagged - the swallow is what the
+  // resync neutralises, not the template itself.
+  const control = [
+    "const q = o.a / 2; const t = `text",
+    "more text`;",
+    "spawnSync('git', ['status']);",
+    "const u = `tail`;",
+  ].join('\n');
+  assert(
+    findGitSpawnSites('p.mjs', control).sites.length === 1,
+    'the control shape (no misread) must stay flagged - the resync must not change honest classifications',
+  );
+  console.log('\u2714 a template opener swallowed by a misread regex body resyncs; the spawn below stays flagged');
+}
+
 export const gitEnvIsolationCases = [
   testASpreadEnvCannotRestoreGitDir,
   testEveryGitSpawnInTestsGoesThroughTheScrub,
   testScrubDistinguishesCodeFromStringData,
+  testScrubResyncsATemplateSwallowedByAFakeRegex,
   testGitDirOverridesCwdSoTheLeakIsReal,
   testInheritedGitDirIsStrippedByTheHarness,
 ];
@@ -160,9 +194,14 @@ function testASpreadEnvCannotRestoreGitDir() {
 // classifier. Its two KNOWN misread forms - a division after an identifier whose name ends in a keyword
 // ('min / total' reading 'in'), and a division after postfix ++/-- - are excluded by construction (whole-
 // identifier keyword test; +/- absent from the operator set) and pinned by that test, so they cannot mask a
-// live spawn. A residual unknown misread is bounded to ONE LINE (the regex-body scan stops at a newline and
-// quote frames pop there), so it can only over-flag within a line or hide a spawn on the same line as the
-// misread - the standing planted-red drill is the check that the known shapes stay excluded.
+// live spawn. A residual unknown misread is bounded by the frame resyncs: the regex-body scan stops at a
+// newline and 'sq'/'dq' frames pop there, and - web-uplift-j176 - a fake regex body that swallowed an ODD
+// number of backticks sets a one-shot resync so the orphaned template CLOSER out in the code is consumed
+// as content instead of opening a tpl frame. Without that, a misread line could mask a real spawn up to
+// the NEXT backtick - across lines (a real regex literal cannot contain a raw newline, so a newline-terminated
+// body scan is always a misread, and odd backticks in it always mean a swallowed opener). The committed
+// pin for the known shapes is the synthetic case testScrubDistinguishesCodeFromStringData - there is no
+// standing planted-red drill; that phrase described a one-off instrument from the original fix, not code.
 const SCRUB_KEYWORDS = new Set([
   'return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'do', 'else', 'yield', 'await',
 ]);
@@ -172,6 +211,9 @@ function maskNonExecutableContent(text) {
   // Frames: sq | dq | tpl (template TEXT) | interp (template ${} - executable) | line | block (comments).
   const stack = [];
   let interpBraceDepth = 0;
+  // web-uplift-j176: one-shot resync - the next code-level backtick closes a template whose opener a
+  // misread regex body swallowed, so it must not open a frame.
+  let skipNextTplOpen = false;
   let i = 0;
   while (i < text.length) {
     const c = text[i];
@@ -197,20 +239,37 @@ function maskNonExecutableContent(text) {
           // Consume the regex body: no escapes-to-EOL semantics, just find the closing unescaped slash.
           mask[i] = 1;
           i += 1;
+          let swallowedBackticks = 0;
           while (i < text.length && text[i] !== '/') {
             if (text[i] === '\\') { mask[i] = 1; if (i + 1 < text.length) mask[i + 1] = 1; i += 2; continue; }
             if (text[i] === '\n') break; // a regex cannot span lines either; resync
+            if (text[i] === '`') swallowedBackticks += 1; // web-uplift-j176: masked content, not a frame
             mask[i] = 1;
             i += 1;
           }
           if (text[i] === '/') { mask[i] = 1; i += 1; }
+          // web-uplift-j176: a newline-terminated body scan is always a MISREAD (real regex literals
+          // cannot span lines). An odd swallowed-backtick count means the fake body consumed a template
+          // OPENING backtick whose closer is still out in the code - consume that closer as content
+          // (one-shot) instead of letting it open a tpl frame that masks a real spawn across lines.
+          if (text[i] === '\n' && swallowedBackticks % 2 === 1) skipNextTplOpen = true;
           continue;
         }
         i += 1; continue;
       }
       if (c === "'") { stack.push('sq'); mask[i] = 1; i += 1; continue; }
       if (c === '"') { stack.push('dq'); mask[i] = 1; i += 1; continue; }
-      if (c === '`') { stack.push('tpl'); mask[i] = 1; i += 1; continue; }
+      if (c === '`') {
+        if (skipNextTplOpen) {
+          // The closer of a template whose opener a misread regex body swallowed (web-uplift-j176):
+          // consume it as content instead of opening a frame.
+          skipNextTplOpen = false;
+          mask[i] = 1;
+          i += 1;
+          continue;
+        }
+        stack.push('tpl'); mask[i] = 1; i += 1; continue;
+      }
       i += 1; continue;
     }
     if (frame === 'line') {
