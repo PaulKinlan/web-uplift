@@ -31,6 +31,7 @@ import {
   SKIP_DIRS,
 } from "./test-helpers.mjs";
 import { snapshotTree, diffTrees, isExcludedPath, deriveIntegrityRoots, EXECUTABLE_HASH_ROOTS } from "../runner/write-scope.mjs";
+import { AGENTS } from "../runner/agents.mjs";
 
 // scoreReport's (correct) refusal to score incomplete atomic coverage killed the
 // whole fix run with an unhandled throw - including on every report written
@@ -1238,7 +1239,7 @@ export function testFixModeRefusesWritesHiddenBehindANestedReportsDir() {
 // reference a NON-standard directory, proving the set comes from the declarations and not from
 // a hand list that happens to contain them; then it asserts every required root of the REAL
 // repo is present, so removing a root from the derivation fails here.
-export function testIntegrityRootSetIsDerivedFromDeclaredSurfaces() {
+export async function testIntegrityRootSetIsDerivedFromDeclaredSurfaces() {
   // 1. Derivation proof: a fixture with synthetic declarations.
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-integrity-derive-'));
   try {
@@ -1266,8 +1267,21 @@ export function testIntegrityRootSetIsDerivedFromDeclaredSurfaces() {
   // 2. The REAL repo's set: every required root present, so removing one from the
   //    derivation fails here (the control; same shape as the gsfb provider enumeration).
   const real = deriveIntegrityRoots({ root: repoRoot });
-  for (const required of ['AGENTS.md', 'CLAUDE.md', 'README.md', join('.claude', 'skills'), join('.pi', 'skills'), 'mcp', 'scripts', 'tests', 'evidence', 'runner', 'fixer', 'bin', '.web-uplift']) {
+  for (const required of ['AGENTS.md', 'CLAUDE.md', 'README.md', join('.claude', 'skills'), join('.pi', 'skills'), 'mcp', 'scripts', 'tests', 'evidence', 'runner', 'fixer', 'bin', '.web-uplift',
+    // web-uplift-8evs round two: the six instruction surfaces the nightly named, now derived from
+    // the AGENTS entries' own declarations rather than a second hand list.
+    join('.agents', 'skills'), join('.codex', 'skills'), join('.gemini', 'commands'), join('.opencode', 'command'), join('.github', 'prompts'), join('.github', 'copilot-instructions.md')]) {
     assert(real.includes(required), `the real repo's integrity set must contain ${required} (web-uplift-8evs): ${JSON.stringify(real)}`);
+  }
+  // The control is now the AGENTS DECLARATIONS: the derived set must cover every declared
+  // instruction surface that exists, so a provider whose declaration is dropped from the
+  // derivation (or an AGENTS entry added with a surface the derivation ignores) fails here.
+  const { AGENTS, AGENT_NAMES } = await import(pathToFileURL(join(repoRoot, 'runner', 'agents.mjs')).href);
+  for (const name of AGENT_NAMES) {
+    for (const ref of AGENTS[name].instructions ?? []) {
+      if (!existsSync(join(repoRoot, ref))) continue;
+      assert(real.includes(ref), `the declared instruction surface of ${name} (${ref}) must be in the derived set (web-uplift-8evs): ${JSON.stringify(real)}`);
+    }
   }
   console.log('  ok: integrity roots are derived from declared surfaces and every required root is present');
 }
@@ -1278,6 +1292,8 @@ export function testIntegrityRootSetIsDerivedFromDeclaredSurfaces() {
 // verification (snapshot diff) fails - i.e. the change is visible as a hash drift.
 export function testTamperingWithInstructionSurfacesIsDetected() {
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-integrity-tamper-'));
+  // Declared OUTSIDE the try so finally can restore it (it is the shared provider table).
+  let savedCopilotInstructions;
   try {
     const mk = (p, body) => {
       mkdirSync(dirname(join(root, p)), { recursive: true });
@@ -1288,10 +1304,23 @@ export function testTamperingWithInstructionSurfacesIsDetected() {
     mk(join('mcp', 'skills-server.mjs'), 'original server');
     mk(join('scripts', 'test-fast.mjs'), 'original script');
     mk('README.md', 'original readme');
+    // web-uplift-8evs round two: the surfaces the verdict showed invisible under the first cut.
+    mk(join('.github', 'copilot-instructions.md'), 'original copilot instructions');
+    mk(join('.opencode', 'command', 'web-audit.md'), 'original opencode command');
+    mk(join('AGENTS.md') + '.tmp', 'ignored');
     // The fixture DECLARS its surfaces the way the real repo does: the derivation covers
     // what the harness declares, so mcp/ and scripts/ must be referenced to be covered.
     writeFileSync(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'node', args: ['mcp/skills-server.mjs'] } } }));
     writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node scripts/test-fast.mjs' } }));
+    // The fixture declares a copilot-style surface too, so the derivation must cover it. The AGENTS
+    // entry is mutated ONLY here and restored in finally - it is the shared provider table.
+    savedCopilotInstructions = AGENTS.copilot.instructions;
+    AGENTS.copilot.instructions = ['.github/copilot-instructions.md'];
+    mkdirSync(join(root, '.github'), { recursive: true });
+    writeFileSync(join(root, '.github', 'copilot-instructions.md'), 'original copilot instructions');
+    // The opencode declaration comes from the real table already; the fixture ships its directory.
+    mkdirSync(join(root, '.opencode', 'command'), { recursive: true });
+    writeFileSync(join(root, '.opencode', 'command', 'web-audit.md'), 'original opencode command');
     const hashUnder = deriveIntegrityRoots({ root });
     for (const required of ['mcp', 'scripts', join('.claude', 'skills'), 'AGENTS.md', 'README.md']) {
       assert(hashUnder.includes(required), `the fixture's derived set must cover ${required}: ${JSON.stringify(hashUnder)}`);
@@ -1304,9 +1333,11 @@ export function testTamperingWithInstructionSurfacesIsDetected() {
     mk(join('mcp', 'skills-server.mjs'), 'DOCTORED server');
     mk(join('scripts', 'test-fast.mjs'), 'DOCTORED script');
     mk('README.md', 'DOCTORED readme');
+    writeFileSync(join(root, '.github', 'copilot-instructions.md'), 'DOCTORED copilot instructions');
+    writeFileSync(join(root, '.opencode', 'command', 'web-audit.md'), 'DOCTORED command');
     const after = snapshotTree(root, { hashUnder });
     const diff = diffTrees(before, after);
-    for (const tampered of ['AGENTS.md', 'README.md', join('.claude', 'skills', 'web-audit', 'SKILL.md'), join('mcp', 'skills-server.mjs'), join('scripts', 'test-fast.mjs')]) {
+    for (const tampered of ['AGENTS.md', 'README.md', join('.claude', 'skills', 'web-audit', 'SKILL.md'), join('mcp', 'skills-server.mjs'), join('scripts', 'test-fast.mjs'), join('.github', 'copilot-instructions.md'), join('.opencode', 'command', 'web-audit.md')]) {
       assert(
         diff.modified.includes(tampered),
         `a doctored file under ${tampered} must be DETECTED as hash drift (web-uplift-8evs): ${JSON.stringify(diff.modified)}`,
@@ -1317,6 +1348,7 @@ export function testTamperingWithInstructionSurfacesIsDetected() {
       );
     }
   } finally {
+    AGENTS.copilot.instructions = savedCopilotInstructions;
     rmSync(root, { recursive: true, force: true });
   }
   console.log('  ok: tampering with instructions, skills, mcp and scripts surfaces is detected');

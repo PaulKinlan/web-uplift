@@ -76,6 +76,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
+import { AGENTS } from './agents.mjs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 // The only blanket-excluded location left: the run tree's OWN output root - the
@@ -129,7 +130,10 @@ export const EXECUTABLE_HASH_ROOTS = [
 //     stat strength (so a change is SEEN), never hash-stamped.
 //   - .git/ - walked only for the persistence vectors (hooks, config, HEAD), the object
 //     store is noise (GIT_KEEP below).
+const derivedRootsCache = new Map(); // web-uplift-8evs: the derivation runs per spawn; cache per root path
 export function deriveIntegrityRoots({ root = process.cwd(), existsSync: exists = existsSync, readFile = (p) => readFileSync(p, 'utf8') } = {}) {
+  const cached = derivedRootsCache.get(root);
+  if (cached) return cached;
   const roots = new Set(EXECUTABLE_HASH_ROOTS);
   // A referenced repo-local path contributes the TOP of its path (a top-level file
   // contributes itself; mcp/skills-server.mjs contributes 'mcp'). This is what keeps
@@ -145,11 +149,17 @@ export function deriveIntegrityRoots({ root = process.cwd(), existsSync: exists 
   for (const f of ['AGENTS.md', 'CLAUDE.md', 'README.md']) {
     if (exists(join(root, f))) roots.add(f);
   }
-  // 2. SKILLS TREES: the canonical skill text the agent is told to follow, canonical and
-  //    vendored copies (the vendored .web-uplift tree is already hashed wholesale).
-  for (const d of ['.claude', '.pi']) {
-    if (exists(join(root, d, 'skills'))) roots.add(join(d, 'skills'));
+  // 2. INSTRUCTION SURFACES, DECLARED PER PROVIDER (web-uplift-8evs round two): each AGENTS entry
+  //    declares the instruction surface it loads from this repo (.claude/skills, .codex/skills,
+  //    .gemini/commands, .opencode/command, .pi/skills, copilot's .github/ files) - the set is read
+  //    from those declarations rather than a second hand list here. Plus the cross-agent skills
+  //    convention directory when it exists.
+  for (const agent of Object.values(AGENTS)) {
+    for (const ref of agent.instructions ?? []) {
+      if (exists(join(root, ref))) roots.add(ref);
+    }
   }
+  if (exists(join(root, '.agents', 'skills'))) roots.add(join('.agents', 'skills'));
   // 3. THE MCP SURFACE: whatever .mcp.json launches is executed by the harness. The
   //    skills server shapes the instructions the MCP caller receives (8m4y), so its
   //    tree is behavioural input.
@@ -178,7 +188,9 @@ export function deriveIntegrityRoots({ root = process.cwd(), existsSync: exists 
   } catch {
     /* no package.json: nothing to derive */
   }
-  return [...roots].sort();
+  const sorted = Object.freeze([...roots].sort());
+  derivedRootsCache.set(root, sorted);
+  return sorted;
 }
 
 // sha256 stamp for one file, or null when it raced away.
@@ -216,7 +228,12 @@ export function executableIntegrity(base) {
       else if (child.isFile()) record(p, hashFile(p));
     }
   };
-  for (const root of EXECUTABLE_HASH_ROOTS) {
+  // web-uplift-8evs round two: the PRE-SPAWN abort gate must cover the same derived set as the
+  // snapshots - iterating the core list only let a mid-batch tamper with AGENTS.md, the skill, the
+  // MCP server or scripts/ produce an empty drift and let the next URL spawn on doctored input.
+  // deriveIntegrityRoots caches per root, so this stays cheap per call; the HASHES are computed
+  // fresh every time (a cached hash would defeat the check entirely).
+  for (const root of deriveIntegrityRoots({ root: baseAbs })) {
     const abs = resolve(baseAbs, root);
     let st;
     try {

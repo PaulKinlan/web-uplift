@@ -313,6 +313,9 @@ export const AGENTS = {
   claude: {
     bin: 'claude',
     prompt: slashPrompt,
+    // The instruction surface THIS provider loads from this repo (web-uplift-8evs): the integrity
+    // derivation (runner/write-scope.mjs deriveIntegrityRoots) hashes whatever is declared here.
+    instructions: ['.claude/skills', 'AGENTS.md'],
     args: (prompt, { maxTurns, root } = {}) => [
       '-p', prompt,
       '--output-format', 'json',
@@ -354,6 +357,7 @@ export const AGENTS = {
   codex: {
     bin: 'codex',
     prompt: skillPrompt,
+    instructions: ['.codex/skills'],
     // workspace-write keeps file edits sandboxed to the repo. If Chrome can't
     // reach the network from the sandbox, run inside a container with
     // --dangerously-bypass-approvals-and-sandbox instead.
@@ -362,18 +366,22 @@ export const AGENTS = {
   gemini: {
     bin: 'gemini',
     prompt: skillPrompt,
+    instructions: ['.gemini/commands'],
     // --yolo auto-approves every tool call: run untrusted sites in a container.
     args: (prompt) => ['-p', prompt, '--yolo', '--output-format', 'json'],
   },
   antigravity: {
     bin: 'agy',
     prompt: skillPrompt,
+    // No repo-local instruction surface verified for this provider (binary not on the runner VM).
+    instructions: [],
     // No reliable JSON output mode yet; we keep raw stdout in run.json.
     args: (prompt) => ['-p', prompt, '--dangerously-skip-permissions'],
   },
   copilot: {
     bin: 'copilot',
     prompt: skillPrompt,
+    instructions: ['.github/copilot-instructions.md', '.github/prompts'],
     // GitHub Copilot CLI: headless prompt with auto tool approval. The repo's
     // .github/copilot-instructions.md + prompts/web-audit.prompt.md point it at
     // the same skill. Run untrusted sites in a container.
@@ -382,6 +390,7 @@ export const AGENTS = {
   opencode: {
     bin: 'opencode',
     prompt: skillPrompt,
+    instructions: ['.opencode/command'],
     // opencode headless run. It reads AGENTS.md and .opencode/command/web-audit
     // from the repo; here we pass the skill prompt directly for batch use.
     args: (prompt) => ['run', prompt],
@@ -389,6 +398,7 @@ export const AGENTS = {
   pi: {
     bin: 'pi',
     prompt: skillPrompt,
+    instructions: ['.pi/skills'],
     // pi print mode. -a (--approve) trusts project resources so an installed
     // .pi/skills/web-audit + AGENTS.md load in non-interactive mode; pi's default
     // tools include the shell it needs to run `node evidence/cli.mjs ...`. Run
