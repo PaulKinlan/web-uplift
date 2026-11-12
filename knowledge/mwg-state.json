@@ -6,7 +6,7 @@
   "analysedVersion": "0.0.197",
   "appliedRulesVersion": "0.0.197",
   "analysedAt": "2026-11-06T20:15:11.201Z",
-  "lastCheckAt": "2026-11-11T19:43:26.673Z",
+  "lastCheckAt": "2026-11-12T07:25:22.125Z",
   "lastCheckUpstreamVersion": "1.0.0",
   "lastCheckSource": "https://registry.npmjs.org/modern-web-guidance/latest",
   "lastCheckResult": "delta",
@@ -77,7 +77,7 @@
     "result": "ok",
     "rules": 8,
     "anchors": 16,
-    "checkedAt": "2026-11-11T19:43:26.673Z",
+    "checkedAt": "2026-11-12T07:25:22.125Z",
     "source": "https://registry.npmjs.org/modern-web-guidance/-/modern-web-guidance-1.0.0.tgz"
   }
 }
