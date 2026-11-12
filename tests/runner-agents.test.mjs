@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { assert, readJson, repoRoot, tmp, runSuite, runAsync } from "./test-helpers.mjs";
-import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules, buildAgentEnv, parseAgentEnvFlag } from "../runner/agents.mjs";
+import { AGENTS, AGENT_NAMES, SKILL_REQUIRED_COMMANDS, headlessBashRules, buildAgentEnv, parseAgentEnvFlag, resolveAgentLaunchArgs } from "../runner/agents.mjs";
 
 
 // The headless Claude allowlist must name the intended invocations, not the
@@ -15,7 +15,9 @@ import { AGENTS, SKILL_REQUIRED_COMMANDS, headlessBashRules, buildAgentEnv, pars
 // web-uplift-tia). The guidance entry must stay pinned to guidanceCatalogVersion,
 // which is what ties this allowlist to the 2op documentation pin.
 export function testHeadlessAllowlistIsScoped() {
-  const args = AGENTS.claude.args('prompt', { maxTurns: 3 });
+  // web-uplift-gsfb: read the LAUNCH SEAM, not the bare args table - the scoped flags now live in
+  // permissionScope and reach argv only through resolveAgentLaunchArgs.
+  const args = resolveAgentLaunchArgs("claude", "prompt", { maxTurns: 3, root: "/root" });
   const index = args.indexOf('--allowedTools');
   assert(
     index >= 0 && index + 1 < args.length,
@@ -151,7 +153,7 @@ export function testHeadlessAllowlistMatchesSkillContract() {
   //    the fixed file-tools prefix and the derived rules has been hand-added
   //    (a widening entry such as `Bash(node:*)` must fail here, not pass
   //    silently because the subset direction still holds).
-  const args = AGENTS.claude.args('prompt', { maxTurns: 3, root });
+  const args = resolveAgentLaunchArgs("claude", "prompt", { maxTurns: 3, root });
   const allowed = args[args.indexOf('--allowedTools') + 1];
   const expected = ['Read,Write,Edit,Glob,Grep', ...rules].join(',');
   assert(
@@ -460,12 +462,137 @@ export async function testAgentChildEnvProxyCredentials() {
   }
 }
 
+// web-uplift-gsfb: THE ENUMERATION IS THE CONTROL. Every provider in AGENTS must carry a
+// permissionScope record; the enumeration below iterates AGENT_NAMES (the same list the launch
+// path serves), so a NEW provider without a record fails HERE in CI - and resolveAgentLaunchArgs
+// fails at launch - instead of silently spawning with default permissions on one of N paths.
+export function testAgentPermissionScopeCoversEveryProvider() {
+  for (const name of AGENT_NAMES) {
+    const agent = AGENTS[name];
+    const scope = agent.permissionScope;
+    assert(scope, `every provider needs a permissionScope record; "${name}" has none (web-uplift-gsfb)`);
+    if (scope.supported) {
+      assert(typeof scope.flags === 'function', `"${name}" declares supported without a flags function`);
+      const built = resolveAgentLaunchArgs(name, 'PROMPT', { maxTurns: 3, root: '/root' });
+      const flags = scope.flags({ root: '/root' });
+      assert(Array.isArray(flags) && flags.length > 0, `"${name}" declares supported with empty flags`);
+      for (const flag of flags) {
+        assert(built.includes(flag), `"${name}" scoped flag ${JSON.stringify(flag)} must reach the built argv (web-uplift-gsfb): ${JSON.stringify(built)}`);
+      }
+      // web-uplift-iods: a SUPPORTED provider's argv must carry NO blanket bypass - a scoped record
+      // whose argv also passes a bypass flag would be a silent widening of exactly the kind this
+      // table exists to prevent.
+      for (const bypass of ['--dangerously-skip-permissions', '--allow-all-tools', '--yolo', '--dangerously-bypass-approvals-and-sandbox']) {
+        assert(!built.includes(bypass), `"${name}" is scoped but its argv carries the bypass ${bypass} (web-uplift-iods): ${JSON.stringify(built)}`);
+      }
+    } else {
+      assert(typeof scope.reason === 'string' && scope.reason, `"${name}" declares unsupported without a reason - a known limitation needs its reason stated`);
+      assert(typeof scope.mitigation === 'string' && scope.mitigation, `"${name}" declares unsupported without a mitigation`);
+      if (scope.bypassFlag) {
+        const built = resolveAgentLaunchArgs(name, 'PROMPT', { maxTurns: 3, root: '/root' });
+        assert(built.includes(scope.bypassFlag), `"${name}" argv must match its recorded bypass flag ${JSON.stringify(scope.bypassFlag)} (web-uplift-gsfb): ${JSON.stringify(built)}`);
+      }
+    }
+  }
+
+  // The fail-closed probe: an entry WITHOUT a record must refuse to launch, loudly.
+  const ghost = 'ghost-provider-probe';
+  const saved = AGENTS[ghost];
+  AGENTS[ghost] = { bin: 'ghost', prompt: (u) => u, args: (p) => ['-p', p] };
+  try {
+    let threw = null;
+    try {
+      resolveAgentLaunchArgs(ghost, 'PROMPT', {});
+    } catch (err) {
+      threw = err;
+    }
+    assert(threw && /permissionScope/.test(threw.message), `a provider without a permissionScope record must refuse to launch: ${threw && threw.message}`);
+    assert(threw && threw.message.includes(ghost), 'the refusal must name the offending provider');
+  } finally {
+    if (saved === undefined) delete AGENTS[ghost];
+    else AGENTS[ghost] = saved;
+  }
+
+  // web-uplift-iods: THE ENUMERATION'S BLIND SPOT, closed structurally. The first version of this
+  // control inspected agents.mjs and run-batch.mjs only, while fixer/fix.mjs still assembled argv
+  // from agent.args() directly - three call sites that silently LOST the scoped permission set the
+  // moment the flags moved into permissionScope, on the write-capable fix path (web-uplift-706s).
+  // The seam must be the ONLY assembly site: scan every harness source for a direct .args( launch
+  // build outside agents.mjs and fail here, so a future second site cannot go unseen.
+  const scanRoots = [join(repoRoot, 'runner'), join(repoRoot, 'fixer'), join(repoRoot, 'aggregate'), join(repoRoot, 'bin')];
+  const assemblyPattern = /\b(?:agent|a)\.args\(|\.args\(\s*prompt/;
+  const offenders = [];
+  const scan = (dir) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules') scan(abs); continue; }
+      if (!entry.name.endsWith('.mjs')) continue;
+      if (abs === join(repoRoot, 'runner', 'agents.mjs')) continue; // the table + the seam themselves
+      const text = readFileSync(abs, 'utf8');
+      if (assemblyPattern.test(text)) offenders.push(abs.replace(repoRoot + '/', ''));
+    }
+  };
+  for (const dir of scanRoots) scan(dir);
+  assert(
+    offenders.length === 0,
+    `agent argv must be assembled ONLY by resolveAgentLaunchArgs (runner/agents.mjs); these files build it directly and will silently drop the scoped permission set (web-uplift-706s/iods): ${JSON.stringify(offenders)}`,
+  );
+
+  console.log('  ok: every provider carries a permissionScope record, the launch seam is the only assembly site, and an unrecorded provider refuses to launch');
+}
+
+// web-uplift-gsfb acceptance 4: PROVE IT BY LAUNCH INSPECTION, not by reading code - "passes the
+// flags" and "the provider honours them" are different claims, and this case separates them. A stub
+// binary per provider records the argv the batch runner ACTUALLY passed; supported providers must
+// show their scoped flags in that argv, and unsupported providers must show exactly their recorded
+// bypass flag (so a silent widening or narrowing of the bypass shows here too).
+export async function testAgentPermissionScopeReachesTheLaunch() {
+  const envTmp = mkdtempSync(join(tmpdir(), 'web-uplift-agent-scope-'));
+  try {
+    const binDir = join(envTmp, 'bin');
+    mkdirSync(binDir);
+    for (const name of AGENT_NAMES) {
+      const capture = join(envTmp, `${name}-argv.txt`);
+      writeFileSync(join(binDir, AGENTS[name].bin), `#!/bin/sh\nprintf '%s\n' "$@" > ${capture}\nexit 0\n`);
+      chmodSync(join(binDir, AGENTS[name].bin), 0o755);
+    }
+    for (const name of AGENT_NAMES) {
+      const scope = AGENTS[name].permissionScope;
+      await runAsync(
+        process.execPath,
+        [join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com', '--agent', name, '--isolation', 'test-suite', '--out', join(envTmp, `reports-${name}`)],
+        { env: { PATH: `${binDir}:${process.env.PATH}`, HOME: envTmp } },
+      );
+      const capture = join(envTmp, `${name}-argv.txt`);
+      assert(existsSync(capture), `the stub ${name} binary must have run and recorded its argv`);
+      const argv = readFileSync(capture, 'utf8').split('\n').filter((l) => l.length > 0);
+      if (scope.supported) {
+        // run-batch resolves root from ITS cwd (this test's cwd), so compute the expected flags with the
+        // same root - the derived claude rules embed absolute paths under it.
+        for (const flag of scope.flags({ root: process.cwd() })) {
+          assert(argv.includes(flag), `${name}: scoped flag ${JSON.stringify(flag)} must reach the REAL spawn argv (web-uplift-gsfb): ${JSON.stringify(argv)}`);
+        }
+      } else if (scope.bypassFlag) {
+        assert(argv.includes(scope.bypassFlag), `${name}: the recorded bypass flag must be the one actually passed (web-uplift-gsfb): ${JSON.stringify(argv)}`);
+        assert(!argv.includes('--allowedTools'), `${name}: an unsupported provider must not silently grow claude's scoping`);
+      }
+    }
+    console.log('  ok: launch inspection shows every provider\'s argv matches its permissionScope record');
+  } finally {
+    rmSync(envTmp, { recursive: true, force: true });
+  }
+}
+
 export const runnerAgentsTests = [
   testAgentChildEnvProxyCredentials,
   testHeadlessAllowlistIsScoped,
   testHeadlessAllowlistMatchesSkillContract,
   testSkillWriteContractGuard,
   testAgentChildEnvAllowlist,
+  testAgentPermissionScopeCoversEveryProvider,
+  testAgentPermissionScopeReachesTheLaunch,
 ];
 
 await runSuite(runnerAgentsTests, import.meta.url, { timeoutMs: 30000, concurrency: 1 });

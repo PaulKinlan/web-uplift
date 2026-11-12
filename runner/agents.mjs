@@ -313,63 +313,97 @@ export const AGENTS = {
   claude: {
     bin: 'claude',
     prompt: slashPrompt,
-    args: (prompt, { maxTurns, root } = {}) => [
+    args: (prompt, { maxTurns } = {}) => [
       '-p', prompt,
       '--output-format', 'json',
       '--max-turns', String(maxTurns),
-      // Scoped permissions instead of a blanket bypass. The old list granted
-      // Bash(node:*) and Bash(npx:*), which match ANY trailing arguments, so a
-      // page that talked the agent into `node -e '<code>'` or `npx -y <package>`
-      // got arbitrary execution in the same process tree that ingests untrusted
-      // page text (threat model I4, web-uplift-tia).
-      //
-      // The Bash entries are DERIVED from SKILL_REQUIRED_COMMANDS above - the
-      // single declared skill contract - so the sandbox admits exactly the
-      // scripts the skill instructs the agent to run (7tj); the contract test
-      // in tests/regression.mjs keeps the table and SKILL.md in sync.
-      //
-      // These rules are STRING PREFIXES. The CLI's own help documents the glob
-      // form `Bash(git *)` as well, but the binary is compiled and the exact
-      // matcher could not be determined locally, so this list assumes the
-      // conservative PREFIX reading. That shapes what is safe to write here:
-      //   - The guidance prefix ends at `modern-web-guidance@0.0.197`, so a
-      //     lookalike package (`modern-web-guidance-evil`) does NOT match it, and
-      //     `modern-web-guidance@0.0.1971` is not a published version. The pin is
-      //     guidanceCatalogVersion in knowledge/principles.json and is asserted by
-      //     tests/regression.mjs.
-      //   - A bare tool name would NOT be safe: `Bash(npx -y lighthouse:*)` is a
-      //     prefix and also matches `npx -y lighthouse-evil`, so Lighthouse is
-      //     deliberately not allowed here. Add it as
-      //     `Bash(npx -y lighthouse@<exact version>:*)` if a run needs it.
-      //   - The node entries are PATH prefixes that stop at a declared script
-      //     (a sibling like `evidence/cli.mjs2` would still match), and the agent
-      //     has Write, so it could write such a sibling and run it through the
-      //     matching prefix. This list narrows which commands are reachable; it
-      //     is NOT an execution sandbox, and container/VM isolation stays the
-      //     enforcement boundary for untrusted sites (see README).
-      '--allowedTools',
-      ['Read,Write,Edit,Glob,Grep', ...headlessBashRules({ root })].join(','),
     ],
+    // THE PERMISSION SCOPE RECORD (web-uplift-gsfb): every provider in this table
+    // carries one, and the launch path (resolveAgentLaunchArgs) refuses to spawn a
+    // provider whose record is missing - so adding a provider cannot silently add
+    // an unrestricted path. `supported: true` entries carry flags(ctx): the scoped
+    // permission set appended to argv at launch. `supported: false` entries carry
+    // reason + mitigation + bypassFlag: the blanket bypass the launch actually
+    // passes, named so the enumeration test can hold argv to the record.
+    //
+    // Scoped permissions instead of a blanket bypass. The old list granted
+    // Bash(node:*) and Bash(npx:*), which match ANY trailing arguments, so a
+    // page that talked the agent into `node -e '<code>'` or `npx -y <package>`
+    // got arbitrary execution in the same process tree that ingests untrusted
+    // page text (threat model I4, web-uplift-tia).
+    //
+    // The Bash entries are DERIVED from SKILL_REQUIRED_COMMANDS above - the
+    // single declared skill contract - so the sandbox admits exactly the
+    // scripts the skill instructs the agent to run (7tj); the contract test
+    // in tests/regression.mjs keeps the table and SKILL.md in sync.
+    //
+    // These rules are STRING PREFIXES. The CLI's own help documents the glob
+    // form `Bash(git *)` as well, but the binary is compiled and the exact
+    // matcher could not be determined locally, so this list assumes the
+    // conservative PREFIX reading. That shapes what is safe to write here:
+    //   - The guidance prefix ends at `modern-web-guidance@0.0.197`, so a
+    //     lookalike package (`modern-web-guidance-evil`) does NOT match it, and
+    //     `modern-web-guidance@0.0.1971` is not a published version. The pin is
+    //     guidanceCatalogVersion in knowledge/principles.json and is asserted by
+    //     tests/regression.mjs.
+    //   - A bare tool name would NOT be safe: `Bash(npx -y lighthouse:*)` is a
+    //     prefix and also matches `npx -y lighthouse-evil`, so Lighthouse is
+    //     deliberately not allowed here. Add it as
+    //     `Bash(npx -y lighthouse@<exact version>:*)` if a run needs it.
+    //   - The node entries are PATH prefixes that stop at a declared script
+    //     (a sibling like `evidence/cli.mjs2` would still match), and the agent
+    //     has Write, so it could write such a sibling and run it through the
+    //     matching prefix. This list narrows which commands are reachable; it
+    //     is NOT an execution sandbox, and container/VM isolation stays the
+    //     enforcement boundary for untrusted sites (see README).
+    permissionScope: {
+      supported: true,
+      flags: ({ root } = {}) => ['--allowedTools', ['Read,Write,Edit,Glob,Grep', ...headlessBashRules({ root })].join(',')],
+    },
   },
   codex: {
     bin: 'codex',
     prompt: skillPrompt,
+    args: (prompt) => ['exec', '--json', prompt],
     // workspace-write keeps file edits sandboxed to the repo. If Chrome can't
     // reach the network from the sandbox, run inside a container with
     // --dangerously-bypass-approvals-and-sandbox instead.
-    args: (prompt) => ['exec', '--json', '--sandbox', 'workspace-write', prompt],
+    permissionScope: {
+      supported: true,
+      // codex -s, --sandbox <SANDBOX_MODE> is a real argv scoping surface (verified
+      // against `codex --help` on the runner VM): model-generated shell commands run
+      // under the sandbox policy, so this is a scope, not a bypass.
+      flags: () => ['--sandbox', 'workspace-write'],
+    },
   },
   gemini: {
     bin: 'gemini',
     prompt: skillPrompt,
     // --yolo auto-approves every tool call: run untrusted sites in a container.
     args: (prompt) => ['-p', prompt, '--yolo', '--output-format', 'json'],
+    permissionScope: {
+      supported: false,
+      // KNOWN LIMITATION, recorded rather than silent (web-uplift-gsfb): headless gemini runs need
+      // --yolo (auto-approve-everything); no per-tool scoping flag is verified for this launch path
+      // and the gemini binary is not installed on the runner VM to check for one - unverified
+      // capabilities are not claimed. If a per-tool flag exists, verify it against `gemini --help`
+      // and convert this entry to supported: true with real flags.
+      reason: 'headless mode requires the blanket --yolo auto-approval; no per-tool scoping flag verified',
+      mitigation: 'container/VM isolation for untrusted sites (README); the batch write-scope tripwire bounds file writes to the run tree',
+      bypassFlag: '--yolo',
+    },
   },
   antigravity: {
     bin: 'agy',
     prompt: skillPrompt,
     // No reliable JSON output mode yet; we keep raw stdout in run.json.
     args: (prompt) => ['-p', prompt, '--dangerously-skip-permissions'],
+    permissionScope: {
+      supported: false,
+      reason: '--dangerously-skip-permissions is the documented non-interactive mode; no scoping flag verified (binary not on the runner VM)',
+      mitigation: 'container/VM isolation for untrusted sites (README); the batch write-scope tripwire bounds file writes to the run tree',
+      bypassFlag: '--dangerously-skip-permissions',
+    },
   },
   copilot: {
     bin: 'copilot',
@@ -378,6 +412,12 @@ export const AGENTS = {
     // .github/copilot-instructions.md + prompts/web-audit.prompt.md point it at
     // the same skill. Run untrusted sites in a container.
     args: (prompt) => ['-p', prompt, '--allow-all-tools'],
+    permissionScope: {
+      supported: false,
+      reason: '--allow-all-tools is the documented headless mode and is itself the bypass; no per-tool scoping flag verified (binary not on the runner VM)',
+      mitigation: 'container/VM isolation for untrusted sites (README); the batch write-scope tripwire bounds file writes to the run tree',
+      bypassFlag: '--allow-all-tools',
+    },
   },
   opencode: {
     bin: 'opencode',
@@ -385,16 +425,68 @@ export const AGENTS = {
     // opencode headless run. It reads AGENTS.md and .opencode/command/web-audit
     // from the repo; here we pass the skill prompt directly for batch use.
     args: (prompt) => ['run', prompt],
+    permissionScope: {
+      supported: false,
+      // Verified against `opencode run --help` on the runner VM: run mode offers
+      // --agent and --auto (auto-approve, dangerous) only. Per-permission scoping
+      // lives in the opencode config file, not in argv - a config-file scope is a
+      // different launch-time control and would need its own verified record.
+      reason: 'run mode exposes no permission flags in argv (only --auto, the bypass); scoping is config-file only and the repo carries no permission config',
+      mitigation: 'container/VM isolation for untrusted sites (README); the batch write-scope tripwire bounds file writes to the run tree',
+      bypassFlag: null,
+    },
   },
   pi: {
     bin: 'pi',
     prompt: skillPrompt,
     // pi print mode. -a (--approve) trusts project resources so an installed
-    // .pi/skills/web-audit + AGENTS.md load in non-interactive mode; pi's default
-    // tools include the shell it needs to run `node evidence/cli.mjs ...`. Run
+    // .pi/skills/web-audit + AGENTS.md load in non-interactive mode. Run
     // untrusted sites in a container.
     args: (prompt) => ['-p', prompt, '-a', '--no-session', '--no-extensions'],
+    permissionScope: {
+      supported: true,
+      // Verified against `pi --help` and a live run on the runner VM: -t is a real
+      // comma-separated tool allowlist. Tool-GRANULARITY limitation, stated: the
+      // bash tool is all-or-nothing, so command-level prefix scoping like claude's
+      // Bash(node:*) rules is not expressible here - the audit needs bash to run
+      // `node evidence/cli.mjs ...`, and container/VM isolation stays the
+      // command-level boundary. The allowlist still drops every tool outside the
+      // declared set (extension and custom tools included).
+      flags: () => ['-t', 'read,edit,write,grep,find,ls,bash'],
+    },
   },
 };
+
+// THE ONE LAUNCH SEAM (web-uplift-gsfb): every agent spawn's argv is assembled here or
+// nowhere. Fail-closed on a provider without a permissionScope record - adding an AGENTS
+// entry without one breaks the launch loudly instead of silently running unrestricted, and
+// the enumeration test in tests/runner-agents.test.mjs catches it in CI before that.
+export function resolveAgentLaunchArgs(agentName, prompt, ctx = {}) {
+  const agent = AGENTS[agentName];
+  if (!agent) {
+    throw new Error(`Unknown agent "${agentName}". Choose one of: ${AGENT_NAMES.join(', ')}`);
+  }
+  if (!agent.permissionScope) {
+    throw new Error(
+      `Agent "${agentName}" has no permissionScope record (web-uplift-gsfb): every provider must declare ` +
+        `either { supported: true, flags } - the scoped permission set - or { supported: false, reason, mitigation } - ` +
+        `a recorded known limitation. A provider without a record must not launch with default permissions.`,
+    );
+  }
+  const scope = agent.permissionScope;
+  if (scope.supported) {
+    if (typeof scope.flags !== 'function') {
+      throw new Error(`Agent "${agentName}" declares permissionScope.supported without a flags function`);
+    }
+    return [...agent.args(prompt, ctx), ...scope.flags(ctx)];
+  }
+  if (typeof scope.reason !== 'string' || !scope.reason || typeof scope.mitigation !== 'string' || !scope.mitigation) {
+    throw new Error(
+      `Agent "${agentName}" declares permissionScope.supported: false without a reason and mitigation - ` +
+        `an unsupported provider is a known limitation with a stated reason and mitigation, not a silent default`,
+    );
+  }
+  return [...agent.args(prompt, ctx)];
+}
 
 export const AGENT_NAMES = Object.keys(AGENTS);

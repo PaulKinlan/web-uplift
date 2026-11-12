@@ -47,7 +47,7 @@ import { mkdir, readFile, rename, access } from 'node:fs/promises';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
+import { AGENTS, buildAgentEnv, parseAgentEnvFlag, resolveAgentLaunchArgs } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow, createFlowReplayLogger, redactRecordedStructure } from './flow.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
@@ -377,7 +377,7 @@ async function worker() {
       if (flow) console.log(`would replay   flow "${flow.title}" (${flow.steps.length} steps) into ${join(siteDir, 'evidence', 'flow')}`);
       // The prompt embeds the target URL, so the echoed command is redacted the same way
       // (display only - the run uses the URL as given).
-      const realCommand = agent.args(prompt, { maxTurns }).join(' ');
+      const realCommand = resolveAgentLaunchArgs(agentName, prompt, { maxTurns }).join(' ');
       const shownCommand = realCommand.split(url).join(shownUrl(url));
       console.log(`would run      ${agent.bin} ${shownCommand}`);
       if (shownCommand !== realCommand) {
@@ -699,7 +699,10 @@ function runAgent(url, siteDir, extra = '') {
   const prompt = agent.prompt(url, siteDir, extra);
   // `root` is passed so the derived absolute-path Bash rules name the SAME
   // directory the child is spawned with as cwd (the write-scope anchor).
-  const cliArgs = agent.args(prompt, { maxTurns, root: projectRoot });
+  // The ONE launch seam (web-uplift-gsfb): argv is assembled by resolveAgentLaunchArgs, which
+  // refuses a provider without a permissionScope record, so a new provider cannot launch with
+  // default permissions by forgetting the entry.
+  const cliArgs = resolveAgentLaunchArgs(agentName, prompt, { maxTurns, root: projectRoot });
   const slug = slugify(url);
   if (verbose) console.log(`[${slug}] $ ${agent.bin} ${shownText(cliArgs.join(' '), url)}`);
   return new Promise((resolve, reject) => {
