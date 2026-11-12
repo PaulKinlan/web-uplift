@@ -2290,8 +2290,9 @@ const EXPECTED_SUITE_FILES = 33;
       'testTargetUrlGateRefusesBeforeAnyBrowserLaunch', 'testTargetUrlCliRefusalExitsBeforeAnyBrowser',
       // testTargetUrlMcpPromptGate was renamed to testTargetUrlMcpChainLandsOnTheGatedCli in the
       // same commit (web-uplift-fs20): mcp/skills-server.mjs is another owner's surface (web-uplift-8m4y),
-      // so the case pins the CHAIN - the rendered instructions name only the gated evidence/cli.mjs
-      // forms - instead of a second scheme check at the prompt that would drift from gather().
+      // so the case pins the CHAIN - every URL-bearing invocation form in the rendered instructions
+      // must be the gated CLI or carry the http(s)-only condition (web-uplift-sz7g, web-uplift-m070) -
+      // instead of a second scheme check at the prompt that would drift from gather().
       'testTargetUrlMcpChainLandsOnTheGatedCli',
     ],
     'tests/mwg-principles.test.mjs': [
