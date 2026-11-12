@@ -180,6 +180,28 @@ export function executableIntegrity(base) {
   return entries;
 }
 
+// The instruction files ALONE, so a caller can re-check them at the moment of use without hashing the executed
+// trees again (web-uplift-qh6j): content verification and USE are separated in time, and an agent-readable tree can
+// repoint a symlink between the batch-start baseline and the spawn. Stamped by the same code path as the full
+// snapshot, so the two can never disagree about what a file's digest is.
+export function instructionIntegrity(base) {
+  const baseAbs = resolve(base);
+  const entries = new Map();
+  for (const rel of AGENT_INSTRUCTION_FILES) {
+    const abs = join(baseAbs, rel);
+    let st = null;
+    try { st = lstatSync(abs); } catch { /* absent: the project does not use this file */ }
+    if (!st) continue;
+    if (st.isSymbolicLink()) {
+      try { entries.set(rel, `link:${readlinkSync(abs)}`); } catch { /* raced away */ }
+    } else if (st.isFile()) {
+      const stamp = hashFile(abs);
+      if (stamp !== null) entries.set(rel, stamp);
+    }
+  }
+  return entries;
+}
+
 // .git is walked ONLY where an injected agent could plant persistence. The
 // object store, logs and worktree metadata are large, noisy and not a
 // persistence vector.

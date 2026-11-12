@@ -50,7 +50,7 @@ import { fileURLToPath } from 'node:url';
 import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow, createFlowReplayLogger, redactRecordedStructure } from './flow.mjs';
-import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity, instructionIntegrity } from './write-scope.mjs';
 import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, isRealDir, isRealDirUnder, UnsafeTargetRefused } from './safe-write.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
@@ -282,6 +282,9 @@ function withScopeWindow(fn) {
 // re-verified before every spawn: any drift refuses that spawn and aborts the
 // remaining URLs. Hash cost is milliseconds (see EXECUTABLE_HASH_ROOTS).
 const integrityBaseline = executableIntegrity(projectRoot);
+// Checked again immediately before EVERY spawn (web-uplift-qh6j). The baseline above proves what the instruction
+// file was at batch start; the agent's tree is writable, so what matters at spawn time is what the file is THEN.
+const instructionBaseline = instructionIntegrity(projectRoot);
 let integrityAbort = false;
 function executableDrift() {
   const d = diffTrees(integrityBaseline, executableIntegrity(projectRoot));
@@ -415,6 +418,25 @@ async function worker() {
             console.warn(`[run-batch] WARNING: ${blocked} mutating step(s) blocked in dry-run mode for ${shownUrl(url)} (pass --allow-mutations to execute)`);
           }
           extra = flowExtra(siteDir);
+        }
+        {
+          // RE-VERIFY AT USE (web-uplift-qh6j). Content verification and the agent's own read of SKILL.md are
+          // separated in time, and the agent shares this tree, so a repointed symlink between the batch-start
+          // baseline and this line defeated the baseline check. This narrows the window to the moment before the
+          // spawn rather than removing it: the agent READS THE FILE ITSELF, so no descriptor of ours can be handed
+          // to it, and the residual (a write landing between this check and the child's open) is stated here rather
+          // than implied to be closed. A drift found here is treated as ABSENT instructions - refuse the spawn.
+          const nowInstr = instructionIntegrity(projectRoot);
+          const drifted = [];
+          for (const [rel, stamp] of instructionBaseline) {
+            if (nowInstr.get(rel) !== stamp) drifted.push(`${rel} (was ${stamp}, now ${nowInstr.get(rel) ?? 'missing'})`);
+          }
+          for (const rel of nowInstr.keys()) {
+            if (!instructionBaseline.has(rel)) drifted.push(`${rel} (appeared after the batch started)`);
+          }
+          if (drifted.length > 0) {
+            throw new Error(`INTEGRITY FAILURE ${shownUrl(url)}: the agent instruction file changed since the batch started, so the text this spawn would follow is not the text that was verified:\n  ${drifted.join('\n  ')}\nRefusing to spawn. The window this closes is batch-start to spawn; a write landing between this check and the child's own open is outside our control, because the agent reads the file itself.`);
+          }
         }
         scopedResult = await runAgent(url, siteDir, extra);
       } catch (err) {
