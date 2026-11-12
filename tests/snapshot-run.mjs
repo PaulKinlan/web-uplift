@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { resolveLatest } from '../runner/run-history.mjs';
+import { resolveLatest, hostSlug, runDir } from '../runner/run-history.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -285,11 +285,52 @@ export function testSnapshotRunCopyErrorTolerance() {
   }
 }
 
+// web-uplift-0ac3: the host slug is a PATH COMPONENT built from caller input, so it must be
+// bounded explicitly - a parsed HTTPS host has no length bound (four 60-char labels plus a port
+// produced a 257-character single segment and mkdirSync failed with ENAMETOOLONG). The bound is
+// deterministic with a recorded truncation marker plus a digest of the FULL host: distinct long
+// hosts stay distinct (no aliasing onto one reports root), the same host always maps to the same
+// slug (writes and reads agree), and the legitimate shapes - ports, IDN (punycode), empty host,
+// plain hosts - are unchanged.
+export function testHostSlugIsBoundedAndDeterministic() {
+  const longHost = 'https://' + ['a'.repeat(60), 'b'.repeat(60), 'c'.repeat(60), 'd'.repeat(60), 'example'].join('.') + ':65535/';
+  const slug = hostSlug(longHost);
+  assert(slug.length <= 200, `a 257-character host must produce a bounded slug (web-uplift-0ac3): got ${slug.length}`);
+  assert(slug.includes('~trunc'), `a truncated slug must carry the recorded truncation marker: ${JSON.stringify(slug.slice(-30))}`);
+  assert(slug === hostSlug(longHost), 'the same host must map to the same slug across calls (writes and reads agree)');
+
+  // Distinct long hosts whose bounded PREFIX agrees must not alias onto one reports root.
+  const other = longHost.replace('d'.repeat(60) + '.', 'e'.repeat(60) + '.');
+  const otherSlug = hostSlug(other);
+  assert(otherSlug !== slug, `two distinct long hosts must not alias to one slug: ${slug} vs ${otherSlug}`);
+
+  // The previously-working shapes still work, unchanged.
+  assert(hostSlug('https://example.com/') === 'example_com', 'a plain host must slug unchanged');
+  assert(hostSlug('https://app.staging.example.co.uk:8443/') === 'app_staging_example_co_uk_8443', 'a host with a port must keep its shape');
+  assert(hostSlug('https://m\u00fcnchen.example/') === 'xn--mnchen-3ya_example', 'an IDN must arrive punycode-ASCII and slug cleanly');
+  assert(hostSlug('file:///tmp/x') === 'page', 'an empty host falls back to page');
+  assert(hostSlug('') === 'page', 'an empty string falls back to page');
+
+  // End to end: runDir on the 257-char host must actually create the directory (pre-fix this threw
+  // ENAMETOOLONG before any report existed).
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-slug-bound-'));
+  try {
+    const { dir, hostRoot, host } = runDir(root, longHost, 'run-1');
+    assert(host.length <= 200, `runDir must receive the bounded slug: ${host.length}`);
+    assert(existsSync(dir), `runDir must create the run directory for the long host: ${dir}`);
+    assert(hostRoot.startsWith(root), 'the host root stays inside the reports root');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  console.log('  ok: host slug bounded, deterministic, alias-free; ports/IDN/empty/normal unchanged');
+}
+
 const CASES = [
   testSnapshotRunStructure,
   testSnapshotRunCopiesArtifacts,
   testSnapshotRunMissingArtifactsBestEffort,
   testSnapshotRunCopyErrorTolerance,
+  testHostSlugIsBoundedAndDeterministic,
 ];
 
 // --list names this suite's cases for DECLARED_SUITE_CASES (web-uplift-yfbk), from the same array the

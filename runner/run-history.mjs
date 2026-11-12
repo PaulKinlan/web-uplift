@@ -28,6 +28,7 @@ import {
   readlinkSync,
 } from 'node:fs';
 import { writeFileNoFollowSync } from './safe-write.mjs';
+import { createHash } from 'node:crypto';
 import { join, basename } from 'node:path';
 // The containment helpers live with the artifact-path module, which imports nothing
 // itself, so reaching them from runner/ adds no cycle: aggregate/scorecard.mjs already
@@ -38,13 +39,31 @@ import { containedChildDir } from '../aggregate/artifact-path.mjs';
 // Turn a URL (or arbitrary string) into the host slug used as the per-host
 // reports directory name. Mirrors derivedOut() in evidence/cli.mjs and slugify()
 // in the runner so the same site lands in the same place everywhere.
+//
+// The slug is a PATH COMPONENT built from caller input (web-uplift-0ac3): a parsed
+// HTTPS host has no length bound (four 60-char labels plus a port produced a
+// 257-character single segment, and mkdirSync fails past the filesystem's component
+// limit with ENAMETOOLONG), and a bare-host string is unbounded too. The length is
+// therefore bounded EXPLICITLY, with a recorded truncation marker plus a digest of
+// the FULL host: the marker makes truncation recognisable rather than silent, and the
+// digest keeps distinct long hosts DISTINCT (no aliasing two hosts onto one reports
+// root) while the same host always maps to the same slug - writes and reads must
+// agree or the per-host tree splits in two.
+const HOST_SLUG_MAX = 200; // bytes of path component, headroom under the ~255-byte filesystem limit
+const HOST_SLUG_MARKER = '~trunc';
+const HOST_SLUG_DIGEST = 12;
+
 export function hostSlug(urlOrHost) {
+  let raw;
   try {
-    return new URL(urlOrHost).host.replace(/[:.]/g, '_') || 'page';
+    raw = new URL(urlOrHost).host; // IDN arrives punycode-ASCII here, so it is filesystem-safe as-is
   } catch {
-    // Already a slug or a bare host.
-    return String(urlOrHost).replace(/[^a-z0-9._-]/gi, '_') || 'page';
+    raw = String(urlOrHost); // already a slug or a bare host
   }
+  const normalised = raw.replace(/[:.]/g, '_').replace(/[^a-z0-9._-]/gi, '_') || 'page';
+  if (normalised.length <= HOST_SLUG_MAX) return normalised;
+  const digest = createHash('sha256').update(raw).digest('hex').slice(0, HOST_SLUG_DIGEST);
+  return `${normalised.slice(0, HOST_SLUG_MAX - HOST_SLUG_MARKER.length - HOST_SLUG_DIGEST)}${HOST_SLUG_MARKER}${digest}`;
 }
 
 // A sortable, filesystem-safe run id from a real timestamp. Date.now() is fine in

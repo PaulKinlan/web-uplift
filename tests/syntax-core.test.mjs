@@ -2114,7 +2114,7 @@ export function testSuiteListsMatchRegressionRegistry() {
     'mwg-catalog-extract.mjs': 'a case LIBRARY: 1 of its 1 --list names are also listed and run by tests/mwg-principles.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
     'safe-fetch.mjs': 'a case LIBRARY: 2 of its 2 --list names are also listed and run by tests/syntax-core.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
     'skill-write-contract.mjs': 'one behaviour: the skill write contract, exercised as a whole rather than in named cases.',
-    'snapshot-run.mjs': 'a case LIBRARY: 4 of its 4 --list names are also listed and run by tests/runner-batch.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
+    'snapshot-run.mjs': 'a case LIBRARY: 4 of its 5 --list names are also listed and run by tests/runner-batch.test.mjs (the fifth, testHostSlugIsBoundedAndDeterministic, runs only here), so declaring it here would trip the multiplicity check (one owner per case name).',
     'source-tree-symlink.mjs': 'a case LIBRARY: 4 of its 4 --list names are also listed and run by tests/syntax-core.test.mjs, so declaring it here would trip the multiplicity check (one owner per case name).',
   };
   const byName = new Map();
