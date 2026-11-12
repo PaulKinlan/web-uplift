@@ -134,11 +134,53 @@ function testScrubResyncsATemplateSwallowedByAFakeRegex() {
   console.log('\u2714 a template opener swallowed by a misread regex body resyncs; the spawn below stays flagged');
 }
 
+// web-uplift-6pyz: the resync's counter must ignore backticks inside ' or " spans the fake body also
+// swallowed - a backtick inside a string is string content, not a template opener. Counting it made the
+// resync consume a LEGITIMATE template opener, whose real closer then opened a frame and masked a spawn
+// the pre-resync scanner saw correctly (a regression against master on this exact shape). The case pins
+// the paired shape: misread line with a backtick-in-string, then a template, then a spawn - all three
+// must stay visible.
+function testScrubResyncIgnoresBackticksInsideStringSpans() {
+  const text = [
+    "const q = o.of / 2; const s = 'do`nt';",
+    "const t = `template line`;",
+    "spawnSync('git', ['status']);",
+  ].join('\n');
+  assert(
+    findGitSpawnSites('p.mjs', text).sites.length === 1,
+    'a backtick inside a swallowed string span must not trigger the resync (web-uplift-6pyz): the spawn below must stay flagged',
+  );
+  // The unclosed-string variant: a string span that never closes inside the fake body swallows its
+  // backticks the same way.
+  const unclosed = [
+    "const q = o.of / 2; const s = 'open...",
+    "const t = `template`;",
+    "spawnSync('git', ['status']);",
+  ].join('\n');
+  assert(
+    findGitSpawnSites('p.mjs', unclosed).sites.length === 1,
+    'backticks inside an unclosed string span must not trigger the resync (web-uplift-6pyz)',
+  );
+  // And the ORIGINAL j176 shape still resyncs: the swallowed backtick was at CODE level.
+  const original = [
+    'const q = o.of / 2; const t = `text',
+    'more text`;',
+    "spawnSync('git', ['status']);",
+    'const u = `tail`;',
+  ].join('\n');
+  assert(
+    findGitSpawnSites('p.mjs', original).sites.length === 1,
+    'the original j176 desync (code-level swallowed opener) must still resync: the spawn below must stay flagged',
+  );
+  console.log('\u2714 resync counts only code-level backticks; string-span backticks never misfire it');
+}
+
 export const gitEnvIsolationCases = [
   testASpreadEnvCannotRestoreGitDir,
   testEveryGitSpawnInTestsGoesThroughTheScrub,
   testScrubDistinguishesCodeFromStringData,
   testScrubResyncsATemplateSwallowedByAFakeRegex,
+  testScrubResyncIgnoresBackticksInsideStringSpans,
   testGitDirOverridesCwdSoTheLeakIsReal,
   testInheritedGitDirIsStrippedByTheHarness,
 ];
@@ -196,10 +238,13 @@ function testASpreadEnvCannotRestoreGitDir() {
 // identifier keyword test; +/- absent from the operator set) and pinned by that test, so they cannot mask a
 // live spawn. A residual unknown misread is bounded by the frame resyncs: the regex-body scan stops at a
 // newline and 'sq'/'dq' frames pop there, and - web-uplift-j176 - a fake regex body that swallowed an ODD
-// number of backticks sets a one-shot resync so the orphaned template CLOSER out in the code is consumed
-// as content instead of opening a tpl frame. Without that, a misread line could mask a real spawn up to
-// the NEXT backtick - across lines (a real regex literal cannot contain a raw newline, so a newline-terminated
-// body scan is always a misread, and odd backticks in it always mean a swallowed opener). The committed
+// number of CODE-LEVEL backticks sets a one-shot resync so the orphaned template CLOSER out in the code is
+// consumed as content instead of opening a tpl frame. Without that, a misread line could mask a real spawn
+// up to the NEXT backtick - across lines (a real regex literal cannot contain a raw newline, so a
+// newline-terminated body scan is always a misread). Code-level means OUTSIDE any ' or " span the fake body
+// also swallowed: a backtick inside such a string span is string content, not a template opener - counting
+// it misfired by consuming a LEGITIMATE opener and masked a spawn the pre-resync scanner saw
+// (web-uplift-6pyz). An unclosed string span at the newline swallows its backticks the same way. The committed
 // pin for the known shapes is the synthetic case testScrubDistinguishesCodeFromStringData - there is no
 // standing planted-red drill; that phrase described a one-off instrument from the original fix, not code.
 const SCRUB_KEYWORDS = new Set([
@@ -240,10 +285,19 @@ function maskNonExecutableContent(text) {
           mask[i] = 1;
           i += 1;
           let swallowedBackticks = 0;
+          // web-uplift-6pyz: the fake body may swallow COMPLETE ' or " strings, and a backtick inside such
+          // a span is string content - counting it made the resync consume a legitimate template opener.
+          let bodyString = null;
           while (i < text.length && text[i] !== '/') {
             if (text[i] === '\\') { mask[i] = 1; if (i + 1 < text.length) mask[i + 1] = 1; i += 2; continue; }
             if (text[i] === '\n') break; // a regex cannot span lines either; resync
-            if (text[i] === '`') swallowedBackticks += 1; // web-uplift-j176: masked content, not a frame
+            if (bodyString !== null) {
+              if (text[i] === bodyString) bodyString = null;
+            } else if (text[i] === "'" || text[i] === '"') {
+              bodyString = text[i];
+            } else if (text[i] === '`') {
+              swallowedBackticks += 1; // web-uplift-j176: masked content, not a frame
+            }
             mask[i] = 1;
             i += 1;
           }
