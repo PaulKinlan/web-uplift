@@ -50,7 +50,7 @@ import { fileURLToPath } from 'node:url';
 import { AGENTS, buildAgentEnv, parseAgentEnvFlag } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow, createFlowReplayLogger, redactRecordedStructure } from './flow.mjs';
-import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, deriveIntegrityRoots, executableIntegrity } from './write-scope.mjs';
 import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, isRealDir, isRealDirUnder, UnsafeTargetRefused } from './safe-write.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
@@ -251,7 +251,8 @@ function snapshotScope() {
   // change instead of being invisible in both directions. The executed first-party
   // trees are hash-stamped (web-uplift-dzd), so a same-size+mtime rewrite of the
   // vendored CLI or the schema validator is still a detected change.
-  return snapshotTree(projectRoot, { extraRoots: [outRoot], walkUnder: [outRoot], hashUnder: EXECUTABLE_HASH_ROOTS });
+  // web-uplift-8evs: the hashed set is DERIVED (executed trees + instructions + skills + the mcp/scripts surfaces), not a hand list.
+  return snapshotTree(projectRoot, { extraRoots: [outRoot], walkUnder: [outRoot], hashUnder: deriveIntegrityRoots({ root: projectRoot }) });
 }
 
 // P1c: with two workers in flight, each agent's writes land inside the other's
@@ -280,7 +281,7 @@ function withScopeWindow(fn) {
 // still let the NEXT URL execute the tampered tree - the old refusal path
 // continues the batch - so the executed set is hashed at batch start and
 // re-verified before every spawn: any drift refuses that spawn and aborts the
-// remaining URLs. Hash cost is milliseconds (see EXECUTABLE_HASH_ROOTS).
+// remaining URLs. Hash cost is milliseconds (see deriveIntegrityRoots).
 const integrityBaseline = executableIntegrity(projectRoot);
 let integrityAbort = false;
 function executableDrift() {

@@ -75,7 +75,7 @@
 // invisible to the surrounding snapshots.
 
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 // The only blanket-excluded location left: the run tree's OWN output root - the
@@ -107,6 +107,79 @@ export const EXECUTABLE_HASH_ROOTS = [
   'evidence', 'runner', 'fixer', 'aggregate', 'schema', 'knowledge', 'bin',
   'install-surface.mjs', '.web-uplift',
 ];
+
+// web-uplift-8evs: the integrity set must cover what an agent can be TOLD TO OBEY as
+// well as what it can execute - the c28t story verified 'the instruction file', but the
+// definition of instruction was too narrow, so a doctored skill, a modified script or a
+// swapped MCP server sat OUTSIDE the hashed set and therefore outside the check. The set
+// is DERIVED from the harness's own declared surfaces (each source named below), not
+// extended by hand, so a new instruction surface is picked up by derivation instead of
+// by remembering to edit a list.
+//
+// Deliberate EXCLUSIONS, stated (a documented exclusion is a decision; an undocumented
+// one is the bug):
+//   - reports/ - the run's own output root (isExcludedPath): generated, agent-authored
+//     during the run, and re-added per-run by the callers' walkUnder when the report
+//     tree itself must be watched (web-uplift-9tah).
+//   - project node_modules/ - the dependency INSTALL tree, keyed by the lockfile rather
+//     than authored here; walked at stat strength, not hash-stamped (web-uplift-dzd).
+//     The VENDORED copy (.web-uplift/node_modules) is the executed closure the CLI
+//     actually imports, so it IS hashed wholesale.
+//   - evidence-out/ and other generated audit output - output, not executed; walked at
+//     stat strength (so a change is SEEN), never hash-stamped.
+//   - .git/ - walked only for the persistence vectors (hooks, config, HEAD), the object
+//     store is noise (GIT_KEEP below).
+export function deriveIntegrityRoots({ root = process.cwd(), existsSync: exists = existsSync, readFile = (p) => readFileSync(p, 'utf8') } = {}) {
+  const roots = new Set(EXECUTABLE_HASH_ROOTS);
+  // A referenced repo-local path contributes the TOP of its path (a top-level file
+  // contributes itself; mcp/skills-server.mjs contributes 'mcp'). This is what keeps
+  // the set derived: the SOURCE is a declaration the harness already makes.
+  const addReference = (ref) => {
+    if (typeof ref !== 'string' || !ref || ref.startsWith('/') || ref.startsWith('..') || ref.includes('node_modules')) return;
+    const parts = ref.split('/').filter((p) => p && p !== '.');
+    if (parts.length === 0) return;
+    roots.add(parts[0]);
+  };
+  // 1. INSTRUCTION CONVENTIONS: files every agent session loads by name before it
+  //    follows any instruction from this repo. Their content changes what the agent does.
+  for (const f of ['AGENTS.md', 'CLAUDE.md', 'README.md']) {
+    if (exists(join(root, f))) roots.add(f);
+  }
+  // 2. SKILLS TREES: the canonical skill text the agent is told to follow, canonical and
+  //    vendored copies (the vendored .web-uplift tree is already hashed wholesale).
+  for (const d of ['.claude', '.pi']) {
+    if (exists(join(root, d, 'skills'))) roots.add(join(d, 'skills'));
+  }
+  // 3. THE MCP SURFACE: whatever .mcp.json launches is executed by the harness. The
+  //    skills server shapes the instructions the MCP caller receives (8m4y), so its
+  //    tree is behavioural input.
+  try {
+    const cfg = JSON.parse(readFile(join(root, '.mcp.json')));
+    for (const server of Object.values(cfg.mcpServers ?? {})) {
+      // A bare command ("node") resolves via PATH, not the repo; only slash-bearing
+      // references point INTO the repository and can contribute a root.
+      for (const ref of [...(server.args ?? []), ...(typeof server.command === 'string' ? [server.command] : [])]) {
+        if (typeof ref === 'string' && ref.includes('/')) addReference(ref);
+      }
+    }
+  } catch {
+    /* no .mcp.json or unreadable: no surface to derive from this source */
+  }
+  // 4. PACKAGE DECLARATIONS: the scripts npm runs (npm run test:fast -> scripts/) and
+  //    the declared bin entries are executed by every developer/agent workflow here.
+  try {
+    const pkg = JSON.parse(readFile(join(root, 'package.json')));
+    for (const cmd of Object.values(pkg.scripts ?? {})) {
+      for (const m of String(cmd).matchAll(/(?:^|[\s'"=&])([\w.@-]+\/(?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js))/g)) {
+        addReference(m[1]);
+      }
+    }
+    for (const ref of Object.values(pkg.bin ?? {})) addReference(ref);
+  } catch {
+    /* no package.json: nothing to derive */
+  }
+  return [...roots].sort();
+}
 
 // sha256 stamp for one file, or null when it raced away.
 function hashFile(abs) {

@@ -30,7 +30,7 @@ import {
   noUpdateEnv,
   SKIP_DIRS,
 } from "./test-helpers.mjs";
-import { snapshotTree, diffTrees, isExcludedPath } from "../runner/write-scope.mjs";
+import { snapshotTree, diffTrees, isExcludedPath, deriveIntegrityRoots, EXECUTABLE_HASH_ROOTS } from "../runner/write-scope.mjs";
 
 // scoreReport's (correct) refusal to score incomplete atomic coverage killed the
 // whole fix run with an unhandled throw - including on every report written
@@ -1230,6 +1230,98 @@ export function testFixModeRefusesWritesHiddenBehindANestedReportsDir() {
   }
 }
 
+// web-uplift-8evs: THE ENUMERATION IS THE CONTROL. The integrity set must be DERIVED from
+// what an agent can be told to obey or can execute - instructions (AGENTS.md/CLAUDE.md/README),
+// the skills tree the agent follows (canonical + vendored copies), the MCP surface .mcp.json
+// launches, the scripts package.json runs - plus the executed code trees (web-uplift-dzd's
+// core set, kept as EXECUTABLE_HASH_ROOTS). This case derives from a FIXTURE whose declarations
+// reference a NON-standard directory, proving the set comes from the declarations and not from
+// a hand list that happens to contain them; then it asserts every required root of the REAL
+// repo is present, so removing a root from the derivation fails here.
+export function testIntegrityRootSetIsDerivedFromDeclaredSurfaces() {
+  // 1. Derivation proof: a fixture with synthetic declarations.
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-integrity-derive-'));
+  try {
+    mkdirSync(join(root, 'mcp-server'), { recursive: true });
+    mkdirSync(join(root, 'tool-scripts'), { recursive: true });
+    writeFileSync(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'node', args: ['mcp-server/thing.mjs'] } } }));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { go: 'node tool-scripts/go.mjs' } }));
+    writeFileSync(join(root, 'AGENTS.md'), 'instructions');
+    const derived = deriveIntegrityRoots({ root });
+    assert(derived.includes('mcp-server'), `the .mcp.json launch target must contribute its root (web-uplift-8evs): ${JSON.stringify(derived)}`);
+    assert(derived.includes('tool-scripts'), `a package.json script's target must contribute its root: ${JSON.stringify(derived)}`);
+    assert(derived.includes('AGENTS.md'), 'an instruction file that exists must be hashed');
+    assert(!derived.includes('CLAUDE.md'), 'a declaration surface that does not exist must not appear');
+    assert(!derived.includes('node'), 'a bare PATH command must not become a root');
+    // The executed core set stays inside the derived set.
+    for (const core of EXECUTABLE_HASH_ROOTS) {
+      assert(derived.includes(core), `the executed core root ${core} must stay in the derived set`);
+    }
+    // The output root is an EXCLUSION, not a root - documented in deriveIntegrityRoots.
+    assert(!derived.includes('reports'), 'the run output root is an exclusion, not an integrity root');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  // 2. The REAL repo's set: every required root present, so removing one from the
+  //    derivation fails here (the control; same shape as the gsfb provider enumeration).
+  const real = deriveIntegrityRoots({ root: repoRoot });
+  for (const required of ['AGENTS.md', 'CLAUDE.md', 'README.md', join('.claude', 'skills'), join('.pi', 'skills'), 'mcp', 'scripts', 'tests', 'evidence', 'runner', 'fixer', 'bin', '.web-uplift']) {
+    assert(real.includes(required), `the real repo's integrity set must contain ${required} (web-uplift-8evs): ${JSON.stringify(real)}`);
+  }
+  console.log('  ok: integrity roots are derived from declared surfaces and every required root is present');
+}
+
+// web-uplift-8evs acceptance 3: the omission is only proven fixed if TAMPERING under each
+// previously-omitted root is DETECTED. Modify one file under each root the nightly found
+// missing (mcp/, scripts/, the canonical skill, the agent instructions) and assert the
+// verification (snapshot diff) fails - i.e. the change is visible as a hash drift.
+export function testTamperingWithInstructionSurfacesIsDetected() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-integrity-tamper-'));
+  try {
+    const mk = (p, body) => {
+      mkdirSync(dirname(join(root, p)), { recursive: true });
+      writeFileSync(join(root, p), body);
+    };
+    mk(join('AGENTS.md'), 'original instructions');
+    mk(join('.claude', 'skills', 'web-audit', 'SKILL.md'), 'original skill');
+    mk(join('mcp', 'skills-server.mjs'), 'original server');
+    mk(join('scripts', 'test-fast.mjs'), 'original script');
+    mk('README.md', 'original readme');
+    // The fixture DECLARS its surfaces the way the real repo does: the derivation covers
+    // what the harness declares, so mcp/ and scripts/ must be referenced to be covered.
+    writeFileSync(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'node', args: ['mcp/skills-server.mjs'] } } }));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node scripts/test-fast.mjs' } }));
+    const hashUnder = deriveIntegrityRoots({ root });
+    for (const required of ['mcp', 'scripts', join('.claude', 'skills'), 'AGENTS.md', 'README.md']) {
+      assert(hashUnder.includes(required), `the fixture's derived set must cover ${required}: ${JSON.stringify(hashUnder)}`);
+    }
+    const before = snapshotTree(root, { hashUnder });
+
+    // The tamper pass: one doctored file per previously-omitted root.
+    mk(join('AGENTS.md'), 'DOCTORED instructions');
+    mk(join('.claude', 'skills', 'web-audit', 'SKILL.md'), 'DOCTORED skill');
+    mk(join('mcp', 'skills-server.mjs'), 'DOCTORED server');
+    mk(join('scripts', 'test-fast.mjs'), 'DOCTORED script');
+    mk('README.md', 'DOCTORED readme');
+    const after = snapshotTree(root, { hashUnder });
+    const diff = diffTrees(before, after);
+    for (const tampered of ['AGENTS.md', 'README.md', join('.claude', 'skills', 'web-audit', 'SKILL.md'), join('mcp', 'skills-server.mjs'), join('scripts', 'test-fast.mjs')]) {
+      assert(
+        diff.modified.includes(tampered),
+        `a doctored file under ${tampered} must be DETECTED as hash drift (web-uplift-8evs): ${JSON.stringify(diff.modified)}`,
+      );
+      assert(
+        String(after.get(tampered) || '').startsWith('sha256:'),
+        `a tampered instruction surface must be hash-stamped, not stat-only: ${tampered}`,
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  console.log('  ok: tampering with instructions, skills, mcp and scripts surfaces is detected');
+}
+
 export const fixModeTests = [
   testFixSurvivesUnscoreableReports,
   testFixRefusesPassOnIncompleteCoverage,
@@ -1246,6 +1338,8 @@ export const fixModeTests = [
   testFixIsolatedRunPublishes,
   testWriteScopeExclusionIsPositionalNotSubstring,
   testFixModeRefusesWritesHiddenBehindANestedReportsDir,
+  testIntegrityRootSetIsDerivedFromDeclaredSurfaces,
+  testTamperingWithInstructionSurfacesIsDetected,
 ];
 
 await runSuite(fixModeTests, import.meta.url, { timeoutMs: 180000, concurrency: 1 });

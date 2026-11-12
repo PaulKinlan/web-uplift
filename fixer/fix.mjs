@@ -51,7 +51,7 @@ import { runDir, updateLatest, makeRunId } from '../runner/run-history.mjs';
 import { countOutstanding, completionState, remaining } from '../runner/remaining-work.mjs';
 import { compareReports, renderCompareMd } from '../aggregate/compare.mjs';
 import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from '../aggregate/scorecard.mjs';
-import { snapshotTree, diffTrees, escapedChanges, summariseChanges, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
+import { snapshotTree, diffTrees, escapedChanges, summariseChanges, deriveIntegrityRoots } from '../runner/write-scope.mjs';
 import { UnsafeTargetRefused, assertRealParentUnder, isInsidePath, isRealDir, readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync } from '../runner/safe-write.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
 
@@ -222,7 +222,7 @@ const snapshotScope = () =>
     extraRoots: [scopeRoot, outRoot, ...allowWrite],
     // The whole retained root, not just this run's --out (web-uplift-9tah).
     walkUnder: [publishRoot, outRoot],
-    hashUnder: EXECUTABLE_HASH_ROOTS,
+    hashUnder: deriveIntegrityRoots({ root: projectRoot }),
   });
 
 function fixExtra(findingsPath, iteration) {
