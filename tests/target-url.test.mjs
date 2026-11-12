@@ -414,28 +414,58 @@ export async function testTargetUrlMcpChainLandsOnTheGatedCli() {
         typeof text === 'string' && text.includes(url),
         `the rendered instructions must carry the url argument (${url}) as the CLI's target`,
       );
-      // A rendered form may wrap across lines; judge per BLOCK (a non-indented line plus its indented
-      // continuations), not per line, so a wrapped `--chrome-flags` continuation does not read as an
-      // unconditioned form of its own.
-      const blocks = [];
-      for (const line of (text || '').split('\n')) {
-        if (/^\S/.test(line) || blocks.length === 0) blocks.push([line]);
-        else blocks[blocks.length - 1].push(line);
-      }
-      const chromeLaunchBlocks = blocks.filter((block) =>
-        block.some((l) => /--chrome-flags|chrome-launcher|puppeteer|playwright|--headless/.test(l)),
+      // web-uplift-m070: judge per FORM (clause), not per block - a block that MIXES the gated CLI
+      // with an ungated chrome form used to pass on the block's gated mention. Detection is a stated
+      // heuristic, not a claimed complete parser: a clause is a form when it carries a <url> placeholder
+      // or a launch-style flag token (--chrome-flags/--headless/--dump-dom/chrome-launcher/puppeteer/
+      // playwright/chromium-browser/google-chrome); tool names alone are prose, not forms. The residual -
+      // a form spelled with the literal URL under a tool name the heuristic does not know - stays a human
+      // review matter, recorded here rather than asserted away. A surface-side refusal (8m4y) closes it.
+      const chromeLaunchFlag = /--chrome-flags|chrome-launcher|puppeteer|playwright|--headless|--dump-dom/;
+      // A tool token pairs with <url> to make a form; tool NAMES alone are prose (host requirements,
+      // "decide which tools to run"), so they do not make a clause a form by themselves.
+      const toolToken = /npx\s|node\s|\/web-audit|evidence\/cli\.mjs|web-uplift evidence|chromium|google-chrome|chrome-launcher|puppeteer|playwright|lighthouse/;
+      const gatedForm = /evidence\/cli\.mjs|web-uplift evidence|\/web-audit/;
+      const conditionedForm = /http\(s\)/;
+      const formProblems = (candidateText) => {
+        const problems = [];
+        const blocks2 = [];
+        for (const line of candidateText.split('\n')) {
+          if (/^\S/.test(line) || blocks2.length === 0) blocks2.push([line]);
+          else blocks2[blocks2.length - 1].push(line);
+        }
+        for (const block of blocks2) {
+          for (const clause of block.join(' ').split(/\s+or\s+|;|\.\s+/)) {
+            const isForm = (/<url>/.test(clause) && toolToken.test(clause)) || chromeLaunchFlag.test(clause);
+            if (!isForm) continue;
+            if (gatedForm.test(clause) || conditionedForm.test(clause)) continue;
+            problems.push(clause.trim().slice(0, 140));
+          }
+        }
+        return problems;
+      };
+      const problems = formProblems(text);
+      assert(
+        problems.length === 0,
+        `every URL-bearing invocation form in the rendered prompt must be the gated CLI or carry the http(s)-only condition (web-uplift-sz7g, m070): ${JSON.stringify(problems)}`,
       );
       assert(
-        chromeLaunchBlocks.length >= 1,
+        toolToken.test(text || '') && chromeLaunchFlag.test(text || '') && (text || '').includes('http(s) targets only'),
         `the scheme-conditional Lighthouse form must still be named in the rendered prompt for ${url}`,
       );
-      for (const block of chromeLaunchBlocks) {
-        const blockText = block.join(' ');
-        assert(
-          blockText.includes('http(s)') || blockText.includes('evidence/cli.mjs'),
-          `every chrome-launching form in the rendered prompt must be the gated CLI or carry the http(s)-only condition (web-uplift-sz7g): ${JSON.stringify(blockText.slice(0, 200))}`,
-        );
-      }
+      // THE GUARD MUST CATCH ITS OWN BYPASS SHAPES (m070 repros): both mutants are injected into the
+      // real rendered text and the SAME checker must reject them - if a future edit weakens the
+      // checker, these assertions fail before the guard silently stops seeing ungated forms.
+      const mixedBlock = (text || '') + '\n- **Either tool**: node evidence/cli.mjs layout <url> or npx -y lighthouse <url> --chrome-flags="--headless=new".';
+      assert(
+        formProblems(mixedBlock).length > 0,
+        'the form check must fail on a block mixing the gated CLI with an ungated chrome form (m070 repro 1)',
+      );
+      const unknownLauncher = (text || '') + '\n- **Chromium dump**: chromium-browser <url> prints the DOM.';
+      assert(
+        formProblems(unknownLauncher).length > 0,
+        'the form check must fail on a launcher named outside the old token list (m070 repro 2)',
+      );
       // The any-tool invitation must be conditioned too - it is the sentence that licenses the second route.
       assert(
         /any other tool you judge useful[\s\S]{0,120}?http\(s\) targets only/.test(text || ''),
