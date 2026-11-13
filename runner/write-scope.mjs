@@ -149,6 +149,16 @@ export function deriveIntegrityRoots({ root = process.cwd(), existsSync: exists 
   for (const f of ['AGENTS.md', 'CLAUDE.md', 'README.md']) {
     if (exists(join(root, f))) roots.add(f);
   }
+  // 1b. THE DECLARATION FILES THEMSELVES (web-uplift-8evs companion claim): the derivation OPENS
+  //     .mcp.json and package.json to decide the set, so they are behavioural inputs - repointing the
+  //     launched MCP server by rewriting .mcp.json must be DRIFT the gate sees, not an invisible
+  //     config change. One mechanism (content hash by identity) across the whole derived set: no
+  //     stat-stamped instruction surface, and no unhashed declaration file. The per-root cache stays:
+  //     a detected repoint aborts the batch through hash drift on .mcp.json itself, which is the
+  //     contract - the cached LIST does not need mid-batch invalidation for that.
+  if (exists(join(root, '.mcp.json'))) roots.add('.mcp.json');
+  if (exists(join(root, 'package.json'))) roots.add('package.json');
+
   // 2. INSTRUCTION SURFACES, DECLARED PER PROVIDER (web-uplift-8evs round two): each AGENTS entry
   //    declares the instruction surface it loads from this repo (.claude/skills, .codex/skills,
   //    .gemini/commands, .opencode/command, .pi/skills, copilot's .github/ files) - the set is read

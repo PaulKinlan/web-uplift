@@ -30,7 +30,9 @@ import {
   noUpdateEnv,
   SKIP_DIRS,
 } from "./test-helpers.mjs";
-import { snapshotTree, diffTrees, isExcludedPath, deriveIntegrityRoots, EXECUTABLE_HASH_ROOTS } from "../runner/write-scope.mjs";
+import { snapshotTree, diffTrees, isExcludedPath, deriveIntegrityRoots, EXECUTABLE_HASH_ROOTS,
+  executableIntegrity,
+} from "../runner/write-scope.mjs";
 import { AGENTS } from "../runner/agents.mjs";
 
 // scoreReport's (correct) refusal to score incomplete atomic coverage killed the
@@ -1267,7 +1269,7 @@ export async function testIntegrityRootSetIsDerivedFromDeclaredSurfaces() {
   // 2. The REAL repo's set: every required root present, so removing one from the
   //    derivation fails here (the control; same shape as the gsfb provider enumeration).
   const real = deriveIntegrityRoots({ root: repoRoot });
-  for (const required of ['AGENTS.md', 'CLAUDE.md', 'README.md', join('.claude', 'skills'), join('.pi', 'skills'), 'mcp', 'scripts', 'tests', 'evidence', 'runner', 'fixer', 'bin', '.web-uplift',
+  for (const required of ['AGENTS.md', 'CLAUDE.md', 'README.md', '.mcp.json', 'package.json', join('.claude', 'skills'), join('.pi', 'skills'), 'mcp', 'scripts', 'tests', 'evidence', 'runner', 'fixer', 'bin', '.web-uplift',
     // web-uplift-8evs round two: the six instruction surfaces the nightly named, now derived from
     // the AGENTS entries' own declarations rather than a second hand list.
     join('.agents', 'skills'), join('.codex', 'skills'), join('.gemini', 'commands'), join('.opencode', 'command'), join('.github', 'prompts'), join('.github', 'copilot-instructions.md')]) {
@@ -1290,6 +1292,55 @@ export async function testIntegrityRootSetIsDerivedFromDeclaredSurfaces() {
 // previously-omitted root is DETECTED. Modify one file under each root the nightly found
 // missing (mcp/, scripts/, the canonical skill, the agent instructions) and assert the
 // verification (snapshot diff) fails - i.e. the change is visible as a hash drift.
+// web-uplift-8evs companion claim: the derivation OPENS .mcp.json and package.json to decide the
+// set, so repointing the launched MCP server by rewriting .mcp.json must be DRIFT the pre-spawn
+// gate sees - one mechanism (content hash by identity) across the whole derived set, no
+// stat-stamped or unhashed behavioural input. The verdict's exact shape: .mcp.json repointed from
+// mcp/ to lib/ (same size, different content) returned empty drift pre-fix because the file was
+// not in the set at all.
+export function testDeclarationFileRepointIsDetected() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-decl-repoint-'));
+  try {
+    mkdirSync(join(root, 'mcp'), { recursive: true });
+    mkdirSync(join(root, 'lib'), { recursive: true });
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    writeFileSync(join(root, 'mcp', 'skills-server.mjs'), 'export const realServer = true;');
+    writeFileSync(join(root, 'lib', 'skills-server.mjs'), 'export const realServer = true;');
+    writeFileSync(join(root, 'scripts', 'test-fast.mjs'), 'process.exit(0);');
+    writeFileSync(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'node', args: ['mcp/skills-server.mjs'] } } }));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node scripts/test-fast.mjs' } }));
+    // Declare an mcp root so the derivation includes it, as the real repo does via .mcp.json.
+    const savedMcp = AGENTS.pi.args;
+    void savedMcp;
+
+    const hashUnder = deriveIntegrityRoots({ root });
+    assert(hashUnder.includes('.mcp.json'), `the declaration file .mcp.json must be content-hashed (web-uplift-8evs companion): ${JSON.stringify(hashUnder)}`);
+    assert(hashUnder.includes('package.json'), `the declaration file package.json must be content-hashed (web-uplift-8evs companion): ${JSON.stringify(hashUnder)}`);
+    const before = snapshotTree(root, { hashUnder });
+    const beforeGate = executableIntegrity(root);
+
+    // THE REPOINT: same-size .mcp.json rewrite pointing the server at lib/. A stat stamp would
+    // miss this; the content hash must not.
+    writeFileSync(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'node', args: ['lib/skills-server.mjs'] } } }));
+    const after = snapshotTree(root, { hashUnder });
+    const drift = diffTrees(before, after);
+    assert(
+      drift.modified.includes('.mcp.json'),
+      `a repointed .mcp.json must be drift the gate sees (web-uplift-8evs companion): ${JSON.stringify(drift)}`,
+    );
+    // And the pre-spawn abort gate (executableIntegrity) sees it too: the recorded hash for
+    // .mcp.json changes across the repoint, so the gate's diff is non-empty for it.
+    const afterGate = executableIntegrity(root);
+    assert(
+      beforeGate.get('.mcp.json') !== afterGate.get('.mcp.json'),
+      'executableIntegrity must see the repointed declaration file (web-uplift-8evs companion)',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  console.log('  ok: a declaration-file repoint is drift the gate sees (content-hashed by identity)');
+}
+
 export function testTamperingWithInstructionSurfacesIsDetected() {
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-integrity-tamper-'));
   // Declared OUTSIDE the try so finally can restore it (it is the shared provider table).
@@ -1372,6 +1423,7 @@ export const fixModeTests = [
   testFixModeRefusesWritesHiddenBehindANestedReportsDir,
   testIntegrityRootSetIsDerivedFromDeclaredSurfaces,
   testTamperingWithInstructionSurfacesIsDetected,
+  testDeclarationFileRepointIsDetected,
 ];
 
 await runSuite(fixModeTests, import.meta.url, { timeoutMs: 180000, concurrency: 1 });
