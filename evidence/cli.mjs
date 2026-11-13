@@ -64,8 +64,8 @@
 //   --selector <css>        Element(s) of interest (dom/screenshot/layout)
 //   --quiet                 Less logging
 
-import { readFileSync, statSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, realpathSync, statSync, existsSync } from 'node:fs';
+import { resolve, dirname, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   launchChrome,
@@ -179,6 +179,42 @@ const PRIMITIVES = {
 
 // --- argument plumbing -----------------------------------------------------
 
+// web-uplift-lp5z: path-valued flags are agent-supplied, so a flow or an agent can point the tool
+// at any file on the machine and have its contents read into a committed artifact. Every path-valued
+// READ flag is contained inside the CLI's working directory - the audited workspace, the only root a
+// legitimate caller needs - with the root STATED in the error. Containment is realpath-based, so a
+// symlink inside the root pointing out is refused the same as a plain escape.
+const WORKSPACE_ROOT = () => resolve(process.cwd());
+export function containLocalPath(flag, raw, root = WORKSPACE_ROOT()) {
+  const resolved = resolve(String(raw ?? ''));
+  let real;
+  try {
+    real = realpathSync(resolved);
+  } catch {
+    // Not present (yet): the read would fail anyway, but a symlinked ANCESTOR could still carry it
+    // outside, so anchor the check on the nearest existing directory.
+    let anchor = dirname(resolved);
+    for (;;) {
+      try {
+        real = joinPath(realpathSync(anchor), basename(resolved));
+        break;
+      } catch {
+        const parent = dirname(anchor);
+        if (parent === anchor) {
+          real = resolved; // nothing exists above: fall through to the plain containment check
+          break;
+        }
+        anchor = parent;
+      }
+    }
+  }
+  if (real !== root && !real.startsWith(root + sep)) {
+    throw new Error(`web-uplift: ${flag} must be inside the workspace root (${root}); refused: ${raw}`);
+  }
+  return real;
+}
+const joinPath = (a, b) => `${a}${sep}${b}`;
+
 export function parseArgs(argv) {
   // `wait` is a GLOBAL fallback (1000ms) for the primitives that do not declare a settle of their own. It is
   // marked as a default so a primitive with its own documented default can tell "the operator chose this"
@@ -206,11 +242,11 @@ export function parseArgs(argv) {
     else if (a === '--duration') args.duration = Number(argv[++i]);
     else if (a === '--fps') args.fps = Number(argv[++i]);
     else if (a === '--selector') args.selector = argv[++i];
-    else if (a === '--source') args.source = argv[++i];
+    else if (a === '--source') args.source = containLocalPath('--source', argv[++i]);
     else if (a === '--expr') args.expr = argv[++i];
-    else if (a === '--expr-file') args.expr = readFileSync(argv[++i], 'utf8');
+    else if (a === '--expr-file') args.expr = readFileSync(containLocalPath('--expr-file', argv[++i]), 'utf8');
     else if (a === '--interact') args.interact = argv[++i];
-    else if (a === '--interact-file') args.interact = readFileSync(argv[++i], 'utf8');
+    else if (a === '--interact-file') args.interact = readFileSync(containLocalPath('--interact-file', argv[++i]), 'utf8');
     else if (a === '--interact-deadline') {
       // A typo must not silently become an unbounded wait: NaN makes
       // `elapsed >= NaN` false forever and sleep(NaN) a 0ms spin, Infinity never
@@ -308,7 +344,13 @@ export async function gather(primitive, url, opts = {}) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const args = parseArgs(argv);
+  let args;
+  try {
+    args = parseArgs(argv);
+  } catch (err) {
+    console.error(String(err.message || err));
+    process.exit(1);
+  }
   const primitive = args._[0];
   const url = args._[1];
   if (!primitive || !url) {

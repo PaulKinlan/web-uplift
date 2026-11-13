@@ -35,6 +35,7 @@ export const repoRoot = resolve(__dirname, '..');
 export const KNOWN_STANDALONE_TESTS = new Set([
   'tests/flow.mjs',
   'tests/flow-shadow-browser.mjs',
+  'tests/evidence-cli-path-root.mjs',
   'tests/safe-fetch.mjs',
   'tests/source-tree-symlink.mjs',
   'tests/install-copy-symlink.mjs',
@@ -384,6 +385,7 @@ export const SUBSYSTEMS = [
       f === 'runner/write-scope.mjs',
     targets: [
       { type: 'node', path: 'tests/source-tree-symlink.mjs', label: 'Source-tree symlink escape tests' },
+      { type: 'node', path: 'tests/evidence-cli-path-root.mjs', label: 'Evidence CLI workspace-root containment (web-uplift-lp5z)' },
       { type: 'node', path: 'tests/install-copy-symlink.mjs', label: 'Install copy symlink escape tests' },
       { type: 'node', path: 'tests/snapshot-run.mjs', label: 'Snapshot run unit tests' },
       { type: 'regression', filter: 'Symlink', label: 'Regression: Symlink tests' },
