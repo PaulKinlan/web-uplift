@@ -150,8 +150,9 @@ Use whichever invocation resolves in your context (they run the SAME CLI):
   `node .web-uplift/evidence/cli.mjs <primitive> <url> [options]`.
 - **Global package install** (e.g. this skill loaded from a pi package, so no
   local copy exists): `web-uplift evidence <primitive> <url> [options]`, or
-  `npx -y --ignore-scripts web-uplift@<exact-version> evidence <primitive> <url>
-  [options]` if `web-uplift` is not on `PATH`. This form works from any cwd and
+  `npx -y --ignore-scripts web-uplift@0.5.0 evidence <primitive> <url>
+  [options]` if `web-uplift` is not on `PATH`, with the version taken from this
+  repository's `package.json` - an exact pin, never a range or a tag. This form works from any cwd and
   needs nothing vendored.
 
   **Pin the exact version and pass `--ignore-scripts` whenever you fetch a
