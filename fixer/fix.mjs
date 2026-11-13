@@ -54,6 +54,7 @@ import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from 
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { UnsafeTargetRefused, assertRealParentUnder, isInsidePath, isRealDir, readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync } from '../runner/safe-write.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
+import { redactUrlsInText } from '../evidence/credential-terms.mjs';
 
 // Every place this tool PRINTS the audit URL goes through shownAuditUrl (web-uplift-s0x):
 // the URL appears in the dry-run plan, in the baseline-audit line and inside the echoed
@@ -473,7 +474,7 @@ if (!baselineRemaining.completion.complete) {
 }
 const baselineScore = reportSummarySafe(baseline);
 if (!baselineScore.scoreable) {
-  console.log(`Score unavailable: ${baselineScore.reason}`);
+  console.log(`Score unavailable: ${redactUrlsInText(String(baselineScore.reason ?? ''))}`);
   console.log('Climbing on outstanding findings; scores read N/A until atomic coverage is complete.');
 }
 if (goalActive) {
@@ -522,7 +523,8 @@ for (let i = 1; i <= maxIterations && !passed; i++) {
   // model changed instead of trusting the model's own summary.
   const changes = diffTrees(scopeBefore, snapshotScope());
   const escaped = escapedChanges(changes, projectRoot, allowedRoots);
-  const iterationDiff = { iteration: i, projectRoot, target: scopeRoot, allowedRoots, changed: changes, escapedOutsideScope: escaped, agentError: iterationError ? String(iterationError.message || iterationError) : null };
+  // web-uplift-0knu: the diff records are artifact boundaries - the same shared redactor applies.
+  const iterationDiff = { iteration: i, projectRoot, target: scopeRoot, allowedRoots, changed: changes, escapedOutsideScope: escaped, agentError: iterationError ? redactUrlsInText(String(iterationError.message || iterationError)) : null };
   await writeUnder(outRoot, join(outDir, `iter-${i}-diff.json`), JSON.stringify(iterationDiff, null, 2) + '\n', OUT_TREE);
   console.log(`  changed: ${summariseChanges(changes)}`);
   if (escaped.length) {
@@ -705,7 +707,8 @@ async function baselineAudit() {
     allowedRoots,
     changed: changes,
     escapedOutsideScope: escaped,
-    agentError: agentFailure ? String(agentFailure.message || agentFailure) : null,
+    // web-uplift-0knu: artifact boundary - the shared redactor applies.
+    agentError: agentFailure ? redactUrlsInText(String(agentFailure.message || agentFailure)) : null,
   };
   await writeUnder(outRoot, join(outDir, 'iter-0-diff.json'), JSON.stringify(record, null, 2) + '\n', OUT_TREE);
   console.log(`  baseline audit changed: ${summariseChanges(changes)}`);

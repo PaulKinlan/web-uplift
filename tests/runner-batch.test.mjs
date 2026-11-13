@@ -525,6 +525,54 @@ export function testWriteScopeCoversExecutedTrees() {
 // path in its escape list (hash coverage sees the tamper), and URL 2's agent is
 // NEVER SPAWNED because the pre-spawn integrity gate compares against the
 // batch-start baseline, refuses and aborts the remaining URLs.
+// web-uplift-0knu: the batch FAILURE SUMMARY must go through the same redaction as the primary
+// log. The summary is what a human reads and pastes into a bead, so a credential surviving only
+// there travels further than one in the full log. The stub agent fails with a credential-bearing
+// error; the secret must be absent from the summary, the stderr lines, and any file under the out
+// root, with the redacted placeholder present instead.
+export function testBatchFailureSummaryIsRedacted() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-batch-summary-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    // Composed at runtime: no credential-shaped literal is committed with this test.
+    const user = 'deploy';
+    const secret = ['S3cr3t', 'P4ssw0rd'].join(':');
+    const credUrl = `https://${user}:${secret}@vault.internal.example/`;
+    writeFileSync(join(binDir, 'claude'), [
+      '#!/bin/sh',
+      `echo "audit failed while authenticating against ${credUrl}" >&2`,
+      'exit 1',
+      '',
+    ].join('\n'));
+    chmodSync(join(binDir, 'claude'), 0o755);
+
+    const res = run(process.execPath, [
+      join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com/', '--agent', 'claude',
+      '--isolation', 'test-suite', '--concurrency', '1', '--out', join(root, 'reports'),
+    ], { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+
+    const output = `${res.stdout}\n${res.stderr}`;
+    assert(res.status !== 0, `the failing agent must fail the batch: ${res.status}`);
+    assert(output.includes('Done. 1 failure(s)'), `the summary must be printed: ${output.slice(-400)}`);
+    assert(!output.includes(secret), `the credential must not survive into the summary OR the stderr log (web-uplift-0knu): ${output.slice(-500)}`);
+    assert(!output.includes(secret.split(':')[0]) || /%5Bredacted%5D|\[redacted\]/.test(output), 'the redaction must be visible, not silent deletion');
+    assert(output.includes('%5Bredacted%5D'), `the summary must carry the shared redactor's placeholder: ${output.slice(-400)}`);
+    // And nothing under the out root carries it either.
+    const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+      const p = join(d, e.name);
+      return e.isDirectory() ? walk(p) : [p];
+    });
+    for (const file of walk(join(root, 'reports'))) {
+      const text = readFileSync(file, 'utf8');
+      assert(!text.includes(secret), `an artifact must not carry the credential (web-uplift-0knu): ${file}`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  console.log('  ok: the batch failure summary is redacted through the shared redactor');
+}
+
 export function testBatchIntegrityGateAbortsOnTamperedExecutedTree() {
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-dzd-batch-'));
   try {
@@ -605,6 +653,7 @@ export const runnerBatchTests = [
   testBatchResumeIsolation,
   testWriteScopeCoversExecutedTrees,
   testBatchIntegrityGateAbortsOnTamperedExecutedTree,
+  testBatchFailureSummaryIsRedacted,
   testFlowNormalize,
   testFlowRecordSensitiveRedaction,
   testFlowReplayMutationGate,

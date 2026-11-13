@@ -54,6 +54,7 @@ import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRoots
 import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, isRealDir, isRealDirUnder, UnsafeTargetRefused } from './safe-write.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
+import { redactUrlsInText } from '../evidence/credential-terms.mjs';
 
 // Every target URL this runner PRINTS goes through shownUrl (web-uplift-b9p): a batch
 // log lands in CI artifacts and gets pasted into issues, and a target URL can carry a
@@ -75,6 +76,17 @@ function shownText(text, raw) {
   if (typeof text !== 'string') return text;
   const shown = shownUrl(raw);
   return typeof shown === 'string' && shown !== raw ? text.split(raw).join(shown) : text;
+}
+
+// web-uplift-0knu: EVERY failure-text boundary - the per-failure stderr line, the end-of-run
+// summary a human reads and pastes into a bead, and the exit message - goes through THIS one
+// composition: the shared names-based text redactor (redactUrlsInText, the same function the
+// console-evidence collector uses) followed by the run's own URL substitution. A third boundary
+// added later inherits the redactor by construction by calling this, not by copying logic: the
+// summary used to print f.reason raw, re-disclosing credential-bearing failure reasons that the
+// primary path had substituted.
+function safeFailureReason(text, rawUrl) {
+  return shownText(redactUrlsInText(String(text ?? '')), rawUrl);
 }
 
 // The runner-level policy for a candidate the URL parser REJECTED (web-uplift-9lhy, web-uplift-mafp).
@@ -295,7 +307,9 @@ function writeScopeFor(url, siteDir, scopeBefore, agentError) {
     allowedRoots: allowedRootsFor(outRoot),
     changed: changes,
     escapedOutsideScope: escapedChanges(changes, projectRoot, allowedRootsFor(outRoot)),
-    agentError: agentError ? String(agentError.message || agentError) : null,
+    // web-uplift-0knu: the recorded error is an artifact boundary like the console ones - the same
+    // composition applies, or write-scope.json re-discloses what the log redacted.
+    agentError: agentError ? safeFailureReason(agentError.message || agentError, url) : null,
     recordWrittenTo: siteDir,
   };
 }
@@ -339,7 +353,12 @@ await Promise.all(Array.from({ length: concurrency }, worker));
 
 console.log(`Done. ${failures.length} failure(s).`);
 if (failures.length) {
-  console.log(failures.map((f) => `  ${shownUrl(f.url)}: ${f.reason}`).join('\n'));
+  // The safe reason is composed BEFORE the line is built, so the census only ever sees the
+  // wrapped forms (web-uplift-b9p/s0x source containment).
+  console.log(failures.map((f) => {
+    const safe = safeFailureReason(f.reason, f.url);
+    return `  ${shownUrl(f.url)}: ${safe}`;
+  }).join('\n'));
   process.exitCode = 1;
 }
 
@@ -366,8 +385,8 @@ async function worker() {
     } catch (err) {
       // Preparing the next URL used to sit outside the per-URL guard, so a failure here
       // aborted the whole batch. Fold it in: one URL cannot take the others down.
-      failures.push({ url, reason: `could not prepare a run directory: ${err.message}` });
-      console.error(`failed         ${shownUrl(url)}: ${shownText(String(err.message), url)}`);
+      failures.push({ url, reason: safeFailureReason(`could not prepare a run directory: ${err.message}`, url) });
+      console.error(`failed         ${shownUrl(url)}: ${safeFailureReason(err.message, url)}`);
       continue;
     }
 
@@ -426,7 +445,7 @@ async function worker() {
     if (integrityDrift) {
       integrityAbort = true;
       const shown = integrityDrift.slice(0, 8).join(', ') + (integrityDrift.length > 8 ? ', ...' : '');
-      failures.push({ url, reason: `executable tree changed since batch start: ${shown}` });
+      failures.push({ url, reason: safeFailureReason(`executable tree changed since batch start: ${shown}`, url) });
       console.error(
         `INTEGRITY FAILURE ${shownUrl(url)}: the executed tree changed since the batch started:\n  ${integrityDrift.join('\n  ')}\n` +
         'Every audit runs code from these paths (the agent spawns the evidence CLI per primitive; the runner\n' +
@@ -453,12 +472,12 @@ async function worker() {
       // counted. The refusal below is still reported if there was one - that is the
       // security-relevant fact and must not be hidden by a bookkeeping failure.
       recordFailed = true;
-      failures.push({ url, reason: scopeReason });
+      failures.push({ url, reason: safeFailureReason(scopeReason, url) });
       console.error(`record failed  ${shownUrl(url)}: ${shownText(String(err.message), url)}`);
     }
     console.log(`  changed: ${summariseChanges(scope.changed)}`);
     if (scope.escapedOutsideScope.length) {
-      failures.push({ url, reason: `wrote outside --out: ${scope.escapedOutsideScope.join(', ')}` });
+      failures.push({ url, reason: safeFailureReason(`wrote outside --out: ${scope.escapedOutsideScope.join(', ')}`, url) });
       // Quarantine the run: rename its report out of the way and leave a record.
       //
       // ADVISORY EVIDENCE AND DEFENCE IN DEPTH: it improves the odds against a resumed run
@@ -466,7 +485,7 @@ async function worker() {
       // completion check below is the single place where the guarantee and its residual are
       // stated - read that before relying on anything here.
       const quarantineProblem = await quarantineRefusedRun(siteDir, { url, escapedOutsideScope: scope.escapedOutsideScope });
-      if (quarantineProblem) failures.push({ url, reason: quarantineProblem });
+      if (quarantineProblem) failures.push({ url, reason: safeFailureReason(quarantineProblem, url) });
       console.error(
         `CONFINEMENT FAILURE ${shownUrl(url)}: this audit changed ${scope.escapedOutsideScope.length} path(s) outside ` +
         `${outRoot}:\n  ${scope.escapedOutsideScope.join('\n  ')}\n` +
@@ -476,8 +495,8 @@ async function worker() {
       continue;
     }
     if (agentError) {
-      failures.push({ url, reason: String(agentError) });
-      console.error(`failed         ${shownUrl(url)}: ${shownText(String(agentError), url)}`);
+      failures.push({ url, reason: safeFailureReason(agentError, url) });
+      console.error(`failed         ${shownUrl(url)}: ${safeFailureReason(agentError, url)}`);
       continue;
     }
     if (recordFailed) {
@@ -501,8 +520,8 @@ async function worker() {
             // Publication failed, so this URL is NOT complete. Adding it to the in-memory
             // set before this point meant a DUPLICATE url later in the same resume batch
             // was skipped even though nothing was ever published for it.
-            failures.push({ url, reason: `completion could not be published: ${err.message}` });
-            console.error(`failed         ${shownUrl(url)}: could not publish completion: ${shownText(String(err.message), url)}`);
+            failures.push({ url, reason: safeFailureReason(`completion could not be published: ${err.message}`, url) });
+            console.error(`failed         ${shownUrl(url)}: could not publish completion: ${safeFailureReason(err.message, url)}`);
             continue;
           }
           completedThisBatch.add(url);
