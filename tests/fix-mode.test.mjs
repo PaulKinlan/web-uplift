@@ -430,6 +430,52 @@ export async function testFixWriteScopeDiffing() {
 // refusal is driven end-to-end with a stand-in agent CLI that takes the shape of a
 // prompt-injected iteration: one legitimate in-scope edit plus one write somewhere
 // it was never pointed at.
+// web-uplift-yz7a: the fixer's failure-text boundary - the iteration-failure line and the
+// end-of-run AGENT FAILURE summary, the text a human reads and pastes into a bead - must go
+// through the same shared redactor as the artifacts. shownText composes redactUrlsInText, so a
+// credential-bearing agent error prints the redacted placeholder, never the secret.
+export function testFixModeFailureLineIsRedacted() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-fixredact-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(root, 'src', 'index.html'), '<h1>hi</h1>');
+    // Composed at runtime: no credential-shaped literal is committed with this test.
+    const user = 'deploy';
+    const secret = ['S3cr3t', 'P4ssw0rd'].join(':');
+    const credUrl = `https://${user}:${secret}@vault.internal.example/x?api_key=${secret}`;
+    const agentBody = `echo "agent failed while authenticating against ${credUrl}" >&2\nexit 1`;
+    writeFileSync(join(binDir, 'claude'), `#!/bin/sh\n${agentBody}\n`);
+    chmodSync(join(binDir, 'claude'), 0o755);
+
+    const res = run(
+      process.execPath,
+      [
+        join(repoRoot, 'fixer', 'fix.mjs'),
+        '--target', 'src',
+        '--audit-url', 'http://example.test/',
+        '--agent', 'claude',
+        '--max-iterations', '1',
+        '--findings', join(repoRoot, 'examples', 'playground-report.json'),
+        '--isolation', 'host-permission-model',
+        '--out', 'out-redact',
+        '--reports-root', 'reports-out-redact',
+      ],
+      { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } },
+    );
+
+    const output = `${res.stdout}\n${res.stderr}`;
+    assert(res.status !== 0, 'the failing agent must fail the fix run');
+    assert(output.includes('AGENT FAILURE'), `the end-of-run AGENT FAILURE summary must be printed: ${output.slice(-400)}`);
+    assert(!output.includes(secret), `the credential must not reach the terminal/CI log through the failure lines (web-uplift-yz7a): ${output.slice(-500)}`);
+    assert(output.includes('%5Bredacted%5D'), `the failure lines must carry the shared redactor's placeholder: ${output.slice(-400)}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  console.log('  ok: the fixer failure lines are redacted through the shared redactor');
+}
+
 export function testFixModeRefusesOutOfScopeWrites() {
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-fixscope-'));
   try {
@@ -1237,6 +1283,7 @@ export const fixModeTests = [
   testFixRejectsMalformedReports,
   testFixWriteScopeDiffing,
   testFixModeRefusesOutOfScopeWrites,
+  testFixModeFailureLineIsRedacted,
   testFixModeScopeEdgeCases,
   testFixModeRefusesPlantedLinksInItsOwnRecords,
   testFixModeSnapshotRefusesPlantedLinks,

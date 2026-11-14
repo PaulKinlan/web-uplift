@@ -68,7 +68,17 @@ const shownCommand = (command) => (typeof auditUrl === 'string' && auditUrl ? co
 // A printed MESSAGE can carry the audit URL without interpolating it: an error whose text
 // names the URL it was waiting for, or an agent failure that echoes the prompt
 // (web-uplift-s0x review finding 1).
-const shownText = (text) => (typeof text === 'string' && typeof auditUrl === 'string' && auditUrl ? text.split(auditUrl).join(shownAuditUrl()) : text);
+// web-uplift-yz7a: shownText is the ONE text-out helper for failure and diagnostic lines, so the
+// shared names-based redactor (redactUrlsInText - the same function the console-evidence collector
+// and run-batch's safeFailureReason use) composes INTO it: every call site inherits the redactor by
+// construction instead of each boundary remembering. The iteration-failure line and the end-of-run
+// AGENT FAILURE summary printed agent error text raw before this (the exact boundary 0knu was
+// filed about - the line a human reads and pastes into a bead).
+const shownText = (text) => {
+  const base = typeof text === 'string' ? text : String(text ?? '');
+  const redacted = redactUrlsInText(base);
+  return typeof auditUrl === 'string' && auditUrl ? redacted.split(auditUrl).join(shownAuditUrl()) : redacted;
+};
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -605,7 +615,7 @@ console.log(
 );
 if (agentFailure) {
   console.log(
-    `AGENT FAILURE: an iteration did not complete (${agentFailure.message || agentFailure}); ` +
+    `AGENT FAILURE: an iteration did not complete (${shownText(agentFailure.message || String(agentFailure))}); ` +
       `the run exits non-zero (records: ${scopeRecordPaths()} in ${outDir}).`,
   );
 }
