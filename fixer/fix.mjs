@@ -71,11 +71,21 @@ const shownText = (text) => (typeof text === 'string' && typeof auditUrl === 'st
 
 const args = parseArgs(process.argv.slice(2));
 
+// web-uplift-re77 + qh0t: the path-flag containment root the CLI will enforce for this run. The
+// target is the fixer's own workspace, declared to the agent via WEB_UPLIFT_PATH_ROOT (below) -
+// a spawn-time declaration the agent's command line cannot alter.
+const targetPathRoot = resolve(String(args.target ?? process.cwd()));
+
 // The agent child's environment is an explicit ALLOWLIST (web-uplift-l6d) built
 // once, here - never a process.env spread. See buildAgentEnv in runner/agents.mjs
 // for what passes (PATH/HOME/locale, the child's own provider auth, WEB_UPLIFT_*)
 // and what is withheld (warned by name).
 const agentEnv = buildAgentEnv({ agentName: args.agent ?? 'claude', extra: parseAgentEnvFlag(args['agent-env']) });
+// web-uplift-re77 + qh0t: the path-flag containment root is declared in the AGENT'S ENVIRONMENT at
+// spawn time, not in the command the agent runs - the guarded party cannot grant itself the
+// permission through argv (an argv --source-root may only narrow this root, and widening refuses
+// loudly). The value is this fixer's own resolved target: the workspace being fixed.
+agentEnv.WEB_UPLIFT_PATH_ROOT = targetPathRoot;
 
 // --goal defines a SCORE target to hill-climb to, an alternative stop condition
 // to "every issue fixed". Same shape as the CI gate:
@@ -144,11 +154,6 @@ if (!agent) {
 }
 
 const target = args.target;
-// web-uplift-re77: the CLI contains path flags inside its cwd by default; this fixer points
-// --source at the target, which routinely sits outside the cwd the agent invokes the CLI from.
-// DECLARING the target as the path root keeps the containment real (a declared, named root -
-// refusals still name it) while the documented fix workflow keeps working.
-const targetPathRoot = resolve(String(target ?? process.cwd()));
 const auditUrl = args['audit-url'];
 const maxIterations = Number(args['max-iterations'] ?? 4);
 const outDir = args.out ?? `reports/fix-${slugify(auditUrl ?? 'site')}`;
@@ -232,7 +237,7 @@ const snapshotScope = () =>
 
 function fixExtra(findingsPath, iteration) {
   return (
-    `--source-root ${targetPathRoot} --source ${target} --fix --findings ${findingsPath} ` +
+    `--source ${target} --fix --findings ${findingsPath} ` +
     `--max-iterations 1 ` +
     `# hill-climb iteration ${iteration}: apply the highest-leverage ` +
     `guidance-backed fixes to the source under ${target} (you write the edits; ` +
@@ -693,7 +698,7 @@ async function baselineAudit() {
   // iteration: this spawn runs under the same untrusted page context and holds
   // the same write tools, so an injection here would otherwise write unmonitored
   // AND be baked into iteration 1's "clean" baseline snapshot.
-  const prompt = agent.prompt(auditUrl, outDir, `--source-root ${targetPathRoot} --source ${target}`);
+  const prompt = agent.prompt(auditUrl, outDir, `--source ${target}`);
   const scopeBefore = snapshotScope();
   try {
     await runAgent(prompt, 0);

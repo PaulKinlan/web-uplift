@@ -23,10 +23,11 @@ function assert(condition, message) {
 
 const CLI_PATH = fileURLToPath(new URL('../evidence/cli.mjs', import.meta.url));
 
-function runCliAsync(args, cwd, timeoutMs = 20000) {
+function runCliAsync(args, cwd, timeoutMs = 20000, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const cp = spawn(process.execPath, [CLI_PATH, ...args], {
       cwd,
+      env: { ...process.env, ...extraEnv },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -118,41 +119,70 @@ export async function testTrailingSeparatorRefused() {
   }
 }
 
-// 5. web-uplift-re77: A DECLARED ROOT (--source-root) widens containment to the caller's stated
-// workspace - the fixer points --source at targets outside its cwd, and that workflow is
-// explicitly supported. The declaration must cover the named root's own subtree and still refuse
-// everything outside it; refusals name the root IN FORCE.
+// 5. web-uplift-re77 + qh0t: the harness declares the workspace in the AGENT'S ENVIRONMENT at
+// spawn time (WEB_UPLIFT_PATH_ROOT, set by the fixer from its own resolved target) - the intended
+// legitimate workflow works WITHOUT the agent adding any flag, and an argv --source-root may only
+// NARROW that root. Widening or moving it from argv is a loud refusal: a permission the guarded
+// party can grant itself is not a control.
 export async function testDeclaredRootHonouredAndStillBounding() {
   const declared = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-decl-'));
   const outside = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-outside-'));
+  mkdirSync(join(declared, 'sub'), { recursive: true });
   writeFileSync(join(declared, 'app.js'), 'export const app = 1;\n');
+  writeFileSync(join(declared, 'sub', 'inner.js'), 'export const inner = 1;\n');
   const secret = join(outside, 'secret.js');
   writeFileSync(secret, 'const stolen = "TOPSECRET";\n');
+  const env = { WEB_UPLIFT_PATH_ROOT: declared };
   try {
-    // IN the declared root (absolute, outside cwd): accepted.
+    // (a) THE LEGITIMATE WORKFLOW, NO AGENT FLAG: cwd is somewhere else entirely; the env
+    // declaration bounds containment to the harness's target, and --source inside it passes.
     const ws = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-cwd-'));
     try {
-      const ok = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', declared, '--source', declared, '--quiet'], ws);
-      assert(!ok.stderr.includes('must be inside'), `a declared-root source must pass: ${ok.stderr.slice(-300)}`);
+      const ok = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source', join(declared, 'sub'), '--quiet'], ws, undefined, env);
+      assert(!ok.stderr.includes('refused'), `a declared-env source must pass: ${ok.stderr.slice(-300)}`);
+      // And a file OUTSIDE the env root is refused even though cwd moved with the agent.
+      const bad = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--expr-file', secret, '--quiet'], ws, undefined, env);
+      assert(bad.status !== 0, 'outside the env-declared root must refuse (qh0t cd repro)');
+      assert(bad.stderr.includes(declared), `the refusal must name the declared root: ${bad.stderr.slice(-300)}`);
     } finally {
       rmSync(ws, { recursive: true, force: true });
     }
-    // OUTSIDE the declared root: refused, naming the DECLARED root.
+    // (b) THE AGENT GRANTS ITSELF PERMISSION: argv --source-root outside the env root is a LOUD
+    // narrow-only refusal, naming the boundary in force.
     const ws2 = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-cwd2-'));
     try {
-      const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', declared, '--expr-file', secret, '--quiet'], ws2);
-      assert(res.status !== 0, 'outside the declared root must still refuse');
-      assert(res.stderr.includes(declared), `the refusal must name the declared root: ${res.stderr.slice(-300)}`);
+      const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', outside, '--expr-file', secret, '--quiet'], ws2, undefined, env);
+      assert(res.status !== 0, 'an argv widening must refuse');
+      assert(res.stderr.includes('may only NARROW'), `the widening refusal must be loud and specific: ${res.stderr.slice(-300)}`);
+      assert(res.stderr.includes(declared), `the refusal must name the env-declared root: ${res.stderr.slice(-300)}`);
     } finally {
       rmSync(ws2, { recursive: true, force: true });
     }
-    // ' ..' escape from the declared root: refused.
+    // (c) NARROWING IS ALLOWED: a subdir of the env root works for files inside it.
     const ws3 = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-cwd3-'));
     try {
-      const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', declared, '--source', '../', '--quiet'], ws3);
-      assert(res.status !== 0, 'a .. escape from the declared root must refuse');
+      const narrowed = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', join(declared, 'sub'), '--source', join(declared, 'sub'), '--quiet'], ws3, undefined, env);
+      assert(!narrowed.stderr.includes('refused'), `a narrowing declaration must pass: ${narrowed.stderr.slice(-300)}`);
+      // Narrowing is per-invocation: the SAME invocation that narrows to sub/ cannot read a file
+      // inside the env root but outside the narrowed root.
+      const outsideAfterNarrow = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', join(declared, 'sub'), '--expr-file', join(declared, 'app.js'), '--quiet'], ws3, undefined, env);
+      assert(outsideAfterNarrow.status !== 0, 'a file inside the env root but OUTSIDE the narrowed root must refuse');
+      // And a subsequent invocation WITHOUT the flag is still bounded by the env root - omitting
+      // the narrowing flag cannot widen anything back.
+      const noFlag = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--expr-file', secret, '--quiet'], ws3, undefined, env);
+      assert(noFlag.status !== 0, 'omitting the flag must not escape the env-declared root');
     } finally {
       rmSync(ws3, { recursive: true, force: true });
+    }
+    // (d) NO ENV DECLARATION: cwd default unchanged; an argv --source-root outside cwd is refused
+    // (narrow-only against cwd), and the refusal names the cwd root.
+    const ws4 = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-cwd4-'));
+    try {
+      const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', declared, '--source', declared, '--quiet'], ws4);
+      assert(res.status !== 0, 'an argv declaration outside the cwd default must refuse');
+      assert(res.stderr.includes('may only NARROW'), `the refusal must state the narrow-only rule: ${res.stderr.slice(-300)}`);
+    } finally {
+      rmSync(ws4, { recursive: true, force: true });
     }
   } finally {
     rmSync(declared, { recursive: true, force: true });

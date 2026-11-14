@@ -185,22 +185,47 @@ const PRIMITIVES = {
 // root STATED in the error. Containment is realpath-based, so a symlink inside the root pointing out
 // is refused the same as a plain escape.
 //
-// web-uplift-re77: the working directory is NOT the only root a legitimate caller needs - the fixer
-// points --source at a target that routinely sits OUTSIDE its cwd (out-of-tree targets are an
-// explicitly supported fix workflow), and an operator typing an out-of-tree path is making the same
-// declaration. So the root can be DECLARED per invocation with --source-root <dir>: the caller states
-// the workspace the path flags may touch, the containment applies against THAT root exactly as it
-// does against cwd, and every refusal still names the root in force. The declaration is part of the
-// invocation, so it is visible in the command itself - a caller that did not declare it gets the
-// strict cwd default.
+// web-uplift-re77 + web-uplift-qh0t: the working directory is NOT the only root a legitimate caller
+// needs - the fixer points --source at a target that routinely sits OUTSIDE its cwd - but the root
+// must be UNFORGEABLE by the party being contained. The harness declares it in the AGENT'S
+// ENVIRONMENT at agent spawn time (WEB_UPLIFT_PATH_ROOT, set by fixer/fix.mjs from its own resolved
+// target - a value the agent's command line cannot touch). An argv --source-root may only NARROW
+// that root (select a directory inside it); an argv attempt to WIDEN or move it is refused LOUDLY -
+// a permission the guarded party can grant itself is not a control.
+//
+// RESIDUAL, stated plainly (qh0t's third candidate): this is defence-in-depth against prompt-driven
+// drift in the common case, not closure of the disclosure primitive against a fully malicious
+// write-capable agent - such an agent can change its own child env or cd before invoking; the real
+// boundary for that adversary is the operator-declared isolation (docker/bwrap/vm), which this tool
+// records but does not verify. Without an env declaration the default stays cwd, with the same
+// documented limit.
 const WORKSPACE_ROOT = () => resolve(process.cwd());
+function envPathRoot() {
+  const raw = process.env.WEB_UPLIFT_PATH_ROOT;
+  return raw ? resolve(raw) : null;
+}
 export function declaredPathRoot(argv) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--source-root') return resolve(String(argv[i + 1] ?? ''));
   }
   return null;
 }
-export function containLocalPath(flag, raw, root = WORKSPACE_ROOT()) {
+// The root IN FORCE: the harness declaration by default; an argv declaration may only narrow it.
+// argv that tries to widen (its root is not inside the declared/env/cwd root) is a loud refusal,
+// not a silent fallback.
+export function effectivePathRoot(argvDeclared) {
+  const base = envPathRoot() ?? WORKSPACE_ROOT();
+  if (argvDeclared == null) return base;
+  const inner = argvDeclared === base || argvDeclared.startsWith(base + sep);
+  if (!inner) {
+    throw new Error(
+      `web-uplift: --source-root may only NARROW the harness-declared workspace root (${base}); ` +
+        `widening or moving it is refused: ${argvDeclared}`,
+    );
+  }
+  return argvDeclared;
+}
+export function containLocalPath(flag, raw, root) {
   const resolved = resolve(String(raw ?? ''));
   let real;
   try {
@@ -231,9 +256,10 @@ export function containLocalPath(flag, raw, root = WORKSPACE_ROOT()) {
 const joinPath = (a, b) => `${a}${sep}${b}`;
 
 export function parseArgs(argv) {
-  // web-uplift-re77: the declared root can appear anywhere in argv, so it is resolved before any
-  // path flag is contained; the three read flags below take it (or the cwd default).
-  const pathRoot = declaredPathRoot(argv) ?? undefined;
+  // web-uplift-re77: the argv declaration can appear anywhere in argv, so it is resolved before any
+  // path flag is contained - and it may only NARROW the harness-declared (env) or cwd root
+  // (web-uplift-qh0t): an argv attempt to widen is the loud refusal in effectivePathRoot.
+  const pathRoot = effectivePathRoot(declaredPathRoot(argv));
   // `wait` is a GLOBAL fallback (1000ms) for the primitives that do not declare a settle of their own. It is
   // marked as a default so a primitive with its own documented default can tell "the operator chose this"
   // from "nobody chose anything" - without the marker, discoverability's 3500ms SPA default could not be
@@ -379,7 +405,7 @@ async function main() {
         '         --allow-scheme <scheme,..> permit those non-http(s) target schemes this run (e.g. file); recorded in the output\n' +
         '         --locale de-DE --timezone Asia/Tokyo\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f --interact-deadline ms\n' +
-        '         --source-root dir declares the workspace path flags may read from (default: the CLI\'s working directory)\n' +
+        '         --source-root dir may only NARROW the workspace path flags may read from (default: the harness-declared WEB_UPLIFT_PATH_ROOT, else the CLI\'s working directory)\n' +
         '         --source dir reads a local source tree: contents are redacted (names-based, as the HAR bodies) and credential-named files are skipped unread before anything is inlined\n' +
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies\n' +
         '         --cdp-deadline ms (bound every CDP attach/navigation wait; default 30000)\n' +

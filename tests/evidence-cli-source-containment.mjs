@@ -45,9 +45,10 @@ function assert(condition, message) {
 
 const CLI_PATH = fileURLToPath(new URL('../evidence/cli.mjs', import.meta.url));
 
-function runCliAsync(args, timeoutMs = 30000) {
+function runCliAsync(args, timeoutMs = 30000, _unused = null, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const cp = spawn(process.execPath, [CLI_PATH, ...args], {
+      env: { ...process.env, ...extraEnv },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -140,9 +141,11 @@ export async function testExplicitSourceHonoursOperatorSpecifiedRoot() {
   writeFileSync(join(srcDir, 'app.js'), 'console.log("hello world");\n');
 
   try {
-    // web-uplift-re77: an out-of-cwd source dir is a legitimate DECLARED root - the operator
-    // (or the fixer, for its targets) states the workspace the path flags may read.
-    const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', srcDir, '--source', srcDir, '--quiet']);
+    // web-uplift-re77 + qh0t: an out-of-cwd source dir is a legitimate HARNESS-DECLARED root -
+    // the declaration rides the environment at agent-spawn time (WEB_UPLIFT_PATH_ROOT, set by the
+    // fixer from its own target), because an argv declaration is the guarded party granting itself
+    // a permission. This test plays the harness: it declares via env.
+    const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source', srcDir, '--quiet'], undefined, undefined, { WEB_UPLIFT_PATH_ROOT: srcDir });
     assert(res.status === 0, `cli exited with status ${res.status}: ${res.stderr}`);
     const data = JSON.parse(res.stdout);
     assert(data.source, 'source block must be present when --source is specified');
