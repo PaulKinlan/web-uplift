@@ -256,6 +256,36 @@ changed no case. The count is 161 on master because web-uplift-lql5 later added 
 `tests/evidence.test.mjs` was also a real collision hotspot, at 12 of the 30-day `--first-parent` changes
 under `tests/`, so the split reduces the file every evidence change has to edit as well as the critical path.
 
+### The gate derives its readers instead of trusting a route table
+
+`web-uplift-v4pc` is the reason this exists: a P1 where the fast gate reported PASS for a change to
+`knowledge/mwg-catalog.md` that it never selected. The file is tracked, two suites read it
+(`tests/mwg-principles.test.mjs` asserts its guide total, `tests/mwg-catalog-extract.mjs` checks its regenerate
+section), the `docs` omission rule had waved it through as "documentation or prose: no executable behaviour to
+test", and the run fell back to the four baseline targets. Every control was green: the path was MAPPED (baseline
+counts as mapped) and it was OMITTED by a rule that said nothing could depend on it. A lane reading that PASS
+would have concluded the change was tested.
+
+So the selection is now checked against what the suites actually open, derived from their own sources rather than
+a list somebody maintains:
+
+- `readingSuitesOf(trackedPath)` scans the suite sources for two literal forms - a path literal of at least two
+  segments (`'knowledge/mwg-catalog.md'`) and the split form a `join()` produces (`'knowledge', 'mwg-catalog.md'`)
+  - and returns the suites that name it. A bare basename does not count: several suites mention common file names
+    in prose, and that would make everything a reader of everything.
+- `mapFilesToTests(..., { withReaders: true })` refuses when a changed NON-EXECUTABLE path has readers and the plan
+  runs none of them, naming each reader and the next action. Omission does not silence it: a rule that says "no
+  executable behaviour depends on this" is false for a file a suite reads, so the derived readers win.
+- `--dry-run` prints the readers of every changed file, marked `[selected]` or `[NOT selected]`, so what did not run
+  is visible rather than inferred from a green line.
+
+Two limits are stated rather than papered over. The guarantee is "at least one reader runs", not "all of them":
+the scan over-approximates (a suite that merely mentions a path in a comment counts as a reader), and demanding
+every reader would drag unrelated suites into correct plans until someone deleted the check. And it applies to
+non-executable paths only - a module has an import graph, which the gate already follows with stronger evidence
+(`unmapped`, `refused`, auto-mapping, the shared-module control), so refusing `runner/flow.mjs` because three
+unrelated suites mention its path would be a worse trade than the gap it closes.
+
 ### The paired measurement, and the setting it chose
 
 Every arm sampled run by run in ONE window, load recorded beside every run, 3 samples per arm, each arm

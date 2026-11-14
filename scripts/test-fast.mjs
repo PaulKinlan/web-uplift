@@ -281,6 +281,79 @@ export function importingSuitesOf(modulePath, repo = repoRoot) {
   return suites;
 }
 
+const READER_SOURCE_CACHE = new Map();
+
+/**
+ * Which gate suites NAME a tracked DATA file in their source - i.e. which suites read it.
+ *
+ * web-uplift-v4pc is why this exists. The gate selected knowledge/mwg-catalog.md for the four BASELINE targets
+ * while two suites read it, so the run was green and blind at once: a hand-maintained include list cannot see the
+ * files a suite opens, and baseline counts as mapped for the completeness control. This derives the readers from
+ * the suite sources instead of any list, so the answer updates when a suite starts reading a new file.
+ *
+ * Deliberately the same over-approximating, text-based shape as importingSuitesOf above: a suite that only
+ * MENTIONS the path in a comment or an assertion message is counted as a reader. Naming one reader too many is
+ * the safe direction for a refusal (it costs one map edit); missing one is the false green this closes.
+ *
+ * Two literal forms are recognised, because both are in use:
+ *   readFileSync(join(repoRoot, 'knowledge', 'mwg-catalog.md'))   ->  join form: consecutive quoted segments
+ *   readFileSync(join(repoRoot, 'knowledge/mwg-catalog.md'))      ->  suffix form: a >= 2-segment path literal
+ * A BASENAME on its own ('mwg-catalog.md') is not enough: many suites mention a common file name in prose, and
+ * that would make every one of them a reader of every file with that name.
+ */
+export function readingSuitesOf(trackedPath, repo = repoRoot) {
+  const segments = trackedPath.split('/').filter(Boolean);
+  if (segments.length < 2) return [];
+  const escaped = segments.map((seg) => seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const needle = new RegExp(
+    [
+      // suffix literal: 'knowledge/mwg-catalog.md' or 'docs/principles-analysis.md'
+      `['"\`](?:\\./)?${escaped.join('/')}['"\`]`,
+      // join form: 'knowledge', 'mwg-catalog.md' - consecutive quoted segments, any quote style
+      escaped.map((seg) => `['"\`]${seg}['"\`]`).join(`\\s*,\\s*`),
+    ].join('|'),
+  );
+  const dir = join(repo, 'tests');
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const suites = [];
+  for (const entry of [...entries].sort()) {
+    if (!entry.endsWith('.mjs')) continue;
+    const rel = `tests/${entry}`;
+    if (!isDirectRunnableTest(rel)) continue;
+    let source = READER_SOURCE_CACHE.get(rel);
+    if (source === undefined) {
+      try {
+        source = readFileSync(join(dir, entry), 'utf8');
+      } catch {
+        source = '';
+      }
+      READER_SOURCE_CACHE.set(rel, source);
+    }
+    if (source && needle.test(source)) suites.push(rel);
+  }
+  return suites;
+}
+
+/**
+ * The gap this closes, as a pure function so the direction is testable: a tracked file READ by a suite that the
+ * plan does not run. `selectedPaths` is the set of suite paths the plan executes.
+ */
+export function readerGapsFor(filePaths, readersByFile, selectedPaths) {
+  const gaps = [];
+  for (const raw of filePaths) {
+    const file = raw.startsWith('/') ? relative(repoRoot, raw) : raw;
+    for (const reader of readersByFile[file] || []) {
+      if (!selectedPaths.has(reader)) gaps.push({ file, reader });
+    }
+  }
+  return gaps;
+}
+
 /**
  * Shared modules the control CAN see are not honestly covered, declared with the reason and the tracking
  * bead so the gap is visible rather than skipped (web-uplift-ev2u). The control asserts each entry is
@@ -1136,9 +1209,47 @@ export function mapFilesToTests(filePaths, options = {}) {
     }
   }
 
+  // THE READERS CHECK (web-uplift-v4pc). A changed file that gate suites READ but no selected target runs is the
+  // false green this bead is about, and no hand-maintained route can rule it out. Derived, not listed: the reader
+  // set comes from the suite sources (readingSuitesOf), so a suite that starts reading a new file is covered
+  // without anyone remembering to update a rule.
+  //
+  // Deliberately the WEAK form of the guarantee: the plan must run AT LEAST ONE reader, not all of them. The
+  // scan over-approximates (a suite that merely mentions a path in a comment counts as a reader), so demanding
+  // every reader would drag unrelated suites into correct plans and the pressure would be to delete the check.
+  // One reader is the difference between "nothing that reads this ran" and "something that reads it ran", which
+  // is exactly the gap the reviewer proved. The full reader list is printed either way, so what did not run is
+  // visible rather than claimed.
+  //
+  // It applies to NON-EXECUTABLE paths only, and that line is deliberate: a module has an import graph, which the
+  // gate already follows (unmapped and refused paths, auto-mapping, the shared-module control) and which is
+  // stronger evidence than a text mention. This check exists for the paths that have NO import edge to follow and
+  // were waved through by an omission rule - a .md or .json a suite opens with readFileSync. Applying it to
+  // modules as well would refuse runner/flow.mjs for a plan that runs its own suite, because three unrelated
+  // suites mention the path, and the pressure would then be to weaken the check rather than the routing.
+  const readersByFile = {};
+  if (options.withReaders) {
+    for (const raw of filePaths) {
+      const file = raw.startsWith('/') ? relative(repoRoot, raw) : raw;
+      readersByFile[file] = readingSuitesOf(file, repoRoot);
+    }
+  }
+  const selectedPaths = new Set([...targetsByKey.values()].filter((t) => t.path).map((t) => t.path));
+  const readerGaps = options.withReaders
+    ? Object.entries(readersByFile)
+      // An OMITTED file is checked too, and that is the point: the 'docs' and 'data-and-config' rules omit a
+      // .md or .json on the grounds that no executable behaviour depends on it, which is FALSE for a file a
+      // suite reads. knowledge/mwg-catalog.md was omitted by the docs rule and read by two suites at the same
+      // time, so omission has to lose to the derived reader set rather than silence it.
+      .filter(([file, readers]) => readers.length > 0 && !isDirectRunnableTest(file) && !hasCodeExtension(file))
+      .filter(([, readers]) => !readers.some((reader) => selectedPaths.has(reader)))
+      .map(([file, readers]) => ({ file, readers }))
+    : [];
+
   // Only a diff with nothing to map at all falls back to the baseline suite. A diff that contains an
   // UNKNOWN path must not look like a baseline run: that was the false green this gate now refuses.
-  const isBaseline = targetsByKey.size === 0 && unmappedFiles.length === 0 && refusedFiles.length === 0;
+  const isBaseline = targetsByKey.size === 0 && unmappedFiles.length === 0 && refusedFiles.length === 0
+    && readerGaps.length === 0;
   if (isBaseline) {
     for (const t of BASELINE_TARGETS) {
       targetsByKey.set(targetKey(t), t);
@@ -1151,6 +1262,8 @@ export function mapFilesToTests(filePaths, options = {}) {
     targets: Array.from(targetsByKey.values()).map(applyMeasuredBudget),
     unmappedFiles,
     omittedFiles,
+    readersByFile,
+    readerGaps,
     refusedFiles,
     autoMappedFiles,
     autoMapScan,
@@ -1405,7 +1518,7 @@ Usage:
     for (const f of filesToTest) console.log(`  • ${f}`);
   }
 
-  const plan = mapFilesToTests(filesToTest, { diffRef });
+  const plan = mapFilesToTests(filesToTest, { diffRef, withReaders: true });
 
   if (plan.matchedSubsystems.length > 0) {
     console.log(`[test:fast] Matched subsystem(s): ${plan.matchedSubsystems.join(', ')}`);
@@ -1464,6 +1577,25 @@ Usage:
   // A full-gate-only module (web-uplift-5y2w) refuses for the opposite reason to an unmapped path: the
   // suite that should run it exists, and running all of it is the full gate. Naming the importing suites
   // and one command keeps the choice with the author instead of hiding it behind a fast-tier subset.
+  // web-uplift-v4pc: PRINT THE READERS, selected and not, so a reviewer can see what did NOT run. This is the
+  // transparency the finding asked for: the previous output could not distinguish "nothing reads this file" from
+  // "something reads it and the gate did not select it".
+  const selectedPathsForReaders = new Set(plan.targets.filter((t) => t.path).map((t) => t.path));
+  for (const [file, readers] of Object.entries(plan.readersByFile || {})) {
+    if (readers.length === 0) continue;
+    const mark = (r) => (selectedPathsForReaders.has(r) ? `[selected] ${r}` : `[NOT selected] ${r}`);
+    console.log(`[test:fast] ${file} is read by: ${readers.map(mark).join(', ')}`);
+  }
+  if (plan.readerGaps.length > 0) {
+    for (const gap of plan.readerGaps) {
+      console.error(`fast-gate: REFUSED - ${gap.file} is read by ${gap.readers.join(', ')} but this plan runs none of them.`);
+    }
+    console.error('[test:fast] NEXT ACTION: route the changed path so at least one of the suites that read it runs (a SUBSYSTEMS match entry), then re-run. A plan that runs nothing reading the change is the false green web-uplift-v4pc is about: it reports PASS for a file it never selected.');
+    console.error('[test:fast] No test target was executed.');
+    emitManifest('execute', []);
+    process.exit(1);
+  }
+
   if (plan.refusedFiles.length > 0) {
     for (const f of plan.refusedFiles) {
       console.log(`fast-gate: refused: ${f.path} (named by ${f.consumers.length} suite(s) under tests/)`);

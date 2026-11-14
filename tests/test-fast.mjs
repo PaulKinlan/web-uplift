@@ -56,6 +56,8 @@ import {
   getUncommittedChanges,
   printAutoMappings,
   importingSuitesOf,
+  readingSuitesOf,
+  readerGapsFor,
   UNWIRED_SHARED_MODULES,
   repoRoot,
   executionSummary,
@@ -137,6 +139,39 @@ function testSubsystemMappings() {
     [],
     'every tracked file under knowledge/ must select the mwg or mwg-drift subsystem: falling through to the baseline targets counts as mapped while running nothing that reads the file (web-uplift-v4pc)',
   );
+
+  // THE READER CHECK (web-uplift-v4pc): the routing above is checked against what the suites actually READ, so the
+  // control does not depend on anyone remembering that knowledge/mwg-catalog.md exists. Both directions matter:
+  // the derived reader set has to find the two suites that name it, and a plan that runs neither must be REFUSED
+  // rather than silently falling back to the baseline targets.
+  const catalogMdReaders = readingSuitesOf('knowledge/mwg-catalog.md', repoRoot);
+  assert(catalogMdReaders.includes('tests/mwg-principles.test.mjs'),
+    'the reader scan must find the suite whose readFileSync opens knowledge/mwg-catalog.md; without it the check cannot see the false green it exists for');
+  assert(catalogMdReaders.includes('tests/mwg-catalog-extract.mjs'),
+    'the reader scan must also find the join(repoRoot, "knowledge", "mwg-catalog.md") form - one suite writes it that way and a suffix-literal-only scan misses it');
+  const catalogMdPlan = mapFilesToTests(['knowledge/mwg-catalog.md'], { withReaders: true });
+  assert.deepEqual(catalogMdPlan.readerGaps, [],
+    'knowledge/mwg-catalog.md is read by two suites and this plan must run one of them; a gap here is the baseline-only false green of web-uplift-v4pc');
+  assert(catalogMdPlan.targets.some((t) => t.path === 'tests/mwg-catalog-extract.mjs'),
+    'and the plan must contain the reader, not merely avoid the gap');
+
+  // The refusal direction, tested as a pure function so it cannot depend on the routing being wrong in the tree:
+  // given a plan that runs nothing that reads the file, the gap is reported and is non-empty.
+  const syntheticReaders = { 'knowledge/example.md': ['tests/mwg-principles.test.mjs'] };
+  assert.deepEqual(
+    readerGapsFor(['knowledge/example.md'], syntheticReaders, new Set()),
+    [{ file: 'knowledge/example.md', reader: 'tests/mwg-principles.test.mjs' }],
+    'a changed file whose only reader is not selected must be reported as a gap - this is the assertion that fails on the pre-fix tree',
+  );
+  assert.deepEqual(
+    readerGapsFor(['knowledge/example.md'], syntheticReaders, new Set(['tests/mwg-principles.test.mjs'])),
+    [],
+    'and a plan that runs the reader must NOT be reported: the control has to be able to pass, or it is not a control',
+  );
+  // A BASENAME alone must not make a reader: 'mwg-catalog.md' appears in prose in several suites, and treating
+  // those as readers would make the check fire on every plan that cites the file it touches.
+  assert.deepEqual(readingSuitesOf('knowledge/mwg-catalog.md', repoRoot).includes('tests/regression.mjs'), false,
+    'tests/regression.mjs does not open the catalogue markdown and must not be counted as a reader');
 
   const catalogPlan = mapFilesToTests(['knowledge/mwg-catalog.json']);
   assert(
