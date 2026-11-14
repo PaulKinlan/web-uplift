@@ -527,8 +527,14 @@ async function worker() {
           completedThisBatch.add(url);
           console.log(`done (coverage complete)     ${shownUrl(url)}`);
         } else {
-          failures.push({ url, reason: `atomic coverage validation failed: ${validation.detail}` });
-          console.error(`INVALID REPORT ${shownUrl(url)}: ${shownText(String(validation.detail), url)}`);
+          // web-uplift-5d9h: the validator echoes agent-written report values into its errors,
+          // so the detail is a page-derived-text boundary like every other failure line - the
+          // same composition applies at BOTH the record and the stderr line, or the two
+          // boundaries of one event disagree (the summary re-runs safeFailureReason at print
+          // time; the stored reason and the INVALID REPORT line redact at rest).
+          const safeDetail = safeFailureReason(`atomic coverage validation failed: ${validation.detail}`, url);
+          failures.push({ url, reason: safeDetail });
+          console.error(`INVALID REPORT ${shownUrl(url)}: ${safeDetail}`);
         }
       } else {
         console.log(`NO REPORT     ${shownUrl(url)}`);

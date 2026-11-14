@@ -530,6 +530,51 @@ export function testWriteScopeCoversExecutedTrees() {
 // there travels further than one in the full log. The stub agent fails with a credential-bearing
 // error; the secret must be absent from the summary, the stderr lines, and any file under the out
 // root, with the redacted placeholder present instead.
+// web-uplift-5d9h: the INVALID REPORT line prints validateAtomicReport's .detail, and the
+// validator echoes agent-written report values into its errors - a credential-bearing value in a
+// report field reached stderr verbatim through shownText (target-URL substitution only), while
+// the summary of the same failure was redacted. Both boundaries of one event go through the same
+// composition now.
+export function testBatchInvalidReportLineIsRedacted() {
+  const root = mkdtempSync(join(tmpdir(), 'web-uplift-batch-invalid-'));
+  try {
+    const binDir = join(root, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const user = 'deploy';
+    const secret = ['S3cr3t', 'P4ssw0rd'].join(':');
+    // The stub copies a VALID report into the run dir, then corrupts checkOutcomes[0].status
+    // with a credential-bearing URL and exits 0 - so the runner reaches schema validation and
+    // the validator echoes the agent-written value into its error.
+    const corrupt = `const fs = require('node:fs');const r = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));r.checkOutcomes[0].status = 'https://${user}:${secret}@vault.internal.example/x?api_key=${secret}';fs.writeFileSync(process.argv[2], JSON.stringify(r));`;
+    writeFileSync(join(root, 'corrupt.cjs'), corrupt);
+    const stub = [
+      '#!/bin/sh',
+      'd=$(ls -dt "$PWD/out"/*/*/ | head -1); d=${d%%/}',
+      `cp ${JSON.stringify(join(repoRoot, 'examples', 'playground-report.json'))} "$d/report.json"`,
+      `node ${JSON.stringify(join(root, 'corrupt.cjs'))} "$d/report.json"`,
+      'exit 0',
+      '',
+    ].join('\n');
+    writeFileSync(join(binDir, 'claude'), stub);
+    chmodSync(join(binDir, 'claude'), 0o755);
+
+    const res = run(process.execPath, [
+      join(repoRoot, 'runner', 'run-batch.mjs'), 'https://example.com/', '--agent', 'claude',
+      '--isolation', 'test-suite', '--concurrency', '1', '--out', join(root, 'out'),
+    ], { cwd: root, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+
+    const output = `${res.stdout}\n${res.stderr}`;
+    assert(res.status !== 0, 'an invalid report must fail the batch');
+    assert(output.includes('INVALID REPORT'), `the INVALID REPORT line must be printed: ${output.slice(-400)}`);
+    assert(output.includes('invalid status'), `the validator's echo must still carry the diagnostic: ${output.slice(-400)}`);
+    assert(!output.includes(secret), `the credential must not reach the log through the validation detail (web-uplift-5d9h): ${output.slice(-500)}`);
+    assert(output.includes('%5Bredacted%5D'), `the detail must carry the shared redactor's placeholder: ${output.slice(-400)}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  console.log('  ok: the INVALID REPORT line is redacted through the shared redactor');
+}
+
 export function testBatchFailureSummaryIsRedacted() {
   const root = mkdtempSync(join(tmpdir(), 'web-uplift-batch-summary-'));
   try {
@@ -654,6 +699,7 @@ export const runnerBatchTests = [
   testWriteScopeCoversExecutedTrees,
   testBatchIntegrityGateAbortsOnTamperedExecutedTree,
   testBatchFailureSummaryIsRedacted,
+  testBatchInvalidReportLineIsRedacted,
   testFlowNormalize,
   testFlowRecordSensitiveRedaction,
   testFlowReplayMutationGate,
