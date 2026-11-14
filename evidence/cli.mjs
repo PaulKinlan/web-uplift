@@ -181,10 +181,25 @@ const PRIMITIVES = {
 
 // web-uplift-lp5z: path-valued flags are agent-supplied, so a flow or an agent can point the tool
 // at any file on the machine and have its contents read into a committed artifact. Every path-valued
-// READ flag is contained inside the CLI's working directory - the audited workspace, the only root a
-// legitimate caller needs - with the root STATED in the error. Containment is realpath-based, so a
-// symlink inside the root pointing out is refused the same as a plain escape.
+// READ flag is contained inside a DECLARED root - the CLI's working directory by default - with the
+// root STATED in the error. Containment is realpath-based, so a symlink inside the root pointing out
+// is refused the same as a plain escape.
+//
+// web-uplift-re77: the working directory is NOT the only root a legitimate caller needs - the fixer
+// points --source at a target that routinely sits OUTSIDE its cwd (out-of-tree targets are an
+// explicitly supported fix workflow), and an operator typing an out-of-tree path is making the same
+// declaration. So the root can be DECLARED per invocation with --source-root <dir>: the caller states
+// the workspace the path flags may touch, the containment applies against THAT root exactly as it
+// does against cwd, and every refusal still names the root in force. The declaration is part of the
+// invocation, so it is visible in the command itself - a caller that did not declare it gets the
+// strict cwd default.
 const WORKSPACE_ROOT = () => resolve(process.cwd());
+export function declaredPathRoot(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--source-root') return resolve(String(argv[i + 1] ?? ''));
+  }
+  return null;
+}
 export function containLocalPath(flag, raw, root = WORKSPACE_ROOT()) {
   const resolved = resolve(String(raw ?? ''));
   let real;
@@ -216,6 +231,9 @@ export function containLocalPath(flag, raw, root = WORKSPACE_ROOT()) {
 const joinPath = (a, b) => `${a}${sep}${b}`;
 
 export function parseArgs(argv) {
+  // web-uplift-re77: the declared root can appear anywhere in argv, so it is resolved before any
+  // path flag is contained; the three read flags below take it (or the cwd default).
+  const pathRoot = declaredPathRoot(argv) ?? undefined;
   // `wait` is a GLOBAL fallback (1000ms) for the primitives that do not declare a settle of their own. It is
   // marked as a default so a primitive with its own documented default can tell "the operator chose this"
   // from "nobody chose anything" - without the marker, discoverability's 3500ms SPA default could not be
@@ -242,11 +260,11 @@ export function parseArgs(argv) {
     else if (a === '--duration') args.duration = Number(argv[++i]);
     else if (a === '--fps') args.fps = Number(argv[++i]);
     else if (a === '--selector') args.selector = argv[++i];
-    else if (a === '--source') args.source = containLocalPath('--source', argv[++i]);
+    else if (a === '--source') args.source = containLocalPath('--source', argv[++i], pathRoot);
     else if (a === '--expr') args.expr = argv[++i];
-    else if (a === '--expr-file') args.expr = readFileSync(containLocalPath('--expr-file', argv[++i]), 'utf8');
+    else if (a === '--expr-file') args.expr = readFileSync(containLocalPath('--expr-file', argv[++i], pathRoot), 'utf8');
     else if (a === '--interact') args.interact = argv[++i];
-    else if (a === '--interact-file') args.interact = readFileSync(containLocalPath('--interact-file', argv[++i]), 'utf8');
+    else if (a === '--interact-file') args.interact = readFileSync(containLocalPath('--interact-file', argv[++i], pathRoot), 'utf8');
     else if (a === '--interact-deadline') {
       // A typo must not silently become an unbounded wait: NaN makes
       // `elapsed >= NaN` false forever and sleep(NaN) a 0ms spin, Infinity never
@@ -361,6 +379,7 @@ async function main() {
         '         --allow-scheme <scheme,..> permit those non-http(s) target schemes this run (e.g. file); recorded in the output\n' +
         '         --locale de-DE --timezone Asia/Tokyo\n' +
         '         --source dir --expr "<js>" --expr-file f --interact "<js>" --interact-file f --interact-deadline ms\n' +
+        '         --source-root dir declares the workspace path flags may read from (default: the CLI\'s working directory)\n' +
         '         --source dir reads a local source tree: contents are redacted (names-based, as the HAR bodies) and credential-named files are skipped unread before anything is inlined\n' +
         '         --rules a,b,c --tags a,b,c --duration ms --fps n --full-page --bodies\n' +
         '         --cdp-deadline ms (bound every CDP attach/navigation wait; default 30000)\n' +

@@ -140,7 +140,9 @@ export async function testExplicitSourceHonoursOperatorSpecifiedRoot() {
   writeFileSync(join(srcDir, 'app.js'), 'console.log("hello world");\n');
 
   try {
-    const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source', srcDir, '--quiet']);
+    // web-uplift-re77: an out-of-cwd source dir is a legitimate DECLARED root - the operator
+    // (or the fixer, for its targets) states the workspace the path flags may read.
+    const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', srcDir, '--source', srcDir, '--quiet']);
     assert(res.status === 0, `cli exited with status ${res.status}: ${res.stderr}`);
     const data = JSON.parse(res.stdout);
     assert(data.source, 'source block must be present when --source is specified');

@@ -118,7 +118,49 @@ export async function testTrailingSeparatorRefused() {
   }
 }
 
-// 5. THE LEGITIMATE USE MUST STILL WORK: an in-root relative source path passes the containment
+// 5. web-uplift-re77: A DECLARED ROOT (--source-root) widens containment to the caller's stated
+// workspace - the fixer points --source at targets outside its cwd, and that workflow is
+// explicitly supported. The declaration must cover the named root's own subtree and still refuse
+// everything outside it; refusals name the root IN FORCE.
+export async function testDeclaredRootHonouredAndStillBounding() {
+  const declared = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-decl-'));
+  const outside = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-outside-'));
+  writeFileSync(join(declared, 'app.js'), 'export const app = 1;\n');
+  const secret = join(outside, 'secret.js');
+  writeFileSync(secret, 'const stolen = "TOPSECRET";\n');
+  try {
+    // IN the declared root (absolute, outside cwd): accepted.
+    const ws = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-cwd-'));
+    try {
+      const ok = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', declared, '--source', declared, '--quiet'], ws);
+      assert(!ok.stderr.includes('must be inside'), `a declared-root source must pass: ${ok.stderr.slice(-300)}`);
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+    // OUTSIDE the declared root: refused, naming the DECLARED root.
+    const ws2 = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-cwd2-'));
+    try {
+      const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', declared, '--expr-file', secret, '--quiet'], ws2);
+      assert(res.status !== 0, 'outside the declared root must still refuse');
+      assert(res.stderr.includes(declared), `the refusal must name the declared root: ${res.stderr.slice(-300)}`);
+    } finally {
+      rmSync(ws2, { recursive: true, force: true });
+    }
+    // ' ..' escape from the declared root: refused.
+    const ws3 = mkdtempSync(join(tmpdir(), 'web-uplift-pathroot-cwd3-'));
+    try {
+      const res = await runCliAsync(['dom', 'about:blank', '--allow-scheme', 'about', '--source-root', declared, '--source', '../', '--quiet'], ws3);
+      assert(res.status !== 0, 'a .. escape from the declared root must refuse');
+    } finally {
+      rmSync(ws3, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(declared, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+}
+
+// 6. THE LEGITIMATE USE MUST STILL WORK: an in-root relative source path passes the containment
 // gate (the run then fails later at the browser step, which this sandbox has no server for - the
 // assertion is that the failure is NOT the containment refusal).
 export async function testInRootSourceStillAccepted() {
@@ -137,6 +179,7 @@ const cases = [
   testSymlinkOutRefused,
   testTrailingSeparatorRefused,
   testInRootSourceStillAccepted,
+  testDeclaredRootHonouredAndStillBounding,
 ];
 
 let failed = 0;
