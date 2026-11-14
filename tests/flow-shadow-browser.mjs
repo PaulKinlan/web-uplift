@@ -84,7 +84,10 @@ export async function testFlowPierceShadowRootBrowser() {
   let chrome;
   try {
     chrome = await launchChrome({ log });
-    const session = await newSession(chrome, { log });
+    // web-uplift-f9jg: the network guard exempts only the declared audited origin - the same
+    // declaration the CLI makes for an operator-chosen loopback target. Without it the guard
+    // fail-closes and refuses the fixture document itself before the shadow DOM can exist.
+    const session = await newSession(chrome, { log, auditedOrigin: new URL(url).origin });
     try {
       const client = session.client;
       await navigate(client, url, { settleMs: 300, log });
