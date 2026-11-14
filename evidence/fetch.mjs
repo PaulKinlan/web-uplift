@@ -98,10 +98,23 @@ export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin
   const host = normalizedHost(parsed.hostname);
   // Only the operator-selected ORIGIN is exempt: the same host on a different
   // port (another local service) is a different origin and must not inherit it.
-  // The exemption ONLY applies to explicitly provided IP addresses, not names
-  // that resolve to private addresses.
-  if (targetOrigin && parsed.origin === targetOrigin && isIP(host)) {
-    parsed.pinnedAddress = host;
+  //
+  // The exemption is keyed on the ORIGIN, not on how the host is SPELLED. It used
+  // to require `isIP(host)`, which made the one documented local-testing case
+  // spelling-dependent: auditing http://127.0.0.1:PORT worked and auditing
+  // http://localhost:PORT was refused outright, because a name went on to the
+  // resolved-address rule that the exemption exists to bypass (web-uplift-a32k).
+  // An operator who types a name has chosen that origin just as explicitly, and
+  // the page cannot widen the choice: any other host, port or scheme is still
+  // resolved and still refused.
+  //
+  // Residual, stated rather than buried: a NAME-served target's own requests are
+  // allowed without an address decision, so a target whose DNS answer changes
+  // after it was chosen (rebinding) keeps its own origin. That origin is the
+  // operator's explicit choice and the page can already read it same-origin;
+  // bounding it needs connect-time address pinning (web-uplift-jpzr).
+  if (targetOrigin && parsed.origin === targetOrigin) {
+    if (isIP(host)) parsed.pinnedAddress = host;
     return parsed;
   }
   if (isIP(host)) {

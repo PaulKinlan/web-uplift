@@ -223,12 +223,49 @@ export async function testAuditedOriginAssetLoads() {
   }
 }
 
+// 6. A HOSTNAME-served target navigates and its own asset loads. The exemption is keyed on the
+// audited ORIGIN, not on the host being an IP literal: `audit http://localhost:PORT` is the
+// documented local-testing case and used to die on the spelling alone while
+// `http://127.0.0.1:PORT` worked (web-uplift-a32k). A name the operator typed is as explicit a
+// choice as a literal, and the page cannot widen it - case 2 proves the same name pointing at a
+// DIFFERENT port is still refused.
+export async function testHostnameServedTargetNavigates() {
+  const audited = await serveOnce((req, res) => {
+    if (req.url === '/asset.txt') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('same-origin-asset-ok');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(PAGE(`
+      window.__asset = 'pending';
+      fetch('/asset.txt').then((r) => r.text()).then((t) => { window.__asset = t; }).catch(() => { window.__asset = 'failed'; });
+    `));
+  });
+  try {
+    const target = `http://localhost:${audited.address().port}`;
+    const dom = await runCliAsync(['dom', target, '--allow-scheme', 'http', '--quiet']);
+    assert(!dom.stdout.includes('network-refusal'), `the audited name-served target's own navigation must not be refused: ${dom.stdout.slice(-500)}`);
+    const res = await runCliAsync(['evaluate', target, '--allow-scheme', 'http', '--expr', 'window.__asset', '--quiet']);
+    assert(res.status === 0, `the evaluate primitive must succeed on a name-served target: ${res.status} ${res.stderr.slice(-300)}`);
+    const data = JSON.parse(res.stdout);
+    const value = typeof data === 'string' ? data : data?.result?.value ?? data?.result ?? data?.value;
+    assert(
+      String(value).includes('same-origin-asset-ok'),
+      `a name-served target's own asset must LOAD (got ${JSON.stringify(value ?? null).slice(0, 200)}): ${res.stdout.slice(-400)}`,
+    );
+  } finally {
+    audited.close();
+  }
+}
+
 const cases = [
   testPageFetchLoopbackRefused,
   testNameResolvingPrivateRefused,
   testRedirectToPrivateRefused,
   testServiceWorkerRequestBlocked,
   testAuditedOriginAssetLoads,
+  testHostnameServedTargetNavigates,
 ];
 
 let failed = 0;

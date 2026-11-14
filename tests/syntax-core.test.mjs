@@ -386,6 +386,21 @@ export async function testPageDerivedFetchGuard() {
   }
   const exempt = await assertPageDerivedFetchAllowed('http://127.0.0.1:8080/m.webmanifest', { targetOrigin: 'http://127.0.0.1:8080' });
   assert(exempt.port === '8080', `the audited target ORIGIN must be exempt: ${exempt.href}`);
+  // web-uplift-a32k: the same exemption for a NAME-served target - the operator
+  // who audits http://localhost:PORT chose that origin as explicitly as a literal.
+  const namedExempt = await assertPageDerivedFetchAllowed('http://localhost:8080/m.webmanifest', { targetOrigin: 'http://localhost:8080' });
+  assert(namedExempt.port === '8080', `a name-served target's own ORIGIN must be exempt: ${namedExempt.href}`);
+  // ...and the name form is no wider than the literal form: another port is another origin.
+  let namedCrossPort = null;
+  try {
+    await assertPageDerivedFetchAllowed('http://localhost:2375/containers/json', { targetOrigin: 'http://localhost:8080' });
+  } catch (e) {
+    namedCrossPort = e;
+  }
+  assert(
+    namedCrossPort && /refused:/.test(namedCrossPort.message),
+    `a name-served target's exemption must not cross ports: ${namedCrossPort?.message}`,
+  );
   const relative = await assertPageDerivedFetchAllowed('/m.webmanifest', {
     base: 'http://127.0.0.1:8080/deep/page',
     targetOrigin: 'http://127.0.0.1:8080',
