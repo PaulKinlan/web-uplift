@@ -19,8 +19,11 @@
 // Usage: node tests/skill-write-contract.mjs
 // Exit 0 when the halves agree, 1 when they drift. Node builtins only: no npm
 // install is needed to run it.
-import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import {
+  mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync,
+} from 'node:fs';
+import { join, relative, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { SCRATCH_SUBDIR, allowedRootsFor, escapedChanges } from '../runner/write-scope.mjs';
 
@@ -30,21 +33,36 @@ const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 export const SKILL_CONTRACT_PHRASE = `<report directory>/${SCRATCH_SUBDIR}/`;
 
-// Machine-local path checks (web-uplift-069l, web-uplift-0jpc): skills are shared doctrine and must not hard-code
-// machine-local paths (/home/..., /Users/..., ~/.gemini/..., ~/.config/..., C:\Users\..., /opt/homebrew/..., /mnt/c/Users/...,
-// file:///home/...) which make them non-portable and silently fail or run arbitrary code elsewhere.
+// Machine-local path checks (web-uplift-069l, web-uplift-0jpc, web-uplift-1v48): skills are shared doctrine
+// and must not hard-code machine-local paths (/home/..., /Users/..., ~/.gemini/..., C:\Users\..., /opt/homebrew/...,
+// /mnt/c/Users/..., file:///home/...) which make them non-portable and silently fail or run arbitrary code elsewhere.
+//
+// web-uplift-1v48: `/home/` and `/Users/` carry no left boundary of their own, so before this fix a documentation
+// URL whose PATH contained one of those segments ('https://developers.google.com/home/docs') was reported as a
+// machine-local path, and the guard would have failed the gate for citing a docs page. The fix is not an extra
+// boundary character - a URL path segment follows '/', which no boundary check can tell from a real absolute
+// path. It is to decide what the token IS: non-`file:` URLs are blanked before the path patterns run, so a
+// citation can never be read as a filesystem location, while `file://` - which genuinely names a local path - is
+// kept in scope and still matched by the explicit `file://` alternatives below.
+const NON_FILE_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s)\]`'"]+/gi;
+const URL_PLACEHOLDER = '\u0000';
+
 export function skillMachineLocalPathViolations(skillText) {
   const violations = [];
   const patterns = [
     /(?:file:\/\/|\/mnt\/[a-z])?(?:\/home\/[^\s)\]`'"]+)/g,
     /(?:file:\/\/|\/mnt\/[a-z])?(?:\/Users\/[^\s)\]`'"]+)/g,
-    /(?:^|[^\w./-])(~(?:\/|\\[\w.-]+)[^\s)\]`'"]*)/g,
-    /(?:^|[^\w./-])([A-Za-z]:\\[Uu]sers\\[^\s)\]`'"]+)/g,
+    /(?:^|[^\w./-])(~[\\/][^\s)\]`'"]*)/g,
+    /(?:^|[^\w./-])([A-Za-z]:[\\/][Uu]sers[\\/][^\s)\]`'"]+)/g,
     /(?:\/opt\/homebrew\/[^\s)\]`'"]+)/g,
     /(?:\/opt\/local\/[^\s)\]`'"]+)/g,
   ];
+  // Blank non-`file:` URLs, keeping their LENGTH so offsets reported elsewhere still line up.
+  const scanText = skillText.replace(NON_FILE_URL, (url) => (
+    url.slice(0, 5).toLowerCase() === 'file:' ? url : URL_PLACEHOLDER.repeat(url.length)
+  ));
   for (const pat of patterns) {
-    for (const match of skillText.matchAll(pat)) {
+    for (const match of scanText.matchAll(pat)) {
       const p = match[1] || match[0];
       violations.push(`SKILL.md contains machine-local path "${p}" - resolve relative to the skill root or declare tool by name (web-uplift-069l, web-uplift-0jpc)`);
     }
@@ -188,15 +206,48 @@ if (skillWriteContractViolations(benign, gitignoreText).length !== 0) {
   problems.push('false-positive control: prose \'from scratch\' beside the contract phrase must not violate the contract');
 }
 
-// Machine-local path audit (web-uplift-069l, web-uplift-gmd4): every SKILL.md in the repository must be portable
+// Machine-local path audit (web-uplift-069l, web-uplift-gmd4): every SKILL.md in the repository must be portable.
+// The population is pinned by NAME, not by a count: the real tree dedupes by realpath, so a count threshold is
+// the wrong invariant (web-uplift-gmd4 - 'length >= 3' was already true with symlinks skipped entirely).
 const skillFiles = findSkillFiles(repoRoot);
-if (skillFiles.length < 3) {
-  problems.push(`skill search found fewer than 3 SKILL.md files (${skillFiles.length} found): directory traversal broke or missed symlinks`);
+for (const known of ['.agents/skills/beads/SKILL.md', '.claude/skills/web-audit/SKILL.md', '.pi/skills/web-audit/SKILL.md']) {
+  if (!skillFiles.some((sf) => relative(repoRoot, sf) === known)) {
+    problems.push(`skill search must reach ${known}: the population, not a count, is what proves the traversal works`);
+  }
 }
 for (const sf of skillFiles) {
   const content = readFileSync(sf, 'utf8');
   for (const v of skillMachineLocalPathViolations(content)) {
     problems.push(`${relative(repoRoot, sf)}: ${v}`);
+  }
+}
+
+// web-uplift-gmd4: a symlink control that can actually FAIL. statSync/realpathSync traversal is what makes a
+// symlinked skill tree visible, so the fixture builds one and requires the traversal to find it. Mutating
+// statSync back to lstatSync (the reported defect) loses both the symlinked directory's SKILL.md and the
+// symlinked SKILL.md file, and this control then names them - the old 'length >= 3' assert could not.
+{
+  const scratch = mkdtempSync(join(tmpdir(), 'skill-symlink-'));
+  try {
+    // A real skill tree OUTSIDE the walked directory, reached only through links.
+    const targetTree = join(scratch, 'target-tree');
+    mkdirSync(targetTree, { recursive: true });
+    writeFileSync(join(targetTree, 'SKILL.md'), '# linked target\n', 'utf8');
+    const skills = join(scratch, 'skills');
+    mkdirSync(skills, { recursive: true });
+    // (1) a symlinked skill DIRECTORY
+    symlinkSync(targetTree, join(skills, 'linked-dir'), 'dir');
+    // (2) a symlinked SKILL.md FILE inside a real directory
+    mkdirSync(join(skills, 'linked-file'), { recursive: true });
+    symlinkSync(join(targetTree, 'SKILL.md'), join(skills, 'linked-file', 'SKILL.md'), 'file');
+    const relFound = findSkillFiles(skills).map((f) => relative(skills, f)).sort();
+    for (const expected of ['linked-dir/SKILL.md', 'linked-file/SKILL.md']) {
+      if (!relFound.includes(expected)) {
+        problems.push(`symlink control: findSkillFiles missed ${expected} (found ${JSON.stringify(relFound)}) - a symlinked skill directory or SKILL.md is silently skipped (web-uplift-gmd4)`);
+      }
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 }
 
@@ -206,7 +257,9 @@ for (const sample of [
   'See /home/exedev/tools/plugin for config.',
   'Load from /Users/paul/Library/Application Support/agent.',
   'Config at C:\\Users\\exedev\\AppData\\Local\\skills',
+  'Load from C:/Users/exedev/AppData/Local/skills',
   'Load from /opt/homebrew/lib/node_modules/x',
+  'Load from /opt/local/lib/node_modules/x',
   'file:///home/exedev/x/SKILL.md',
   '/mnt/c/Users/exedev/x',
 ]) {
@@ -214,10 +267,15 @@ for (const sample of [
     problems.push(`mutation control: machine-local path in ${JSON.stringify(sample)} must violate portability check`);
   }
 }
-// False-positive control: relative paths, URLs, and innocent prose must NOT violate
+// False-positive control: relative paths, documentation URLs and innocent prose must NOT violate. The two URL
+// cases are web-uplift-1v48: a docs URL whose PATH contains /home/ or /Users/ is a citation, not a filesystem
+// location, and flagging it would fail the gate for citing a page. `file://` is deliberately NOT here - it
+// names a local path and must stay a violation (it is in the mutation list above).
 for (const sample of [
   'Run ./scripts/scan.py or use node_modules/@foo/bar.',
   'Visit https://github.com/ChromeDevTools/chrome-devtools-mcp for docs.',
+  'See https://developers.google.com/home/docs for the reference.',
+  'Guide: https://x.test/Users/guide and https://x.test/home/install',
   'Relative skill path: ../skills/audit/SKILL.md',
 ]) {
   if (skillMachineLocalPathViolations(sample).length !== 0) {
