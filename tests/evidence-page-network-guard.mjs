@@ -17,10 +17,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
+// The suite convention (tests/test-helpers.mjs): one exported array of cases, run through runSuite, so
+// --list prints the bare case names the registry and the fast gate enumerate. The hand-rolled runner this
+// file used to end with printed "✔ name", which lists nothing a gate can match, and
+// testSuiteListsMatchRegressionRegistry refuses a gate target that lists no cases - correctly, because a
+// target it cannot enumerate is a target it cannot show ran anything (web-uplift-j48l).
+import { assert, runSuite } from './test-helpers.mjs';
 
 const CLI_PATH = fileURLToPath(new URL('../evidence/cli.mjs', import.meta.url));
 
@@ -259,7 +261,7 @@ export async function testHostnameServedTargetNavigates() {
   }
 }
 
-const cases = [
+export const auditedPageNetworkGuardTests = [
   testPageFetchLoopbackRefused,
   testNameResolvingPrivateRefused,
   testRedirectToPrivateRefused,
@@ -268,19 +270,5 @@ const cases = [
   testHostnameServedTargetNavigates,
 ];
 
-let failed = 0;
-for (const testCase of cases) {
-  try {
-    await testCase();
-    console.log(`\u2714 ${testCase.name}`);
-  } catch (err) {
-    failed += 1;
-    console.error(`\u2716 ${testCase.name}`);
-    console.error(String(err.message || err).slice(0, 600));
-  }
-}
-if (failed) {
-  console.error(`${failed} case(s) failed`);
-  process.exit(1);
-}
-console.log('all audited-page network guard cases passed');
+// Every case launches a browser, so the bound is per case rather than per file.
+await runSuite(auditedPageNetworkGuardTests, import.meta.url, { timeoutMs: 120000, concurrency: 1 });

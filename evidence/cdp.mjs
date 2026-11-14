@@ -1752,12 +1752,21 @@ function addScriptToEvaluateOnNewDocumentOnce(client, log) {
   });
 }
 
-export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault, auditedOrigin } = {}) {
+// `pageNetworkGuard: false` exists for ONE caller shape: a test that drives the Fetch domain ITSELF on
+// the session - it enables its own patterns, holds requests and continues them - because CDP Fetch is
+// per session and every handler receives every pause. Two consumers of the same pause answer the same
+// requestId twice: the guard's refusal fails it while the test waits to continue it, and the second
+// reply is 'Invalid InterceptionId'. A guard a caller can wave off is a bypass, so the option is named
+// for that narrow purpose and withSession (the test-only raw-CDP seam) is the only caller that sets
+// it; testWithSessionIsATestOnlySeam in tests/syntax-core.test.mjs refuses a production module that
+// calls withSession at all, and the CLI, flow replay, flow record and batch runner all arm the guard
+// unconditionally (web-uplift-j48l).
+export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault, auditedOrigin, pageNetworkGuard = true } = {}) {
   // web-uplift-j3re: a launch HANDLE means the pipe transport, where no port exists to dial; a
   // number keeps the websocket path unchanged, so the port route stays supported (and audited by
   // 4rv's exposure guard) rather than being deleted with the fix.
   if (portOrHandle && typeof portOrHandle === 'object' && portOrHandle.pipe) {
-    return newPipeSession(portOrHandle, { log, cdpDeadlineMs, auditedOrigin });
+    return newPipeSession(portOrHandle, { log, cdpDeadlineMs, auditedOrigin, pageNetworkGuard });
   }
   const port = portOrHandle;
   // Create a dedicated target via the /json/new HTTP endpoint and attach to the
@@ -1807,9 +1816,11 @@ export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs =
     // budget and a long-lived batch process cannot wedge the guard (web-uplift-j48l).
     lookup: createGuardLookup(),
   };
-  guardsByClient.set(client, guard);
-  await armNetworkGuard(client, guard, log, cdpDeadlineMs);
-  addScriptToEvaluateOnNewDocumentOnce(client, log);
+  if (pageNetworkGuard) {
+    guardsByClient.set(client, guard);
+    await armNetworkGuard(client, guard, log, cdpDeadlineMs);
+    addScriptToEvaluateOnNewDocumentOnce(client, log);
+  }
 
   async function close() {
     // Teardown is bounded for the same reason: by the time close() runs, the browser may
@@ -1826,13 +1837,13 @@ export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs =
     }
   }
 
-  return { client, targetId, close, networkGuard: guard };
+  return pageNetworkGuard ? { client, targetId, close, networkGuard: guard } : { client, targetId, close };
 }
 
 // The pipe equivalent of newSession: create a target, attach FLAT (so commands and events carry a
 // sessionId instead of a nested session), enable the same domains, and return the same shape - so a
 // caller cannot tell which transport it got apart from the handle it passed in.
-async function newPipeSession(chrome, { auditedOrigin, log = () => {}, cdpDeadlineMs }) {
+async function newPipeSession(chrome, { auditedOrigin, log = () => {}, cdpDeadlineMs, pageNetworkGuard = true }) {
   const { pipe } = chrome;
   const created = await withDeadline(
     pipe.send('Target.createTarget', { url: 'about:blank' }),
@@ -1873,9 +1884,11 @@ async function newPipeSession(chrome, { auditedOrigin, log = () => {}, cdpDeadli
     // budget and a long-lived batch process cannot wedge the guard (web-uplift-j48l).
     lookup: createGuardLookup(),
   };
-  guardsByClient.set(client, guard);
-  await armNetworkGuard(client, guard, log, cdpDeadlineMs);
-  addScriptToEvaluateOnNewDocumentOnce(client, log);
+  if (pageNetworkGuard) {
+    guardsByClient.set(client, guard);
+    await armNetworkGuard(client, guard, log, cdpDeadlineMs);
+    addScriptToEvaluateOnNewDocumentOnce(client, log);
+  }
 
   async function close() {
     try {
@@ -2137,10 +2150,10 @@ export function attachConsoleEvidence(client, result) {
 
 // Launch Chrome, open a session, run the body, and always clean up. A thin
 // convenience so each primitive does not repeat the launch/teardown dance.
-export async function withSession(fn, { log = () => {} } = {}) {
+export async function withSession(fn, { log = () => {}, auditedOrigin, pageNetworkGuard = true } = {}) {
   const chrome = await launchChrome({ log });
   try {
-    const session = await newSession(chrome, { log });
+    const session = await newSession(chrome, { log, auditedOrigin, pageNetworkGuard });
     try {
       return await fn(session.client, { chrome, session });
     } finally {

@@ -946,6 +946,10 @@ export async function testScorecardWithholdsScriptedFindingUrls() {
     assert(html.includes(esc(raw)), `scorecard: a withheld finding url must stay visible as escaped text: ${JSON.stringify(raw)}`);
   }
 
+  // web-uplift-j48l: the fixture is an anonymous loopback port chosen inside the callback, so this session
+  // has no audited origin to declare and the guard refuses the page's own navigation (the case failed with a
+  // chrome-error document and 'found 0 friendly links'). What is under test is the scorecard's escaping, not
+  // the guard, so the seam opts out rather than asserting through a page that never loaded.
   // The browser's parser, on the document that actually shipped.
   const measured = await withSession(async (client) => {
     const server = http.createServer((req, res) => {
@@ -978,7 +982,7 @@ export async function testScorecardWithholdsScriptedFindingUrls() {
     } finally {
       await closeFixtureServer(server, 'scorecard scripted-url page');
     }
-  });
+  }, { pageNetworkGuard: false });
 
   // The bound is PROVEN rather than assumed, the same discipline the rest of this suite uses: a close that
   // never completes must fail loudly inside the budget instead of quietly adding a minute to the gate. The
@@ -1295,6 +1299,10 @@ export async function testReservedImageBoxInBrowser() {
     return { ready: document.readyState, sized: read('withSize', 'markerA'), unsized: read('withoutSize', 'markerB') };
   })()`;
 
+  // web-uplift-j48l: this case drives the Fetch domain ITSELF - it enables its own patterns, holds both
+  // image requests and continues them by hand - and CDP Fetch is per session, so a guard armed on the same
+  // session answers the same requestId too: the guard failed the held request and the test's own
+  // continueRequest then threw 'Invalid InterceptionId'. The seam is opted out here and nowhere else.
   const measured = await withSession(async (client) => {
     const encoded = await evaluate(client, `(() => { const c = document.createElement('canvas'); c.width = 400; c.height = 250; const x = c.getContext('2d'); x.fillStyle = '#123456'; x.fillRect(0, 0, 400, 250); return c.toDataURL('image/png'); })()`);
     const png = Buffer.from(String(encoded).split(',')[1], 'base64');
@@ -1341,7 +1349,7 @@ export async function testReservedImageBoxInBrowser() {
     } finally {
       await closeFixtureServer(server, 'reserved image box page');
     }
-  });
+  }, { pageNetworkGuard: false });
 
   // The page is parsed and both bitmaps really were in flight: without these the
   // measurement could be of an empty document, which is how an earlier attempt read zero.
@@ -1491,6 +1499,9 @@ export async function testScorecardCspRestrictsAndFunctions() {
     return JSON.stringify({ hasMeta: !!meta, findingsActive, hasOpener: !!opener, dialogOpen, imgCount: imgs.length, decoded, bodyBg, injectionBlocked, ready: document.readyState });
   })()`;
 
+  // web-uplift-j48l: same shape as the scripted-url case above - an anonymous loopback fixture with no
+  // audited origin to declare, so the guard would refuse the page's own navigation and every measurement
+  // below would read a chrome-error document. The case is about the shipped CSP, not the guard.
   const measured = await withSession(async (client) => {
     const server = http.createServer((req, res) => {
       if ((req.url || '') === '/no-csp') {
@@ -1525,7 +1536,7 @@ export async function testScorecardCspRestrictsAndFunctions() {
       server.closeAllConnections();
       await new Promise((resolveClose) => server.close(resolveClose));
     }
-  });
+  }, { pageNetworkGuard: false });
 
   // Function under the policy: everything the page is for still works.
   assert(measured.under.ready === 'complete' || measured.under.ready === 'interactive', `csp: the document must parse under its own policy, got ${measured.under.ready}`);
@@ -2274,7 +2285,11 @@ export function testSuiteListsMatchRegressionRegistry() {
   // 19 *.test.mjs suites plus the 13 gate targets that are not *.test.mjs files (web-uplift-yfbk). The
 // constant catches a change in the NUMBER of things the gate runs, which is what makes a silently dropped
 // suite visible; it is not the count of test files.
-const EXPECTED_SUITE_FILES = 33;
+// 35, from 33: web-uplift-j48l added the guard's DNS adapter suite (tests/guard-lookup.test.mjs) and
+// registered the browser-driven guard suite (tests/evidence-page-network-guard.mjs) as a gate target. The
+// second one had been a gate target since web-uplift-f9jg without appearing in this population, and the
+// count only surfaced once the suites before this one stopped failing first.
+const EXPECTED_SUITE_FILES = 35;
   // web-uplift-rkcs: the case population is DECLARED BY NAME PER SUITE FILE, for the web-uplift-j3go
   // reason. A count cannot tell an addition in one file from a removal in another, and the reviewer showed a
   // global floor still passing after exactly that pair of edits (add a case, drop a preexisting one). Every
@@ -2328,6 +2343,16 @@ const EXPECTED_SUITE_FILES = 33;
     ],
     'tests/evidence-network-headers.test.mjs': [
       'testHeadersPrimitiveFindsHeadersRegardlessOfNameCase', 'testHeadersPrimitiveSurvivesSlowResponseUnderLoad',
+    ],
+    'tests/guard-lookup.test.mjs': [
+      'testAdapterHandsThePolicyNodeArrayShape', 'testAdapterAsksTheResolverWithNodeOptions',
+      'testPastTheCapTheCacheEvictsItNeverRefuses', 'testEachSessionGetsItsOwnCache',
+      'testTheCacheEvictsTheLeastRecentlyUsedEntry', 'testAFailedResolveIsNotCachedAndIsRetried',
+      'testAnAnswerOlderThanTheTtlIsDecidedAgain', 'testTheAdapterNeverReturnsItsCachedArray',
+    ],
+    'tests/evidence-page-network-guard.mjs': [
+      'testPageFetchLoopbackRefused', 'testNameResolvingPrivateRefused', 'testRedirectToPrivateRefused',
+      'testServiceWorkerRequestBlocked', 'testAuditedOriginAssetLoads', 'testHostnameServedTargetNavigates',
     ],
     'tests/evidence-network-resilience.test.mjs': [
       'testTrackersThirdPartySuffix', 'testResiliencePrimitive', 'testResilienceWaitsForLateServiceWorkerRegistration',
@@ -2521,6 +2546,42 @@ const EXPECTED_SUITE_FILES = 33;
   );
 }
 
+// web-uplift-j48l: withSession is the raw-CDP seam that can opt the audited-page network guard out of a
+// session (three cases here drive the Fetch domain themselves, and CDP Fetch is per session, so a second
+// consumer of the same pause answers one requestId twice). An opt-out in a guard is only as safe as the
+// population that can reach it, so this control pins the population to the test tree: no production module
+// may call withSession at all, and if one ever does this fails with its path rather than leaving a guard
+// bypass in a shipped path.
+export function testWithSessionIsATestOnlySeam() {
+  const productionRoots = ['evidence', 'runner', 'fixer', 'aggregate', 'bin', 'mcp', 'scripts'];
+  const offenders = [];
+  for (const root of productionRoots) {
+    const dir = join(repoRoot, root);
+    if (!existsSync(dir)) continue;
+    for (const file of listFiles(dir, (p) => p.endsWith('.mjs'))) {
+      const rel = relative(repoRoot, file);
+      if (rel.startsWith('tests/')) continue;
+      // Comments are stripped first: prose that MENTIONS the seam is not a call site, and the first version of
+      // this control failed on its own explanatory comment in evidence/cdp.mjs, which is the shape it exists to
+      // avoid (a control that fires on the wrong thing teaches the next author to weaken it).
+      const source = readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('//'))
+        .join('\n');
+      // A call, minus the definition site itself in evidence/cdp.mjs.
+      const calls = [...source.matchAll(/withSession\s*\(/g)].filter((m) => {
+        const before = source.slice(0, m.index);
+        return !/export\s+async\s+function\s*$/.test(before.split('\n').pop() || '');
+      });
+      if (calls.length > 0) offenders.push(`${rel} (${calls.length} call site(s))`);
+    }
+  }
+  assert(
+    offenders.length === 0,
+    `withSession can opt the audited-page network guard out of a session, so it must stay a TEST-ONLY seam; a production module now calls it: ${offenders.join(', ')}. Use newSession with an auditedOrigin instead, and state why the guard cannot stay armed if it truly cannot.`,
+  );
+}
+
 // The control that makes the population DECLARED rather than derived, driven with a synthetic list so it
 // writes nothing into the repository. It must FAIL LOUDLY and NAME the file, because a census that notices a
 // loss without saying what was lost still leaves the reader searching.
@@ -2623,6 +2684,7 @@ export const syntaxCoreTests = [
   testCompareArtifactContainment,
   testCensusTargetsAreTracked,
   testSuiteListsMatchRegressionRegistry,
+  testWithSessionIsATestOnlySeam,
 ];
 
 export {
