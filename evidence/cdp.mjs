@@ -16,9 +16,11 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from 'node:fs';
 import { homedir, networkInterfaces, tmpdir } from 'node:os';
 import { connect as netConnect } from 'node:net';
+import { lookup } from 'node:dns/promises';
 import { join } from 'node:path';
 import CDP from 'chrome-remote-interface';
 import { redactUrlCredentialValues, redactUrlsInText } from './credential-terms.mjs';
+import { assertPageDerivedFetchAllowed, targetOriginOf } from './fetch.mjs';
 
 // Chrome binary discovery. Env overrides come first (CHROME_PATH is honoured as
 // an alias of CHROME_BIN because other Chrome tooling uses it), then the
@@ -1563,12 +1565,153 @@ async function withRetry(fn, { label, attempts = 8, delayMs = 200, maxDelayMs = 
 
 // Open a fresh CDP session against a new target (tab) and enable the domains we
 // rely on across the auditor. Returns the CDP client plus a per-target cleanup.
-export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault } = {}) {
+// --- the audited page's network guard (web-uplift-f9jg) --------------------
+//
+// fs20/x1ru restricted NAVIGATION; this is the other half: once the page is
+// loaded, everything it fetches (images, scripts, fetch/XHR, beacons,
+// redirects, service-worker requests) could still reach the developer's local
+// services and the cloud metadata endpoint, and what the page learns can end
+// up encoded in committed evidence. The guard applies fetch.mjs's page-derived
+// fetch policy - the SAME function the harness's own fetches use - at the
+// NETWORK layer, by RESOLVED ADDRESS, through CDP Fetch-domain interception on
+// the page's session: every http(s) request the renderer makes is paused,
+// resolved here, and allowed or refused before it leaves the machine.
+//
+// Service workers are closed by construction rather than interception: the
+// browser profile is fresh per launch (mkdtemp below), and an init script
+// refuses service-worker REGISTRATION in the audited page, so no worker can
+// exist to make requests the page session would not see.
+//
+// Configurability: there is NO per-run override flag. The audited target's own
+// origin is the only exemption (the operator's explicit choice, the same
+// semantics as fetch.mjs), which is exactly the legitimate local-testing case:
+// auditing your own http://127.0.0.1:PORT app still works; the PAGE fetching a
+// DIFFERENT loopback port or host does not.
+
+// Per-process DNS cache for the guard: the policy resolves every hostname it
+// sees, and a page with many requests to the same host must not turn the
+// interception into a DNS flood. Bounded; a full cache evicts nothing (an
+// audit sees a bounded page's host set) but stops resolving past the cap by
+// failing closed.
+const GUARD_LOOKUP_CACHE_MAX = 256;
+const guardLookupCache = new Map();
+async function guardLookup(host) {
+  const cached = guardLookupCache.get(host);
+  if (cached) return cached;
+  let result;
+  if (guardLookupCache.size >= GUARD_LOOKUP_CACHE_MAX) {
+    result = { error: 'guard lookup cache full' };
+  } else {
+    try {
+      result = { addresses: await lookup(host, { all: true, verbatim: true }) };
+    } catch (e) {
+      result = { error: e?.code || e?.message || 'lookup failed' };
+    }
+    guardLookupCache.set(host, result);
+  }
+  return result;
+}
+
+// The refusal record: page-derived, so the same redaction applies as every
+// other page-authored string in an artifact.
+function guardRefusalRecord(requestUrl, reason, stage) {
+  return {
+    kind: 'network-refusal',
+    level: 'error',
+    source: 'network-guard',
+    stage,
+    url: redactUrlsInText(redactUrlCredentialValues(String(requestUrl || ''))),
+    text: redactUrlsInText(redactUrlCredentialValues(String(reason || ''))),
+  };
+}
+
+const guardsByClient = new WeakMap();
+
+const AUDITED_PAGE_GUARD_INIT = `(() => {
+  // web-uplift-f9jg: a service worker's requests do not traverse the page
+  // session's Fetch interception, so the guard refuses REGISTRATION instead:
+  // with a fresh profile and no worker able to register, no worker exists to
+  // make a request this session would not see. The block is loud in the
+  // refusal sense: the page's own register() call rejects visibly to IT, and
+  // the harness records nothing page-authored here.
+  try {
+    const refused = () => Promise.reject(new DOMException('service worker registration is refused by the audit harness', 'NotAllowedError'));
+    navigator.serviceWorker.register = refused;
+    navigator.serviceWorker.getRegistration = () => Promise.resolve(undefined);
+    navigator.serviceWorker.getRegistrations = () => Promise.resolve([]);
+    navigator.serviceWorker.ready = refused;
+    Object.defineProperty(navigator.serviceWorker, 'controller', { get: () => null, configurable: true });
+  } catch {}
+})();`;
+
+async function armNetworkGuard(client, guard, log, cdpDeadlineMs) {
+  // Only network schemes: data:/blob:/about: do not leave the machine and some
+  // do not survive interception anyway; http(s) is the reach this guard exists
+  // to bound.
+  await withDeadline(
+    client.Fetch.enable({
+      patterns: [
+        { urlPattern: 'http://*', requestStage: 'Request' },
+        { urlPattern: 'https://*', requestStage: 'Request' },
+      ],
+    }),
+    cdpDeadlineMs,
+    'the browser to enable network request interception (the page network guard)',
+  ).catch((err) => {
+    throw new Error(`the page network guard could not arm (Fetch.enable failed: ${err.message}); refusing to audit`);
+  });
+
+  client.Fetch.requestPaused(async ({ requestId, request }) => {
+    const pausedUrl = request?.url || '';
+    let verdict;
+    try {
+      const parsed = await assertPageDerivedFetchAllowed(pausedUrl, {
+        targetOrigin: guard.auditedOrigin,
+        lookup: guardLookup,
+      });
+      verdict = { allowed: true, pinned: parsed.pinnedAddress };
+    } catch (err) {
+      verdict = { allowed: false, reason: String(err.message || err) };
+    }
+    if (verdict.allowed) {
+      try {
+        await client.Fetch.continueRequest({ requestId });
+      } catch (err) {
+        log(`[network-guard] continue failed for ${redactUrlCredentialValues(pausedUrl)}: ${err.message}`);
+      }
+      return;
+    }
+    const record = guardRefusalRecord(pausedUrl, verdict.reason, request.stage || 'request');
+    guard.refusals.push(record);
+    try {
+      guard.pushEntry?.(record);
+    } catch {}
+    log(`[network-guard] refused ${record.url}: ${record.text}`);
+    try {
+      await client.Fetch.failRequest({ requestId, errorReason: 'BlockedByClient' });
+    } catch (err) {
+      log(`[network-guard] failRequest failed for ${record.url}: ${err.message}`);
+    }
+  });
+  log('[evidence] page network guard armed (fetch policy by resolved address)');
+}
+
+// Refuse service-worker registration in the audited page (see AUDITED_PAGE_GUARD_INIT).
+function addScriptToEvaluateOnNewDocumentOnce(client, log) {
+  client.Page.addScriptToEvaluateOnNewDocument({ source: AUDITED_PAGE_GUARD_INIT }).catch((err) => {
+    // A page that somehow runs without the init script still has the Fetch guard on every
+    // page-session request; the SW residual is only a same-profile PRE-EXISTING worker, and the
+    // profile is fresh per launch. Say so rather than failing silently.
+    log(`[network-guard] service-worker registration block could not install: ${err.message}`);
+  });
+}
+
+export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs = cdpCallDeadlineMsDefault, auditedOrigin } = {}) {
   // web-uplift-j3re: a launch HANDLE means the pipe transport, where no port exists to dial; a
   // number keeps the websocket path unchanged, so the port route stays supported (and audited by
   // 4rv's exposure guard) rather than being deleted with the fix.
   if (portOrHandle && typeof portOrHandle === 'object' && portOrHandle.pipe) {
-    return newPipeSession(portOrHandle, { log, cdpDeadlineMs });
+    return newPipeSession(portOrHandle, { log, cdpDeadlineMs, auditedOrigin });
   }
   const port = portOrHandle;
   // Create a dedicated target via the /json/new HTTP endpoint and attach to the
@@ -1607,6 +1750,14 @@ export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs =
   void Emulation;
   log('[browser] session ready');
 
+  // web-uplift-f9jg: arm the network guard (see the block comment above). The
+  // audit does not run without it - an unaudited fetch path from the page to
+  // the machine is exactly what this session exists to prevent.
+  const guard = { refusals: [], auditedOrigin: typeof auditedOrigin === 'string' ? auditedOrigin : '', pushEntry: null };
+  guardsByClient.set(client, guard);
+  await armNetworkGuard(client, guard, log, cdpDeadlineMs);
+  addScriptToEvaluateOnNewDocumentOnce(client, log);
+
   async function close() {
     // Teardown is bounded for the same reason: by the time close() runs, the browser may
     // already have proven itself unresponsive.
@@ -1622,13 +1773,13 @@ export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs =
     }
   }
 
-  return { client, targetId, close };
+  return { client, targetId, close, networkGuard: guard };
 }
 
 // The pipe equivalent of newSession: create a target, attach FLAT (so commands and events carry a
 // sessionId instead of a nested session), enable the same domains, and return the same shape - so a
 // caller cannot tell which transport it got apart from the handle it passed in.
-async function newPipeSession(chrome, { log = () => {}, cdpDeadlineMs }) {
+async function newPipeSession(chrome, { auditedOrigin, log = () => {}, cdpDeadlineMs }) {
   const { pipe } = chrome;
   const created = await withDeadline(
     pipe.send('Target.createTarget', { url: 'about:blank' }),
@@ -1658,6 +1809,13 @@ async function newPipeSession(chrome, { log = () => {}, cdpDeadlineMs }) {
     'the browser to enable the CDP domains over the pipe',
   );
   log('[browser] session ready (pipe)');
+
+  // web-uplift-f9jg: the pipe transport arms the SAME guard - a transport is
+  // not a bypass.
+  const guard = { refusals: [], auditedOrigin: typeof auditedOrigin === 'string' ? auditedOrigin : '', pushEntry: null };
+  guardsByClient.set(client, guard);
+  await armNetworkGuard(client, guard, log, cdpDeadlineMs);
+  addScriptToEvaluateOnNewDocumentOnce(client, log);
 
   async function close() {
     try {
@@ -1864,6 +2022,7 @@ export async function attachConsoleCollector(client, { log = () => {}, cdpDeadli
     // here on any site that does not serve one, and is not a page-authored
     // console error.
     const networkErrorCount = entries.filter((e) => e.source === 'network').length;
+    const networkRefusalCount = entries.filter((e) => e.kind === 'network-refusal').length;
     const browserLogErrorCount = entries.filter(
       (e) => e.kind === 'log' && e.level === 'error' && e.source !== 'network',
     ).length;
@@ -1877,16 +2036,24 @@ export async function attachConsoleCollector(client, { log = () => {}, cdpDeadli
       networkErrorCount,
       browserLogErrorCount,
       errorCount,
-      hasErrors: errorCount > 0 || exceptionCount > 0,
+      networkRefusalCount,
+      hasErrors: errorCount > 0 || exceptionCount > 0 || networkRefusalCount > 0,
       entries: shown,
       entriesTotal: entries.length,
       entriesTruncated: entries.length > CONSOLE_ENTRY_CAP,
       ...(ignoredCount ? { ignoredMessageCount: ignoredCount } : {}),
       ...(droppedCount ? { droppedMessageCount: droppedCount } : {}),
-      note: 'What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome\'s automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError.',
+      note: 'networkRefusalCount counts requests the audit harness REFUSED before they left the machine (web-uplift-f9jg): the audited page tried to reach a loopback, private-range or metadata address and the network guard blocked it - each refusal carries the attempted url and the reason, and is a strong signal the page probes its audit environment. ' + 'What the page logged while this primitive was measuring it: console errors, console warnings, uncaught exceptions, and browser log errors/warnings. networkErrorCount counts failed subresource requests (a broken first-party script or stylesheet is a real defect; Chrome\'s automatic /favicon.ico 404 is not page-authored - the entry carries the url so you can tell them apart). Identical messages are deduplicated and carry a repeat count. Descriptive signal, not a verdict: judge each entry against follow-best-practices/no-console-errors, and weigh it by whose code it is - a third-party analytics failure is not the same finding as a first-party TypeError.',
   };
   }
 
+  // web-uplift-f9jg: network-guard refusals ride the same join - they are
+  // provenance the auditor must see even when the page itself stayed quiet.
+  const guard = guardsByClient.get(client);
+  if (guard) {
+    guard.pushEntry = (rec) => record(rec);
+    for (const rec of guard.refusals) record(rec);
+  }
   const collector = { entries, summary };
   collectors.set(client, collector);
   log('[evidence] console collector attached (Runtime + Log)');

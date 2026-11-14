@@ -50,6 +50,7 @@ import { fileURLToPath } from 'node:url';
 import { AGENTS, buildAgentEnv, parseAgentEnvFlag, resolveAgentLaunchArgs } from './agents.mjs';
 import { hostSlug, makeRunId, runDir, updateLatest } from './run-history.mjs';
 import { loadFlow, replayFlow, createFlowReplayLogger, redactRecordedStructure } from './flow.mjs';
+import { targetOriginOf } from '../evidence/fetch.mjs';
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, allowedRootsFor, EXECUTABLE_HASH_ROOTS, executableIntegrity } from './write-scope.mjs';
 import { readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync, isRealDir, isRealDirUnder, UnsafeTargetRefused } from './safe-write.mjs';
 import { launchChrome, newSession, recordLaunch } from '../evidence/cdp.mjs';
@@ -673,7 +674,7 @@ async function replayFlowIntoRun(url, siteDir) {
   // the agent's CLI invocations write (web-uplift-4wx).
   recordLaunch({ primitive: 'flow-replay', url, chrome, launchesFile: join(siteDir, 'launches.jsonl') });
   try {
-    const session = await newSession(chrome, { log });
+    const session = await newSession(chrome, { log, auditedOrigin: targetOriginOf(url) });
     try {
       const res = await replayFlow(session.client, flow, { startUrl: url, outDir: flowDir, log, allowMutations });
       writeFileNoFollowSync(join(flowDir, 'flow-result.json'), JSON.stringify(redactRecordedStructure(res), null, 2) + '\n');

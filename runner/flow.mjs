@@ -30,6 +30,7 @@ import { assertRealParentUnder, isRealDir, writeFileNoFollowSync } from './safe-
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchChrome, newSession, navigate, evaluate, sleep, recordLaunch } from '../evidence/cdp.mjs';
+import { targetOriginOf } from '../evidence/fetch.mjs';
 import {
   isCredentialName,
   isSensitiveName,
@@ -848,7 +849,8 @@ async function main() {
     // (web-uplift-6x7): env-unset is a no-op.
     recordLaunch({ primitive: 'flow-replay', url: startUrl ?? null, chrome });
     try {
-      const session = await newSession(chrome, { log });
+      // web-uplift-f9jg: a flow without a start URL gets NO origin exemption - fail closed.
+      const session = await newSession(chrome, { log, auditedOrigin: targetOriginOf(startUrl ?? '') });
       try {
         const res = await replayFlow(session.client, flow, { startUrl, outDir, log, allowMutations });
         const summaryPath = join(outDir, '..', 'flow-result.json');
@@ -877,7 +879,7 @@ async function main() {
     // Same attribution as the replay path (web-uplift-6x7).
     recordLaunch({ primitive: 'flow-record', url, chrome });
     try {
-      const session = await newSession(chrome, { log });
+      const session = await newSession(chrome, { log, auditedOrigin: targetOriginOf(url) });
       try {
         const flow = await recordFlow(session.client, url, { log, captureHidden, captureSensitive, timeoutMs });
         // The recording itself is operator-named, so there is no tree to contain it in - but the leaf is still

@@ -76,6 +76,7 @@ import {
   recordLaunch,
 } from './cdp.mjs';
 import { validateConditions } from './common.mjs';
+import { targetOriginOf } from './fetch.mjs';
 import { assertTargetUrlAllowed, parseSchemeOptIn, recordTargetUrlPolicy } from './target-url.mjs';
 
 import { screenshot } from './primitives/screenshot.mjs';
@@ -283,7 +284,10 @@ export async function gather(primitive, url, opts = {}) {
   // primitives does not read as several launches.
   recordLaunch({ primitive, url, chrome, shared: !ownsBrowser });
   try {
-    const session = await newSession(chrome, { log });
+    // web-uplift-f9jg: the network guard exempts ONLY the audited target's own origin
+    // (the operator's explicit choice); the page reaching any OTHER loopback/private
+    // address is refused and recorded.
+    const session = await newSession(chrome, { log, auditedOrigin: targetOriginOf(url) });
     try {
       // Attach BEFORE the primitive runs so console output from the load itself
       // is captured, not just whatever fires after it settles.
