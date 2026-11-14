@@ -1425,15 +1425,18 @@ export async function testFragmentRedactionKeepsSiblingParamsByteIdentical() {
       `innocent anchor deep link must survive untouched (web-uplift-j3co, web-uplift-rx0i): ${deepLink}`);
   }
 
-  // Sensitive route markers redact token segments regardless of depth (web-uplift-rx0i):
+  // Sensitive route markers redact token segments regardless of depth (web-uplift-rx0i, web-uplift-u46z):
   for (const sensitiveRoute of [
     { in: 'https://x.test/a#/auth/3f2a9c8e1b7d4f60', exp: 'https://x.test/a#/auth/%5Bredacted%5D' },
     { in: 'https://x.test/a#/reset/password/3f2a9c8e1b7d4f60', exp: 'https://x.test/a#/reset/password/%5Bredacted%5D' },
     { in: 'https://x.test/a#/otp/v2/9f8e7d6c5b4a3210deadbeef', exp: 'https://x.test/a#/otp/v2/%5Bredacted%5D' },
+    // Sensitive route overrides an earlier innocent route marker (web-uplift-u46z):
+    { in: 'https://x.test/a#/tree/main/auth/3f2a9c8e1b7d4f60', exp: 'https://x.test/a#/tree/main/auth/%5Bredacted%5D' },
+    { in: 'https://x.test/a#/commit/abc123def456/session/9f8e7d6c5b4a3210deadbeef', exp: 'https://x.test/a#/commit/abc123def456/session/%5Bredacted%5D' },
   ]) {
     const out = cli.redactUrlCredentialValues(sensitiveRoute.in);
     assert(out === sensitiveRoute.exp,
-      `token in sensitive route marker must be redacted (web-uplift-rx0i): got ${out}, expected ${sensitiveRoute.exp}`);
+      `token in sensitive route marker must be redacted (web-uplift-rx0i, web-uplift-u46z): got ${out}, expected ${sensitiveRoute.exp}`);
   }
 
   // Provider tokens and JWTs MUST be redacted even inside innocent route markers (web-uplift-wlnh):

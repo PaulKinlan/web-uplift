@@ -19,8 +19,8 @@
 // Usage: node tests/skill-write-contract.mjs
 // Exit 0 when the halves agree, 1 when they drift. Node builtins only: no npm
 // install is needed to run it.
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SCRATCH_SUBDIR, allowedRootsFor, escapedChanges } from '../runner/write-scope.mjs';
 
@@ -29,6 +29,54 @@ import { SCRATCH_SUBDIR, allowedRootsFor, escapedChanges } from '../runner/write
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 export const SKILL_CONTRACT_PHRASE = `<report directory>/${SCRATCH_SUBDIR}/`;
+
+// Machine-local path checks (web-uplift-069l, web-uplift-0jpc): skills are shared doctrine and must not hard-code
+// machine-local paths (/home/..., /Users/..., ~/.gemini/..., ~/.config/..., C:\Users\..., /opt/homebrew/..., /mnt/c/Users/...,
+// file:///home/...) which make them non-portable and silently fail or run arbitrary code elsewhere.
+export function skillMachineLocalPathViolations(skillText) {
+  const violations = [];
+  const patterns = [
+    /(?:file:\/\/|\/mnt\/[a-z])?(?:\/home\/[^\s)\]`'"]+)/g,
+    /(?:file:\/\/|\/mnt\/[a-z])?(?:\/Users\/[^\s)\]`'"]+)/g,
+    /(?:^|[^\w./-])(~(?:\/|\\[\w.-]+)[^\s)\]`'"]*)/g,
+    /(?:^|[^\w./-])([A-Za-z]:\\[Uu]sers\\[^\s)\]`'"]+)/g,
+    /(?:\/opt\/homebrew\/[^\s)\]`'"]+)/g,
+    /(?:\/opt\/local\/[^\s)\]`'"]+)/g,
+  ];
+  for (const pat of patterns) {
+    for (const match of skillText.matchAll(pat)) {
+      const p = match[1] || match[0];
+      violations.push(`SKILL.md contains machine-local path "${p}" - resolve relative to the skill root or declare tool by name (web-uplift-069l, web-uplift-0jpc)`);
+    }
+  }
+  return violations;
+}
+
+export function findSkillFiles(dir, seenDirs = new Set()) {
+  const results = [];
+  let realDir;
+  try {
+    realDir = realpathSync(dir);
+  } catch {
+    return results;
+  }
+  if (seenDirs.has(realDir)) return results;
+  seenDirs.add(realDir);
+
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === '.git' || entry === 'evidence-out' || entry === 'reports') continue;
+    const full = join(dir, entry);
+    try {
+      const st = statSync(full);
+      if (st.isDirectory()) {
+        results.push(...findSkillFiles(full, seenDirs));
+      } else if (st.isFile() && entry === 'SKILL.md') {
+        results.push(full);
+      }
+    } catch {}
+  }
+  return results.sort();
+}
 
 // The pure check, exported so the mutation controls below — and any future
 // test — can prove it FAILS on drifted inputs instead of trusting that it
@@ -140,9 +188,46 @@ if (skillWriteContractViolations(benign, gitignoreText).length !== 0) {
   problems.push('false-positive control: prose \'from scratch\' beside the contract phrase must not violate the contract');
 }
 
+// Machine-local path audit (web-uplift-069l, web-uplift-gmd4): every SKILL.md in the repository must be portable
+const skillFiles = findSkillFiles(repoRoot);
+if (skillFiles.length < 3) {
+  problems.push(`skill search found fewer than 3 SKILL.md files (${skillFiles.length} found): directory traversal broke or missed symlinks`);
+}
+for (const sf of skillFiles) {
+  const content = readFileSync(sf, 'utf8');
+  for (const v of skillMachineLocalPathViolations(content)) {
+    problems.push(`${relative(repoRoot, sf)}: ${v}`);
+  }
+}
+
+// Mutation controls for machine-local paths (web-uplift-069l, web-uplift-0jpc):
+for (const sample of [
+  'Run ~/.gemini/config/plugins/chrome-devtools-plugin/skills/memory-leak-debugging/SKILL.md for details.',
+  'See /home/exedev/tools/plugin for config.',
+  'Load from /Users/paul/Library/Application Support/agent.',
+  'Config at C:\\Users\\exedev\\AppData\\Local\\skills',
+  'Load from /opt/homebrew/lib/node_modules/x',
+  'file:///home/exedev/x/SKILL.md',
+  '/mnt/c/Users/exedev/x',
+]) {
+  if (skillMachineLocalPathViolations(sample).length === 0) {
+    problems.push(`mutation control: machine-local path in ${JSON.stringify(sample)} must violate portability check`);
+  }
+}
+// False-positive control: relative paths, URLs, and innocent prose must NOT violate
+for (const sample of [
+  'Run ./scripts/scan.py or use node_modules/@foo/bar.',
+  'Visit https://github.com/ChromeDevTools/chrome-devtools-mcp for docs.',
+  'Relative skill path: ../skills/audit/SKILL.md',
+]) {
+  if (skillMachineLocalPathViolations(sample).length !== 0) {
+    problems.push(`false-positive control: innocent path in ${JSON.stringify(sample)} must NOT violate portability check`);
+  }
+}
+
 if (problems.length) {
   console.error('skill-write-contract: FAIL');
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);
 }
-console.log('skill-write-contract: every SKILL-instructed write path stays inside the runner allowed roots');
+console.log('skill-write-contract: every SKILL-instructed write path stays inside the runner allowed roots and all SKILL.md files are portable');
