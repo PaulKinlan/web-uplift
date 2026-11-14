@@ -94,11 +94,37 @@ function testSubsystemMappings() {
   assert(pkgPlan.targets.some((t) => t.path === 'tests/changelog-version-check.mjs'), 'must include changelog check');
   assert(pkgPlan.targets.some((t) => t.filter === 'InstallSurface'), 'must include InstallSurface regression');
 
-  // 5. MWG & Principles
+  // 5. MWG & Principles. The subsystem was SPLIT by cost (web-uplift-xj4u), so this pins the routing in both
+  // directions: a cheap-half change must NOT drag in the spawn-heavy drift guards (that is the whole point of
+  // the split), and a drift-state change must reach them by BOTH the suite path and the Mwg filter.
   const mwgPlan = mapFilesToTests(['knowledge/principles.json']);
   assert(mwgPlan.matchedSubsystems.includes('mwg'), 'knowledge/principles.json must map to mwg');
   assert(mwgPlan.targets.some((t) => t.filter === 'Principles'), 'must include Principles regression filter');
-  assert(mwgPlan.targets.some((t) => t.filter === 'Mwg'), 'must include Mwg regression filter');
+  assert(mwgPlan.targets.some((t) => t.path === 'tests/mwg-principles.test.mjs'), 'must include the principles suite');
+  assert(
+    !mwgPlan.targets.some((t) => t.path === 'tests/mwg-drift-guards.test.mjs'),
+    'a principles.json change must not select the drift guards - the Mwg FILTER would run them too, which is why it lives in mwg-drift',
+  );
+  assert(
+    !mwgPlan.targets.some((t) => t.filter === 'Mwg'),
+    'the Mwg regression filter spans the drift suite as well, so selecting it here would undo the split (web-uplift-xj4u)',
+  );
+
+  const driftPlan = mapFilesToTests(['knowledge/mwg-state.json']);
+  assert(driftPlan.matchedSubsystems.includes('mwg-drift'), 'knowledge/mwg-state.json must map to mwg-drift');
+  assert(driftPlan.targets.some((t) => t.path === 'tests/mwg-drift-guards.test.mjs'), 'must include the drift guards');
+  assert(driftPlan.targets.some((t) => t.filter === 'Mwg'), 'must include Mwg regression filter');
+  assert(
+    !driftPlan.targets.some((t) => t.path === 'tests/mwg-principles.test.mjs'),
+    'a drift-state change must not run the principles suite: nothing in it reads the drift state',
+  );
+
+  const catalogPlan = mapFilesToTests(['knowledge/mwg-catalog.json']);
+  assert(
+    catalogPlan.targets.some((t) => t.path === 'tests/mwg-principles.test.mjs')
+      && catalogPlan.targets.some((t) => t.path === 'tests/mwg-drift-guards.test.mjs'),
+    'the catalogue is read by BOTH suites (testPrinciplesMwgCatalogSyncAndChangedGuidance compares it to principles.json, the guards pin it in the state), so it must select both',
+  );
 
   // 6. Schema
   const schemaPlan = mapFilesToTests(['schema/findings.schema.json']);
@@ -238,10 +264,13 @@ function testSubsystemMappings() {
   // guard into its plan. Without this the entry could silently become a directory- or prefix-wide match.
   // The drift workflow is read by the mwg suite, so it must map to it; otherwise a workflow edit lands
   // with a gate that never ran the test that reads it (web-uplift-6f8x).
+  // web-uplift-xj4u moved the case that reads the workflow (testMwgDriftClassifierGuard) into the drift-guards
+  // suite, so the pin moves with it: the subsystem is now mwg-drift and the suite is the guards file. Asserting
+  // 'mwg' here would still pass while the case that reads the workflow stopped being selected.
   const workflowPlan = mapFilesToTests(['.github/workflows/mwg-drift.yml']);
-  assert(workflowPlan.matchedSubsystems.includes('mwg'),
-    'the mwg-drift workflow must select the mwg subsystem: the suite reads it');
-  assert(workflowPlan.targets.some((t) => t.path === 'tests/mwg-principles.test.mjs'),
+  assert(workflowPlan.matchedSubsystems.includes('mwg-drift'),
+    'the mwg-drift workflow must select the mwg-drift subsystem: the guards suite reads it');
+  assert(workflowPlan.targets.some((t) => t.path === 'tests/mwg-drift-guards.test.mjs'),
     'a workflow change must run the suite that reads it');
   const unrelatedPlan = mapFilesToTests(['evidence/cdp.mjs']);
   assert(!unrelatedPlan.matchedSubsystems.includes('census-targets'),
@@ -268,10 +297,19 @@ function testNonTestExclusion() {
   assert(isDirectRunnableTest('tests/safe-fetch.mjs'), 'safe-fetch.mjs must be direct runnable');
   assert(isDirectRunnableTest('tests/test-fast.mjs'), 'test-fast.mjs must be direct runnable');
 
-  // When mwg-catalog.mjs changes, it should map to mwg subsystem targets, NOT a direct no-arg run
+  // When mwg-catalog.mjs changes, it should map to mwg subsystem targets, NOT a direct no-arg run.
+  // web-uplift-xj4u: the pin names the SUITE that drives the tool rather than the 'Mwg' filter. After the split
+  // the filter was the wrong witness - it spans both halves, so it would have dragged the drift guards in - while
+  // the cases that actually run this tool (testMwgCatalogRegenerateAgreement,
+  // testPrinciplesMwgCatalogSyncAndChangedGuidance, testMwgCatalogExtract) are all in the cheap suite. The drift
+  // tooling reads the catalogue DATA (knowledge/mwg-catalog.json), not this tool, which is why the data file maps
+  // to both halves and the tool maps to one.
   const mwgCatalogPlan = mapFilesToTests(['tests/mwg-catalog.mjs']);
   assert(!mwgCatalogPlan.targets.some((t) => t.path === 'tests/mwg-catalog.mjs'), 'must not direct-run tests/mwg-catalog.mjs');
-  assert(mwgCatalogPlan.targets.some((t) => t.filter === 'Mwg'), 'must run Mwg regression filter');
+  assert(mwgCatalogPlan.targets.some((t) => t.path === 'tests/mwg-principles.test.mjs'),
+    'must run the suite that drives tests/mwg-catalog.mjs, named by path so the split cannot silently move it away');
+  assert(mwgCatalogPlan.matchedSubsystems.includes('mwg'),
+    'tests/mwg-catalog.mjs is driven by the cheap half of the mwg subsystem');
 
   console.log('✔ Non-test file exclusion passed');
 }

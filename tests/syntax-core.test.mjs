@@ -2214,7 +2214,7 @@ export function testSuiteListsMatchRegressionRegistry() {
   // 19 *.test.mjs suites plus the 13 gate targets that are not *.test.mjs files (web-uplift-yfbk). The
 // constant catches a change in the NUMBER of things the gate runs, which is what makes a silently dropped
 // suite visible; it is not the count of test files.
-const EXPECTED_SUITE_FILES = 33;
+const EXPECTED_SUITE_FILES = 34;
   // web-uplift-rkcs: the case population is DECLARED BY NAME PER SUITE FILE, for the web-uplift-j3go
   // reason. A count cannot tell an addition in one file from a removal in another, and the reviewer showed a
   // global floor still passing after exactly that pair of edits (add a case, drop a preexisting one). Every
@@ -2297,8 +2297,14 @@ const EXPECTED_SUITE_FILES = 33;
     ],
     'tests/mwg-principles.test.mjs': [
       'testMwgDriftExtractPipe', 'testMwgDriftBasisFloor', 'testGuidanceUsage', 'testGuidanceVersionPinnedInDocs',
-      'testMwgCatalogRegenerateAgreement', 'testPrinciplesMwgCatalogSyncAndChangedGuidance', 'testMwgDriftCheckGuard', 'testMwgArtefactGuard',
-      'testMwgDriftClassifierGuard', 'testMwgCatalogExtract', 'testBaselineOracle',
+      'testMwgCatalogRegenerateAgreement', 'testPrinciplesMwgCatalogSyncAndChangedGuidance', 'testMwgCatalogExtract',
+      'testBaselineOracle',
+    ],
+    // The three drift-guard cases moved here from tests/mwg-principles.test.mjs (web-uplift-xj4u): they are
+    // ~162s of that suite's measured wall time and a knowledge/principles.json or guidance.md change cannot
+    // affect them, so they now own their own suite and their own gate target.
+    'tests/mwg-drift-guards.test.mjs': [
+      'testMwgDriftCheckGuard', 'testMwgArtefactGuard', 'testMwgDriftClassifierGuard',
     ],
     'tests/redaction.test.mjs': [
       'testRedactHeaderList', 'testCredentialRedactionHelpers', 'testHarCredentialRedaction', 'testHarRedactsCredentialHeaders',

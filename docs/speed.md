@@ -23,8 +23,9 @@ code does.
 Each fast-gate target is killed at `target.timeoutMs || 120000`; `TEST_FAST_TARGET_TIMEOUT_MS` overrides all of
 them for a single run. One target deliberately carries a measured budget instead of the default:
 `Regression: Batch isolation and scope tests` is **240s**, `Fast gate unit and integration tests`
-(`tests/test-fast.mjs`) is **300s**, `Regression: Evidence primitives` is **240s**, `MWG principles and
-drift unit tests` (`tests/mwg-principles.test.mjs`, one file) is **300s**, and `Regression: Fix mode tests`
+(`tests/test-fast.mjs`) is **300s**, `Regression: Evidence primitives` is **240s**, `MWG drift guards`
+(`tests/mwg-drift-guards.test.mjs`) and `MWG principles and guidance unit tests` (`tests/mwg-principles.test.mjs`)
+are **90s** each, and `Regression: Fix mode tests`
 is **240s** (measured 139.3s and 149.2s for its 13 cases on 2026-10-30, so a `fixer/`-only change was being
 killed at the 120s default - a regression target carries a FILTER rather than a path, which is why the
 path-keyed table below cannot reach it). They measured **148.3s** and **130.4s** on an idle VM on 2026-10-27
@@ -34,12 +35,22 @@ every change under `runner/` - and every change to the gate script itself - fail
 was already over budget before it ran anything new. The two worst targets in this repo are therefore the batch
 group and the gate's own self-test; neither is a per-change cost problem, both are design problems.
 
-The fourth (web-uplift-46wr) is a one-FILE target - `tests/mwg-principles.test.mjs` - that measured **236s** on
+The fourth (web-uplift-46wr) was a one-FILE target - `tests/mwg-principles.test.mjs` - that measured **236s** on
 2026-10-28 and was killed at the 120s default: `testMwgDriftCheckGuard` 76.7s, `testMwgArtefactGuard` 53.4s,
 `testMwgDriftClassifierGuard` 31.9s, `testMwgArtefactAppliedRulesAxisFailsClosed` 18.6s, `testMwgDriftExtractPipe`
 13.3s, `testMwgDriftBasisFloor` 11.3s, everything else under 3s. Those six cases are 80% of the file and they run
 one at a time in one process, which is the shape defect: the file wants splitting, not a bigger bound, and the
-bound exists only so an mwg/ change can be verified in the meantime.
+bound existed only so an mwg/ change could be verified in the meantime. **web-uplift-xj4u did that split**, and
+measured both halves on 2026-11-14 at load average 6.18 on this VM: the three drift guards, now
+`tests/mwg-drift-guards.test.mjs`, take **17.59s** total (`testMwgDriftCheckGuard` 8.3s, `testMwgArtefactGuard`
+6.2s, `testMwgDriftClassifierGuard` 2.7s) and the 13 cases that stayed in `tests/mwg-principles.test.mjs` take
+**16.71s**. Both bounds are 90s (5.1x and 5.4x the measurement). Stated plainly: the 236s figure does NOT
+reproduce on today's tree at the loads this VM sees, so the split is not credited with that difference - what it
+actually delivers is ROUTING, which does not depend on how fast the cases are: `knowledge/principles.json`,
+`knowledge/guidance.md` and `knowledge/baseline.mjs` no longer select the drift guards at all (the `mwg` subsystem
+is the cheap half), while `knowledge/mwg-state.json`, `knowledge/mwg-rule-basis.json`, `docs/mwg-*` and the drift
+workflow select them (the `mwg-drift` subsystem). `knowledge/mwg-catalog.json` selects both, because
+`testPrinciplesMwgCatalogSyncAndChangedGuidance` compares the catalogue against the principles file.
 
 The third measured bound (web-uplift-91lr) is a different shape and is expected to come back **down**:
 `Regression: Evidence primitives` took **185.4s** on an otherwise idle VM on 2026-10-27 -
@@ -220,6 +231,13 @@ loaded merger run). Both were split into per-subject files, with the cases moved
 | --- | --- |
 | `tests/evidence.test.mjs` (9 cases) | `evidence-axe` (2), `evidence-conditions` (4), `evidence-console` (3) |
 | `tests/evidence-network.test.mjs` (8 cases) | `evidence-network-headers` (2), `evidence-network-har` (3), `evidence-network-resilience` (3) |
+| `tests/mwg-principles.test.mjs` (16 cases, web-uplift-xj4u) | `mwg-principles` (13, unchanged name), `mwg-drift-guards` (3) |
+
+The mwg split is the same contract with a different motive: the three cases moved out are the SPAWN-heavy drift
+guards, so the cheap half and the expensive half are now separate gate targets with separate budgets and separate
+`match` rules in `scripts/test-fast.mjs`. `testSuiteListsMatchRegressionRegistry` pins the new population
+(34 suite files, the case names declared per file in `DECLARED_SUITE_CASES`), so a case that stops being listed
+fails by NAME.
 
 Nothing was dropped, relaxed or reordered: the union of the suite lists is byte-identical before and after
 (160 case names, diffed), and `testSuiteListsMatchRegressionRegistry` pins the population absolutely: 14

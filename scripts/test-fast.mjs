@@ -288,9 +288,10 @@ export function importingSuitesOf(modulePath, repo = repoRoot) {
  */
 export const UNWIRED_SHARED_MODULES = [
   // Emptied by web-uplift-ev2u: the four tests/mwg-drift-*.mjs helpers used to sit here because the
-  // mwg subsystem selected three checks that do not import them. The subsystem now also names their
-  // only importer (tests/mwg-principles.test.mjs), so they are honestly wired and the declarations
-  // were removed rather than left stale - which is exactly what the control below enforces.
+  // mwg subsystem selected three checks that do not import them. The subsystem now names their importers
+  // (tests/mwg-principles.test.mjs and, since the web-uplift-xj4u split, tests/mwg-drift-guards.test.mjs),
+  // so they are honestly wired and the declarations were removed rather than left stale - which is exactly
+  // what the control below enforces.
 ];
 
 /**
@@ -432,35 +433,78 @@ export const SUBSYSTEMS = [
     ],
   },
   {
+    // SPLIT by cost, not by subject (web-uplift-xj4u): the three drift-guard cases were ~162s of the 236s
+    // tests/mwg-principles.test.mjs measured on 2026-10-28, and a change to knowledge/principles.json,
+    // knowledge/guidance.md or knowledge/baseline.mjs cannot affect any of them. Selection is therefore
+    // per-FILE below: the cheap suite covers the catalogue/principles/guidance/baseline surfaces, and the
+    // drift-guards subsystem covers the state, rule-basis, workflow and drift-tool surfaces. A catalogue
+    // change matches BOTH, because testPrinciplesMwgCatalogSyncAndChangedGuidance compares the two.
     id: 'mwg',
-    description: 'Modern Web Guidance catalog, drift checking, and principles sync',
+    description: 'Modern Web Guidance catalogue, principles and guidance sync (cheap half)',
     match: (f) =>
-      f.startsWith('knowledge/') ||
-      f.startsWith('docs/mwg-') ||
-      // The drift workflow is READ by tests/mwg-principles.test.mjs (case 1f drives its classifier
-      // block), so a change to it must select these tests: an unread workflow could otherwise drift
-      // away from the conditions it is supposed to file (web-uplift-6f8x).
-      f === '.github/workflows/mwg-drift.yml' ||
-      /^tests\/mwg-.*\.mjs$/.test(f),
+      f === 'knowledge/principles.json' ||
+      f === 'knowledge/guidance.md' ||
+      f === 'knowledge/baseline.mjs' ||
+      f === 'knowledge/mwg-catalog.json' ||
+      f.startsWith('docs/principles') ||
+      f === 'docs/mwg-train-consumer-contract.md' ||
+      f === 'tests/mwg-principles.test.mjs' ||
+      // The catalogue tool and its library are driven by the cheap half (testMwgCatalogExtract,
+      // testPrinciplesMwgCatalogSyncAndChangedGuidance); tests/mwg-basis.mjs is read by BOTH suites.
+      f === 'tests/mwg-catalog.mjs' ||
+      f === 'tests/mwg-catalog-extract.mjs' ||
+      f === 'tests/mwg-basis.mjs' ||
+      f === 'tests/mwg-drift-extract-pipe.mjs' ||
+      f === 'tests/mwg-drift-basis-floor.mjs' ||
+      f === 'tests/mwg-drift-alert.mjs' ||
+      f === 'tests/mwg-rule-basis-anchors.mjs',
     targets: [
       { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
       { type: 'node', path: 'tests/mwg-artefact.mjs', args: ['verify'], label: 'MWG artifact verification' },
       { type: 'node', path: 'tests/mwg-catalog-extract.mjs', label: 'MWG catalog extract test' },
-      // The drift helpers under tests/mwg-drift-*.mjs are imported ONLY by this suite. Without it the
-      // plan selected three mwg checks that cannot fail for a change to them, which is why the four
-      // were declared unwired (web-uplift-ev2u). Naming the importer makes the coverage honest.
-      // MEASURED BUDGET (web-uplift-46wr), same shape as the Evidence and Batch bounds: this one file took
-      // 236s wall on an otherwise idle VM on 2026-10-28 - testMwgDriftCheckGuard 76.7s, testMwgArtefactGuard
-      // 53.4s, testMwgDriftClassifierGuard 31.9s, testMwgArtefactAppliedRulesAxisFailsClosed 18.6s,
-      // testMwgDriftExtractPipe 13.3s, testMwgDriftBasisFloor 11.3s - and was killed at the 120s default, so
-      // an mwg/ change could not reach a verdict. The shape defect is that all of those run in ONE suite in one
-      // process, one case at a time; splitting it is filed rather than done here (a P2 fix should not carry a
-      // 200s test refactor). When it is split, this bound comes back down with a new measurement.
-      { type: 'node', path: 'tests/mwg-principles.test.mjs', label: 'MWG principles and drift unit tests', timeoutMs: 300000 },
-      { type: 'regression', filter: 'Mwg', label: 'Regression: MWG catalog and drift tests' },
+      // MEASURED BUDGET (web-uplift-xj4u): 16.71s wall for all 13 cases, one process, one case at a time, at
+      // load average 6.18 on this VM on 2026-11-14 - the remaining half of web-uplift-46wr's 236s single-suite
+      // measurement, after the three drift guards moved to tests/mwg-drift-guards.test.mjs. 90s is 5.4x that
+      // measurement, the headroom the other measured bounds carry: the expensive cases here are
+      // testBaselineOracle (3.6s), testMwgCatalogExtract (1.2s) and the two spawned-tool cases, and none of
+      // them scales with the tree.
+      { type: 'node', path: 'tests/mwg-principles.test.mjs', label: 'MWG principles and guidance unit tests', timeoutMs: 90000 },
       { type: 'regression', filter: 'Principles', label: 'Regression: Principles sync tests' },
       { type: 'regression', filter: 'Guidance', label: 'Regression: Guidance usage tests' },
       { type: 'regression', filter: 'Baseline', label: 'Regression: Baseline oracle tests' },
+    ],
+  },
+  {
+    id: 'mwg-drift',
+    description: 'Modern Web Guidance drift state, rule basis and drift-tool guards (expensive half)',
+    match: (f) =>
+      f === 'knowledge/mwg-catalog.json' ||
+      f === 'knowledge/mwg-state.json' ||
+      f === 'knowledge/mwg-rule-basis.json' ||
+      f.startsWith('knowledge/mwg/') ||
+      f.startsWith('docs/mwg-') ||
+      // The drift workflow is READ by the classifier guard, so a change to it must select these tests: an
+      // unread workflow could otherwise drift away from the conditions it is supposed to file (web-uplift-6f8x).
+      f === '.github/workflows/mwg-drift.yml' ||
+      // Every module the guard cases drive, named individually so a new one cannot appear unmapped.
+      f === 'tests/mwg-artefact.mjs' ||
+      f === 'tests/mwg-basis.mjs' ||
+      f === 'tests/mwg-drift-check.mjs' ||
+      f === 'tests/mwg-drift-classify.mjs' ||
+      f === 'tests/mwg-drift-anchor-subject.mjs' ||
+      f === 'tests/mwg-drift-guards.test.mjs',
+    targets: [
+      // The drift helpers under tests/mwg-drift-*.mjs are imported ONLY by the drift suites. Without naming the
+      // importer the plan selected three mwg checks that cannot fail for a change to them, which is why the four
+      // were declared unwired (web-uplift-ev2u).
+      // MEASURED BUDGET (web-uplift-xj4u): 17.59s wall for the three cases at load average 6.18 on 2026-11-14
+      // (testMwgDriftCheckGuard 8.3s, testMwgArtefactGuard 6.2s, testMwgDriftClassifierGuard 2.7s) - the same
+      // three cases web-uplift-46wr recorded at 76.7s + 53.4s + 31.9s inside the 236s monolith. The 236s figure
+      // is not reproducible on today's tree at any load this VM has, so the bound follows TODAY'S measurement
+      // (90s = 5.1x) rather than the old one; what the split bought is the ROUTING below, which is independent
+      // of how fast the cases are - a knowledge/principles.json change no longer waits for drift state work.
+      { type: 'node', path: 'tests/mwg-drift-guards.test.mjs', label: 'MWG drift guards', timeoutMs: 90000 },
+      { type: 'regression', filter: 'Mwg', label: 'Regression: MWG catalog and drift tests' },
     ],
   },
   {
