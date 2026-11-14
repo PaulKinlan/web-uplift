@@ -291,7 +291,10 @@ export function configureCdpDeadlines({ navigationMs, callMs } = {}) {
 // in resilience the ServiceWorker.enable, the offline switch, the offline-reload navigate
 // and the online restore; in safeFetch the response-body reads; and (web-uplift-j3re) the five
 // pipe calls in the launch and session paths, the readiness retry sleep and the grace-bounded close
-// on the readiness failure path. Bounded transitively:
+// on the readiness failure path; and (web-uplift-j48l) the network guard's hostname resolution, which takes
+// the same CDP-call bound as every other browser-facing await here - a resolver that never settles holds
+// one paused request open, so that request fails closed when the bound lands rather than waiting forever.
+// Bounded transitively:
 // applyConditions' six internals and sw.enable's internal enable (every caller wraps the call).
 // web-uplift-xnte REMOVED the Browser.getVersion probe from this bucket: it was listed here as bounded
 // by waitForPipeReady's deadlineMs, and that was false, because the loop consulted its deadline only in
@@ -1624,6 +1627,10 @@ export function createGuardLookup({
   maxEntries = GUARD_LOOKUP_CACHE_MAX,
   ttlMs = GUARD_LOOKUP_TTL_MS,
   now = Date.now,
+  // A resolver that never settles is a wedge like any other, and it holds one paused request
+  // open for as long as it lasts, so the resolution takes the same CDP-call bound every other
+  // browser-facing await in this module takes rather than inheriting an unlimited wait.
+  deadlineMs = cdpCallDeadlineMsDefault,
 } = {}) {
   const cache = new Map();
   const guardLookup = async function guardLookup(host) {
@@ -1640,7 +1647,9 @@ export function createGuardLookup({
     // A failure is NOT cached: it fails closed for this request, and the next
     // request to the same host resolves again rather than inheriting a stale
     // verdict from a DNS blip.
-    const addresses = Object.freeze(await resolveImpl(host, { all: true, verbatim: true }));
+    const addresses = Object.freeze(
+      await withDeadline(resolveImpl(host, { all: true, verbatim: true }), deadlineMs, `the network guard to resolve ${host}`),
+    );
     cache.set(host, { addresses, at: now() });
     while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
     return addresses.slice();

@@ -681,7 +681,10 @@ export function testAwaitCensus() {
       // `await close()` on the pipe-readiness failure path, the readiness wait itself and the
       // Browser.getVersion probe inside its bounded loop. Every one is classified by the mechanism
       // that bounds it; none is a catch-all.
-      'bounded:withDeadline': 20,
+      // 21: the network guard's hostname resolution (web-uplift-j48l) takes the same CDP-call bound
+      // rather than inheriting an unlimited wait - a resolver that never settles holds one paused
+      // request open, and the request now fails closed when the bound lands.
+      'bounded:withDeadline': 21,
       // 9, not 7: the exposure verdict added a SECOND grace-bounded `await close()` on the path that
       // refuses an exposed launch (web-uplift-4rv), and every site in this bucket is the same
       // mechanism (waitForProcExit, waitForGroupDrain, the deadline-bounded endpoint wait, the
@@ -702,7 +705,11 @@ export function testAwaitCensus() {
       'bounded:pre-existing-mechanism': 16,
       'bounded:sleep': 5,
       'bounded:gather-spine': 4,
-      'excluded:primitive-probe': 4,
+      // 3, not 4: web-uplift-j48l moved the network guard's hostname resolution OUT of this bucket.
+      // It used to be a bare `await lookup(...)` - excluded like the policy's other probe-side awaits -
+      // and it is now wrapped in withDeadline, so it is counted in that bucket instead (a resolver that
+      // never settles is a wedge that holds a paused request open, which is a bound worth naming).
+      'excluded:primitive-probe': 3,
       // web-uplift-4rv: the exposure probe's own connect (handed timeoutMs) and the injected
       // exposureProbe, both bounded by the callee rather than by a wrapper at the call site.
       // web-uplift-j3re added a third: the pipe readiness wait, which takes deadlineMs.
