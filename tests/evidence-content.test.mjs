@@ -669,10 +669,10 @@ export function testAwaitCensus() {
     // instead of quietly still 'bounded'), and `exposureProbe` is an injected probe whose
     // production default, cdpEndpointExposure, bounds its own sockets by PROBE_TIMEOUT_MS. Same
     // shape as `await launchChromeOnce`, which is bounded by the mechanism it contains.
-    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise|await exposureProbe\(|await waitForPipeReady\([^)]*deadlineMs|await Promise\.allSettled\(hosts\.map\(async \(host\) => connect\([^)]*timeoutMs\)\)\)/],
+    ['bounded:own-deadline', /await waitForNetworkIdle|await waitForInteractEvidence|await Promise\.race|await (?:fetch|pinnedFetch)\(.*AbortSignal|await fetched\.text\(\)|await docPromise|await exposureProbe\(|await waitForPipeReady\([^)]*deadlineMs|await Promise\.allSettled\(hosts\.map\(async \(host\) => connect\([^)]*timeoutMs\)\)\)|await armNetworkGuard\([^)]*cdpDeadlineMs\)/],
     ['bounded:gather-spine', /await launchChrome\(|await newSession\(|await attachConsoleCollector|await session\.close\(\)|await chrome\.close\(\)|await gather\(/],
     ['excluded:page-side-template', /await navigator\.|await fetch\(\$\{JSON\.stringify\(su\)\}, \{ signal: controller\.signal \}\)|const t = await res\.text\(\);/],
-    ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],
+    ['excluded:primitive-probe', /await evaluate\(|captureScreenshot|getResponseBody|[Ss]creencast|HeapProfiler|axeSource|axe\.run|Accessibility|Input\.|getCookies|getLayoutMetrics|safeFetch\(|assertPageDerivedFetchAllowed|await lookup\(|await lookupImpl\(|await reader\.|res\.body|client\.Runtime\.evaluate|setBypassCSP|setScriptExecutionDisabled|getFullAXTree|await task\(item\)|await Promise\.all\(workers\)|await mapBounded\(|await fn\(session/],
   ];
   const expected = {
     'evidence/cdp.mjs': {
@@ -681,7 +681,7 @@ export function testAwaitCensus() {
       // `await close()` on the pipe-readiness failure path, the readiness wait itself and the
       // Browser.getVersion probe inside its bounded loop. Every one is classified by the mechanism
       // that bounds it; none is a catch-all.
-      'bounded:withDeadline': 17,
+      'bounded:withDeadline': 20,
       // 9, not 7: the exposure verdict added a SECOND grace-bounded `await close()` on the path that
       // refuses an exposed launch (web-uplift-4rv), and every site in this bucket is the same
       // mechanism (waitForProcExit, waitForGroupDrain, the deadline-bounded endpoint wait, the
@@ -702,14 +702,14 @@ export function testAwaitCensus() {
       'bounded:pre-existing-mechanism': 16,
       'bounded:sleep': 5,
       'bounded:gather-spine': 4,
-      'excluded:primitive-probe': 2,
+      'excluded:primitive-probe': 4,
       // web-uplift-4rv: the exposure probe's own connect (handed timeoutMs) and the injected
       // exposureProbe, both bounded by the callee rather than by a wrapper at the call site.
       // web-uplift-j3re added a third: the pipe readiness wait, which takes deadlineMs.
       // web-uplift-xnte added a fourth: that wait now RACES its Browser.getVersion send against the
       // remaining budget and against process exit, so the send itself is bounded rather than only the
       // loop around it. The rule catches it because it matches await Promise.race.
-      'bounded:own-deadline': 4,
+      'bounded:own-deadline': 6,
       // web-uplift-j3re: the Browser.getVersion probe inside waitForPipeReady's bounded loop.
       // web-uplift-xnte moved that probe OUT of an awaited line and into the race that owns its bound, so
       // the rule matches nothing on this tree now. It is kept rather than deleted because applyConditions
