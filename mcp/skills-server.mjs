@@ -16,6 +16,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFile } from 'node:fs/promises';
+import { assertSafeSiteEntry, untrustedArgumentBlock } from '../runner/untrusted.mjs';
 import { z } from 'zod';
 
 const SKILL_PATH = new URL('../.claude/skills/web-audit/SKILL.md', import.meta.url);
@@ -54,7 +55,10 @@ server.registerPrompt(
           type: 'text',
           text:
             `${await skillText()}\n\n---\n\n` +
-            `Follow the skill above with these arguments: ${url}${flags ? ` ${flags}` : ''}`,
+            // The url and flags are CALLER-SUPPLIED and land in the instructions of a write-capable agent, so they
+            // are DATA here, not instruction text (web-uplift-8m4y, web-uplift-d3a6). Same helper as the runner's
+            // prompts: a second local escaping rule at this call site is the drift this pair exists to prevent.
+            `Follow the skill above with ${untrustedArgumentBlock([url, ...(flags ? [flags] : [])], { validators: [assertSafeSiteEntry] })}`,
         },
       },
     ],

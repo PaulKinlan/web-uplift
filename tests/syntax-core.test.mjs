@@ -2314,6 +2314,8 @@ const EXPECTED_SUITE_FILES = 33;
     'tests/runner-agents.test.mjs': [
       'testAgentChildEnvProxyCredentials', 'testHeadlessAllowlistIsScoped', 'testHeadlessAllowlistMatchesSkillContract', 'testSkillWriteContractGuard',
       'testAgentChildEnvAllowlist',
+      // web-uplift-8m4y + d3a6: caller-supplied prompt values are data, and BOTH call sites use the shared helper.
+      'testCallerSuppliedPromptValuesAreDataNotInstructions',
     ],
     'tests/runner-batch.test.mjs': [
       'testBatchIsolationGate', 'testBatchDryRunUsesRetainedDirs', 'testBatchFlowDryRun',
