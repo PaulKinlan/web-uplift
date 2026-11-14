@@ -44,7 +44,28 @@ export const SKILL_CONTRACT_PHRASE = `<report directory>/${SCRATCH_SUBDIR}/`;
 // path. It is to decide what the token IS: non-`file:` URLs are blanked before the path patterns run, so a
 // citation can never be read as a filesystem location, while `file://` - which genuinely names a local path - is
 // kept in scope and still matched by the explicit `file://` alternatives below.
-const NON_FILE_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s)\]`'"]+/gi;
+//
+// web-uplift-70dv: the first version of that blanking recognised only tokens with an explicit scheme, so the same
+// citation written protocol-relative ('//example.com/home/guide') or bare-www ('www.example.com/home/guide') was
+// still read as a filesystem path. A URL is a URL whether or not the scheme was typed, so all three spellings are
+// blanked. The forms are enumerated rather than guessed, and the false-positive controls below cover each one:
+// blanking anything path-shaped would weaken the guard instead of widening it, which is why a bare
+// 'host.tld/path' with no scheme and no 'www.' prefix is NOT treated as a URL - that shape is far more likely to
+// be a repository path (tests/mwg-catalog.mjs) than a citation.
+// Every quantifier here is BOUNDED, which is the lesson web-uplift-g99q/web-uplift-ght8 wrote into the other
+// page-controlled matchers in this repo: `[a-z0-9+.-]*` before `://` includes '.', so an unbounded version is
+// quadratic on prose with a long dotted run (measured: 12s on 60k characters of `//.a.a.a...`, which the linearity
+// control below now catches). A scheme is at most 32 characters and a DNS label at most 63, so bounding them
+// changes no real match and makes the whole matcher linear.
+const SCHEME = '[a-z][a-z0-9+.-]{0,31}';
+const LABEL = '[a-z0-9-]{1,63}';
+const HOST = `${LABEL}(?:\\.${LABEL})+`;
+const NON_FILE_URL = new RegExp(
+  `\\b${SCHEME}:\\/\\/[^\\s)\\]\`'"]+`
+  + `|\\/\\/${HOST}(?::\\d{1,5})?[^\\s)\\]\`'"]*`
+  + `|\\bwww\\.${HOST}(?::\\d{1,5})?[^\\s)\\]\`'"]*`,
+  'gi',
+);
 const URL_PLACEHOLDER = '\u0000';
 
 export function skillMachineLocalPathViolations(skillText) {
@@ -276,10 +297,34 @@ for (const sample of [
   'Visit https://github.com/ChromeDevTools/chrome-devtools-mcp for docs.',
   'See https://developers.google.com/home/docs for the reference.',
   'Guide: https://x.test/Users/guide and https://x.test/home/install',
+  // web-uplift-70dv: the same citation written without a scheme is still a citation.
+  'Visit //example.com/home/guide for docs.',
+  'www.example.com/home/guide for docs.',
+  'Guide: x //example.com/Users/guide',
+  'See www.example.com:8443/Users/guide for details.',
+  // ...and the shapes that must NOT be treated as URLs, because they are repository paths: if the blanking
+  // widened to bare host-shaped tokens, a guard would stop seeing a real path.
   'Relative skill path: ../skills/audit/SKILL.md',
+  'Run tests/mwg-catalog.mjs and read knowledge/principles.json.',
 ]) {
   if (skillMachineLocalPathViolations(sample).length !== 0) {
     problems.push(`false-positive control: innocent path in ${JSON.stringify(sample)} must NOT violate portability check`);
+  }
+}
+// web-uplift-70dv linearity: the widened matcher reads AUTHOR-CONTROLLED prose on every fast-gate run, so it
+// gets the same bound the other page-controlled matchers in this repo do (web-uplift-g99q, web-uplift-ght8). The
+// shapes below are the ones that make a dotted-host alternative backtrack - a long dot-run, and a scheme with no
+// terminator - and 60k of each must stay well under a second.
+for (const pathological of [
+  `//${'.a'.repeat(30000)}`,
+  `${'https://'.repeat(8000)}x`,
+  `www.${'.a'.repeat(30000)}`,
+]) {
+  const started = Date.now();
+  skillMachineLocalPathViolations(pathological);
+  const elapsed = Date.now() - started;
+  if (elapsed > 750) {
+    problems.push(`linearity control: ${pathological.length} chars of ${JSON.stringify(pathological.slice(0, 12))}... took ${elapsed}ms - the machine-local matcher is not linear on adversarial prose`);
   }
 }
 
