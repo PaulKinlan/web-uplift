@@ -441,11 +441,16 @@ export const SUBSYSTEMS = [
     // change matches BOTH, because testPrinciplesMwgCatalogSyncAndChangedGuidance compares the two.
     id: 'mwg',
     description: 'Modern Web Guidance catalogue, principles and guidance sync (cheap half)',
+    // The cheap half is the DEFAULT for knowledge/ (web-uplift-v4pc): a new knowledge file that nobody routed
+    // explicitly runs 17s of cheap suite rather than falling through to the four baseline targets, which is what
+    // knowledge/mwg-catalog.md did while the gate still read as complete. Only the two drift-only data files and
+    // the drift data directory are excluded, and those are named, so moving a file between halves is a visible
+    // edit here rather than a silent change of verdict.
     match: (f) =>
-      f === 'knowledge/principles.json' ||
-      f === 'knowledge/guidance.md' ||
-      f === 'knowledge/baseline.mjs' ||
-      f === 'knowledge/mwg-catalog.json' ||
+      (f.startsWith('knowledge/') &&
+        f !== 'knowledge/mwg-state.json' &&
+        f !== 'knowledge/mwg-rule-basis.json' &&
+        !f.startsWith('knowledge/mwg/')) ||
       f.startsWith('docs/principles') ||
       f === 'docs/mwg-train-consumer-contract.md' ||
       f === 'tests/mwg-principles.test.mjs' ||
@@ -478,9 +483,11 @@ export const SUBSYSTEMS = [
     id: 'mwg-drift',
     description: 'Modern Web Guidance drift state, rule basis and drift-tool guards (expensive half)',
     match: (f) =>
-      f === 'knowledge/mwg-catalog.json' ||
-      f === 'knowledge/mwg-state.json' ||
-      f === 'knowledge/mwg-rule-basis.json' ||
+      // A PREFIX, not an enumerated list (web-uplift-v4pc): enumerating the three files I knew about let
+      // knowledge/mwg-catalog.md - tracked, and read by the drift guards' catalogue checks - fall through to the
+      // baseline targets, so the gate looked complete while running nothing that reads it. Every current and
+      // future knowledge/mwg-* file belongs to the drift half.
+      f.startsWith('knowledge/mwg-') ||
       f.startsWith('knowledge/mwg/') ||
       f.startsWith('docs/mwg-') ||
       // The drift workflow is READ by the classifier guard, so a change to it must select these tests: an

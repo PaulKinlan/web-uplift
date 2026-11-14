@@ -119,6 +119,25 @@ function testSubsystemMappings() {
     'a drift-state change must not run the principles suite: nothing in it reads the drift state',
   );
 
+  // THE COMPLETENESS CONTROL the review finding (web-uplift-v4pc) earned: enumerated file lists pass the gate's
+  // own "every tracked path is mapped" control by falling through to the BASELINE targets, which is mapped and
+  // blind at the same time. knowledge/mwg-catalog.md did exactly that - a tracked file read by the cheap suite's
+  // own cases, selecting four generic targets that never open it. So every tracked file under knowledge/ must
+  // select at least one half of the mwg subsystem, checked against the real tree rather than a list someone
+  // remembered to update.
+  const knowledgeFiles = spawnSync('git', ['ls-files', 'knowledge'], { cwd: repoRoot, encoding: 'utf8' })
+    .stdout.split('\n').filter(Boolean);
+  assert(knowledgeFiles.length >= 7, `expected the real knowledge/ tree, got ${knowledgeFiles.length} file(s)`);
+  const knowledgeUnrouted = knowledgeFiles.filter((f) => {
+    const plan = mapFilesToTests([f]);
+    return !plan.matchedSubsystems.includes('mwg') && !plan.matchedSubsystems.includes('mwg-drift');
+  });
+  assert.deepEqual(
+    knowledgeUnrouted,
+    [],
+    'every tracked file under knowledge/ must select the mwg or mwg-drift subsystem: falling through to the baseline targets counts as mapped while running nothing that reads the file (web-uplift-v4pc)',
+  );
+
   const catalogPlan = mapFilesToTests(['knowledge/mwg-catalog.json']);
   assert(
     catalogPlan.targets.some((t) => t.path === 'tests/mwg-principles.test.mjs')

@@ -235,7 +235,12 @@ loaded merger run). Both were split into per-subject files, with the cases moved
 
 The mwg split is the same contract with a different motive: the three cases moved out are the SPAWN-heavy drift
 guards, so the cheap half and the expensive half are now separate gate targets with separate budgets and separate
-`match` rules in `scripts/test-fast.mjs`. `testSuiteListsMatchRegressionRegistry` pins the new population
+`match` rules in `scripts/test-fast.mjs`. The routing is per-FILE and, for `knowledge/`, PREFIX-based with the
+cheap half as the default: enumerating the files I knew about let `knowledge/mwg-catalog.md` - tracked, and read by
+the cheap suite's own cases - fall through to the four baseline targets, so the gate looked complete while running
+nothing that opens it (web-uplift-v4pc). `tests/test-fast.mjs` now checks every tracked file under `knowledge/`
+against the real tree and fails by name if one selects neither half; that is the failure mode the gate's own
+"every tracked path is mapped" control cannot see, because baseline counts as mapped. `testSuiteListsMatchRegressionRegistry` pins the new population
 (34 suite files, the case names declared per file in `DECLARED_SUITE_CASES`), so a case that stops being listed
 fails by NAME.
 
