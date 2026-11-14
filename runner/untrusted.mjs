@@ -69,6 +69,7 @@ export function assertSafePromptText(value, { what = 'value' } = {}) {
 // a claim about.
 export function assertSafeSiteEntry(value, { what = 'site entry' } = {}) {
   const text = assertSafePromptText(value, { what });
+  const a = /^[aeiou]/i.test(what) ? 'an' : 'a';
   let parsed = null;
   try { parsed = new URL(text); } catch { /* reported below */ }
   if (!parsed) {

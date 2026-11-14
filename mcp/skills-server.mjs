@@ -16,7 +16,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFile } from 'node:fs/promises';
-import { assertSafeSiteEntry, untrustedArgumentBlock } from '../runner/untrusted.mjs';
+import { untrustedArgumentBlock } from '../runner/untrusted.mjs';
 import { z } from 'zod';
 
 const SKILL_PATH = new URL('../.claude/skills/web-audit/SKILL.md', import.meta.url);
@@ -58,7 +58,14 @@ server.registerPrompt(
             // The url and flags are CALLER-SUPPLIED and land in the instructions of a write-capable agent, so they
             // are DATA here, not instruction text (web-uplift-8m4y, web-uplift-d3a6). Same helper as the runner's
             // prompts: a second local escaping rule at this call site is the drift this pair exists to prevent.
-            `Follow the skill above with ${untrustedArgumentBlock([url, ...(flags ? [flags] : [])], { validators: [assertSafeSiteEntry] })}`,
+            //
+            // STRUCTURE only, no scheme policy, and that is deliberate (web-uplift-oxw2, web-uplift-sz7g): this
+            // prompt forwards its target to the gated CLI, which owns the scheme decision and is the single
+            // enforcement point - tests/target-url.test.mjs pins that the chain lands there for file:// and
+            // javascript: alike. Refusing a scheme HERE would duplicate policy at the surface and break that
+            // funnel, which is why the helper's scheme check belongs to the runner's own prompt, where the runner
+            // owns the audit set.
+            `Follow the skill above with ${untrustedArgumentBlock([url, ...(flags ? [flags] : [])])}`,
         },
       },
     ],
