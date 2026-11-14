@@ -95,11 +95,16 @@ export async function testHarRedirects() {
   // body-fetch pool's in-flight limit, so the pool has to recycle its workers,
   // and the redirect entry must still end up with no body attached.
   const BODY_COUNT = 12;
-  // A binary asset and a cross-origin request (web-uplift-js42): the binary body is
-  // what exercises the base64 content path, and asking for it on `localhost` while
-  // the page is served on `127.0.0.1` makes it a genuine third-party origin, which
-  // is what runs the origins ranking and the third-party byte/count totals. The dead
-  // image on a closed port is what makes the transport-failure path fire.
+  // A binary asset and cross-origin attempts. web-uplift-f9jg reshaped this fixture: the
+  // audited-page network guard refuses every cross-origin LOOPBACK request (a different
+  // loopback host/port is a different origin and gets no exemption), so the old shape - the
+  // big PNG on `localhost:<port>` while the page is served on `127.0.0.1:<port>` - can no
+  // longer load at all, and js42's third-party byte totals have no reachable offline fixture.
+  // The fixture now serves the big binary SAME-ORIGIN (the base64 body path and the
+  // missing-cache ranking are origin-independent) and keeps the `localhost` third-party
+  // attempt in the page: under the guard it is REFUSED, which is asserted as guard
+  // provenance instead of third-party traffic. The dead image on a closed port is what makes
+  // the transport-failure path fire (and is policy-refused before the connection, too).
   //
   // It is padded past the tiny script bodies ON PURPOSE: the missing-cache ranking
   // is asserted below, and a fixture whose insertion order already matches the
@@ -133,7 +138,9 @@ export async function testHarRedirects() {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     const scripts = Array.from({ length: BODY_COUNT }, (_, i) => `<script src="/s${i}.js"></script>`).join('');
     const crossHost = String(req.headers.host || '').replace('127.0.0.1', 'localhost');
-    res.end(`<!doctype html><title>ok</title><link rel="icon" href="data:,">${scripts}<img src="http://${crossHost}/pic.png" alt=""><img src="http://127.0.0.1:9/dead.png" alt="">ok`);
+    // The big binary is SAME-ORIGIN now (the guard would refuse the localhost form); the
+    // localhost img stays as the third-party attempt the guard must refuse and record.
+    res.end(`<!doctype html><title>ok</title><link rel="icon" href="data:,">${scripts}<img src="/pic.png" alt=""><img src="http://${crossHost}/pic.png" alt=""><img src="http://127.0.0.1:9/dead.png" alt="">ok`);
   });
 
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
@@ -198,9 +205,18 @@ export async function testHarRedirects() {
       picEntry?.response?.content?.encoding === 'base64' && picEntry.response.content.size === PNG.length,
       `--bodies must record a binary body as base64 with its true decoded size (${PNG.length} bytes): ${JSON.stringify(picEntry?.response?.content)}`,
     );
+    // web-uplift-f9jg: the third-party loopback attempts are REFUSED by the page network guard
+    // and recorded - a stronger local assertion than js42's third-party byte totals, which no
+    // offline fixture can reach any more (cross-origin loopback traffic cannot load under the
+    // guard; see the fixture comment above).
+    const refusals = result?.console?.entries?.filter((e) => e.kind === 'network-refusal') ?? [];
     assert(
-      summary.thirdParty?.thirdPartyRequestCount > 0 && summary.thirdParty?.thirdPartyTransferredBytes > 0,
-      `the cross-origin image must be counted as third-party traffic: ${JSON.stringify(summary.thirdParty)}`,
+      (result?.console?.networkRefusalCount ?? 0) >= 2,
+      `the guard must record the refused cross-origin loopback attempts: ${JSON.stringify(result?.console?.networkRefusalCount)}`,
+    );
+    assert(
+      refusals.some((r) => r.url?.includes('localhost')),
+      `the localhost third-party refusal must carry its attempted url: ${JSON.stringify(refusals)}`,
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));

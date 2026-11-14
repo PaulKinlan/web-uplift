@@ -285,7 +285,13 @@ function summariseHar(har, mainUrl, log, { redactCredentials = true } = {}) {
     const type = e._resourceType || 'other';
     const bucket = bucketFor(type);
     const res = e.response || {};
-    const transferred = num(res._transferSize) || num(res.bodySize) || 0;
+    // web-uplift-f9jg: with the page network guard's Fetch-domain interception armed (every
+    // audited session now runs intercepted), Chrome stops attributing _transferSize on
+    // responseReceived - the value is absent and bodySize collapses to 0. The record's own
+    // encodedDataLength from Network.loadingFinished is the honest transferred size in that
+    // mode, so it is the fallback before 0. Pre-guard sessions (and responses that DO carry
+    // _transferSize) are unchanged: the earlier terms win.
+    const transferred = num(res._transferSize) || num(res.bodySize) || num(e.encodedDataLength) || 0;
     const content = num(res.content?.size) || 0;
     totalTransferredBytes += transferred;
     totalContentBytes += content;
