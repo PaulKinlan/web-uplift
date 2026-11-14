@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { attachConsoleEvidence } from './cdp.mjs';
 
@@ -189,10 +190,38 @@ export function round(n) {
   return Math.round(n * 100) / 100;
 }
 
+// web-uplift-cx25: ONE bounded, deterministic mapping for every caller-derived path component.
+// hostSlug is the canonical form (the same host lands in the same place everywhere - run-history's
+// per-host trees, evidence's derived output names); boundPathComponent applies the byte bound to
+// callers whose normalisation differs (the fixer keeps dots) without a second hand-rolled limit.
+const HOST_SLUG_MAX = 200; // bytes of path component, headroom under the ~255-byte filesystem limit
+const HOST_SLUG_MARKER = '~trunc';
+const HOST_SLUG_DIGEST = 12;
+
+export function boundPathComponent(normalised) {
+  if (normalised.length <= HOST_SLUG_MAX) return normalised;
+  const digest = createHash('sha256').update(normalised).digest('hex').slice(0, HOST_SLUG_DIGEST);
+  return `${normalised.slice(0, HOST_SLUG_MAX - HOST_SLUG_MARKER.length - HOST_SLUG_DIGEST)}${HOST_SLUG_MARKER}${digest}`;
+}
+
+export function hostSlug(urlOrHost) {
+  let raw;
+  try {
+    raw = new URL(urlOrHost).host; // IDN arrives punycode-ASCII here, so it is filesystem-safe as-is
+  } catch {
+    raw = String(urlOrHost); // already a slug or a bare host
+  }
+  const normalised = raw.replace(/[:.]/g, '_').replace(/[^a-z0-9._-]/gi, '_') || 'page';
+  return boundPathComponent(normalised);
+}
+
 export function derivedOut(url, kind, ext) {
+  // web-uplift-cx25: the host part used to be an unbounded replace - a 257-byte host died at the
+  // first evidence step's ENAMETOOLONG before any report directory (which hostSlug fixed) was
+  // reached. Same mapping, same place, bounded.
   let host = 'page';
   try {
-    host = new URL(url).host.replace(/[:.]/g, '_') || 'page';
+    host = hostSlug(url);
   } catch {
     // ignore
   }

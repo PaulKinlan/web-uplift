@@ -54,6 +54,7 @@ import { buildScorecardData, renderScorecard, scoreReport, evaluateGates } from 
 import { snapshotTree, diffTrees, escapedChanges, summariseChanges, EXECUTABLE_HASH_ROOTS } from '../runner/write-scope.mjs';
 import { UnsafeTargetRefused, assertRealParentUnder, isInsidePath, isRealDir, readFileNoFollow, writeFileNoFollow, writeFileNoFollowSync } from '../runner/safe-write.mjs';
 import { redactUrlCredentialValues } from '../evidence/cli.mjs';
+import { boundPathComponent } from '../evidence/common.mjs';
 
 // Every place this tool PRINTS the audit URL goes through shownAuditUrl (web-uplift-s0x):
 // the URL appears in the dry-run plan, in the baseline-audit line and inside the echoed
@@ -951,11 +952,16 @@ async function snapshotRun(fromDir, toDir, report, root) {
 }
 
 function slugify(s) {
+  // web-uplift-cx25: the URL branch keeps dots (existing report dirs keep resolving) but is now
+  // bounded by the SAME shared bound as every other caller-derived path component - a 257-byte
+  // host produced a 267-char component and ENAMETOOLONG at run start.
+  let normalised;
   try {
-    return new URL(s).host.replace(/[^a-z0-9.-]/gi, '_');
+    normalised = new URL(s).host.replace(/[^a-z0-9.-]/gi, '_');
   } catch {
     return String(s).replace(/[^a-z0-9.-]/gi, '_').slice(0, 40) || 'site';
   }
+  return boundPathComponent(normalised || 'site');
 }
 
 function parseArgs(argv) {
