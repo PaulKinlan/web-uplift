@@ -562,6 +562,12 @@ export const SUBSYSTEMS = [
     targets: [
       { type: 'node', path: 'tests/cdp-copy-sync.mjs', label: 'CDP copy sync byte check' },
       { type: 'node', path: 'tests/safe-fetch.mjs', label: 'Safe-fetch DNS rebinding and decoding' },
+      // The network guard's DNS adapter (bounded per-session cache, TTL, node lookup's array shape) is a
+      // security contract in evidence/cdp.mjs, and it is CHEAP: ~0.1s, no browser, no network. The
+      // browser-driven end-to-end suite for the same guard stays a symlink-guards target rather than being
+      // added here, because it costs ~150s of real Chrome and the evidence/ subsystem is on the critical
+      // path of almost every change; the gap that leaves is stated on web-uplift-j48l.
+      { type: 'node', path: 'tests/guard-lookup.test.mjs', label: 'Network guard DNS adapter and cache (web-uplift-j48l, web-uplift-jpzr)' },
       { type: 'node', path: 'tests/source-tree-symlink.mjs', label: 'Source-tree symlink escape tests' },
       { type: 'node', path: 'tests/target-url.test.mjs', label: 'Target-URL scheme gate (audited target)' },
       // MEASURED BUDGET (web-uplift-91lr), same shape as the Batch bound above: this target took 185.4s on an

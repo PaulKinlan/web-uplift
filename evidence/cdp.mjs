@@ -1588,11 +1588,26 @@ async function withRetry(fn, { label, attempts = 8, delayMs = 200, maxDelayMs = 
 // auditing your own http://127.0.0.1:PORT app still works; the PAGE fetching a
 // DIFFERENT loopback port or host does not.
 
-// Per-process DNS cache for the guard: the policy resolves every hostname it
-// sees, and a page with many requests to the same host must not turn the
-// interception into a DNS flood. Bounded; a full cache evicts nothing (an
-// audit sees a bounded page's host set) but stops resolving past the cap by
-// failing closed.
+// The guard's DNS adapter, as a PER-SESSION factory (web-uplift-j48l). It used to be
+// ONE module-scope cache for the whole process: after 256 distinct hostnames had
+// been resolved - a batch audit of a few real sites reaches that easily - every new
+// host was refused with 'guard lookup cache full' for the rest of the process, so a
+// batch started failing part-way through with no policy reason behind it. Now each
+// armed session gets its own cache, and it is bounded by EVICTION instead of by
+// refusing: dropping the oldest entry costs one re-resolve and can never allow
+// anything, because every entry was already checked by the policy when it was used.
+//
+// The TTL is what keeps this honest about a rebinding name (web-uplift-jpzr). A
+// cached answer is reused for at most GUARD_LOOKUP_TTL_MS; after that the name is
+// resolved again, so a name that switches from a public address to a private one is
+// caught on the next request rather than for the life of the cache. Reusing an entry
+// inside the window is the residual: what the policy sees is the address the process
+// resolved, not the address the BROWSER connects to - Fetch.continueRequest cannot
+// pin one - so a name whose answer changes between the decision and Chrome's own
+// connect is not bounded by this guard. Closing that needs the connection itself
+// controlled (a pinning proxy), which is stated on the bead rather than pretended
+// here. What IS bounded: every request is decided separately, on an answer no older
+// than the TTL, and a refusal is never cached.
 //
 // The adapter is a DROP-IN for node:dns/promises#lookup with `all: true`: it
 // RESOLVES to an array of { address, family } and THROWS on failure. The policy
@@ -1602,29 +1617,36 @@ async function withRetry(fn, { label, attempts = 8, delayMs = 200, maxDelayMs = 
 // hostname request, and a hostname target's own navigation, was refused with an
 // internal TypeError instead of a policy decision (web-uplift-a32k).
 const GUARD_LOOKUP_CACHE_MAX = 256;
-const guardLookupCache = new Map();
-async function guardLookup(host) {
-  const cached = guardLookupCache.get(host);
-  if (cached) {
-    if (cached.error) throw new Error(cached.error);
-    // A defensive copy: the cached entry is not the caller's to mutate.
-    return cached.addresses.slice();
-  }
-  if (guardLookupCache.size >= GUARD_LOOKUP_CACHE_MAX) {
-    // Fail closed, and cache the refusal so a page cannot turn a full cache into
-    // a per-request DNS retry loop.
-    guardLookupCache.set(host, { error: 'guard lookup cache full' });
-    throw new Error('guard lookup cache full');
-  }
-  let entry;
-  try {
-    entry = { addresses: Object.freeze(await lookup(host, { all: true, verbatim: true })) };
-  } catch (e) {
-    entry = { error: e?.code || e?.message || 'lookup failed' };
-  }
-  guardLookupCache.set(host, entry);
-  if (entry.error) throw new Error(entry.error);
-  return entry.addresses.slice();
+const GUARD_LOOKUP_TTL_MS = 30_000;
+
+export function createGuardLookup({
+  resolve: resolveImpl = lookup,
+  maxEntries = GUARD_LOOKUP_CACHE_MAX,
+  ttlMs = GUARD_LOOKUP_TTL_MS,
+  now = Date.now,
+} = {}) {
+  const cache = new Map();
+  const guardLookup = async function guardLookup(host) {
+    if (!(maxEntries > 0)) throw new Error('guard lookup cache misconfigured');
+    const cached = cache.get(host);
+    if (cached && now() - cached.at < ttlMs) {
+      // Least-recently-used last: re-insert so eviction takes the coldest host.
+      cache.delete(host);
+      cache.set(host, cached);
+      // A defensive copy: the cached entry is not the caller's to mutate.
+      return cached.addresses.slice();
+    }
+    cache.delete(host);
+    // A failure is NOT cached: it fails closed for this request, and the next
+    // request to the same host resolves again rather than inheriting a stale
+    // verdict from a DNS blip.
+    const addresses = Object.freeze(await resolveImpl(host, { all: true, verbatim: true }));
+    cache.set(host, { addresses, at: now() });
+    while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+    return addresses.slice();
+  };
+  Object.defineProperty(guardLookup, 'cacheSize', { get: () => cache.size });
+  return guardLookup;
 }
 
 // The refusal record: page-derived, so the same redaction applies as every
@@ -1682,7 +1704,7 @@ async function armNetworkGuard(client, guard, log, cdpDeadlineMs) {
     try {
       const parsed = await assertPageDerivedFetchAllowed(pausedUrl, {
         targetOrigin: guard.auditedOrigin,
-        lookup: guardLookup,
+        lookup: guard.lookup,
       });
       verdict = { allowed: true, pinned: parsed.pinnedAddress };
     } catch (err) {
@@ -1768,7 +1790,14 @@ export async function newSession(portOrHandle, { log = () => {}, cdpDeadlineMs =
   // web-uplift-f9jg: arm the network guard (see the block comment above). The
   // audit does not run without it - an unaudited fetch path from the page to
   // the machine is exactly what this session exists to prevent.
-  const guard = { refusals: [], auditedOrigin: typeof auditedOrigin === 'string' ? auditedOrigin : '', pushEntry: null };
+  const guard = {
+    refusals: [],
+    auditedOrigin: typeof auditedOrigin === 'string' ? auditedOrigin : '',
+    pushEntry: null,
+    // Per-session DNS cache, so one session's host set cannot spend another's
+    // budget and a long-lived batch process cannot wedge the guard (web-uplift-j48l).
+    lookup: createGuardLookup(),
+  };
   guardsByClient.set(client, guard);
   await armNetworkGuard(client, guard, log, cdpDeadlineMs);
   addScriptToEvaluateOnNewDocumentOnce(client, log);
@@ -1827,7 +1856,14 @@ async function newPipeSession(chrome, { auditedOrigin, log = () => {}, cdpDeadli
 
   // web-uplift-f9jg: the pipe transport arms the SAME guard - a transport is
   // not a bypass.
-  const guard = { refusals: [], auditedOrigin: typeof auditedOrigin === 'string' ? auditedOrigin : '', pushEntry: null };
+  const guard = {
+    refusals: [],
+    auditedOrigin: typeof auditedOrigin === 'string' ? auditedOrigin : '',
+    pushEntry: null,
+    // Per-session DNS cache, so one session's host set cannot spend another's
+    // budget and a long-lived batch process cannot wedge the guard (web-uplift-j48l).
+    lookup: createGuardLookup(),
+  };
   guardsByClient.set(client, guard);
   await armNetworkGuard(client, guard, log, cdpDeadlineMs);
   addScriptToEvaluateOnNewDocumentOnce(client, log);
