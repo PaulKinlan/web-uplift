@@ -409,9 +409,16 @@ export async function testCdpDeadline() {
   await new Promise((res) => blackhole.listen(0, '127.0.0.1', res));
   const chrome = await launchChrome({ log: () => {} });
   try {
-    const session = await newSession(chrome, { log: () => {} });
+    // web-uplift-f9jg: the network guard exempts only the declared audited origin. This test
+    // drives newSession directly, so it declares its own target - the same thing the CLI does
+    // for an operator-chosen 127.0.0.1 target. Without it the guard fail-closes (no declared
+    // origin = no exemption) and the starve navigation is refused before the deadline can fire.
+    const starvedUrl = `http://127.0.0.1:${blackhole.address().port}/`;
+    const session = await newSession(chrome, {
+      log: () => {},
+      auditedOrigin: starvedUrl.endsWith('/') ? starvedUrl.slice(0, -1) : starvedUrl,
+    });
     try {
-      const starvedUrl = `http://127.0.0.1:${blackhole.address().port}/`;
       const hitsBeforeNav = blackholeHits;
       const t2 = Date.now();
       let navErr = null;

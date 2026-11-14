@@ -82,7 +82,10 @@ export function isBlockedAddress(address) {
 
 // Resolve a page-derived URL to one this process may fetch, or throw a reason.
 // `targetOrigin` is the audited target's origin (see the note above).
-export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin } = {}) {
+// `lookup` is injectable so the CDP network guard (web-uplift-f9jg) can share
+// this exact policy with a process-level DNS cache instead of resolving per
+// intercepted request; the default is the module's own resolver.
+export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin, lookup: lookupImpl = lookup } = {}) {
   let parsed;
   try {
     parsed = new URL(rawUrl, base);
@@ -110,7 +113,7 @@ export async function assertPageDerivedFetchAllowed(rawUrl, { base, targetOrigin
   }
   let addresses;
   try {
-    addresses = await lookup(host, { all: true, verbatim: true });
+    addresses = await lookupImpl(host, { all: true, verbatim: true });
   } catch (e) {
     // Fail closed: a name this process cannot resolve is not fetched at all.
     throw new Error(`refused: ${host} did not resolve (${e?.code || e?.message || 'lookup failed'})`);
