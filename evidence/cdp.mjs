@@ -1675,7 +1675,7 @@ async function armNetworkGuard(client, guard, log, cdpDeadlineMs) {
     }
     if (verdict.allowed) {
       try {
-        await client.Fetch.continueRequest({ requestId });
+        await withDeadline(client.Fetch.continueRequest({ requestId }), cdpDeadlineMs, 'Fetch.continueRequest');
       } catch (err) {
         log(`[network-guard] continue failed for ${redactUrlCredentialValues(pausedUrl)}: ${err.message}`);
       }
@@ -1688,7 +1688,7 @@ async function armNetworkGuard(client, guard, log, cdpDeadlineMs) {
     } catch {}
     log(`[network-guard] refused ${record.url}: ${record.text}`);
     try {
-      await client.Fetch.failRequest({ requestId, errorReason: 'BlockedByClient' });
+      await withDeadline(client.Fetch.failRequest({ requestId, errorReason: 'BlockedByClient' }), cdpDeadlineMs, 'Fetch.failRequest');
     } catch (err) {
       log(`[network-guard] failRequest failed for ${record.url}: ${err.message}`);
     }
