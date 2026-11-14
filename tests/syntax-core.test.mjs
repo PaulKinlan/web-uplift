@@ -391,6 +391,51 @@ export async function testPageDerivedFetchGuard() {
     targetOrigin: 'http://127.0.0.1:8080',
   });
   assert(relative.pathname === '/m.webmanifest', `a relative manifest href must resolve against the target: ${relative.href}`);
+
+  // web-uplift-a32k: a HOSTNAME that resolves to PUBLIC addresses must be ALLOWED.
+  // The CDP network guard injects a DNS-cached lookup adapter into this exact
+  // policy, so the contract pinned here is the one that adapter has to meet:
+  // node's own shape, an ARRAY of { address, family }, resolved or thrown. Every
+  // case above that involves a name is a refusal, so a shape mismatch between the
+  // adapter and the policy passed the whole file for the wrong reason.
+  const publicLookup = async () => [
+    { address: '2606:4700:4700::1111', family: 6 },
+    { address: '93.184.216.34', family: 4 },
+  ];
+  const allowedByName = await assertPageDerivedFetchAllowed('https://cdn.example/asset.js', { lookup: publicLookup });
+  assert(
+    allowedByName.pinnedAddress === '2606:4700:4700::1111',
+    `a name resolving to public addresses must be allowed and pinned to the first one: ${allowedByName.pinnedAddress}`,
+  );
+
+  // ...and a name resolving to a private address is refused for THAT reason, with
+  // the address named, not with an internal error from the policy itself.
+  const privateLookup = async () => [{ address: '127.0.0.1', family: 4 }];
+  let resolvedPrivate = null;
+  try {
+    await assertPageDerivedFetchAllowed('https://cdn.example/asset.js', { lookup: privateLookup });
+  } catch (e) {
+    resolvedPrivate = e;
+  }
+  assert(
+    resolvedPrivate && /refused: cdn\.example resolves to 127\.0\.0\.1/.test(resolvedPrivate.message),
+    `a name resolving to a private address must be refused for that reason: ${resolvedPrivate?.message}`,
+  );
+
+  // A lookup that throws fails closed, with its own reason carried through.
+  const failingLookup = async () => {
+    throw Object.assign(new Error('lookup ENOTFOUND'), { code: 'ENOTFOUND' });
+  };
+  let lookupFailed = null;
+  try {
+    await assertPageDerivedFetchAllowed('https://no-such-name.invalid/x', { lookup: failingLookup });
+  } catch (e) {
+    lookupFailed = e;
+  }
+  assert(
+    lookupFailed && /refused: no-such-name\.invalid did not resolve \(ENOTFOUND\)/.test(lookupFailed.message),
+    `a lookup that cannot resolve must fail closed: ${lookupFailed?.message}`,
+  );
 }
 
 

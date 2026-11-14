@@ -102,16 +102,33 @@ export async function testPageFetchLoopbackRefused() {
 }
 
 // 2. A public-looking NAME that resolves to a private address ('localhost' always resolves
-// loopback on this host): the policy resolves names, not just literals.
+// loopback on this host): the policy resolves names, not just literals. The REFUSAL ITSELF is
+// asserted, not just "something was blocked" - this is the only case in this file that drives the
+// guard's injected DNS adapter through the shared policy, so an adapter that does not hand the
+// policy node's array shape refuses every hostname for the wrong reason and the four refusal cases
+// still go green (web-uplift-a32k).
 export async function testNameResolvingPrivateRefused() {
   const spy = await makePrivateListener('localhost');
   try {
-    await expectRefused(
-      `fetch('http://localhost:${spy.address().port}/probe').catch(() => {})`,
-      'public name resolving to a private address',
-      spy,
-    );
-    assert(spy.hits === 0, 'localhost spy must have zero hits');
+    const audited = await serveOnce((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(PAGE(`fetch('http://localhost:${spy.address().port}/probe').catch(() => {})`));
+    });
+    try {
+      const res = await runCliAsync(['dom', `http://127.0.0.1:${audited.address().port}`, '--allow-scheme', 'http', '--quiet']);
+      const output = `${res.stdout}\n${res.stderr}`;
+      assert(spy.hits === 0, `localhost spy must have zero hits (hits: ${spy.hits})`);
+      assert(
+        /resolves to [^,"]+, a loopback, link-local or private address/.test(output),
+        `the refusal must be the policy's resolved-address decision, recorded with its reason: ${output.slice(-600)}`,
+      );
+      assert(
+        !/addresses\.find is not a function|addresses\.length/.test(output),
+        `the guard's DNS adapter must not fail with an internal TypeError: ${output.slice(-600)}`,
+      );
+    } finally {
+      audited.close();
+    }
   } finally {
     spy.close();
   }

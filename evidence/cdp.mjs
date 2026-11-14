@@ -1593,23 +1593,38 @@ async function withRetry(fn, { label, attempts = 8, delayMs = 200, maxDelayMs = 
 // interception into a DNS flood. Bounded; a full cache evicts nothing (an
 // audit sees a bounded page's host set) but stops resolving past the cap by
 // failing closed.
+//
+// The adapter is a DROP-IN for node:dns/promises#lookup with `all: true`: it
+// RESOLVES to an array of { address, family } and THROWS on failure. The policy
+// is shared with the harness's own fetches, so it can only honour the contract
+// node's lookup has; handing it a { addresses } envelope was read as the array
+// itself, so `addresses.length` was undefined and `addresses.find` threw - every
+// hostname request, and a hostname target's own navigation, was refused with an
+// internal TypeError instead of a policy decision (web-uplift-a32k).
 const GUARD_LOOKUP_CACHE_MAX = 256;
 const guardLookupCache = new Map();
 async function guardLookup(host) {
   const cached = guardLookupCache.get(host);
-  if (cached) return cached;
-  let result;
-  if (guardLookupCache.size >= GUARD_LOOKUP_CACHE_MAX) {
-    result = { error: 'guard lookup cache full' };
-  } else {
-    try {
-      result = { addresses: await lookup(host, { all: true, verbatim: true }) };
-    } catch (e) {
-      result = { error: e?.code || e?.message || 'lookup failed' };
-    }
-    guardLookupCache.set(host, result);
+  if (cached) {
+    if (cached.error) throw new Error(cached.error);
+    // A defensive copy: the cached entry is not the caller's to mutate.
+    return cached.addresses.slice();
   }
-  return result;
+  if (guardLookupCache.size >= GUARD_LOOKUP_CACHE_MAX) {
+    // Fail closed, and cache the refusal so a page cannot turn a full cache into
+    // a per-request DNS retry loop.
+    guardLookupCache.set(host, { error: 'guard lookup cache full' });
+    throw new Error('guard lookup cache full');
+  }
+  let entry;
+  try {
+    entry = { addresses: Object.freeze(await lookup(host, { all: true, verbatim: true })) };
+  } catch (e) {
+    entry = { error: e?.code || e?.message || 'lookup failed' };
+  }
+  guardLookupCache.set(host, entry);
+  if (entry.error) throw new Error(entry.error);
+  return entry.addresses.slice();
 }
 
 // The refusal record: page-derived, so the same redaction applies as every
