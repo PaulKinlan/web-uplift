@@ -65,7 +65,10 @@ server.registerPrompt(
             // javascript: alike. Refusing a scheme HERE would duplicate policy at the surface and break that
             // funnel, which is why the helper's scheme check belongs to the runner's own prompt, where the runner
             // owns the audit set.
-            `Follow the skill above with ${untrustedArgumentBlock([url, ...(flags ? [flags] : [])])}`,
+            `Follow the skill above with ${untrustedArgumentBlock(
+              [url, ...(flags ? [flags] : [])],
+              { label: 'UNTRUSTED CALLER ARGUMENTS' },
+            )}`,
         },
       },
     ],
