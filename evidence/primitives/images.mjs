@@ -13,7 +13,11 @@ export async function images(client, url, opts, log) {
       const nw = img.naturalWidth || 0;
       const dw = Math.round(r.width) || 0;
       return {
-        src: (img.src || '').slice(0, 120),
+        // RAW, generously capped (web-uplift-qu78). Truncating to the DISPLAY length here was the defect: the
+        // redactor runs in Node, so an '@' beyond the cap was invisible to it and the credential PREFIX survived
+        // into the artifact (a bare user:passwor prefix reads as a leak, with host and path gone). This cap exists
+        // only to bound what crosses the CDP boundary from a page that can set a multi-megabyte data: URL.
+        src: (img.src || '').slice(0, 2048),
         alt: img.alt || null,
         hasWidth: img.hasAttribute('width'), hasHeight: img.hasAttribute('height'),
         loading: img.getAttribute('loading'),
@@ -35,9 +39,13 @@ export async function images(client, url, opts, log) {
   // it drops credential VALUES while keeping host and path, which is what keeps the artifact useful.
   for (const item of imgs) {
     if (typeof item?.src !== 'string') continue;
-    item.src = redactUrlsInText(redactUrlCredentialValues(item.src))
-      .replace(/[\u0000-\u001f\u007f]/g, '')
-      .slice(0, 120);
+    // REDACT FIRST, CAP SECOND (web-uplift-qu78): a cap before redaction can cut a credential in half, which is
+    // worse than not redacting, because the remainder reads as ordinary text. Host and path survive the redactor
+    // and are what a reader compares across runs; only the tail is lost, and truncation is MARKED, not silent.
+    const redacted = redactUrlsInText(redactUrlCredentialValues(item.src))
+      .replace(/[\u0000-\u001f\u007f]/g, '');
+    item.srcTruncated = redacted.length > 120;
+    item.src = item.srcTruncated ? `${redacted.slice(0, 120)}[truncated]` : redacted;
   }
   const totalImages = data?.total ?? imgs.length;
   announceCap('images.inspected', imgs.length, totalImages, log);

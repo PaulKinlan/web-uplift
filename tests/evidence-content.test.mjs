@@ -55,6 +55,20 @@ export async function testEvidenceTruncationReporting() {
       res.end(`<!doctype html><title>images</title>${imgs}`);
       return;
     }
+    if (path === '/long-credential-image') {
+      // web-uplift-qu78: a credential that sits BEYOND the display cap. The old code sliced to 120 characters
+      // inside the page and then redacted in Node, so the '@' was never visible to the redactor and the password
+      // PREFIX landed in the artifact. The password is deliberately longer than the cap.
+      const pw = 'p'.repeat(130);
+      res.end(`<!doctype html><title>cred</title><img src="http://user:${pw}@example.invalid/path/pixel.png?token=fixture" alt="cred" width="1" height="1">`);
+      return;
+    }
+    if (path === '/long-image-path') {
+      // Long but credential-free: this one MUST be capped, so the truncation marker is exercised on the path
+      // where truncation actually happens (web-uplift-qu78).
+      res.end(`<!doctype html><title>long</title><img src="http://example.invalid/${'seg/'.repeat(60)}pixel.png" alt="long" width="1" height="1">`);
+      return;
+    }
     if (path === '/many-cookies') {
       res.end("<!doctype html><title>cookies</title><script>for (let i = 0; i < 51; i++) document.cookie = 'cap' + i + '=1;path=/';</script>");
       return;
@@ -101,6 +115,27 @@ export async function testEvidenceTruncationReporting() {
       Object.keys(selected.page.computed).join('|') === 'h1|.missing',
       `dom --selector must trim, drop empties and key the computed styles by selector: ${JSON.stringify(Object.keys(selected.page.computed))}`,
     );
+
+    // web-uplift-qu78: REDACT BEFORE CAP. A credential longer than the display cap must not leak its prefix, and
+    // the truncation must be marked rather than silent - the previous code capped in the page and redacted in
+    // Node, so the '@' was beyond the cap and invisible to the redactor.
+    const cred = await gather('images', `${base}/long-credential-image`, { quiet: true, wait: 250 });
+    const credSrc = cred.images?.[0]?.src ?? '';
+    assert(!/p{10,}/.test(credSrc), `the password must not survive truncation, got ${JSON.stringify(credSrc)}`);
+    assert(!/user:/.test(credSrc), `the userinfo must be redacted, got ${JSON.stringify(credSrc)}`);
+    assert(credSrc.includes('example.invalid'), `host must survive so the artifact stays useful, got ${JSON.stringify(credSrc)}`);
+    // After redaction this URL FITS the cap, which is the ideal outcome - the earlier code truncated first, which
+    // is exactly what hid the credential. So the invariant is consistency, not that truncation always happens.
+    assert(
+      cred.images[0].srcTruncated === false || credSrc.endsWith('[truncated]'),
+      `if a capped src was truncated it must say so, got ${JSON.stringify(cred.images[0])}`,
+    );
+    // And when a URL genuinely exceeds the cap AFTER redaction, the truncation is explicit rather than silent.
+    const longPath = await gather('images', `${base}/long-image-path`, { quiet: true, wait: 250 });
+    const longSrc = longPath.images?.[0]?.src ?? '';
+    assert(longPath.images[0].srcTruncated === true, `a genuinely long src must be marked truncated, got ${JSON.stringify(longPath.images[0])}`);
+    assert(longSrc.endsWith('[truncated]'), `the marker must be visible in the value, got ${JSON.stringify(longSrc)}`);
+    assert(longSrc.includes('example.invalid'), `host must survive the cap, got ${JSON.stringify(longSrc)}`);
 
     // The list caps report the same way: 40 images on the page, 30 listed.
     const images = await gather('images', `${base}/many-images`, { quiet: true, wait: 250 });
