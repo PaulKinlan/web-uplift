@@ -497,7 +497,8 @@ export function testCallerSuppliedPromptValuesAreDataNotInstructions() {
   const legit = skillPrompt('https://ex.test/路径?q=café&b=2', '/tmp/out dir');
   assert(legit.includes('https://ex.test/'), `a legitimate URL must survive validation: ${legit}`);
   assert(legit.includes('/tmp/out dir'), `an output directory with a space must survive: ${legit}`);
-  assert(legit.includes('["'), `arguments are rendered as a structured array, not concatenated: ${legit}`);
+  assert(legit.includes('https://ex.test/路径'), `the argument list must stay readable by the consumers that parse it: ${legit}`);
+  assert(!/"[^"]*ignore previous/.test(legit), `no unvalidated payload may be quoted into the prompt: ${legit}`);
 
   // 4. The MCP call site forwards to the gated CLI, which owns SCHEME policy (web-uplift-oxw2/sz7g pin that
   //    funnel, including for file:// and javascript:), so it applies the STRUCTURAL checks only - the injection
